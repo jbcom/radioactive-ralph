@@ -1,163 +1,155 @@
-"""GitHub PR management via gh CLI — list, classify, merge, get diffs."""
+"""High-level management of pull requests across multiple repositories.
+
+Orchestrates forge detection, PR discovery, CI/review classification,
+and merge operations.
+"""
 
 from __future__ import annotations
 
 import asyncio
-import json
+import logging
 import re
-from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-from .models import PRInfo, PRStatus
+from radioactive_ralph.forge import ForgePR, get_forge_client
+from radioactive_ralph.git_client import GitClient
+from radioactive_ralph.models import PRInfo, PRStatus
 
-STALE_THRESHOLD_DAYS = 7
-
-
-async def run_gh(args: list[str], cwd: str | Path | None = None) -> tuple[str, int]:
-    """Run a gh CLI command and return (stdout, returncode)."""
-    proc = await asyncio.create_subprocess_exec(
-        "gh",
-        *args,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-        cwd=cwd,
-    )
-    stdout, _ = await proc.communicate()
-    return stdout.decode("utf-8", errors="replace"), proc.returncode or 0
-
-
-async def list_open_prs(repo_path: str | Path) -> list[PRInfo]:
-    """List all open PRs for a repository and classify them."""
-    fields = "number,title,author,headRefName,isDraft,updatedAt,url"
-    stdout, rc = await run_gh(
-        ["pr", "list", "--json", fields, "--limit", "100"],
-        cwd=repo_path,
-    )
-    if rc != 0 or not stdout.strip():
-        return []
-
-    raw_prs = json.loads(stdout)
-    repo_name = Path(repo_path).name
-    prs: list[PRInfo] = []
-
-    for raw in raw_prs:
-        pr = PRInfo(
-            repo=repo_name,
-            number=raw["number"],
-            title=raw["title"],
-            author=raw.get("author", {}).get("login", "unknown"),
-            branch=raw["headRefName"],
-            is_draft=raw.get("isDraft", False),
-            url=raw.get("url", ""),
-            status=PRStatus.NEEDS_REVIEW,
-        )
-        if raw.get("updatedAt"):
-            pr.updated_at = datetime.fromisoformat(raw["updatedAt"].replace("Z", "+00:00"))
-
-        prs.append(pr)
-
-    return prs
-
-
-async def classify_pr(pr: PRInfo, repo_path: str | Path) -> PRInfo:
-    """Classify a PR by checking CI status and reviews."""
-    if pr.is_draft:
-        pr.status = PRStatus.DRAFT
-        return pr
-
-    now = datetime.now(UTC)
-    if (now - pr.updated_at) > timedelta(days=STALE_THRESHOLD_DAYS):
-        pr.status = PRStatus.STALE
-        return pr
-
-    ci_stdout, ci_rc = await run_gh(
-        ["pr", "checks", str(pr.number), "--json", "state"],
-        cwd=repo_path,
-    )
-
-    ci_passed = False
-    if ci_rc == 0 and ci_stdout.strip():
-        raw = json.loads(ci_stdout)
-        # gh pr checks --json wraps in {"checks": [...]}
-        checks = raw.get("checks", raw) if isinstance(raw, dict) else raw
-        if checks:
-            ci_passed = all(c.get("state") == "SUCCESS" for c in checks)
-            ci_failed = any(c.get("state") == "FAILURE" for c in checks)
-            if ci_failed:
-                pr.status = PRStatus.CI_FAILING
-                pr.ci_passed = False
-                return pr
-
-    pr.ci_passed = ci_passed
-
-    review_stdout, review_rc = await run_gh(
-        ["pr", "view", str(pr.number), "--json", "reviews,reviewRequests"],
-        cwd=repo_path,
-    )
-
-    if review_rc == 0 and review_stdout.strip():
-        review_data = json.loads(review_stdout)
-        reviews = review_data.get("reviews", [])
-        pr.review_count = len(reviews)
-
-        has_changes_requested = any(r.get("state") == "CHANGES_REQUESTED" for r in reviews)
-        has_approved = any(r.get("state") == "APPROVED" for r in reviews)
-
-        if has_changes_requested:
-            pr.status = PRStatus.NEEDS_FIXES
-            pr.has_unresolved_comments = True
-        elif has_approved and ci_passed:
-            pr.status = PRStatus.MERGE_READY
-        elif ci_passed:
-            pr.status = PRStatus.NEEDS_REVIEW
-        else:
-            pr.status = PRStatus.NEEDS_REVIEW
-
-    return pr
-
-
-async def get_pr_diff(pr_number: int, repo_path: str | Path) -> str:
-    """Get the full diff for a PR."""
-    stdout, _ = await run_gh(["pr", "diff", str(pr_number)], cwd=repo_path)
-    return stdout
-
-
-async def merge_pr(pr: PRInfo, repo_path: str | Path) -> bool:
-    """Squash-merge a PR and delete the branch."""
-    _, rc = await run_gh(
-        ["pr", "merge", str(pr.number), "--squash", "--delete-branch"],
-        cwd=repo_path,
-    )
-    return rc == 0
-
-
-async def sync_after_merge(repo_path: str | Path) -> bool:
-    """Pull latest main after a merge."""
-    proc = await asyncio.create_subprocess_exec(
-        "git", "pull", "--ff-only",
-        cwd=repo_path,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
-    _, _ = await proc.communicate()
-    return (proc.returncode or 0) == 0
-
-
-async def scan_all_repos(repo_paths: list[Path]) -> dict[str, list[PRInfo]]:
-    """Scan all repos for open PRs and classify them."""
-    results: dict[str, list[PRInfo]] = {}
-
-    for repo_path in repo_paths:
-        prs = await list_open_prs(repo_path)
-        classified = await asyncio.gather(
-            *(classify_pr(pr, repo_path) for pr in prs)
-        )
-        results[str(repo_path)] = list(classified)
-
-    return results
+logger = logging.getLogger(__name__)
 
 
 def extract_pr_url(text: str) -> str | None:
-    """Extract a GitHub PR URL from text output."""
-    match = re.search(r"https://github\.com/[^/]+/[^/]+/pull/\d+", text)
+    """Extract the first pull/merge request URL from a block of text.
+
+    Supports GitHub, GitLab (including subgroups), and Gitea URL patterns.
+
+    Args:
+        text: Raw text output (e.g. from a Claude Code agent run).
+
+    Returns:
+        The first matching URL, or None if not found.
+    """
+    match = re.search(
+        r"https?://[^\s/]+/.+?/(?:pull|pulls|merge_requests)/\d+",
+        text,
+    )
     return match.group(0) if match else None
+
+
+def pr_to_model(pr: ForgePR, repo_slug: str) -> PRInfo:
+    """Convert a forge-neutral ForgePR to the internal PRInfo model.
+
+    Args:
+        pr: Normalised PR from a forge client.
+        repo_slug: The ``org/repo`` slug used for display.
+
+    Returns:
+        A :class:`~radioactive_ralph.models.PRInfo` instance.
+    """
+    status = PRStatus.NEEDS_REVIEW
+    if pr.is_draft:
+        status = PRStatus.UNKNOWN
+    elif pr.changes_requested:
+        status = PRStatus.CHANGES_REQUESTED
+    elif pr.review_approved:
+        status = PRStatus.MERGE_READY
+
+    return PRInfo(
+        repo=repo_slug,
+        number=pr.number,
+        title=pr.title,
+        author=pr.author,
+        branch=pr.branch,
+        url=pr.url,
+        status=status,
+        updated_at=pr.updated_at,
+        ci_passed=(pr.ci.passed if pr.ci else False),
+        is_draft=pr.is_draft,
+        review_count=pr.review_count,
+    )
+
+
+async def scan_all_repos(repo_paths: list[Path]) -> dict[str, list[PRInfo]]:
+    """Scan multiple repositories for open pull requests.
+
+    Args:
+        repo_paths: List of local paths to git repositories.
+
+    Returns:
+        Mapping of repo path (string) to list of discovered PRs.
+    """
+    results = await asyncio.gather(*[scan_repo(p) for p in repo_paths])
+    return {str(p): prs for p, prs in zip(repo_paths, results, strict=False)}
+
+
+async def scan_repo(repo_path: Path) -> list[PRInfo]:
+    """Scan a single repository for pull requests via its remote URL.
+
+    Args:
+        repo_path: Local path to the repository.
+
+    Returns:
+        List of PR metadata for open pull requests.
+    """
+    git = GitClient(repo_path)
+    remote_url = await git.get_remote_url()
+    if not remote_url:
+        return []
+
+    try:
+        async with get_forge_client(remote_url) as forge:
+            prs = await forge.list_prs(state="open")
+
+            # Fetch CI and Review status for each PR concurrently
+            async def hydrate(p: ForgePR) -> PRInfo:
+                ci_task = forge.get_pr_ci(p)
+                review_task = forge.get_pr_reviews(p)
+                p.ci, _ = await asyncio.gather(ci_task, review_task)
+                return pr_to_model(p, forge.info.slug)
+
+            return await asyncio.gather(*[hydrate(p) for p in prs])
+
+    except Exception as e:
+        logger.error("Failed to scan PRs for %s: %s", repo_path, e)
+        return []
+
+
+async def merge_pr(pr: PRInfo, repo_path: Path) -> bool:
+    """Squash-merge a PR via its forge and sync local repo.
+
+    Args:
+        pr: The PR to merge.
+        repo_path: Local path to the repository.
+
+    Returns:
+        True if merge succeeded, False otherwise.
+    """
+    git = GitClient(repo_path)
+    remote_url = await git.get_remote_url()
+    if not remote_url:
+        return False
+
+    try:
+        async with get_forge_client(remote_url) as forge:
+            # Reconstruct ForgePR for the client
+            from radioactive_ralph.forge.base import ForgePR
+            f_pr = ForgePR(
+                number=pr.number,
+                title=pr.title,
+                author=pr.author,
+                branch=pr.branch,
+                head_sha="",
+                is_draft=pr.is_draft,
+                url=pr.url,
+                updated_at=pr.updated_at,
+            )
+
+            success = await forge.merge_pr(f_pr)
+            if success:
+                # Sync local repo
+                await git.pull()
+            return success
+
+    except Exception as e:
+        logger.error("Failed to merge PR #%d in %s: %s", pr.number, repo_path, e)
+        return False

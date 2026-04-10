@@ -1,4 +1,4 @@
-"""Pydantic models for radioactive_ralph state, work items, and agent runs."""
+"""Domain models for the orchestrator."""
 
 from __future__ import annotations
 
@@ -9,20 +9,52 @@ from pathlib import Path
 from pydantic import BaseModel, Field
 
 
-class PRStatus(str, Enum):
-    """Classification of a pull request's current state."""
+class WorkPriority(Enum):
+    """Priority level for a work item."""
 
-    MERGE_READY = "merge_ready"
+    LOW = 0
+    MEDIUM = 1
+    HIGH = 2
+    URGENT = 3
+
+
+class PRStatus(Enum):
+    """Internal status of a pull request."""
+
     NEEDS_REVIEW = "needs_review"
-    NEEDS_FIXES = "needs_fixes"
-    CI_FAILING = "ci_failing"
-    IN_PROGRESS = "in_progress"
+    CHANGES_REQUESTED = "changes_requested"
+    MERGE_READY = "merge_ready"
     STALE = "stale"
-    DRAFT = "draft"
+    UNKNOWN = "unknown"
 
 
-class ReviewSeverity(str, Enum):
-    """Severity level for a review finding."""
+class PRInfo(BaseModel):
+    """Aggregated information about a pull request."""
+
+    repo: str
+    number: int
+    title: str
+    author: str
+    branch: str
+    url: str
+    status: PRStatus
+    updated_at: datetime
+    ci_passed: bool = False
+    is_draft: bool = False
+    review_count: int = 0
+
+    @property
+    def is_mergeable(self) -> bool:
+        """Return True if the PR is approved, passed CI, and not a draft.
+
+        Returns:
+            Boolean mergeability status.
+        """
+        return self.status == PRStatus.MERGE_READY and self.ci_passed and not self.is_draft
+
+
+class ReviewSeverity(Enum):
+    """Severity of a review finding."""
 
     ERROR = "error"
     WARNING = "warning"
@@ -30,64 +62,36 @@ class ReviewSeverity(str, Enum):
     NITPICK = "nitpick"
 
 
-class WorkPriority(int, Enum):
-    """Priority levels for work items. Lower number = higher priority."""
-
-    CI_FAILURE = 1
-    PR_FIXES = 2
-    DOC_SWEEP = 3
-    MISSING_FILES = 4
-    STATE_NEXT = 5
-    DESIGN_FEATURE = 6
-    POLISH = 7
-
-
-class PRInfo(BaseModel):
-    """Representation of a GitHub pull request."""
-
-    repo: str
-    number: int
-    title: str
-    author: str
-    branch: str
-    status: PRStatus
-    ci_passed: bool = False
-    review_count: int = 0
-    has_unresolved_comments: bool = False
-    is_draft: bool = False
-    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
-    url: str = ""
-
-    @property
-    def is_mergeable(self) -> bool:
-        return self.status == PRStatus.MERGE_READY and self.ci_passed and not self.is_draft
-
-
 class ReviewFinding(BaseModel):
-    """A single finding from a code review."""
+    """A single finding from an AI code review."""
 
     severity: ReviewSeverity
     file: str
     line: int | None = None
     issue: str
-    fix: str
+    fix: str = ""
 
 
 class ReviewResult(BaseModel):
-    """Result of an AI code review."""
+    """Full result of an AI code review."""
 
     pr: PRInfo
     findings: list[ReviewFinding] = Field(default_factory=list)
-    approved: bool = False
-    summary: str = ""
+    approved: bool
+    summary: str
 
     @property
     def has_blocking_issues(self) -> bool:
+        """Return True if any findings are errors.
+
+        Returns:
+            Boolean blocking status.
+        """
         return any(f.severity == ReviewSeverity.ERROR for f in self.findings)
 
 
 class WorkItem(BaseModel):
-    """A unit of work to be executed by an agent."""
+    """A unit of work discovered in a repository."""
 
     id: str
     repo_path: str
@@ -100,72 +104,39 @@ class WorkItem(BaseModel):
 
     @property
     def repo_name(self) -> str:
+        """Return the name of the repository from its path.
+
+        Returns:
+            The directory name of the repo.
+        """
         return Path(self.repo_path).name
 
 
-class AgentResult(BaseModel):
-    """Result of a Claude Code agent execution."""
-
-    task_id: str
-    repo_path: str
-    output: str = ""
-    returncode: int = -1
-    pr_url: str | None = None
-    duration_seconds: float = 0.0
-    completed_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
-
-    @property
-    def succeeded(self) -> bool:
-        return self.returncode == 0
-
-
 class AgentRun(BaseModel):
-    """Tracking record for an active or completed agent run."""
+    """Tracking data for a running Claude Code agent."""
 
-    task: WorkItem
-    started_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
-    result: AgentResult | None = None
+    item: WorkItem
+    process_id: int
+    started_at: datetime
+    completed_at: datetime | None = None
+    exit_code: int | None = None
+    output: str = ""
 
     @property
     def is_active(self) -> bool:
-        return self.result is None
+        """Return True if the agent process is still running.
+
+        Returns:
+            Boolean activity status.
+        """
+        return self.completed_at is None
 
 
 class OrchestratorState(BaseModel):
-    """Top-level durable state for the orchestrator."""
+    """Persistent state of the orchestrator daemon."""
 
-    active_runs: list[AgentRun] = Field(default_factory=list)
-    completed_runs: list[AgentRun] = Field(default_factory=list)
-    merge_queue: list[PRInfo] = Field(default_factory=list)
-    work_queue: list[WorkItem] = Field(default_factory=list)
+    cycle_count: int = 0
     last_scan: datetime | None = None
     last_discovery: datetime | None = None
-    cycle_count: int = 0
-
-
-class AutoloopConfig(BaseModel):
-    """Parsed configuration for radioactive-ralph."""
-
-    orgs: dict[str, str] = Field(default_factory=dict)
-    bulk_model: str = "claude-haiku-4-5-20251001"
-    default_model: str = "claude-sonnet-4-6"
-    deep_model: str = "claude-opus-4-6"
-    max_parallel_agents: int = 5
-    max_parallel_doc_sweep: int = 10
-    agent_timeout_minutes: int = 30
-    state_path: str = ""
-
-    def resolve_state_path(self) -> Path:
-        if self.state_path:
-            return Path(self.state_path).expanduser()
-        return Path.home() / ".radioactive-ralph" / "state.json"
-
-    def all_repo_paths(self) -> list[Path]:
-        paths: list[Path] = []
-        for org_path in self.orgs.values():
-            expanded = Path(org_path).expanduser()
-            if expanded.is_dir():
-                for child in sorted(expanded.iterdir()):
-                    if child.is_dir() and (child / ".git").exists():
-                        paths.append(child)
-        return paths
+    work_queue: list[WorkItem] = Field(default_factory=list)
+    active_runs: list[AgentRun] = Field(default_factory=list)
