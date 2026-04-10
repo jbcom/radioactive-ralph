@@ -7,14 +7,16 @@ status: current
 # radioactive-ralph
 
 <p align="center">
-  <img src="assets/ralph-mascot.png" alt="radioactive-ralph — I'M HELPING!" width="400"/>
+  <img src="assets/ralph-mascot.png" alt="Autonomous continuous development orchestrator for Claude Code." width="400"/>
 </p>
 
-> **"I'M HELPING!"** — Autonomous continuous development orchestrator for Claude Code.
+<p align="center">Autonomous continuous development orchestrator for Claude Code.</p>
 
-[![PyPI](https://img.shields.io/pypi/v/radioactive-ralph)](https://pypi.org/project/radioactive-ralph/)
-[![CI](https://github.com/jbcom/radioactive-ralph/actions/workflows/ci.yml/badge.svg)](https://github.com/jbcom/radioactive-ralph/actions/workflows/ci.yml)
-[![Docs](https://img.shields.io/badge/docs-github%20pages-blue)](https://jbcom.github.io/radioactive-ralph/)
+<p align="center">
+  <a href="https://pypi.org/project/radioactive-ralph/"><img src="https://img.shields.io/pypi/v/radioactive-ralph" alt="PyPI"/></a>
+  <a href="https://github.com/jbcom/radioactive-ralph/actions/workflows/ci.yml"><img src="https://github.com/jbcom/radioactive-ralph/actions/workflows/ci.yml/badge.svg" alt="CI"/></a>
+  <a href="https://jbcom.github.io/radioactive-ralph/"><img src="https://img.shields.io/badge/docs-github%20pages-blue" alt="Docs"/></a>
+</p>
 
 ## What it is
 
