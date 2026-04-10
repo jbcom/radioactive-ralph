@@ -14,8 +14,8 @@ DISALLOWED_PATTERNS = {
     r"content/skills": "use docs/variants instead of copied content/skills paths",
     r"jbcom\.github\.io/radioactive-ralph": "use the canonical jonbogaty.com docs domain",
     r"jonbogaty\.com/radioactive-ralph/_images": (
-        "README/docs assets should not depend on generated _images paths; use raw GitHub URLs "
-        "or committed asset paths instead"
+        "do not depend on generated _images paths; use raw GitHub URLs or committed asset "
+        "paths instead"
     ),
 }
 SCAN_SUFFIXES = {".md", ".py", ".toml", ".json", ".yml", ".yaml"}

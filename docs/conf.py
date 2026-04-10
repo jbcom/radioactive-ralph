@@ -22,7 +22,11 @@ try:
     release = package_version("radioactive-ralph")
 except PackageNotFoundError:
     pyproject = Path(__file__).resolve().parent.parent / "pyproject.toml"
-    release = tomllib.loads(pyproject.read_text())["project"]["version"]
+    try:
+        release = tomllib.loads(pyproject.read_text())["project"]["version"]
+    except (KeyError, tomllib.TOMLDecodeError) as exc:
+        msg = f"Failed to read version from {pyproject.name}: {exc}"
+        raise RuntimeError(msg) from exc
 version = release
 
 extensions = [
