@@ -1,11 +1,15 @@
-# red-ralph — The Principal
+# red-ralph — Red Ralph
 
 > *"I spent thirty years trying to contain Ralph. Now I am Ralph. The irony isn't lost on me."*
 > — Red Ralph (Principal Seymour Skinner)
 
-## The Character
+**Inspired by Red Hulk, first appearing in *Hulk* vol. 2 #1 (2008), with the Ross reveal landing during *World War Hulks*.**
 
-**Red Hulk (Thunderbolt Ross). First appearance: Hulk vol. 2 #1 (2008, Jeph Loeb). Identity revealed in World War Hulks (2010).**
+| At a glance | Lore / bio |
+|---|---|
+| **Mode:** incident response<br>**Scope:** high-priority CI and PR blockers<br>**Tiering:** sonnet with opus escalation<br>**Best when:** something is on fire and you want one clean report | Skinner-as-Ralph is focused heat instead of chaos: a principal's clipboard welded onto a battlefield temperament. |
+
+## Character notes
 
 Principal Seymour Skinner spent his entire career trying to keep Ralph under control — the boy his school couldn't contain, the liability the district couldn't explain to parents, the kid who drew on the walls and ate the walls and then asked Miss Hoover if the walls were dead now. Then one day, alone in his office after a very bad parent-teacher conference, Principal Skinner was exposed to the same police radio radiation that made Ralph what he is — and he became a Ralph himself. A red one. The color of an angry detention slip.
 
@@ -53,4 +57,4 @@ ralph install-skill --variant red-ralph
 - `--repo <path>` — single repo mode (default: all configured repos)
 - `--config <path>` — alternate config
 
-[← Back to variants index](../README.md)
+[← Back to variants index](https://jonbogaty.com/radioactive-ralph/variants/)

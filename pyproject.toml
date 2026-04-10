@@ -38,7 +38,7 @@ ralph = "radioactive_ralph.cli:main"
 Homepage = "https://github.com/jbcom/radioactive-ralph"
 Repository = "https://github.com/jbcom/radioactive-ralph"
 Issues = "https://github.com/jbcom/radioactive-ralph/issues"
-Documentation = "https://jbcom.github.io/radioactive-ralph/"
+Documentation = "https://jonbogaty.com/radioactive-ralph/"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/radioactive_ralph"]
@@ -77,13 +77,13 @@ config-path = "none"  # use our ruff config below, not hatch defaults
 skip-install = false
 dependencies = [
     "sphinx>=8.0.0",
-    "sphinx-rtd-theme>=3.0.0",
-    "sphinx-autodoc2>=0.5.0",
+    "shibuya>=2024.11.10",
+    "sphinx-autoapi>=3.4.0",
     "myst-parser>=3.0.0",
 ]
 
 [tool.hatch.envs.docs.scripts]
-build = "sphinx-build docs/ _build/html -b html"
+build = "python scripts/validate_docs.py && sphinx-build docs/ _build/html -b html"
 serve = "python -m http.server 8080 --directory _build/html"
 
 # ── Ruff ──────────────────────────────────────────────────────────────────
@@ -100,6 +100,7 @@ ignore = ["N999"]  # allow radioactive_ralph as package name
 # Ralph Wiggum quotes are long sentences with embedded Rich markup.
 # Reformatting would mangle them. Let Ralph speak.
 "src/radioactive_ralph/ralph_says.py" = ["E501"]
+"typings/radioactive_ralph/ralph_says.pyi" = ["UP043"]
 
 # ── mypy ──────────────────────────────────────────────────────────────────
 [tool.mypy]
@@ -107,7 +108,7 @@ python_version = "3.12"
 strict = true
 warn_return_any = true
 warn_unused_configs = true
-mypy_path = "stubs"
+mypy_path = "typings"
 
 # ── pytest ────────────────────────────────────────────────────────────────
 [tool.pytest.ini_options]

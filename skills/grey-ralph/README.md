@@ -1,11 +1,15 @@
-# grey-ralph — The First Form
+# grey-ralph — Grey Ralph
 
 > *"I don't need to explain myself. You'll figure it out. Also I ate a worm."*
 > — Grey Ralph
 
-## The Character
+**Inspired by the original Grey Hulk from *The Incredible Hulk* #1 (May 1962), the first print-era form before the color settled on green.**
 
-**Grey Hulk. First appearance: The Incredible Hulk #1 (May 1962) — the very first issue, before printing inconsistencies forced a color change to green.**
+| At a glance | Lore / bio |
+|---|---|
+| **Mode:** mechanical janitor<br>**Scope:** one repo<br>**Tiering:** haiku only<br>**Best when:** you need governance docs and file hygiene without spending judgment | The first form is sly, practical, and paste-motivated: less heroism, more quietly getting the boring work done and leaving before anyone asks questions. |
+
+## Character notes
 
 The first Ralph was grey. Not green. The decision to go green was a printing accident, not an artistic choice — and the grey form was quietly buried until Miss Hoover dug it back up during a unit on "things that are true even if nobody remembers them." In Ralph's version: the very first time Wiggle Puppy loved him too hard, Ralph didn't turn green. He turned grey. Grey like the sweater his nana knitted him. Grey like a day in Springfield when the factory smoke is bad. Grey like the inside of his favorite crayon box after he ate all the other colors.
 
@@ -53,4 +57,4 @@ ralph install-skill --variant grey-ralph
 
 - `--repo <path>` — target repo (default: cwd)
 
-[← Back to variants index](../README.md)
+[← Back to variants index](https://jonbogaty.com/radioactive-ralph/variants/)

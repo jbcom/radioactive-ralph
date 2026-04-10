@@ -9,5 +9,7 @@ venv/
 _build/
 .coverage
 coverage.xml
+coverage-*.xml
+pytest-results-*.xml
 *.log
 .DS_Store

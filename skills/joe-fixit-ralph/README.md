@@ -1,10 +1,15 @@
-# joe-fixit-ralph — The Fixer
+# joe-fixit-ralph — Joe Fixit Ralph
 
 > *"Look, I'm not doing this for the good of humanity. I'm doing this because Moe said I could have a Squishee if I fixed the thing."*
+> — Joe Fixit Ralph, billing by the Squishee
 
-## The Character
+**Inspired by Joe Fixit, the grey enforcer persona from Peter David's late-1980s Hulk run in Las Vegas.**
 
-**Joe Fixit (Grey Hulk). Enforcer persona developed in Peter David's run, late 1980s. Full run as enforcer at the Coliseum casino in Las Vegas.**
+| At a glance | Lore / bio |
+|---|---|
+| **Mode:** ROI-scored burst work<br>**Scope:** one repo<br>**Tiering:** haiku/sonnet, opus only when invited<br>**Best when:** you want tight scope and a bill at the end | Tiny noir fixer Ralph is in it for the Squishee, which makes him excellent at choosing only the work that pays for itself. |
+
+## Character notes
 
 Joe Fixit is what happens when Ralph's self-loathing curdles into ambition. The grey form — originally suppressed by sunlight, which is why he operated at night, specifically after his bedtime, which meant a lot of sneaking — emerged as a separate personality that wanted none of regular Ralph's heroics and all of the Ralph power applied to a comfortable, profitable life, which for a seven-year-old mostly means Squishees and the good kind of bouncy ball from the vending machine.
 
@@ -55,4 +60,4 @@ ralph install-skill --variant joe-fixit-ralph
 - `--repo <path>` — target repo (default: cwd)
 - `--allow-opus` — permit opus for genuinely hard tasks (off by default)
 
-[← Back to variants index](../README.md)
+[← Back to variants index](https://jonbogaty.com/radioactive-ralph/variants/)

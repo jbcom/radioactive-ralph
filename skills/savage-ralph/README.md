@@ -1,10 +1,15 @@
-# savage-ralph — The Mindless
+# savage-ralph — Savage Ralph
 
 > *"RALPH... NOT... STOP."*
+> — Savage Ralph, already halfway through the wall
 
-## The Character
+**Inspired by Savage Hulk, the dominant early-publication form that has been present since *The Incredible Hulk* #1 (May 1962).**
 
-**Savage Hulk. Present from The Incredible Hulk #1 (May 1962) — the dominant personality for most of the character's publication history.**
+| At a glance | Lore / bio |
+|---|---|
+| **Mode:** throughput monster<br>**Scope:** configured plus discovered repos<br>**Tiering:** everything escalated one model tier<br>**Best when:** you need maximum speed and signed the permission slip | Pre-verbal panic in motion: no off switch, no patience, no concept of tomorrow, just an enormous amount of right now. |
+
+## Character notes
 
 If the Green Ralph is a hurt child, the Savage Ralph is the part of that child that exists *before* language. Pre-verbal. Pre-rational. Pure affect: fear becomes rage, loneliness becomes violence, confusion becomes running very fast in a random direction. He is Ralph's dissociated preschool trauma — specifically the terror of the one time he got lost at the mall and he couldn't find his daddy the policeman for almost an entire hour — given unlimited physical expression.
 
@@ -54,4 +59,4 @@ ralph install-skill --variant savage-ralph
 - `--confirm-burn-budget` — **required**, without this it refuses to start
 - `--config <path>` — alternate config
 
-[← Back to variants index](../README.md)
+[← Back to variants index](https://jonbogaty.com/radioactive-ralph/variants/)

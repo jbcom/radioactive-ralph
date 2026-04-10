@@ -1,11 +1,15 @@
-# world-breaker-ralph — The World Breaker
+# world-breaker-ralph — World Breaker Ralph
 
 > *"I don't want to hurt you. I don't want to help you. But if you get in my way—"*
 > — World Breaker Ralph, before Springfield cracked down the middle
 
-## The Character
+**Inspired by World Breaker Hulk from *World War Hulk* (2007), by Greg Pak and John Romita Jr.**
 
-**World Breaker Hulk. World War Hulk event: #1–5 (2007, Greg Pak / John Romita Jr.).**
+| At a glance | Lore / bio |
+|---|---|
+| **Mode:** maximum emergency<br>**Scope:** every repo, every agent, every cycle<br>**Tiering:** opus only<br>**Best when:** the problem is real enough to justify the biggest possible hammer | Not mindless rage but grief with a kingdom attached: deliberate, wounded, and strong enough to make the monkey bars shake. |
+
+## Character notes
 
 This is not a separate personality. This is the Green Scar — Ralph's identity during the time he was exiled to *"the Wumple Wuzzle kingdom"* (what the grown-ups called "the time Ralph spent behind Mr. Skinner's filing cabinet for three days without anyone noticing"), his most purposeful and warrior-king form, the version of himself that finally found something worth being — pushed past the breaking point by loss.
 
@@ -59,4 +63,4 @@ ralph install-skill --variant world-breaker-ralph
 - `--confirm-burn-everything` — **required**
 - `--config <path>` — alternate config
 
-[← Back to variants index](../README.md)
+[← Back to variants index](https://jonbogaty.com/radioactive-ralph/variants/)
