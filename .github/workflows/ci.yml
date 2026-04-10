@@ -4,6 +4,9 @@ on:
   pull_request:
     types: [opened, synchronize, reopened]
 
+permissions:
+  contents: read
+
 jobs:
   test:
     name: Test Python ${{ matrix.python-version }}
@@ -19,7 +22,11 @@ jobs:
           python-version: ${{ matrix.python-version }}
           enable-cache: true
       - name: Run tests
-        run: uvx hatch run hatch-test:pytest tests/ --cov=radioactive_ralph --cov-report=xml:coverage-${{ matrix.python-version }}.xml --junitxml=pytest-results-${{ matrix.python-version }}.xml
+        run: >-
+          uvx hatch run hatch-test:pytest tests/
+          --cov=radioactive_ralph
+          --cov-report=xml:coverage-${{ matrix.python-version }}.xml
+          --junitxml=pytest-results-${{ matrix.python-version }}.xml
       - name: Upload test artifacts
         uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
         if: always()

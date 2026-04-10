@@ -100,6 +100,7 @@ ignore = ["N999"]  # allow radioactive_ralph as package name
 # Ralph Wiggum quotes are long sentences with embedded Rich markup.
 # Reformatting would mangle them. Let Ralph speak.
 "src/radioactive_ralph/ralph_says.py" = ["E501"]
+"typings/radioactive_ralph/ralph_says.pyi" = ["UP043"]
 
 # ── mypy ──────────────────────────────────────────────────────────────────
 [tool.mypy]

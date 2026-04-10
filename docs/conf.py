@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import os
 import sys
+import tomllib
 from datetime import datetime
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as package_version
+from pathlib import Path
 
 sys.path.insert(0, os.path.abspath("../src"))
 
@@ -19,7 +21,8 @@ html_baseurl = "https://jonbogaty.com/radioactive-ralph/"
 try:
     release = package_version("radioactive-ralph")
 except PackageNotFoundError:
-    release = "0.5.0"
+    pyproject = Path(__file__).resolve().parent.parent / "pyproject.toml"
+    release = tomllib.loads(pyproject.read_text())["project"]["version"]
 version = release
 
 extensions = [
