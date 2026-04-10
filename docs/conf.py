@@ -47,12 +47,6 @@ exclude_patterns = [
     "_build",
     "Thumbs.db",
     ".DS_Store",
-    "ARCHITECTURE.md",
-    "DEMO.md",
-    "DESIGN.md",
-    "LAUNCH.md",
-    "STATE.md",
-    "TESTING.md",
 ]
 
 html_theme = "shibuya"

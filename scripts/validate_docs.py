@@ -26,7 +26,19 @@ def iter_files() -> list[Path]:
     for path in ROOT.rglob("*"):
         if not path.is_file() or path.suffix not in SCAN_SUFFIXES:
             continue
-        ignored_parts = {".git", ".mypy_cache", ".pytest_cache", "__pycache__", "_build"}
+        ignored_parts = {
+            ".git",
+            ".mypy_cache",
+            ".pytest_cache",
+            "__pycache__",
+            "_build",
+            ".tox",
+            ".venv",
+            ".hatch",
+            "dist",
+            "build",
+            "node_modules",
+        }
         if any(part in ignored_parts for part in path.parts):
             continue
         if path == Path(__file__).resolve():
