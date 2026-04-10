@@ -11,3 +11,4 @@ _build/
 coverage.xml
 *.log
 .DS_Store
+\n# Generated documentation content\ndocs/content/

@@ -1,0 +1,38 @@
+/* Local Font Definitions */
+
+@font-face {
+    font-family: 'Fuzzy Bubbles';
+    src: url('fonts/FuzzyBubbles-Bold.ttf') format('truetype');
+    font-weight: 700;
+    font-style: normal;
+}
+
+@font-face {
+    font-family: 'Schoolbell';
+    src: url('fonts/Schoolbell-Regular.ttf') format('truetype');
+    font-weight: 400;
+    font-style: normal;
+}
+
+:root {
+    --sy-f-body: 'Schoolbell', cursive;
+    --sy-f-heading: 'Fuzzy Bubbles', cursive;
+    --sy-f-title: 'Fuzzy Bubbles', cursive;
+}
+
+h1, h2, h3, h4, h5, h6 {
+    font-weight: 700;
+}
+
+.brand {
+    font-family: 'Fuzzy Bubbles', cursive;
+    font-weight: 700;
+}
+
+/* Custom "Ralphy" style for the announcement bar */
+.announcement {
+    background-color: #ff00ff;
+    color: white;
+    font-weight: bold;
+    font-family: 'Fuzzy Bubbles', cursive;
+}
