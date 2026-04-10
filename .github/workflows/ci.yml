@@ -144,6 +144,7 @@ jobs:
           retention-days: 14
           
       - name: Commit changes
+        id: auto_commit
         uses: stefanzweifel/git-auto-commit-action@04702edda442b2e678b25b537cec683a1493fcb9 # v7.1.0
         with:
           commit_message: "chore: update generated demo gif for release"
@@ -158,6 +159,6 @@ jobs:
             
             The terminal recording has been automatically re-generated and committed to this branch.
             
-            ![VHS GIF](https://raw.githubusercontent.com/${{ github.repository }}/${{ github.head_ref }}/assets/demo.gif)
+            ![VHS GIF](https://raw.githubusercontent.com/${{ github.repository }}/${{ steps.auto_commit.outputs.commit_hash || github.sha }}/assets/demo.gif)
           comment_tag: "vhs-demo-gif"
           mode: "upsert"
