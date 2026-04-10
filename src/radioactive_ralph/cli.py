@@ -131,6 +131,83 @@ def pr_merge(config: str, dry_run: bool) -> None:
 
 
 @cli.command()
+@click.option("--config", "-c", default="~/.radioactive-ralph/config.toml", help="Config file path")
+@click.option(
+    "--variant",
+    "-v",
+    default="green-ralph",
+    help="Ralph variant to theme the dashboard with (e.g. green-ralph, old-man-ralph).",
+)
+@click.option(
+    "--refresh",
+    default=1.0,
+    type=float,
+    help="Refresh interval in Hz (default 1.0 = once per second).",
+)
+def dashboard(config: str, variant: str, refresh: float) -> None:
+    """Open the Rich Live terminal dashboard (reads state, does not run the daemon)."""
+    from .config import load_config
+    from .dashboard import run_dashboard
+    from .ralph_says import Variant
+
+    cfg = load_config(Path(config).expanduser())
+    try:
+        v = Variant(variant)
+    except ValueError:
+        console.print(f"[red]Unknown variant: {variant}[/red]")
+        known = ", ".join(m.value for m in Variant)
+        console.print(f"[dim]Known variants: {known}[/dim]")
+        raise SystemExit(2) from None
+
+    run_dashboard(cfg.resolve_state_path(), variant=v, refresh_per_second=refresh)
+
+
+@cli.command()
+@click.option("--config", "-c", default=None, help="Config file path")
+@click.option("--json", "as_json", is_flag=True, help="Emit JSON instead of a Rich table")
+def doctor(config: str | None, as_json: bool) -> None:
+    """Run diagnostic health checks on the ralph environment."""
+    import json as json_mod
+    import os as _os
+
+    from .doctor import FAIL, OK, WARN, run_all_checks
+    from .ralph_says import Variant, ralph_says
+
+    cfg_path_str = (
+        config
+        or _os.environ.get("RALPH_CONFIG_PATH")
+        or "~/.radioactive-ralph/config.toml"
+    )
+    cfg_path = Path(cfg_path_str).expanduser()
+    report = run_all_checks(cfg_path)
+
+    if as_json:
+        console.print_json(json_mod.dumps(report.to_dict()))
+        raise SystemExit(0 if report.ok else 1)
+
+    ralph_says(Variant.PROFESSOR, "startup")
+    t = Table("Check", "Status", "Detail", "Fix", show_lines=False)
+    status_style = {
+        OK: "[green]\u2713 OK[/green]",
+        WARN: "[yellow]\u26a0 WARN[/yellow]",
+        FAIL: "[red]\u2717 FAIL[/red]",
+    }
+    for r in report.results:
+        t.add_row(r.name, status_style.get(r.status, r.status), r.detail, r.fix or "")
+    console.print(t)
+    console.print(
+        f"[bold]{len(report.results)} checks, "
+        f"[red]{report.failed} failed[/red], "
+        f"[yellow]{report.warnings} warnings[/yellow].[/bold]"
+    )
+    if report.ok:
+        ralph_says(Variant.PROFESSOR, "success")
+    else:
+        ralph_says(Variant.PROFESSOR, "error")
+    raise SystemExit(0 if report.ok else 1)
+
+
+@cli.command()
 def stop() -> None:
     """Send SIGTERM to a running ralph daemon."""
     import subprocess

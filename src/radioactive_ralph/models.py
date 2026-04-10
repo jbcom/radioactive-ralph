@@ -143,29 +143,5 @@ class OrchestratorState(BaseModel):
     cycle_count: int = 0
 
 
-class AutoloopConfig(BaseModel):
-    """Parsed configuration for radioactive-ralph."""
-
-    orgs: dict[str, str] = Field(default_factory=dict)
-    bulk_model: str = "claude-haiku-4-5-20251001"
-    default_model: str = "claude-sonnet-4-6"
-    deep_model: str = "claude-opus-4-6"
-    max_parallel_agents: int = 5
-    max_parallel_doc_sweep: int = 10
-    agent_timeout_minutes: int = 30
-    state_path: str = ""
-
-    def resolve_state_path(self) -> Path:
-        if self.state_path:
-            return Path(self.state_path).expanduser()
-        return Path.home() / ".radioactive-ralph" / "state.json"
-
-    def all_repo_paths(self) -> list[Path]:
-        paths: list[Path] = []
-        for org_path in self.orgs.values():
-            expanded = Path(org_path).expanduser()
-            if expanded.is_dir():
-                for child in sorted(expanded.iterdir()):
-                    if child.is_dir() and (child / ".git").exists():
-                        paths.append(child)
-        return paths
+# RadioactiveRalphConfig lives in radioactive_ralph.config — import it from there.
+# This module contains only work-item and state models, not settings.

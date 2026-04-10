@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
+from radioactive_ralph.config import RadioactiveRalphConfig
 from radioactive_ralph.models import (
-    AutoloopConfig,
     OrchestratorState,
     PRInfo,
     PRStatus,
@@ -74,8 +74,8 @@ def test_orchestrator_state_defaults() -> None:
     assert state.cycle_count == 0
 
 
-def test_autoloop_config_defaults() -> None:
-    cfg = AutoloopConfig()
+def test_radioactive_ralph_config_defaults() -> None:
+    cfg = RadioactiveRalphConfig()
     assert "claude-sonnet" in cfg.default_model
     assert cfg.max_parallel_agents == 5
 

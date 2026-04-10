@@ -9,11 +9,23 @@ domain: technical
 
 ## Architecture
 
-Two-layer design:
-1. `/autoloop` Claude Code skill — in-session orchestration
-2. `radioactive-ralph` Python daemon — external persistence, survives context resets
+Two deployment modes, same core:
 
-The daemon spawns `claude` CLI subprocesses with `--dangerously-skip-permissions` and `--print`. Each subprocess is a stateless agent; the daemon holds all state.
+1. **Claude Code plugin** — a family of 10 Ralph variants (`/green-ralph`,
+   `/grey-ralph`, `/red-ralph`, `/blue-ralph`, `/professor-ralph`,
+   `/savage-ralph`, `/immortal-ralph`, `/joe-fixit-ralph`, `/old-man-ralph`,
+   `/world-breaker-ralph`) installed via `claude plugin install
+   radioactive-ralph`. Each variant has its own model tiering, parallelism,
+   tool allowlist, and safety gate. See `skills/README.md` for the full index.
+2. **External Python daemon** — `ralph run` spins up an async orchestrator that
+   survives context resets, process restarts, and rate limits. It spawns
+   `claude` CLI subprocesses per work item with `--dangerously-skip-permissions`
+   and `--print`. Each subprocess is a stateless agent; the daemon holds all
+   state in `~/.radioactive-ralph/state.json`. Config is pydantic-settings
+   layered over TOML + env vars + CLI overrides.
+
+Both modes share the same work-discovery, PR-classification, and forge-interaction
+code, plus the same Ralph Wiggum personality module (`ralph_says.py`).
 
 ## State
 
