@@ -2,7 +2,7 @@
 <h1 align="center">radioactive-ralph</h1>
 
 <p align="center">
-  <img src="assets/ralph-mascot.png" alt="Autonomous continuous development orchestrator for Claude Code." width="400"/>
+  <img src="https://jonbogaty.com/radioactive-ralph/_images/ralph-mascot.png" alt="Autonomous continuous development orchestrator for Claude Code." width="400"/>
 </p>
 
 <p align="center">
@@ -28,20 +28,20 @@ radioactive-ralph drives Claude Code across a portfolio of git repos — continu
 
 ## Ralph has many forms
 
-radioactive-ralph is not one skill. It's a family of ten, each a genuinely distinct operating mode with its own model tiering, parallelism, tool allowlist, and termination condition. See [`skills/`](./skills/README.md) for the full variants index.
+radioactive-ralph is not one skill. It's a family of ten, each a genuinely distinct operating mode with its own model tiering, parallelism, tool allowlist, and termination condition. See [the variants index](https://jonbogaty.com/radioactive-ralph/content/skills/README.html) for more details.
 
 | Variant | One-liner | Gate |
 |---|---|---|
-| [`/green-ralph`](./skills/green-ralph/README.md) | The Classic. Unlimited loop, all repos, sensible model tiering. | — |
-| [`/grey-ralph`](./skills/grey-ralph/README.md) | The First Form. Single repo, haiku only, file hygiene. | — |
-| [`/red-ralph`](./skills/red-ralph/README.md) | The Principal. Single cycle, CI failures + PR blockers, structured report. | — |
-| [`/blue-ralph`](./skills/blue-ralph/README.md) | The Observer. Read-only — `Write`/`Edit` structurally excluded. | — |
-| [`/professor-ralph`](./skills/professor-ralph/README.md) | The Integrated. Opus plan → sonnet execute → sonnet reflect. | — |
-| [`/joe-fixit-ralph`](./skills/joe-fixit-ralph/README.md) | The Fixer. N cycles, single repo, ROI-scored, prints a bill. | — |
-| [`/immortal-ralph`](./skills/immortal-ralph/README.md) | The One Who Comes Back. Crash-resistant. Obsessive state persistence. | — |
-| [`/savage-ralph`](./skills/savage-ralph/README.md) | The Mindless. 10 parallel, +1 tier escalation, zero sleep. | `--confirm-burn-budget` |
-| [`/old-man-ralph`](./skills/old-man-ralph/README.md) | The Maestro. Force-resets branches, resolves conflicts `-X ours`. | `--confirm-no-mercy` |
-| [`/world-breaker-ralph`](./skills/world-breaker-ralph/README.md) | The World Breaker. Every agent opus. All repos. Zero sleep. | `--confirm-burn-everything` |
+| [`/green-ralph`](https://jonbogaty.com/radioactive-ralph/content/skills/green-ralph/README.html) | The Classic. Unlimited loop, all repos, sensible model tiering. | — |
+| [`/grey-ralph`](https://jonbogaty.com/radioactive-ralph/content/skills/grey-ralph/README.html) | The First Form. Single repo, haiku only, file hygiene. | — |
+| [`/red-ralph`](https://jonbogaty.com/radioactive-ralph/content/skills/red-ralph/README.html) | The Principal. Single cycle, CI failures + PR blockers, structured report. | — |
+| [`/blue-ralph`](https://jonbogaty.com/radioactive-ralph/content/skills/blue-ralph/README.html) | The Observer. Read-only — `Write`/`Edit` structurally excluded. | — |
+| [`/professor-ralph`](https://jonbogaty.com/radioactive-ralph/content/skills/professor-ralph/README.html) | The Integrated. Opus plan → sonnet execute → sonnet reflect. | — |
+| [`/joe-fixit-ralph`](https://jonbogaty.com/radioactive-ralph/content/skills/joe-fixit-ralph/README.html) | The Fixer. N cycles, single repo, ROI-scored, prints a bill. | — |
+| [`/immortal-ralph`](https://jonbogaty.com/radioactive-ralph/content/skills/immortal-ralph/README.html) | The One Who Comes Back. Crash-resistant. Obsessive state persistence. | — |
+| [`/savage-ralph`](https://jonbogaty.com/radioactive-ralph/content/skills/savage-ralph/README.html) | The Mindless. 10 parallel, +1 tier escalation, zero sleep. | `--confirm-burn-budget` |
+| [`/old-man-ralph`](https://jonbogaty.com/radioactive-ralph/content/skills/old-man-ralph/README.html) | The Maestro. Force-resets branches, resolves conflicts `-X ours`. | `--confirm-no-mercy` |
+| [`/world-breaker-ralph`](https://jonbogaty.com/radioactive-ralph/content/skills/world-breaker-ralph/README.html) | The World Breaker. Every agent opus. All repos. Zero sleep. | `--confirm-burn-everything` |
 
 ## Install as a Claude Code plugin
 
@@ -152,7 +152,7 @@ radioactive-ralph logs in the voice of Ralph Wiggum. Every variant has its own c
 [green-ralph] Sleeping for 30 seconds. Oh boy, sleep! That's where I'm a Viking!
 ```
 
-See [`src/radioactive_ralph/ralph_says.py`](./src/radioactive_ralph/ralph_says.py) for the full personality module.
+See [`src/radioactive_ralph/ralph_says.py`](https://jonbogaty.com/radioactive-ralph/autoapi/radioactive_ralph/ralph_says/index.html) for the full personality module.
 
 ## Requirements
 
@@ -163,7 +163,7 @@ See [`src/radioactive_ralph/ralph_says.py`](./src/radioactive_ralph/ralph_says.p
 
 ## Contributing
 
-See [AGENTS.md](AGENTS.md) for agentic operating protocols, [STANDARDS.md](STANDARDS.md) for code quality rules, and [CONTRIBUTING.md](CONTRIBUTING.md) for the contribution workflow.
+See [AGENTS.md](https://github.com/jbcom/radioactive-ralph/blob/main/AGENTS.md) for agentic operating protocols, [STANDARDS.md](https://github.com/jbcom/radioactive-ralph/blob/main/STANDARDS.md) for code quality rules, and [CONTRIBUTING.md](https://github.com/jbcom/radioactive-ralph/blob/main/CONTRIBUTING.md) for the contribution workflow.
 
 ```bash
 git clone git@github.com:jbcom/radioactive-ralph.git
@@ -174,16 +174,16 @@ uv run pytest
 
 ## License
 
-MIT. See [LICENSE](./LICENSE).
+MIT. See [LICENSE](https://github.com/jbcom/radioactive-ralph/blob/main/LICENSE).
 
 <details>
 <summary><strong>Launch notes</strong> (maintainers — uploading the social preview + demo assets)</summary>
 
 ### Social preview image
 
-GitHub shows a custom image when someone shares this repo on LinkedIn, HN, Slack, X, etc. The image file lives at [`assets/social-preview.png`](./assets/social-preview.png) (1280x640 PNG). To upload or replace it:
+GitHub shows a custom image when someone shares this repo on LinkedIn, HN, Slack, X, etc. The image file lives at [`assets/social-preview.png`](https://jonbogaty.com/radioactive-ralph/_images/social-preview.png) (1280x640 PNG). To upload or replace it:
 
-1. Generate or update `assets/social-preview.png` per the spec in [`assets/ASSETS.md`](./assets/ASSETS.md#2-social-preview--assetssocial-previewpng)
+1. Generate or update `assets/social-preview.png` per the spec in [`assets/ASSETS.md`](https://github.com/jbcom/radioactive-ralph/blob/main/assets/ASSETS.md#2-social-preview--assetssocial-previewpng)
 2. Commit and push the file (so it's versioned and reviewable)
 3. Upload it to GitHub:
    - Go to **Settings -> General -> Social preview**
@@ -193,7 +193,7 @@ GitHub shows a custom image when someone shares this repo on LinkedIn, HN, Slack
 
 ### Demo GIF
 
-The README can embed [`assets/demo.gif`](./assets/demo.gif) once it's recorded. To record (or re-record) it:
+The README can embed [`assets/demo.gif`](https://jonbogaty.com/radioactive-ralph/_images/demo.gif) once it's recorded. To record (or re-record) it:
 
 ```bash
 # Install vhs once
@@ -203,10 +203,10 @@ brew install vhs    # or: go install github.com/charmbracelet/vhs@latest
 ./scripts/record-demo.sh
 ```
 
-Edit [`scripts/demo.tape`](./scripts/demo.tape) to change what the demo shows. The recording is fully deterministic — same tape + same ralph state ≈ same GIF.
+Edit [`scripts/demo.tape`](https://github.com/jbcom/radioactive-ralph/blob/main/scripts/demo.tape) to change what the demo shows. The recording is fully deterministic — same tape + same ralph state ≈ same GIF.
 
 ### Full asset checklist
 
-See [`docs/LAUNCH.md`](./docs/LAUNCH.md) for the full launch checklist and the LinkedIn / Hacker News draft copy.
+See [`docs/LAUNCH.md`](https://jonbogaty.com/radioactive-ralph/LAUNCH.html) for the full launch checklist and the LinkedIn / Hacker News draft copy.
 
 </details>
