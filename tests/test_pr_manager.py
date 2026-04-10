@@ -36,23 +36,25 @@ def test_pr_info_mergeable_when_ready() -> None:
 
 
 @pytest.mark.asyncio
-async def test_classify_pr_uses_gh(mocker: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    """classify_pr calls gh CLI — mock run_gh with pytest-mock."""
-    import json
+async def test_classify_pr_uses_forge_client(mocker: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """classify_pr fetches CI and reviews via the ForgeClient abstraction."""
+    from unittest.mock import AsyncMock
 
-    mock_run_gh = mocker.patch(
-        "radioactive_ralph.pr_manager.run_gh",
-        side_effect=[
-            ('{"checks":[]}', 0),  # gh pr checks
-            (json.dumps({"reviews": [], "reviewRequests": []}), 0),  # gh pr view reviews
-        ],
-    )
-
+    from radioactive_ralph.forge.base import CIState, ForgeCI, ForgePR
     from radioactive_ralph.pr_manager import classify_pr
 
-    pr = PRInfo(
-        repo="org/repo", number=5, title="test", author="bot",
-        branch="feat/z", status=PRStatus.NEEDS_REVIEW
+    forge_pr = ForgePR(
+        number=5, title="test", author="bot", branch="feat/z",
+        head_sha="abc123", is_draft=False, url="",
+        updated_at=__import__("datetime").datetime.now(__import__("datetime").timezone.utc),
     )
-    await classify_pr(pr, tmp_path)
-    assert mock_run_gh.call_count == 2
+
+    mock_forge = mocker.MagicMock()
+    mock_forge.get_pr_ci = AsyncMock(return_value=ForgeCI(state=CIState.SUCCESS))
+    mock_forge.get_pr_reviews = AsyncMock(return_value=forge_pr)
+
+    result = await classify_pr(forge_pr, mock_forge)
+    mock_forge.get_pr_ci.assert_called_once_with(forge_pr)
+    mock_forge.get_pr_reviews.assert_called_once()
+    assert result.ci is not None
+    assert result.ci.passed

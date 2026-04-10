@@ -1,15 +1,29 @@
-"""AI-powered code review using the Anthropic SDK directly."""
+"""AI-powered code review using the Anthropic SDK.
+
+Reviews PR diffs using Claude and returns structured findings categorised
+by severity (error, warning, suggestion, nitpick).
+
+Typical usage::
+
+    result = await review_pr(pr_info, repo_path="/srv/projects/my-app")
+    if result.has_blocking_issues:
+        print("PR has errors that must be fixed")
+"""
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import anthropic
 
 from .models import PRInfo, ReviewFinding, ReviewResult, ReviewSeverity
-from .pr_manager import get_pr_diff
+
+if TYPE_CHECKING:
+    pass
 
 logger = logging.getLogger(__name__)
 
@@ -40,8 +54,44 @@ Return ONLY valid JSON in this format:
 """
 
 
+async def get_pr_diff(pr_number: int, repo_path: str | Path) -> str:
+    """Fetch the unified diff for a PR via the gh CLI.
+
+    Uses ``asyncio.create_subprocess_exec`` (no shell, no injection risk).
+    Falls back to an empty string on any error so callers can handle it
+    gracefully.
+
+    Args:
+        pr_number: The PR/MR number (integer).
+        repo_path: Local path to the repository.
+
+    Returns:
+        Raw unified diff string, or empty string on error.
+    """
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "gh", "pr", "diff", str(pr_number),
+            cwd=str(repo_path),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, _ = await proc.communicate()
+        return stdout.decode("utf-8", errors="replace")
+    except Exception as e:
+        logger.warning("Failed to get diff for PR #%d: %s", pr_number, e)
+        return ""
+
+
 def build_review_prompt(pr: PRInfo, diff: str) -> str:
-    """Build the review prompt with PR context and diff."""
+    """Build the review prompt with PR context and diff.
+
+    Args:
+        pr: PR metadata (number, title, author, etc.).
+        diff: Unified diff content (truncated to 50 000 chars).
+
+    Returns:
+        Formatted prompt string for the Anthropic API.
+    """
     return f"""\
 PR #{pr.number}: {pr.title}
 Author: {pr.author}
@@ -57,7 +107,16 @@ Review this diff and return structured JSON findings.
 
 
 def parse_review_response(raw: str) -> tuple[bool, str, list[ReviewFinding]]:
-    """Parse the AI review response into structured findings."""
+    """Parse the AI review response into structured findings.
+
+    Strips Markdown code fences if present before attempting JSON parse.
+
+    Args:
+        raw: Raw text response from the Anthropic API.
+
+    Returns:
+        Tuple of (approved, summary, list_of_findings).
+    """
     cleaned = raw.strip()
     if cleaned.startswith("```json"):
         cleaned = cleaned[7:]
@@ -101,7 +160,20 @@ async def review_pr(
     model: str = "claude-haiku-4-5-20251001",
     client: anthropic.Anthropic | None = None,
 ) -> ReviewResult:
-    """Review a PR using the Anthropic API. Returns structured findings."""
+    """Review a PR using the Anthropic API and return structured findings.
+
+    Fetches the PR diff via gh CLI, sends it to Claude with a structured
+    review prompt, and parses the JSON response into :class:`ReviewResult`.
+
+    Args:
+        pr: The PR to review.
+        repo_path: Local path to the repository.
+        model: Anthropic model ID to use (default: haiku for cost).
+        client: Optional pre-constructed Anthropic client.
+
+    Returns:
+        Structured review result with findings and overall approval status.
+    """
     if client is None:
         client = anthropic.Anthropic()
 
@@ -133,12 +205,20 @@ async def batch_review(
     prs: list[tuple[PRInfo, str | Path]],
     model: str = "claude-haiku-4-5-20251001",
 ) -> list[ReviewResult]:
-    """Review multiple PRs sequentially (API rate-limit friendly)."""
-    client = anthropic.Anthropic()
+    """Review multiple PRs sequentially (API rate-limit friendly).
+
+    Args:
+        prs: List of (PRInfo, repo_path) tuples to review.
+        model: Anthropic model ID to use for all reviews.
+
+    Returns:
+        List of ReviewResult in the same order as input.
+    """
+    api_client = anthropic.Anthropic()
     results: list[ReviewResult] = []
 
     for pr, repo_path in prs:
-        result = await review_pr(pr, repo_path, model=model, client=client)
+        result = await review_pr(pr, repo_path, model=model, client=api_client)
         results.append(result)
 
     return results

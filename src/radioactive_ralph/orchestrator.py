@@ -16,7 +16,7 @@ from .models import (
     PRInfo,
     PRStatus,
 )
-from .pr_manager import merge_pr, scan_all_repos, sync_after_merge
+from .pr_manager import merge_pr, scan_all_repos
 from .reviewer import review_pr
 from .state import load_state, merge_work_items, prune_completed, save_state
 from .work_discovery import discover_all_repos
@@ -111,10 +111,9 @@ class Orchestrator:
 
         logger.info("Merging %d ready PRs", len(merge_ready))
         for repo_path, pr in merge_ready:
-            success = await merge_pr(pr, repo_path)
+            success = await merge_pr(pr, Path(repo_path))
             if success:
                 logger.info("Merged PR #%d in %s", pr.number, pr.repo)
-                await sync_after_merge(repo_path)
             else:
                 logger.warning("Failed to merge PR #%d in %s", pr.number, pr.repo)
 
