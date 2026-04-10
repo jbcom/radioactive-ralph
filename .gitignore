@@ -12,3 +12,4 @@ coverage.xml
 *.log
 .DS_Store
 \n# Generated documentation content\ndocs/content/
+\n# Generated doc assets\ndocs/_static/images/
