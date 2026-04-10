@@ -1,0 +1,27 @@
+name: Automerge
+
+on:
+  status: {}
+  check_run:
+    types: [completed]
+  pull_request_review:
+    types: [submitted]
+
+jobs:
+  automerge:
+    name: Automerge Dependabot and Release-Please
+    runs-on: ubuntu-latest
+    # Only run if the PR was created by dependabot or release-please
+    if: >
+      github.event.pull_request.user.login == 'dependabot[bot]' ||
+      startsWith(github.event.pull_request.head.ref, 'release-please--')
+    steps:
+      - name: Automerge
+        uses: pascalgn/automerge-action@7961b8b5eec56cc088c140b56d864285eabd3f67 # v0.16.4
+        env:
+          GITHUB_TOKEN: ${{ secrets.CI_GITHUB_TOKEN }}
+          MERGE_METHOD: "squash"
+          MERGE_LABELS: "" # allow all labels
+          MERGE_FORKS: "false"
+          MERGE_RETRIES: "6"
+          MERGE_RETRY_SLEEP: "10000"
