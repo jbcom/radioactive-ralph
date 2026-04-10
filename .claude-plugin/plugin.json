@@ -1,6 +1,6 @@
 {
   "name": "radioactive-ralph",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "description": "Autonomous continuous development orchestrator for Claude Code. Ten Ralph variants — from the classic unlimited loop to the totalitarian Maestro — each a genuinely distinct behavior profile, each with their own personality logging.",
   "author": {
     "name": "jbcom",
