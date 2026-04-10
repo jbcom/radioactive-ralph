@@ -21,6 +21,19 @@ def test_load_fresh_state(tmp_path: Path) -> None:
     assert state.cycle_count == 0
 
 
+def test_load_state_invalid_json(tmp_path: Path, mocker) -> None:
+    """Test that loading invalid JSON returns a fresh state."""
+    state_file = tmp_path / "bad.json"
+    state_file.write_text("{bad json}")
+    
+    mock_logger = mocker.patch("radioactive_ralph.state.logger")
+    state = load_state(state_file)
+    
+    assert isinstance(state, OrchestratorState)
+    assert state.cycle_count == 0
+    mock_logger.warning.assert_called_once()
+
+
 def test_save_and_load_state(tmp_path: Path) -> None:
     """Test round-trip persistence of orchestrator state."""
     state_file = tmp_path / "state.json"
@@ -29,6 +42,21 @@ def test_save_and_load_state(tmp_path: Path) -> None:
     
     loaded = load_state(state_file)
     assert loaded.cycle_count == 42
+
+
+def test_save_state_exception(tmp_path: Path, mocker) -> None:
+    """Test exception handling during save_state."""
+    state = OrchestratorState(cycle_count=42)
+    state_file = tmp_path / "state.json"
+    
+    # Mock mkdir to raise an exception
+    mocker.patch("pathlib.Path.mkdir", side_effect=PermissionError("Denied"))
+    mock_logger = mocker.patch("radioactive_ralph.state.logger")
+    
+    save_state(state, state_file)
+    
+    mock_logger.error.assert_called_once()
+    assert not state_file.exists()
 
 
 def test_merge_work_items() -> None:

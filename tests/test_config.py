@@ -306,3 +306,65 @@ def test_malformed_toml_falls_back_to_defaults(
     monkeypatch.setenv("RALPH_CONFIG_PATH", str(bad))
     cfg = RadioactiveRalphConfig()
     assert cfg.default_model == "claude-sonnet-4-6"
+
+
+def test_all_repo_paths(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Test discovery of git repositories under configured org paths."""
+    org1 = tmp_path / "org1"
+    org1.mkdir()
+    repo1 = org1 / "repo1"
+    repo1.mkdir()
+    (repo1 / ".git").mkdir()
+    
+    org2 = tmp_path / "org2"
+    org2.mkdir()
+    repo2 = org2 / "repo2"
+    repo2.mkdir()
+    (repo2 / ".git").mkdir()
+    
+    # Not a repo (no .git)
+    (org1 / "not-a-repo").mkdir()
+    
+    cfg = RadioactiveRalphConfig(orgs={"o1": str(org1), "o2": str(org2)})
+    paths = cfg.all_repo_paths()
+    
+    assert len(paths) == 2
+    assert any(p.name == "repo1" for p in paths)
+    assert any(p.name == "repo2" for p in paths)
+
+
+def test_toml_source_load_errors(mocker):
+    from radioactive_ralph.config import _TomlConfigSource, RadioactiveRalphConfig
+    
+    source = _TomlConfigSource(RadioactiveRalphConfig)
+    
+    # Mock _resolve_toml_path to return a non-existent file
+    mocker.patch("radioactive_ralph.config._resolve_toml_path", return_value=Path("/nonexistent"))
+    assert source._load() == {}
+    
+    # Mock open to raise OSError
+    mocker.patch("radioactive_ralph.config._resolve_toml_path", return_value=Path("/tmp/fake.toml"))
+    mocker.patch("builtins.open", side_effect=OSError)
+    source._data = None  # Reset cache
+    assert source._load() == {}
+
+
+def test_toml_source_get_field_value(toml_config: Path, mocker):
+    from radioactive_ralph.config import _TomlConfigSource, RadioactiveRalphConfig
+    mocker.patch("radioactive_ralph.config._resolve_toml_path", return_value=toml_config)
+    source = _TomlConfigSource(RadioactiveRalphConfig)
+    
+    val, name, found = source.get_field_value(None, "default_model")
+    assert val == "claude-from-toml"
+    assert found is True
+    
+    val, name, found = source.get_field_value(None, "non_existent")
+    assert val is None
+    assert found is False
+
+
+def test_load_config_path_none(mocker):
+    # This triggers the 'if path is not None' branch as False
+    cfg = load_config(None)
+    assert isinstance(cfg, RadioactiveRalphConfig)
+
