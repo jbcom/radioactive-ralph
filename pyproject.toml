@@ -1,0 +1,112 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "radioactive-ralph"
+version = "0.1.0"
+description = "Autonomous continuous development orchestrator for Claude Code"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.12"
+authors = [{ name = "jbcom" }]
+keywords = ["claude", "automation", "orchestration", "development", "ai", "autonomous"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Build Tools",
+    "Topic :: Software Development :: Libraries :: Application Frameworks",
+]
+# Runtime only — no dev tools here
+dependencies = [
+    "anthropic>=0.40.0",
+    "click>=8.1.0",
+    "pydantic>=2.0.0",
+    "rich>=13.0.0",
+]
+
+[project.scripts]
+ralph = "radioactive_ralph.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/jbcom/radioactive-ralph"
+Repository = "https://github.com/jbcom/radioactive-ralph"
+Issues = "https://github.com/jbcom/radioactive-ralph/issues"
+Documentation = "https://jbcom.github.io/radioactive-ralph/"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/radioactive_ralph"]
+
+# ── Test env (hatch test) ──────────────────────────────────────────────────
+# hatch-test includes: pytest, pytest-cov, pytest-mock, pytest-randomly, pytest-xdist
+[tool.hatch.envs.hatch-test]
+extra-dependencies = [
+    "pytest-asyncio>=0.24.0",
+    "mypy>=1.11.0",
+]
+
+[[tool.hatch.envs.hatch-test.matrix]]
+python = ["3.12", "3.13"]
+
+[tool.hatch.envs.hatch-test.scripts]
+type-check = "mypy src/"
+
+# ── Static analysis env (hatch fmt) ───────────────────────────────────────
+# hatch-static-analysis is built-in; hatch fmt runs ruff format + check
+[tool.hatch.envs.hatch-static-analysis]
+config-path = "none"  # use our ruff config below, not hatch defaults
+
+# ── Docs env (hatch run docs:build) ───────────────────────────────────────
+[tool.hatch.envs.docs]
+skip-install = false
+dependencies = [
+    "sphinx>=8.0.0",
+    "sphinx-rtd-theme>=3.0.0",
+    "sphinx-autoapi>=3.0.0",
+]
+
+[tool.hatch.envs.docs.scripts]
+build = "sphinx-build docs/ _build/html -b html"
+serve = "python -m http.server 8080 --directory _build/html"
+
+# ── Ruff ──────────────────────────────────────────────────────────────────
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+src = ["src"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W", "UP", "B", "SIM", "RUF", "ASYNC"]
+ignore = ["N999"]  # allow radioactive_ralph as package name
+
+# ── mypy ──────────────────────────────────────────────────────────────────
+[tool.mypy]
+python_version = "3.12"
+strict = true
+warn_return_any = true
+warn_unused_configs = true
+
+# ── pytest ────────────────────────────────────────────────────────────────
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+
+# ── Coverage ──────────────────────────────────────────────────────────────
+[tool.coverage.run]
+source = ["radioactive_ralph"]
+omit = ["tests/*"]
+
+[tool.coverage.report]
+exclude_lines = ["pragma: no cover", "if TYPE_CHECKING:"]
+
+[dependency-groups]
+dev = [
+    "mypy>=1.20.0",
+    "pytest>=9.0.3",
+    "pytest-asyncio>=1.3.0",
+    "pytest-cov>=7.1.0",
+    "pytest-mock>=3.15.1",
+]

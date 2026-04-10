@@ -1,0 +1,62 @@
+"""Tests for work discovery."""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+from radioactive_ralph.models import WorkPriority
+from radioactive_ralph.work_discovery import discover_missing_files, parse_state_md
+
+
+def test_discover_missing_files_all_missing(tmp_path: Path) -> None:
+    (tmp_path / ".git").mkdir()
+    items = discover_missing_files(tmp_path)
+    # description contains the filename
+    descriptions = [i.description for i in items]
+    assert any("CLAUDE.md" in d for d in descriptions)
+    assert any("AGENTS.md" in d for d in descriptions)
+    assert all(i.priority == WorkPriority.MISSING_FILES for i in items)
+
+
+def test_discover_missing_files_partial(tmp_path: Path) -> None:
+    (tmp_path / ".git").mkdir()
+    (tmp_path / "CLAUDE.md").write_text("# CLAUDE")
+    (tmp_path / "AGENTS.md").write_text("# AGENTS")
+    items = discover_missing_files(tmp_path)
+    descriptions = [i.description for i in items]
+    assert not any("CLAUDE.md" in d for d in descriptions)
+    assert not any("AGENTS.md" in d for d in descriptions)
+
+
+def test_discover_missing_files_all_present(tmp_path: Path) -> None:
+    (tmp_path / ".git").mkdir()
+    for name in ["CLAUDE.md", "AGENTS.md", "README.md", "CHANGELOG.md", "STANDARDS.md"]:
+        (tmp_path / name).write_text(f"# {name}")
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    for name in ["ARCHITECTURE.md", "DESIGN.md", "TESTING.md", "STATE.md"]:
+        (docs / name).write_text(f"# {name}")
+    items = discover_missing_files(tmp_path)
+    assert items == []
+
+
+def test_parse_state_md_extracts_next(tmp_path: Path) -> None:
+    state_file = tmp_path / "docs" / "STATE.md"
+    state_file.parent.mkdir()
+    state_file.write_text("""
+# State
+
+## Next
+
+- Build the widget
+- Fix the bug
+
+## Done
+
+- Old thing
+""")
+    items = parse_state_md(tmp_path)
+    descriptions = [i.description for i in items]
+    assert any("Build the widget" in d for d in descriptions)
+    assert any("Fix the bug" in d for d in descriptions)
+    assert all(i.priority == WorkPriority.STATE_NEXT for i in items)

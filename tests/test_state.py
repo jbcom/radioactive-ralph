@@ -1,0 +1,61 @@
+"""Tests for state persistence."""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+from radioactive_ralph.models import (
+    AgentResult,
+    AgentRun,
+    OrchestratorState,
+    WorkItem,
+    WorkPriority,
+)
+from radioactive_ralph.state import load_state, merge_work_items, prune_completed, save_state
+
+
+def _make_item(id: str, priority: WorkPriority = WorkPriority.DOC_SWEEP) -> WorkItem:
+    return WorkItem(id=id, repo_path="/tmp/repo", description="test", priority=priority)
+
+
+def test_load_state_missing_file(tmp_path: Path) -> None:
+    state = load_state(tmp_path / "nonexistent.json")
+    assert isinstance(state, OrchestratorState)
+    assert state.cycle_count == 0
+
+
+def test_save_and_load_roundtrip(tmp_path: Path) -> None:
+    state = OrchestratorState(cycle_count=42)
+    path = tmp_path / "state.json"
+    save_state(state, path)
+    loaded = load_state(path)
+    assert loaded.cycle_count == 42
+
+
+def test_merge_work_items_dedup() -> None:
+    state = OrchestratorState()
+    state.work_queue = [_make_item("x")]
+    added = merge_work_items(state, [_make_item("x"), _make_item("y")])
+    assert added == 1  # "x" already exists, only "y" added
+    assert len(state.work_queue) == 2
+
+
+def test_merge_work_items_sorted_by_priority() -> None:
+    state = OrchestratorState()
+    low = _make_item("low", WorkPriority.POLISH)
+    high = _make_item("high", WorkPriority.CI_FAILURE)
+    merge_work_items(state, [low, high])
+    assert state.work_queue[0].id == "high"
+
+
+def test_prune_completed(tmp_path: Path) -> None:
+    runs = []
+    for i in range(20):
+        item = _make_item(f"t{i}")
+        result = AgentResult(task_id=f"t{i}", repo_path="/tmp/repo")
+        runs.append(AgentRun(task=item, result=result))
+
+    state = OrchestratorState(completed_runs=runs)
+    pruned_count = prune_completed(state, keep=10)
+    assert pruned_count == 10  # 10 removed
+    assert len(state.completed_runs) == 10
