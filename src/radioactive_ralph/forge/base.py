@@ -1,11 +1,4 @@
-"""Abstract base classes for forge (git hosting) clients.
-
-A ForgeClient abstracts over GitHub, GitLab, Gitea, and Forgejo so that
-radioactive-ralph works with any hosted or self-hosted git forge.
-
-All methods are async. Implementations use httpx.AsyncClient internally
-and should be used as async context managers.
-"""
+"""Abstract base class and shared types for git forge clients."""
 
 from __future__ import annotations
 
@@ -14,9 +7,11 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import Enum
 
+import httpx
 
-class CIState(str, Enum):
-    """Normalised CI state across forges."""
+
+class CIState(Enum):
+    """Normalised CI status state."""
 
     PENDING = "pending"
     RUNNING = "running"
@@ -34,23 +29,23 @@ class ForgeInfo:
     host: str          # e.g. "github.com", "gitlab.com", "git.example.com"
     slug: str          # e.g. "jbcom/radioactive-ralph"
     forge_type: str    # "github" | "gitlab" | "gitea"
-    api_base_url: str  # e.g. "https://api.github.com" or "https://git.example.com/api/v1"
+    api_base_url: str  # e.g. "https://api.github.com"
 
     @property
     def owner(self) -> str:
         """Return the owner/org part of the slug.
 
         Returns:
-            The owner/org string.
+            The owner string.
         """
         return self.slug.split("/")[0]
 
     @property
     def repo(self) -> str:
-        """Return the repository name part of the slug.
+        """Return the repo name part of the slug.
 
         Returns:
-            The repository name string.
+            The repo name string.
         """
         return self.slug.split("/")[-1]
 
@@ -64,30 +59,13 @@ class ForgeCI:
 
     @property
     def passed(self) -> bool:
-        """Check if all CI jobs passed successfully.
-
-        Returns:
-            True if state is SUCCESS, False otherwise.
-        """
+        """Return True if CI state is success."""
         return self.state == CIState.SUCCESS
 
     @property
     def failed(self) -> bool:
-        """Check if any CI jobs failed or were cancelled.
-
-        Returns:
-            True if state is FAILURE or CANCELLED, False otherwise.
-        """
+        """Return True if CI state is failure or cancelled."""
         return self.state in (CIState.FAILURE, CIState.CANCELLED)
-
-    @property
-    def pending(self) -> bool:
-        """Check if CI jobs are still pending or running.
-
-        Returns:
-            True if state is PENDING or RUNNING, False otherwise.
-        """
-        return self.state in (CIState.PENDING, CIState.RUNNING)
 
 
 @dataclass
@@ -109,11 +87,7 @@ class ForgePR:
 
     @property
     def is_stale(self) -> bool:
-        """Check if the pull request has not been updated in the last 7 days.
-
-        Returns:
-            True if the PR is stale, False otherwise.
-        """
+        """Return True if PR has not been updated in 7 days."""
         delta = datetime.now(UTC) - self.updated_at
         return delta.days >= 7
 
@@ -130,15 +104,21 @@ class PRCreateParams:
 
 
 class ForgeClient(ABC):
-    """Abstract forge client — implement for each hosting platform."""
+    """Abstract base class for git forge implementations.
 
-    def __init__(self, info: ForgeInfo) -> None:
-        """Initialize the ForgeClient.
+    Args:
+        info: Parsed forge metadata.
+        http_client: Optional pre-configured httpx.AsyncClient.
+    """
 
-        Args:
-            info: The ForgeInfo object containing repository and API details.
-        """
+    def __init__(
+        self,
+        info: ForgeInfo,
+        http_client: httpx.AsyncClient | None = None
+    ) -> None:
         self.info = info
+        self._external_client = http_client
+        self._http: httpx.AsyncClient | None = http_client
 
     async def __aenter__(self) -> ForgeClient:
         await self._open()
@@ -148,84 +128,40 @@ class ForgeClient(ABC):
         await self._close()
 
     async def _open(self) -> None:
-        """Called on context manager entry. Override to init HTTP client.
-
-        Returns:
-            None.
-        """
-        return
+        """Called on context manager entry. Override to init HTTP client."""
+        if self._http is None:
+            self._http = self._make_http()
 
     async def _close(self) -> None:
-        """Called on context manager exit. Override to close HTTP client.
+        """Called on context manager exit. Override to close HTTP client."""
+        if self._http and self._http is not self._external_client:
+            await self._http.aclose()
+            self._http = None
 
-        Returns:
-            None.
-        """
-        return
+    @abstractmethod
+    def _make_http(self) -> httpx.AsyncClient:
+        """Create a new authenticated httpx.AsyncClient."""
 
     @abstractmethod
     async def list_prs(self, state: str = "open") -> list[ForgePR]:
-        """List pull/merge requests for the repo.
-
-        Args:
-            state: Filter by state (e.g. "open", "closed", "all").
-
-        Returns:
-            A list of ForgePR objects.
-        """
+        """List pull/merge requests for the repo."""
 
     @abstractmethod
     async def get_pr_ci(self, pr: ForgePR) -> ForgeCI:
-        """Get CI status for a PR's head commit.
-
-        Args:
-            pr: The pull/merge request to check.
-
-        Returns:
-            A ForgeCI object containing the aggregated CI state.
-        """
+        """Get CI status for a PR's head commit."""
 
     @abstractmethod
     async def get_pr_reviews(self, pr: ForgePR) -> ForgePR:
-        """Populate review fields on pr.
-
-        Args:
-            pr: The pull/merge request to update.
-
-        Returns:
-            The same ForgePR object with review_approved, changes_requested,
-            and review_count fields updated.
-        """
+        """Populate review fields on pr (approved, changes_requested, review_count).."""
 
     @abstractmethod
     async def create_pr(self, params: PRCreateParams) -> ForgePR:
-        """Create a new pull/merge request.
-
-        Args:
-            params: Parameters for the new PR (title, body, etc.).
-
-        Returns:
-            The newly created ForgePR object.
-        """
+        """Create a new pull/merge request."""
 
     @abstractmethod
     async def merge_pr(self, pr: ForgePR) -> bool:
-        """Squash-merge (or equivalent) a PR.
-
-        Args:
-            pr: The pull/merge request to merge.
-
-        Returns:
-            True if merged successfully, False otherwise.
-        """
+        """Squash-merge (or equivalent) a PR. Returns True on success."""
 
     @abstractmethod
     async def get_pr_diff(self, pr: ForgePR) -> str:
-        """Fetch the unified diff for a pull/merge request.
-
-        Args:
-            pr: The pull/merge request to fetch the diff for.
-
-        Returns:
-            The raw unified diff string.
-        """
+        """Fetch the unified diff for a pull/merge request."""

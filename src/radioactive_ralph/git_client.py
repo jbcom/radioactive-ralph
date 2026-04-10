@@ -2,28 +2,21 @@
 
 All git operations run in a thread executor via ``asyncio.to_thread`` because
 GitPython is synchronous. This keeps the asyncio event loop unblocked.
-
-Typical usage::
-
-    client = GitClient("/path/to/repo")
-    remote_url = await client.get_remote_url()
-    branch = await client.current_branch()
-    await client.pull()
-
-The module never shells out to the ``git`` binary — all operations go through
-:mod:`git` (GitPython).
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, TypeVar
 
 import git
 
 logger = logging.getLogger(__name__)
+
+T = TypeVar("T")
 
 
 def _open_repo(path: str | Path) -> git.Repo:
@@ -45,14 +38,7 @@ def _open_repo(path: str | Path) -> git.Repo:
 
 
 class GitClient:
-    """Async-friendly wrapper around GitPython for a single repository.
-
-    All blocking GitPython operations are wrapped in :func:`asyncio.to_thread`
-    so they do not block the event loop.
-
-    Args:
-        repo_path: Path to the git repository root (or any subdirectory).
-    """
+    """Async-friendly wrapper around GitPython for a single repository."""
 
     def __init__(self, repo_path: str | Path) -> None:
         """Initialize the git client.
@@ -64,13 +50,13 @@ class GitClient:
         self._repo_cache: git.Repo | None = None
         self._lock = asyncio.Lock()
 
-    async def _run(self, fn: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
+    async def _run(self, fn: Callable[..., T], *args: Any, **kwargs: Any) -> T:
         """Run a synchronous function in a thread, returning its result.
 
         Args:
             fn: The synchronous function to execute.
-            *args: Positional arguments for the function.
-            **kwargs: Keyword arguments for the function.
+            *args: Positional arguments.
+            **kwargs: Keyword arguments.
 
         Returns:
             The result of the function call.
@@ -80,8 +66,6 @@ class GitClient:
     async def _repo(self) -> git.Repo:
         """Open and cache the git repository instance.
 
-        Uses an asyncio.Lock to ensure thread-safe initialization.
-
         Returns:
             The cached :class:`git.Repo` instance.
         """
@@ -90,10 +74,6 @@ class GitClient:
                 self._repo_cache = await self._run(_open_repo, self._path)
             return self._repo_cache
 
-    def clear_cache(self) -> None:
-        """Invalidate the cached repository instance."""
-        self._repo_cache = None
-
     async def get_remote_url(self, remote: str = "origin") -> str | None:
         """Return the URL of a named remote, or None if not found.
 
@@ -101,29 +81,28 @@ class GitClient:
             remote: Name of the remote (default: "origin").
 
         Returns:
-            The remote URL string, or None if the remote does not exist.
+            The remote URL string, or None.
         """
         try:
             repo = await self._repo()
-            return await self._run(lambda r: r.remotes[remote].url, repo)
-        except (IndexError, AttributeError, ValueError) as e:
-            logger.debug("Could not get remote URL for %s: %s", self._path, e)
+            return await self._run(lambda r: str(r.remotes[remote].url), repo)
+        except (IndexError, AttributeError, ValueError):
             return None
 
     async def current_branch(self) -> str | None:
         """Return the name of the current branch, or None if detached HEAD.
 
         Returns:
-            Branch name string, or None if in detached HEAD state.
+            Branch name string, or None.
         """
         try:
             repo = await self._repo()
-            return await self._run(lambda r: r.active_branch.name, repo)
+            return await self._run(lambda r: str(r.active_branch.name), repo)
         except (TypeError, ValueError):
-            return None  # detached HEAD
+            return None
 
     async def pull(self, remote: str = "origin", ff_only: bool = True) -> bool:
-        """Pull from a remote, fast-forward only by default.
+        """Pull from a remote.
 
         Args:
             remote: Remote name to pull from.
@@ -134,13 +113,12 @@ class GitClient:
         """
         def _pull(r: git.Repo) -> bool:
             try:
-                # remote(name) returns a Remote object
                 rem = r.remote(remote)
                 kwargs: dict[str, Any] = {"ff_only": ff_only} if ff_only else {}
                 rem.pull(**kwargs)
                 return True
             except (git.GitCommandError, ValueError) as e:
-                logger.warning("git pull failed for %s: %s", self._path, e)
+                logger.warning("git pull failed: %s", e)
                 return False
 
         repo = await self._repo()
@@ -150,10 +128,10 @@ class GitClient:
         """Return True if the working tree has uncommitted changes.
 
         Returns:
-            True if any tracked files are modified or staged.
+            Boolean dirty status.
         """
         repo = await self._repo()
-        return await self._run(lambda r: r.is_dirty(), repo)
+        return await self._run(lambda r: bool(r.is_dirty()), repo)
 
     async def get_head_sha(self) -> str:
         """Return the SHA of the current HEAD commit.
@@ -162,7 +140,7 @@ class GitClient:
             Full 40-character SHA hex string.
         """
         repo = await self._repo()
-        return await self._run(lambda r: r.head.commit.hexsha, repo)
+        return await self._run(lambda r: str(r.head.commit.hexsha), repo)
 
     async def list_remotes(self) -> dict[str, str]:
         """Return a mapping of remote name → URL for all remotes.
@@ -171,7 +149,7 @@ class GitClient:
             Dict where keys are remote names and values are URLs.
         """
         def _remotes(r: git.Repo) -> dict[str, str]:
-            return {rem.name: rem.url for rem in r.remotes}
+            return {str(rem.name): str(rem.url) for rem in r.remotes}
 
         repo = await self._repo()
         return await self._run(_remotes, repo)

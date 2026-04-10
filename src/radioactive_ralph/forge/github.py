@@ -16,8 +16,15 @@ from typing import Any
 
 import httpx
 
-from radioactive_ralph.forge.base import CIState, ForgeCI, ForgeClient, ForgeInfo, ForgePR, PRCreateParams
-from radioactive_ralph.github_client import GITHUB_API_VERSION, AuthError, get_github_token
+from radioactive_ralph.forge.base import (
+    CIState,
+    ForgeCI,
+    ForgeClient,
+    ForgeInfo,
+    ForgePR,
+    PRCreateParams,
+)
+from radioactive_ralph.github_client import GITHUB_API_VERSION, get_github_token
 
 logger = logging.getLogger(__name__)
 
@@ -70,16 +77,21 @@ class GitHubForge(ForgeClient):
     fetching CI status, creating PRs, and merging.
     """
 
-    def __init__(self, info: ForgeInfo, token: str | None = None) -> None:
+    def __init__(
+        self,
+        info: ForgeInfo,
+        token: str | None = None,
+        http_client: httpx.AsyncClient | None = None
+    ) -> None:
         """Initialize the GitHub forge client.
 
         Args:
             info: Parsed forge metadata.
             token: Optional API token. If omitted, discovered via fallback chain.
+            http_client: Optional pre-configured httpx.AsyncClient.
         """
-        super().__init__(info)
+        super().__init__(info, http_client=http_client)
         self._token = token or get_github_token()
-        self._http: httpx.AsyncClient | None = None
 
     def _make_http(self) -> httpx.AsyncClient:
         """Create a new authenticated httpx.AsyncClient.
@@ -96,26 +108,6 @@ class GitHubForge(ForgeClient):
             },
             timeout=30.0,
         )
-
-    async def _open(self) -> None:
-        """Open the internal HTTP client.
-
-        Returns:
-            Description of return value.
-
-        """
-        self._http = self._make_http()
-
-    async def _close(self) -> None:
-        """Close the internal HTTP client.
-
-        Returns:
-            Description of return value.
-
-        """
-        if self._http:
-            await self._http.aclose()
-            self._http = None
 
     def _c(self) -> httpx.AsyncClient:
         """Return the internal HTTP client.
@@ -153,13 +145,17 @@ class GitHubForge(ForgeClient):
         Returns:
             A list containing all items from all pages.
         """
-        all_results = []
-        url = path
+        all_results: list[Any] = []
+        url: str | None = path
         if "per_page" not in params:
             params["per_page"] = 100
 
         while url:
-            resp = await self._c().get(url, params=params)
+            # If url is absolute (starts with http), use it as is.
+            # Otherwise it's relative to base_url.
+            # params should only be passed for the initial call,
+            # as 'next' links already include them.
+            resp = await self._c().get(url, params=params if not url.startswith("http") else None)
             resp.raise_for_status()
 
             data = resp.json()
@@ -170,17 +166,16 @@ class GitHubForge(ForgeClient):
             elif isinstance(data, dict) and "check_runs" in data:
                 all_results.extend(data["check_runs"])
             else:
-                return data
+                return [data]
 
             # Check Link header for next page
             url = None
-            params = {}  # URL in link header already contains params
             if "link" in resp.headers:
-                links = resp.headers["link"]
+                links = str(resp.headers["link"])
                 match = re.search(r'<([^>]+)>;\s*rel="next"', links)
                 if match:
-                    url = match.group(1).removeprefix(str(self.info.api_base_url))
-        
+                    url = match.group(1)
+
         return all_results
 
     async def _post(self, path: str, json: dict[str, Any]) -> Any:
@@ -198,13 +193,13 @@ class GitHubForge(ForgeClient):
         return resp.json()
 
     def _parse_pr(self, raw: dict[str, Any]) -> ForgePR:
-        """Parse raw GitHub PR JSON into a ForgePR object.
+        """Parse raw GitHub API PR data into a ForgePR object.
 
         Args:
-            raw: Raw dictionary from the GitHub API.
+            raw: Raw dictionary from GitHub API.
 
         Returns:
-            A populated ForgePR object.
+            A normalised ForgePR object.
         """
         updated_raw = raw.get("updated_at", "")
         updated_at = (
@@ -250,7 +245,7 @@ class GitHubForge(ForgeClient):
         runs = await self._get_paginated(
             f"/repos/{self.info.slug}/commits/{pr.head_sha}/check-runs",
         )
-        
+
         # 2. Fetch Commit Statuses (legacy/simple CI) - status endpoint returns a combined summary
         status_data = await self._get(
             f"/repos/{self.info.slug}/commits/{pr.head_sha}/status",
@@ -280,7 +275,7 @@ class GitHubForge(ForgeClient):
             return ForgeCI(state=CIState.PENDING, details=all_details)
         if all(s in (CIState.SUCCESS, CIState.SKIPPED) for s in all_states):
             return ForgeCI(state=CIState.SUCCESS, details=all_details)
-        
+
         return ForgeCI(state=CIState.UNKNOWN, details=all_details)
 
     async def get_pr_reviews(self, pr: ForgePR) -> ForgePR:
@@ -294,13 +289,12 @@ class GitHubForge(ForgeClient):
         Returns:
             The updated ForgePR object.
         """
+        # reviews endpoint is paginated but Ralph rarely hits 100+ reviews
         reviews = await self._get(f"/repos/{self.info.slug}/pulls/{pr.number}/reviews")
         if not isinstance(reviews, list):
             return pr
 
         # Group by reviewer and keep the latest state
-        # GitHub returns reviews in chronological order by default, 
-        # so later entries for the same user override earlier ones.
         latest_reviews = {}
         for r in reviews:
             user = r.get("user", {}).get("login")
@@ -311,7 +305,7 @@ class GitHubForge(ForgeClient):
         pr.review_count = len(latest_reviews)
         pr.changes_requested = any(s == "CHANGES_REQUESTED" for s in states)
         pr.review_approved = any(s == "APPROVED" for s in states)
-        
+
         return pr
 
     async def create_pr(self, params: PRCreateParams) -> ForgePR:
@@ -370,7 +364,9 @@ class GitHubForge(ForgeClient):
             "Accept": "application/vnd.github.v3.diff",
             "X-GitHub-Api-Version": GITHUB_API_VERSION,
         }
-        async with httpx.AsyncClient(base_url=self.info.api_base_url, headers=headers, timeout=30) as client:
+        async with httpx.AsyncClient(
+            base_url=self.info.api_base_url, headers=headers, timeout=30
+        ) as client:
             resp = await client.get(f"/repos/{self.info.slug}/pulls/{pr.number}")
             resp.raise_for_status()
             return resp.text

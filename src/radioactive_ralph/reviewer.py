@@ -5,14 +5,15 @@ by severity (error, warning, suggestion, nitpick).
 
 Typical usage::
 
-    result = await review_pr(pr_info, repo_path="/srv/projects/my-app")
-    if result.has_blocking_issues:
-        print("PR has errors that must be fixed")
+    async with get_forge_client(url) as forge:
+        result = await review_pr(pr_info, repo_path, forge)
+        if result.has_blocking_issues:
+            print("PR has errors that must be fixed")
 """
 
 from __future__ import annotations
 
-import asyncio
+import contextlib
 import json
 import logging
 from pathlib import Path
@@ -28,25 +29,24 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 REVIEW_SYSTEM_PROMPT = """\
-You are a senior code reviewer. Review the following PR diff and return structured findings.
+You are a senior code reviewer.
+Review the following PR diff and return structured findings.
 
 Rules:
-- Focus on correctness, security, performance, and maintainability
-- Be specific about file and line numbers
-- For each issue, provide a concrete fix
-- If the code is acceptable, return an empty findings list
-- Severity levels: error (must fix), warning (should fix), suggestion (nice to have), nitpick
+1. ONLY return valid JSON. No conversational filler.
+2. Categorise findings by severity: error, warning, suggestion, nitpick.
+3. Be concise but helpful.
 
-Return ONLY valid JSON in this format:
+Format:
 {
   "approved": true/false,
-  "summary": "Brief overall assessment",
+  "summary": "Overall summary of the review",
   "findings": [
     {
-      "severity": "error|warning|suggestion|nitpick",
-      "file": "path/to/file",
+      "severity": "error",
+      "file": "path/to/file.py",
       "line": 42,
-      "issue": "What's wrong",
+      "issue": "Detailed description of the issue",
       "fix": "How to fix it"
     }
   ]
@@ -120,17 +120,19 @@ def parse_review_response(raw: str) -> tuple[bool, str, list[ReviewFinding]]:
         Tuple of (approved, summary, list_of_findings).
     """
     cleaned = raw.strip()
-    if cleaned.startswith("```json"):
-        cleaned = cleaned[7:]
-    if cleaned.startswith("```"):
-        cleaned = cleaned[3:]
-    if cleaned.endswith("```"):
-        cleaned = cleaned[:-3]
+
+    # Try to extract content between ```json and ```
+    if "```json" in cleaned:
+        with contextlib.suppress(IndexError):
+            cleaned = cleaned.split("```json")[1].split("```")[0]
+    elif "```" in cleaned:
+        with contextlib.suppress(IndexError):
+            cleaned = cleaned.split("```")[1].split("```")[0]
 
     try:
         data = json.loads(cleaned.strip())
     except json.JSONDecodeError:
-        logger.warning("Failed to parse review response as JSON")
+        logger.warning("Failed to parse review response as JSON: %r", cleaned)
         return False, "Failed to parse review", []
 
     approved = data.get("approved", False)
@@ -205,7 +207,16 @@ async def review_pr(
         messages=[{"role": "user", "content": user_prompt}],
     )
 
-    raw_text = response.content[0].text if response.content else ""
+    # Extract text from the response content blocks
+    raw_text = ""
+    if response.content:
+        for block in response.content:
+            # Handle both real TextBlock and MagicMock with 'text' attribute
+            if hasattr(block, "text"):
+                raw_text += block.text
+            elif isinstance(block, dict) and "text" in block:
+                raw_text += block["text"]
+
     approved, summary, findings = parse_review_response(raw_text)
 
     return ReviewResult(

@@ -72,7 +72,12 @@ def detect_forge(remote_url: str) -> ForgeInfo:
         # Gitea / Forgejo
         api_base_url = f"{scheme}{host}/api/v1"
 
-    return ForgeInfo(host=host, slug=slug, forge_type=forge_type, api_base_url=api_base_url)
+    return ForgeInfo(
+        host=host,
+        slug=slug,
+        forge_type=forge_type,
+        api_base_url=api_base_url
+    )
 
 
 def get_forge_client(remote_url: str) -> ForgeClient:
