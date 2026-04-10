@@ -116,6 +116,8 @@ asyncio_mode = "auto"
 
 # ── Coverage ──────────────────────────────────────────────────────────────
 [tool.coverage.run]
+relative_files = true
+branch = true
 source = ["radioactive_ralph"]
 omit = ["tests/*"]
 

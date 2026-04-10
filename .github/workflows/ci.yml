@@ -91,7 +91,7 @@ jobs:
         if: steps.download.outcome == 'success'
         uses: EnricoMi/publish-unit-test-result-action@c950f6fb443cb5af20a377fd0dfaa78838901040 # v2.23.0
         with:
-          files: "artifacts/**/*.xml"
+          files: "artifacts/pytest-results-*.xml"
           github_token: ${{ secrets.GITHUB_TOKEN }}
           
       - name: SonarQube Scan
