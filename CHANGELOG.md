@@ -9,6 +9,19 @@ status: current
 All notable changes to this project will be documented in this file.
 Format: [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/), [Semantic Versioning](https://semver.org/).
 
+## [0.5.0](https://github.com/jbcom/radioactive-ralph/compare/v0.4.0...v0.5.0) (2026-04-10)
+
+
+### Features
+
+* add automerge workflow and clean up CD ([#20](https://github.com/jbcom/radioactive-ralph/issues/20)) ([06bf01f](https://github.com/jbcom/radioactive-ralph/commit/06bf01ff277f27985eb751c5c73aed093db7824b))
+* automate release asset generation ([#16](https://github.com/jbcom/radioactive-ralph/issues/16)) ([7474891](https://github.com/jbcom/radioactive-ralph/commit/74748912a30c59b4c6e5d7da3a5f51bdbde4abd3))
+
+
+### Bug Fixes
+
+* GitHub native PR comment for demo GIF ([#19](https://github.com/jbcom/radioactive-ralph/issues/19)) ([ba1fd89](https://github.com/jbcom/radioactive-ralph/commit/ba1fd89399b90c23e7b375d9e6d7239f6d0233e4))
+
 ## [0.4.0](https://github.com/jbcom/radioactive-ralph/compare/v0.3.0...v0.4.0) (2026-04-10)
 
 
