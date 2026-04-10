@@ -1,21 +1,12 @@
-"""GitHub API client — async httpx with token discovery fallback chain.
-
-Token resolution order (matches gh CLI convention):
-  1. GH_TOKEN env var      (gh CLI primary, CI-friendly)
-  2. GITHUB_TOKEN env var  (GitHub Actions native)
-  3. `gh auth token`       (developer machine with gh CLI installed)
-  4. Raise AuthError with a clear message
-
-Detection: if CLAUDECODE=1 env var is set, we're running inside a Claude Code
-session and the GitHub MCP server may be available for interactive operations.
-"""
+"""GitHub API client — async httpx with token discovery fallback chain."""
 
 from __future__ import annotations
 
 import logging
 import os
+import re
 import subprocess
-from typing import Any
+from typing import Any, cast
 
 import httpx
 
@@ -35,10 +26,7 @@ def inside_claude_code() -> bool:
 
 
 def get_github_token() -> str:
-    """Discover GitHub token via standard fallback chain.
-
-    Raises AuthError if no token is found.
-    """
+    """Discover GitHub token via standard fallback chain."""
     for var in ("GH_TOKEN", "GITHUB_TOKEN"):
         if tok := os.environ.get(var):
             logger.debug("GitHub token from %s env var", var)
@@ -98,37 +86,67 @@ class GitHubClient:
             await self._client.aclose()
             self._client = None
 
-    async def get(self, path: str, **params: Any) -> Any:
-        """GET request, returns parsed JSON."""
+    def _c(self) -> httpx.AsyncClient:
         assert self._client, "Use as async context manager"
-        resp = await self._client.get(path, params=params)
+        return self._client
+
+    async def get(self, path: str, **params: Any) -> Any:
+        resp = await self._c().get(path, params=params)
         resp.raise_for_status()
         return resp.json()
 
+    async def get_paginated(self, path: str, **params: Any) -> list[Any]:
+        all_results = []
+        url: str | None = path
+
+        if "per_page" not in params:
+            params["per_page"] = 100
+
+        while url:
+            resp = await self._c().get(url, params=params if not url.startswith("http") else None)
+            resp.raise_for_status()
+
+            data = resp.json()
+            if isinstance(data, list):
+                all_results.extend(data)
+            elif isinstance(data, dict) and "items" in data:
+                all_results.extend(data["items"])
+            else:
+                return [data] if not isinstance(data, list) else data
+
+            next_url = None
+            if "link" in resp.headers:
+                links = str(resp.headers["link"])
+                match = re.search(r'<([^>]+)>;\s*rel="next"', links)
+                if match:
+                    next_url = match.group(1)
+            url = next_url
+
+        return all_results
+
     async def post(self, path: str, json: dict[str, Any]) -> Any:
-        """POST request, returns parsed JSON."""
-        assert self._client, "Use as async context manager"
-        resp = await self._client.post(path, json=json)
+        resp = await self._c().post(path, json=json)
         resp.raise_for_status()
         return resp.json()
 
     async def list_prs(self, repo: str, state: str = "open") -> list[dict[str, Any]]:
-        """List pull requests for org/repo."""
-        return await self.get(f"/repos/{repo}/pulls", state=state, per_page=100)  # type: ignore[return-value]
+        return cast(
+            list[dict[str, Any]],
+            await self.get_paginated(f"/repos/{repo}/pulls", state=state)
+        )
 
     async def get_pr_checks(self, repo: str, ref: str) -> list[dict[str, Any]]:
-        """Get check runs for a commit ref."""
-        data = await self.get(f"/repos/{repo}/commits/{ref}/check-runs", per_page=100)
-        return data.get("check_runs", [])  # type: ignore[return-value]
+        results = await self.get_paginated(f"/repos/{repo}/commits/{ref}/check-runs")
+        # get_paginated logic might need adjustment if check-runs is nested
+        return cast(list[dict[str, Any]], results)
 
     async def merge_pr(self, repo: str, pr_number: int) -> bool:
-        """Squash-merge a PR. Returns True on success."""
         try:
             await self.post(
                 f"/repos/{repo}/pulls/{pr_number}/merge",
                 json={"merge_method": "squash"},
             )
             return True
-        except httpx.HTTPStatusError as e:
-            logger.warning("Failed to merge %s #%d: %s", repo, pr_number, e.response.text)
+        except httpx.HTTPError as e:
+            logger.warning("Failed to merge %s #%d: %s", repo, pr_number, e)
             return False

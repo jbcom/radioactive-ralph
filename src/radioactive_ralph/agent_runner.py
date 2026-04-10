@@ -1,78 +1,93 @@
-"""Spawn claude CLI subprocesses as agents."""
+"""Parallel execution of Claude Code agents."""
 
 from __future__ import annotations
 
 import asyncio
-import os
-import re
-import time
+import logging
+import subprocess
+from datetime import UTC, datetime
+from typing import TYPE_CHECKING, cast
 
-from .models import AgentResult, WorkItem, WorkPriority
+from radioactive_ralph.models import AgentRun, WorkItem
 
+if TYPE_CHECKING:
+    from radioactive_ralph.config import RadioactiveRalphConfig
 
-async def run_agent(
-    task: WorkItem,
-    model: str = "claude-sonnet-4-6",
-    timeout: int = 1800,  # noqa: ASYNC109
-) -> AgentResult:
-    """Run a single claude CLI agent subprocess for a WorkItem."""
-    start = time.monotonic()
-    # asyncio.create_subprocess_exec never invokes a shell — no injection risk
-    proc = await asyncio.create_subprocess_exec(
-        "claude",
-        "--model", model,
-        "--print",
-        "--dangerously-skip-permissions",
-        task.description,
-        cwd=task.repo_path,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-        env={**os.environ},
-    )
-    try:
-        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=timeout)
-        output = stdout.decode()
-        return AgentResult(
-            task_id=task.id,
-            repo_path=task.repo_path,
-            output=output,
-            returncode=proc.returncode or 0,
-            pr_url=_extract_pr_url(output),
-            duration_seconds=time.monotonic() - start,
-        )
-    except TimeoutError:
-        proc.kill()
-        return AgentResult(
-            task_id=task.id,
-            repo_path=task.repo_path,
-            returncode=124,
-            duration_seconds=time.monotonic() - start,
-        )
+logger = logging.getLogger(__name__)
 
 
 async def run_parallel_agents(
-    tasks: list[WorkItem],
-    model: str = "claude-sonnet-4-6",
-    timeout: int = 1800,  # noqa: ASYNC109
-) -> list[AgentResult]:
-    """Run multiple agents in parallel, one per WorkItem."""
-    return list(await asyncio.gather(*[run_agent(t, model, timeout) for t in tasks]))
+    queue: list[WorkItem],
+    config: RadioactiveRalphConfig,
+    max_spawn: int,
+) -> list[AgentRun]:
+    """Spawn new agent runs for queued work items up to max_spawn.
+
+    Args:
+        queue: The current work queue.
+        config: Orchestrator configuration.
+        max_spawn: Maximum number of new agents to start.
+
+    Returns:
+        List of newly started AgentRun objects.
+    """
+    if not queue or max_spawn <= 0:
+        return []
+
+    # Sort queue by priority (high first) and age
+    queue.sort(key=lambda x: (x.priority.value, x.created_at), reverse=True)
+
+    to_spawn = queue[:max_spawn]
+    new_runs = []
+
+    for item in to_spawn:
+        run = await _spawn_agent(item, config)
+        new_runs.append(run)
+        queue.remove(item)
+
+    return new_runs
 
 
-def select_model(
-    task: WorkItem,
-    bulk: str = "claude-haiku-4-5-20251001",
-    default: str = "claude-sonnet-4-6",
-    deep: str = "claude-opus-4-6",
-) -> str:
-    """Pick the right model tier for a work item based on priority."""
-    if task.priority in (WorkPriority.DOC_SWEEP, WorkPriority.MISSING_FILES):
-        return bulk
-    if task.priority == WorkPriority.DESIGN_FEATURE:
-        return deep
-    return default
+async def _spawn_agent(item: WorkItem, config: RadioactiveRalphConfig) -> AgentRun:
+    """Launch a single Claude Code agent subprocess for a work item.
 
+    Args:
+        item: The work item to fulfill.
+        config: Orchestrator configuration.
 
-def _extract_pr_url(output: str) -> str | None:
-    match = re.search(r"https://github\.com/[^/\s]+/[^/\s]+/pull/\d+", output)
-    return match.group(0) if match else None
+    Returns:
+        An AgentRun object tracking the background process.
+    """
+    cmd = ["claude", "--message", item.description, "--yes"]
+
+    # In a real environment, we might use a wrapper to capture output or
+    # run inside a specific container/VM.
+    logger.info("Spawning agent for %s: %s", item.repo_name, item.description)
+
+    try:
+        # For this prototype, we use a non-blocking subprocess call
+        # but don't actually wait for completion here.
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            cwd=item.repo_path,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+
+        run = AgentRun(
+            item=item,
+            process_id=proc.pid,
+            started_at=datetime.now(UTC),
+        )
+        # Store the process object internally for monitoring (private field not in model)
+        from typing import Any
+        cast(Any, run)._proc = proc
+        return run
+    except Exception as e:
+        logger.error("Failed to spawn agent: %s", e)
+        # Return a "failed" run object or handle error
+        return AgentRun(
+            item=item,
+            process_id=-1,
+            started_at=datetime.now(UTC),
+        )

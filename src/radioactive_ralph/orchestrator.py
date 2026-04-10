@@ -3,122 +3,166 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import signal
 from datetime import UTC, datetime
 from pathlib import Path
 
-from .agent_runner import run_parallel_agents
-from .config import load_config
-from .models import (
-    AgentRun,
-    AutoloopConfig,
+from radioactive_ralph.agent_runner import run_parallel_agents
+from radioactive_ralph.config import RadioactiveRalphConfig, load_config
+from radioactive_ralph.forge import get_forge_client
+from radioactive_ralph.models import (
     PRInfo,
     PRStatus,
 )
-from .pr_manager import merge_pr, scan_all_repos
-from .reviewer import review_pr
-from .state import load_state, merge_work_items, prune_completed, save_state
-from .work_discovery import discover_all_repos
+from radioactive_ralph.pr_manager import merge_pr, scan_all_repos
+from radioactive_ralph.ralph_says import Variant, ralph_panel, ralph_says
+from radioactive_ralph.reviewer import review_pr
+from radioactive_ralph.state import load_state, merge_work_items, prune_completed, save_state
+from radioactive_ralph.work_discovery import discover_all_repos
 
 logger = logging.getLogger(__name__)
 
 
 class Orchestrator:
-    """Autonomous development orchestrator — the main daemon."""
+    """Autonomous development orchestrator — the main daemon.
 
-    def __init__(self, config: AutoloopConfig | None = None, state_path: Path | None = None):
+    Runs a continuous loop of scanning PRs, reviewing them, merging if ready,
+    discovering new work, and spawning agents to fulfill work items.
+    """
+
+    def __init__(
+        self,
+        config: RadioactiveRalphConfig | None = None,
+        variant: Variant = Variant.SAVAGE,
+    ):
+        """Initialize the orchestrator.
+
+        Args:
+            config: Configuration object. If omitted, loaded from disk/env.
+            variant: Which 'Ralph' persona to use for feedback.
+        """
         self.config = config or load_config()
-        self.state_path = state_path or self.config.resolve_state_path()
-        self.state = load_state(self.state_path)
-        self._shutdown = asyncio.Event()
-        self._setup_signals()
-
-    def _setup_signals(self) -> None:
-        """Register signal handlers for graceful shutdown."""
-        try:
-            loop = asyncio.get_running_loop()
-            for sig in (signal.SIGINT, signal.SIGTERM):
-                loop.add_signal_handler(sig, self._request_shutdown)
-        except RuntimeError:
-            pass
-
-    def _request_shutdown(self) -> None:
-        logger.info("Shutdown requested — finishing active agents...")
-        self._shutdown.set()
-
-    def _persist(self) -> None:
-        save_state(self.state, self.state_path)
+        self.state = load_state(self.config.resolve_state_path())
+        self.variant = variant
+        self._stop_event = asyncio.Event()
 
     async def run(self) -> None:
-        """Main loop — scan, merge, review, discover, execute, repeat."""
-        logger.info("Orchestrator starting with %d configured orgs", len(self.config.orgs))
+        """Run the continuous orchestration loop until stopped.
 
-        while not self._shutdown.is_set():
-            self.state.cycle_count += 1
-            logger.info("=== Cycle %d ===", self.state.cycle_count)
+        Args:
+            None
 
-            try:
-                await self._cycle()
-            except Exception:
-                logger.exception("Error in orchestration cycle")
+        Returns:
+            None
+        """
+        # Handle termination signals
+        loop = asyncio.get_running_loop()
+        for sig in (signal.SIGINT, signal.SIGTERM):
+            loop.add_signal_handler(sig, self.stop)
 
-            self._persist()
+        ralph_says(self.variant, "startup")
 
-            import contextlib
+        try:
+            while not self._stop_event.is_set():
+                with ralph_panel(self.variant, "Cycle Starting"):
+                    await self._step()
 
-            with contextlib.suppress(TimeoutError):
-                await asyncio.wait_for(self._shutdown.wait(), timeout=30.0)
+                # Sleep until next cycle
+                with contextlib.suppress(asyncio.TimeoutError):
+                    await asyncio.wait_for(
+                        self._stop_event.wait(),
+                        timeout=self.config.cycle_sleep_seconds,
+                    )
+        finally:
+            save_state(self.state, self.config.resolve_state_path())
+            ralph_says(self.variant, "shutdown")
 
-        logger.info("Orchestrator shutting down after %d cycles", self.state.cycle_count)
-        self._persist()
+    def stop(self) -> None:
+        """Signal the orchestrator to stop gracefully.
 
-    async def _cycle(self) -> None:
-        """Execute one full orchestration cycle."""
+        Args:
+            None
+
+        Returns:
+            None
+        """
+        self._stop_event.set()
+
+    async def _step(self) -> None:
+        """Perform a single iteration of the orchestration loop.
+
+        Args:
+            None
+
+        Returns:
+            None
+        """
+        self.state.cycle_count += 1
         repo_paths = self.config.all_repo_paths()
-        if not repo_paths:
-            logger.warning("No repos configured — nothing to do")
-            return
 
-        all_prs = await self._scan_prs(repo_paths)
-        await self._drain_merge_queue(all_prs)
-        await self._review_pending(all_prs)
-        await self._discover_and_execute(repo_paths)
-
-        prune_completed(self.state, keep=100)
-
-    async def _scan_prs(self, repo_paths: list[Path]) -> dict[str, list[PRInfo]]:
-        """Scan all repos for PRs."""
-        logger.info("Scanning %d repos for PRs...", len(repo_paths))
+        # 1. Scan for pull requests
         all_prs = await scan_all_repos(repo_paths)
         self.state.last_scan = datetime.now(UTC)
 
-        total = sum(len(prs) for prs in all_prs.values())
-        logger.info("Found %d open PRs across %d repos", total, len(all_prs))
-        return all_prs
+        # 2. Merge ready PRs
+        await self._merge_ready(all_prs)
 
-    async def _drain_merge_queue(self, all_prs: dict[str, list[PRInfo]]) -> None:
-        """Merge all PRs that are ready."""
-        merge_ready = [
+        # 3. Review pending PRs
+        await self._review_pending(all_prs)
+
+        # 4. Discover new work
+        if self._should_discover():
+            work_items = await discover_all_repos(repo_paths)
+            self.state.work_queue = merge_work_items(self.state.work_queue, work_items)
+            self.state.last_discovery = datetime.now(UTC)
+
+        # 5. Clean up completed runs
+        self.state.active_runs = prune_completed(self.state.active_runs)
+
+        # 6. Spawn agents for queued work
+        if len(self.state.active_runs) < self.config.max_parallel_agents:
+            new_runs = await run_parallel_agents(
+                self.state.work_queue,
+                self.config,
+                max_spawn=self.config.max_parallel_agents - len(self.state.active_runs),
+            )
+            self.state.active_runs.extend(new_runs)
+
+    async def _merge_ready(self, all_prs: dict[str, list[PRInfo]]) -> None:
+        """Merge PRs that are approved and passed CI.
+
+        Args:
+            all_prs: Mapping of repo path to list of PR metadata.
+
+        Returns:
+            None
+        """
+        ready = [
             (repo_path, pr)
             for repo_path, prs in all_prs.items()
             for pr in prs
             if pr.is_mergeable
         ]
 
-        if not merge_ready:
-            return
-
-        logger.info("Merging %d ready PRs", len(merge_ready))
-        for repo_path, pr in merge_ready:
+        for repo_path, pr in ready:
+            ralph_says(self.variant, "merging", pr=pr.number, repo=pr.repo)
             success = await merge_pr(pr, Path(repo_path))
             if success:
-                logger.info("Merged PR #%d in %s", pr.number, pr.repo)
+                ralph_says(self.variant, "merged", pr=pr.number, repo=pr.repo)
             else:
-                logger.warning("Failed to merge PR #%d in %s", pr.number, pr.repo)
+                ralph_says(self.variant, "merge_failed", pr=pr.number, repo=pr.repo)
 
     async def _review_pending(self, all_prs: dict[str, list[PRInfo]]) -> None:
-        """Review PRs that need review."""
+        """Review PRs that need review.
+
+        Args:
+            all_prs: Mapping of repo path to list of PR metadata.
+
+        Returns:
+            None
+        """
         needs_review = [
             (repo_path, pr)
             for repo_path, prs in all_prs.items()
@@ -129,59 +173,35 @@ class Orchestrator:
         if not needs_review:
             return
 
-        logger.info("Reviewing %d PRs", len(needs_review))
         for repo_path, pr in needs_review:
-            result = await review_pr(pr, repo_path, model=self.config.bulk_model)
-            if result.approved:
-                logger.info("PR #%d in %s: approved", pr.number, pr.repo)
-            else:
-                logger.info(
-                    "PR #%d in %s: %d findings",
-                    pr.number,
-                    pr.repo,
-                    len(result.findings),
+            ralph_says(self.variant, "reviewing", pr=pr.number, repo=pr.repo)
+
+            # Use ForgeClient to fetch diff for review
+            async with get_forge_client(pr.url) as forge:
+                result = await review_pr(
+                    pr, repo_path, forge, model=self.config.bulk_model
                 )
 
-    async def _discover_and_execute(self, repo_paths: list[Path]) -> None:
-        """Discover work and spawn agents."""
-        items = discover_all_repos(repo_paths)
-        added = merge_work_items(self.state, items)
-        self.state.last_discovery = datetime.now(UTC)
-        logger.info("Discovered %d new work items (queue: %d)", added, len(self.state.work_queue))
+            if result.approved:
+                ralph_says(
+                    self.variant, "reviewed_approved", pr=pr.number, repo=pr.repo
+                )
+            else:
+                ralph_says(
+                    self.variant,
+                    "reviewed_changes",
+                    pr=pr.number,
+                    repo=pr.repo,
+                    count=len(result.findings),
+                )
 
-        available_slots = self.config.max_parallel_agents - len(self.state.active_runs)
-        if available_slots <= 0 or not self.state.work_queue:
-            return
+    def _should_discover(self) -> bool:
+        """Return True if it's time to run work discovery again.
 
-        batch = self.state.work_queue[:available_slots]
-        self.state.work_queue = self.state.work_queue[available_slots:]
-
-        for task in batch:
-            self.state.active_runs.append(AgentRun(task=task))
-
-        self._persist()
-
-        results = await run_parallel_agents(
-            batch, self.config.default_model, self.config.max_parallel_agents
-        )
-
-        for result in results:
-            for run in self.state.active_runs:
-                if run.task.id == result.task_id:
-                    run.result = result
-                    self.state.completed_runs.append(run)
-                    break
-
-            if result.pr_url:
-                logger.info("Agent created PR: %s", result.pr_url)
-
-        self.state.active_runs = [r for r in self.state.active_runs if r.is_active]
-
-
-async def start_orchestrator(
-    config: AutoloopConfig | None = None,
-    state_path: Path | None = None,
-) -> None:
-    """Entry point for the orchestrator daemon."""
-    orch = Orchestrator(config=config, state_path=state_path)
-    await orch.run()
+        Returns:
+            True if enough time has passed since last discovery.
+        """
+        if not self.state.last_discovery:
+            return True
+        delta = datetime.now(UTC) - self.state.last_discovery
+        return delta.total_seconds() > 3600  # hourly discovery
