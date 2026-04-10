@@ -12,13 +12,13 @@ jobs:
       matrix:
         python-version: ["3.12", "3.13"]
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v5
+      - uses: actions/checkout@v6
+      - uses: astral-sh/setup-uv@v7
         with:
           python-version: ${{ matrix.python-version }}
       - uses: pypa/hatch@v1
       - run: hatch test --python ${{ matrix.python-version }} --cover
-      - uses: codecov/codecov-action@v5
+      - uses: codecov/codecov-action@v6
         with:
           fail_ci_if_error: false
 
@@ -26,8 +26,8 @@ jobs:
     name: Lint
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v5
+      - uses: actions/checkout@v6
+      - uses: astral-sh/setup-uv@v7
       - uses: pypa/hatch@v1
       - run: hatch fmt --check
 
@@ -35,7 +35,7 @@ jobs:
     name: Type check
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v5
+      - uses: actions/checkout@v6
+      - uses: astral-sh/setup-uv@v7
       - uses: pypa/hatch@v1
       - run: hatch run hatch-test:type-check
