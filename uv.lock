@@ -1445,6 +1445,7 @@ dependencies = [
     { name = "gitpython" },
     { name = "httpx" },
     { name = "pydantic" },
+    { name = "pydantic-settings" },
     { name = "rich" },
 ]
 
@@ -1469,6 +1470,7 @@ requires-dist = [
     { name = "gitpython", specifier = ">=3.1.0" },
     { name = "httpx", specifier = ">=0.27.0" },
     { name = "pydantic", specifier = ">=2.0.0" },
+    { name = "pydantic-settings", specifier = ">=2.5.0" },
     { name = "rich", specifier = ">=13.0.0" },
 ]
 

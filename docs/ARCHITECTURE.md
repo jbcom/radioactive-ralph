@@ -7,22 +7,37 @@ domain: technical
 
 # Architecture — radioactive-ralph
 
-## Two-layer design
+## Two-mode design
+
+radioactive-ralph ships in two deployment modes, backed by the same work-discovery,
+PR-classification, and forge-interaction code:
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│  Layer 1: Claude Code skill (/autoloop)                      │
-│  In-session orchestration. Lives inside Claude's context.    │
-│  Survives: nothing beyond the session.                       │
+│  Mode 1: Claude Code plugin (10 Ralph variants)              │
+│  /green-ralph, /red-ralph, /professor-ralph, …               │
+│  Runs inside an active Claude Code session via the Agent     │
+│  tool. Uses the user's existing auth — no separate API key.  │
+│  Survives: the length of the Claude Code session.            │
+│  Install: claude plugin install radioactive-ralph            │
 └─────────────────────────────────────────────────────────────┘
 
 ┌─────────────────────────────────────────────────────────────┐
-│  Layer 2: radioactive-ralph daemon (this package)            │
-│  External Python process. Survives: context resets, merges,  │
-│  process restarts, rate limits.                              │
+│  Mode 2: External daemon (this Python package)               │
+│  `ralph run` — Python asyncio daemon, spawns `claude`        │
+│  CLI subprocesses per work item. Lives *outside* any Claude  │
+│  session.                                                    │
+│  Survives: context resets, PR merges, process restarts,      │
+│  rate limits, network blips (via immortal-ralph mode).       │
 │  State: ~/.radioactive-ralph/state.json                      │
+│  Config: pydantic-settings layered over TOML + env vars.     │
+│  Install: pip install radioactive-ralph (or uvx ...)         │
 └─────────────────────────────────────────────────────────────┘
 ```
+
+Both modes share the same skill family and the same Ralph Wiggum personality
+module (`ralph_says.py`) — the daemon logs in Ralph's voice, the plugin prompts
+the in-session agent to behave like the chosen variant.
 
 ## Module map
 
