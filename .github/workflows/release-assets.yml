@@ -3,6 +3,7 @@ name: Release Assets
 on:
   pull_request:
     branches: [main]
+    types: [opened, synchronize]
 
 permissions:
   contents: write
@@ -17,17 +18,35 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           ref: ${{ github.head_ref }}
+          # Use PAT to ensure the auto-commit triggers CI workflows
           token: ${{ secrets.CI_GITHUB_TOKEN }}
       
       - uses: astral-sh/setup-uv@cec208311dfd045dd5311c1add060b2062131d57 # v8.0.0
       
-      - name: Install Ralph for VHS
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg ttyd
+          # Install VHS via Go as it's the most reliable way on Linux runner
+          go install github.com/charmbracelet/vhs@latest
+          echo "$(go env GOPATH)/bin" >> $GITHUB_PATH
+      
+      - name: Install Ralph
         run: uv pip install --system .
         
       - name: Generate demo gif
-        uses: charmbracelet/vhs-action@59641cdc7fadf3978db65eb8c6937ea2752f4ec3 # v2.1.0
-        with:
-          path: scripts/demo.tape
+        run: vhs scripts/demo.tape
+
+      - name: Validate generated asset
+        run: |
+          if [ ! -f assets/demo.gif ]; then
+            echo "Error: assets/demo.gif was not generated!"
+            exit 1
+          fi
+          if [ ! -s assets/demo.gif ]; then
+            echo "Error: assets/demo.gif is empty!"
+            exit 1
+          fi
           
       - name: Commit changes
         uses: stefanzweifel/git-auto-commit-action@04702edda442b2e678b25b537cec683a1493fcb9 # v7.1.0
