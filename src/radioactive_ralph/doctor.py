@@ -22,6 +22,7 @@ def check_health(config: RadioactiveRalphConfig) -> bool:
     Returns:
         True if all critical checks pass, False otherwise.
     """
+    # SonarQube integration test
     table = Table(title="Ralph Doctor - Health Report", border_style="bold magenta")
     table.add_column("Check", style="cyan")
     table.add_column("Status", style="bold")
