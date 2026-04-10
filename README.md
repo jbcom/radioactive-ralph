@@ -98,7 +98,9 @@ Set `ANTHROPIC_API_KEY` in your environment.
 ## Commands
 
 ```bash
-ralph install-skill  # Install /radioactive-ralph Claude Code skill
+ralph install-skill                       # Install both /ralph and /radioactive-ralph skills
+ralph install-skill --variant ralph       # Install lightweight single-repo /ralph skill only
+ralph install-skill --variant radioactive-ralph  # Install multi-repo /radioactive-ralph only
 ralph run            # Start the standalone daemon
 ralph status         # Show current state (works for both modes)
 ralph discover       # Show discovered work items

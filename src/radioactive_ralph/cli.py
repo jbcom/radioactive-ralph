@@ -146,6 +146,54 @@ def stop() -> None:
         console.print(f"Sent SIGTERM to PID {pid}")
 
 
+_SKILL_VARIANTS: dict[str, dict[str, str]] = {
+    "radioactive-ralph": {
+        "source_dir": "skill",
+        "description": "Multi-repo autonomous loop across all configured org repos",
+        "trigger": "/radioactive-ralph",
+    },
+    "ralph": {
+        "source_dir": "skill-ralph",
+        "description": "Lightweight single-repo loop — no config file required",
+        "trigger": "/ralph",
+    },
+}
+
+
+def _find_skill_source(source_dir: str) -> str:
+    """Locate a bundled skill SKILL.md and return its text content.
+
+    Tries importlib.resources first, then falls back to a path relative
+    to the installed package location.
+
+    Args:
+        source_dir: Subdirectory name within the repo root (e.g. "skill").
+
+    Returns:
+        SKILL.md content as a string.
+
+    Raises:
+        SystemExit: If the skill file cannot be found.
+    """
+    import importlib.resources
+
+    try:
+        skill_source = importlib.resources.files("radioactive_ralph").joinpath(
+            f"../../{source_dir}/SKILL.md"
+        )
+        return skill_source.read_text(encoding="utf-8")
+    except (FileNotFoundError, TypeError):
+        here = Path(__file__).parent
+        skill_path = here.parent.parent / source_dir / "SKILL.md"
+        if not skill_path.exists():
+            console.print(
+                f"[red]Could not find bundled {source_dir}/SKILL.md.[/red] "
+                "Re-install radioactive-ralph or clone the repo."
+            )
+            raise SystemExit(1) from None
+        return skill_path.read_text(encoding="utf-8")
+
+
 @cli.command("install-skill")
 @click.option(
     "--skills-dir",
@@ -153,60 +201,57 @@ def stop() -> None:
     show_default=True,
     help="Target skills directory (Claude Code skill root)",
 )
-@click.option("--force", is_flag=True, help="Overwrite existing skill without prompting")
-def install_skill(skills_dir: str, force: bool) -> None:
-    """Install the /radioactive-ralph Claude Code skill.
+@click.option(
+    "--variant",
+    type=click.Choice(list(_SKILL_VARIANTS), case_sensitive=False),
+    default=None,
+    help=(
+        "Which skill to install. "
+        "'radioactive-ralph' = multi-repo loop (default). "
+        "'ralph' = lightweight single-repo loop. "
+        "Omit to install both."
+    ),
+)
+@click.option("--force", is_flag=True, help="Overwrite existing skills without prompting")
+def install_skill(skills_dir: str, variant: str | None, force: bool) -> None:
+    """Install Claude Code skills for autonomous development loops.
 
-    Copies the bundled SKILL.md into the Claude Code skills directory so that
-    ``/radioactive-ralph`` is available as a first-class skill in any Claude
-    Code session — without needing a separate API key or daemon process.
+    Without ``--variant``, installs both skills:
 
-    The skill uses the Agent tool to spawn sub-agents within the running
-    Claude Code session, giving you the same autonomous orchestration loop
-    as ``ralph run`` but entirely inside Claude Code.
+    * ``/radioactive-ralph`` — multi-repo loop across all configured org repos
+    * ``/ralph`` — lightweight single-repo loop, no config file required
+
+    Both skills use the Agent tool to spawn sub-agents within the running
+    Claude Code session — no separate API key or daemon process needed.
 
     Example::
 
-        ralph install-skill
-        # Then in Claude Code: /radioactive-ralph
+        ralph install-skill          # install both
+        ralph install-skill --variant ralph  # only the lightweight variant
+        # Then in Claude Code: /radioactive-ralph  or  /ralph
     """
-    import importlib.resources
+    to_install = [variant] if variant else list(_SKILL_VARIANTS)
 
-    target_dir = Path(skills_dir).expanduser() / "radioactive-ralph"
-    target_file = target_dir / "SKILL.md"
+    for name in to_install:
+        meta = _SKILL_VARIANTS[name]
+        target_dir = Path(skills_dir).expanduser() / name
+        target_file = target_dir / "SKILL.md"
 
-    if target_file.exists() and not force:
-        console.print(
-            f"[yellow]Skill already installed at {target_file}[/yellow]\n"
-            "Use [bold]--force[/bold] to overwrite."
-        )
-        return
-
-    # Locate the bundled SKILL.md relative to this package
-    try:
-        skill_source = importlib.resources.files("radioactive_ralph").joinpath(
-            "../../skill/SKILL.md"
-        )
-        skill_text = skill_source.read_text(encoding="utf-8")
-    except (FileNotFoundError, TypeError):
-        # Fallback: look relative to this file's package root
-        here = Path(__file__).parent
-        skill_path = here.parent.parent / "skill" / "SKILL.md"
-        if not skill_path.exists():
+        if target_file.exists() and not force:
             console.print(
-                "[red]Could not find bundled SKILL.md.[/red] "
-                "Re-install radioactive-ralph or clone the repo."
+                f"[yellow]{name} skill already installed at {target_file}[/yellow] "
+                "(use --force to overwrite)"
             )
-            raise SystemExit(1) from None
-        skill_text = skill_path.read_text(encoding="utf-8")
+            continue
 
-    target_dir.mkdir(parents=True, exist_ok=True)
-    target_file.write_text(skill_text, encoding="utf-8")
+        skill_text = _find_skill_source(meta["source_dir"])
+        target_dir.mkdir(parents=True, exist_ok=True)
+        target_file.write_text(skill_text, encoding="utf-8")
 
-    console.print(
-        f"[bold green]Installed:[/bold green] /radioactive-ralph skill → {target_file}\n"
-        "In any Claude Code session, type [bold]/radioactive-ralph[/bold] to start the loop."
-    )
+        console.print(
+            f"[bold green]Installed:[/bold green] {meta['trigger']} → {target_file}\n"
+            f"  {meta['description']}"
+        )
 
 
 def main() -> None:
