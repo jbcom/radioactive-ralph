@@ -1,11 +1,15 @@
-# green-ralph — The Classic
+# green-ralph — Green Ralph
 
 > *"Ralph is strongest one there is."*
 > — Green Ralph, between bites of a paste sandwich
 
-## The Character
+**Inspired by the classic Green Hulk, first appearing in *The Incredible Hulk* #1 (May 1962), created by Stan Lee and Jack Kirby.**
 
-**Green Hulk. First appearance: The Incredible Hulk #1 (May 1962). Created by Stan Lee and Jack Kirby.**
+| At a glance | Lore / bio |
+|---|---|
+| **Mode:** flagship loop<br>**Scope:** all configured repos<br>**Tiering:** haiku → sonnet → opus<br>**Best when:** you want the standard radioactive-ralph experience | The original little catastrophe: all hurt feelings, infinite ceiling, and just enough Wiggle Puppy heartbreak to power the whole project. |
+
+## Character notes
 
 The original. The one everyone pictures when they hear the word. In Ralph's retelling: Wiggle Puppy — the purest thing in Springfield, the dog who loved so hard that love became a kind of damage — was standing too close when Daddy's police radio went off at the wrong frequency, and the radiation that came out of the radio merged Wiggle Puppy and Ralph into one body that walks on two legs and breaks things with its feelings.
 
@@ -53,4 +57,4 @@ ralph install-skill --variant green-ralph
 - `--once` — single cycle then stop
 - `--focus <repo>` — limit to one repo
 
-[← Back to variants index](../README.md)
+[← Back to variants index](https://jonbogaty.com/radioactive-ralph/variants/)

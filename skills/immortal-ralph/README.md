@@ -1,11 +1,15 @@
-# immortal-ralph — The One Who Comes Back
+# immortal-ralph — Immortal Ralph
 
 > *"You can't keep Ralph dead. You can't keep Wiggle Puppy dead. And whatever comes back through Miss Hoover's closet... that's not always the Ralph you put in."*
 > — Miss Hoover, on the Immortal Ralph, at a parent-teacher conference that went badly
 
-## The Character
+**Inspired by *Immortal Hulk* (2018–2021) and the Devil Hulk persona, especially Al Ewing's horror-forward reinvention of the character.**
 
-**Immortal Hulk / Devil Hulk. Immortal Hulk series: #1–50 (2018–2021, Al Ewing / Joe Bennett). Devil Hulk first named: Incredible Hulk vol. 2 #13 (2000, Paul Jenkins).**
+| At a glance | Lore / bio |
+|---|---|
+| **Mode:** recovery-first loop<br>**Scope:** configured repos<br>**Tiering:** sonnet only<br>**Best when:** you need the orchestrator to survive anything and keep coming back | This is Ralph as a horror story: patient, cold, protective, and impossible to keep down once the closet door opens again. |
+
+## Character notes
 
 Al Ewing's 50-issue run on The Immortal Hulk is considered the definitive modern Ralph story, and the reason is that Miss Hoover understood something every other teacher missed: Ralph has always been a horror story. The Immortal Ralph leans into this completely.
 
@@ -55,4 +59,4 @@ ralph install-skill --variant immortal-ralph
 - `--config <path>` — alternate config
 - `--cooldown-minutes <n>` — override the 30-minute cooldown (default: 30)
 
-[← Back to variants index](../README.md)
+[← Back to variants index](https://jonbogaty.com/radioactive-ralph/variants/)

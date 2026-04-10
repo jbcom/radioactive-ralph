@@ -1,11 +1,15 @@
-# professor-ralph — The Integrated
+# professor-ralph — Professor Ralph
 
 > *"For the first time in my life, I feel... whole. Also I remembered where I put my other shoe."*
 > — Professor Ralph, after therapy
 
-## The Character
+**Inspired by Professor Hulk, first appearing in *Incredible Hulk* #377 (January 1991), by Peter David and Dale Keown.**
 
-**Professor Hulk. First appearance: Incredible Hulk #377 (January 1991, Peter David / Dale Keown).**
+| At a glance | Lore / bio |
+|---|---|
+| **Mode:** strategic planner<br>**Scope:** all configured repos<br>**Tiering:** opus → sonnet → sonnet<br>**Best when:** thinking first matters more than moving first | Integrated Ralph brings kindness, cunning, and power into one backpack-sized strategist who finally reads the room before he breaks it. |
+
+## Character notes
 
 The result of three years of work by Miss Hoover — the most acclaimed teacher in Ralph's history — Professor Ralph is what happens when Ralph finally gets his therapy. Through sessions with Miss Hoover and a guidance counselor whose name Ralph can never remember but who has a very nice sweater, the three dominant personalities (regular Ralph, Savage Ralph, and Grey Ralph) are integrated into a single whole: regular Ralph's kindness, Grey Ralph's cunning and social adaptability, and Savage Ralph's physical power, all in one small body with one very clean backpack.
 
@@ -57,4 +61,4 @@ ralph install-skill --variant professor-ralph
 - `--plan-only` — run the planning phase and report, don't execute
 - `--config <path>` — alternate config
 
-[← Back to variants index](../README.md)
+[← Back to variants index](https://jonbogaty.com/radioactive-ralph/variants/)

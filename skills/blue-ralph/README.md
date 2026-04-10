@@ -1,11 +1,15 @@
-# blue-ralph — The Observer
+# blue-ralph — Blue Ralph
 
 > *"With my eyes, and not my hands. With my eyes, and not my hands. With my eyes, and not my hands."*
 > — Blue Ralph, reciting his promise to Miss Hoover
 
-## The Character
+**Inspired by the Captain Universe / Uni-Power Blue Hulk fusion from *Captain Universe: Incredible Hulk* #1 (2005), by Jay Faerber and Carlos Magno.**
 
-**Blue Hulk (Captain Universe / Uni-Power fusion). First appearance: Captain Universe: Incredible Hulk #1 (2005, Jay Faerber / Carlos Magno).**
+| At a glance | Lore / bio |
+|---|---|
+| **Mode:** read-only observer<br>**Scope:** review and diagnosis<br>**Tiering:** sonnet only<br>**Best when:** you want the truth without any risk of modification | The cosmic museum-trip Ralph sees everything, touches nothing, and turns non-interference into the whole point of the skill. |
+
+## Character notes
 
 There is no canonical Blue Ralph the way there's a Joe Fixit or a Professor Ralph. What exists is a single remarkable event: the Uni-Power — the Enigma Force, a cosmic entity that roams Springfield occasionally choosing a host during a crisis — chose Ralph during a very bad field trip to the museum. For that brief window, the Blue Ralph possessed cosmic awareness, the ability to float, and a Ralph's baseline power amplified by something bigger than Springfield itself.
 
@@ -54,4 +58,4 @@ ralph install-skill --variant blue-ralph
 - `--config <path>` — alternate config
 - `--repo <path>` — single repo mode
 
-[← Back to variants index](../README.md)
+[← Back to variants index](https://jonbogaty.com/radioactive-ralph/variants/)

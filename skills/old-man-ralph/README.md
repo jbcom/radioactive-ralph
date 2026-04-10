@@ -1,11 +1,15 @@
-# old-man-ralph — The Maestro
+# old-man-ralph — Old Man Ralph
 
 > *"Ordinary developers destroyed the codebase, daddy. Not the PM. Not the stakeholders. None of the despots we fought and died against. Ordinary damned developers brought it down around their bloody ears. They should be ruled with an iron hand. Also my cat's breath smells like cat food."*
 > — The Maestro, Ralph: Future Imperfect #1
 
-## The Character
+**Inspired by the Maestro from *The Incredible Hulk: Future Imperfect* #1 (December 1992), created by Peter David and George Pérez.**
 
-**The Maestro. First appearance: The Incredible Hulk: Future Imperfect #1 (December 1992). Created by Peter David and George Pérez.**
+| At a glance | Lore / bio |
+|---|---|
+| **Mode:** imposed target state<br>**Scope:** one decisive pass<br>**Tiering:** sonnet with opus planning where needed<br>**Best when:** consensus has failed and you are enforcing a vision | A hundred-year tyrant with a trophy room and a stuffed dog: theatrical, intelligent, and absolutely convinced he is the only adult in Springfield. |
+
+## Character notes
 
 In an alternate future (Earth-9200, which in Ralph-world is *Springfield-2125*), a bad batch of cafeteria meatloaf triggers a Springfield-wide catastrophe and most of the town is destroyed. Ralph survives — of course he does, he's Ralph, and also he didn't eat the meatloaf because it looked at him funny — and over the next hundred years absorbs so much ambient radiation from the ruined Springfield Elementary science lab that he becomes stronger than any version of himself that has ever existed. Full intelligence, fully integrated and fully retained, though still occasionally interrupted by thoughts about paste. A hundred years of grief, rage, and disappointment, concentrated, with a small stuffed animal named Wiggle Puppy still clutched in one enormous hand.
 
@@ -62,4 +66,4 @@ ralph install-skill --variant old-man-ralph
 - `--repo <path>` — target repo (default: cwd)
 - `--target-branch <branch>` — branch to impose as ground truth
 
-[← Back to variants index](../README.md)
+[← Back to variants index](https://jonbogaty.com/radioactive-ralph/variants/)

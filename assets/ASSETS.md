@@ -9,11 +9,11 @@ domain: creative
 
 Everything the repo needs to look polished on launch day (LinkedIn + Hacker News drop). Each entry says what the asset is, where it lives, how to produce it, and its current status.
 
-Binary assets (PNG, GIF, SVG) are produced by the scripts in `scripts/` or by hand — this file is the source of truth for *what needs to exist* and *what it should contain*. Do not delete entries after shipping; flip status to `DONE` so the checklist in [`docs/LAUNCH.md`](../docs/LAUNCH.md) can reference them.
+Binary assets (PNG, GIF, SVG) are produced by the scripts in `scripts/` or by hand — this file is the source of truth for *what needs to exist* and *what it should contain*. Do not delete entries after shipping; flip status to `DONE` so the checklist in [`docs/guides/launch.md`](../docs/guides/launch.md) can reference them.
 
 ---
 
-## 1. Hero image — `assets/ralph-mascot.png`
+## 1. Hero image — `assets/brand/ralph-mascot.png`
 
 **Status:** DONE
 
@@ -22,8 +22,8 @@ Binary assets (PNG, GIF, SVG) are produced by the scripts in `scripts/` or by ha
 **Dimensions:** Source is roughly 2.4MB PNG at native resolution. Displays well at 300–500px.
 
 **Where it's used:**
-- `README.md` header (`<img src="assets/ralph-mascot.png" ... width="400"/>`)
-- Referenced by docs/DESIGN.md
+- `README.md` header (via the raw GitHub URL for `assets/brand/ralph-mascot.png`, so PyPI renders it correctly)
+- Referenced by docs/guides/design.md
 - Should NOT be re-used as the GitHub social preview — that needs its own composition (see §2)
 
 ---
@@ -107,7 +107,7 @@ Binary assets (PNG, GIF, SVG) are produced by the scripts in `scripts/` or by ha
 
 **Status:** TODO
 
-**What it is:** A single SVG that replaces the ASCII diagram in `docs/ARCHITECTURE.md` for places where SVG renders better (GitHub Pages, blog posts, the social preview if we want a variant).
+**What it is:** A single SVG that replaces the ASCII diagram in `docs/reference/architecture.md` for places where SVG renders better (GitHub Pages, blog posts, the social preview if we want a variant).
 
 **What it shows:**
 - `ralph` daemon (the two-layer process) on the left
@@ -134,7 +134,7 @@ Binary assets (PNG, GIF, SVG) are produced by the scripts in `scripts/` or by ha
 ```bash
 # PNG
 oxipng -o 4 assets/social-preview.png
-oxipng -o 4 assets/ralph-mascot.png
+oxipng -o 4 assets/brand/ralph-mascot.png
 
 # SVG
 svgo assets/variants/*.svg assets/architecture.svg
