@@ -5,11 +5,13 @@ status: current
 domain: product
 ---
 
+# radioactive-ralph
+
 ```{raw} html
 <div class="rr-hero">
   <div class="rr-hero__copy">
     <p class="rr-eyebrow">Autonomous development orchestration for Claude Code</p>
-    <h1>radioactive-ralph</h1>
+    <h2>radioactive-ralph</h2>
     <p class="rr-lead">Ten structurally distinct Ralph variants. One persistent little guy. Two deployment modes. Zero purple default-theme surrender.</p>
     <div class="rr-actions">
       <a class="rr-button rr-button--primary" href="getting-started/">Get started</a>
@@ -55,5 +57,4 @@ getting-started/index
 guides/index
 variants/index
 reference/index
-autoapi/index
 ```

@@ -13,7 +13,9 @@ DISALLOWED_PATTERNS = {
     r"docs/content": "remove docs/content shadow-tree references",
     r"content/skills": "use docs/variants instead of copied content/skills paths",
     r"jbcom\.github\.io/radioactive-ralph": "use the canonical jonbogaty.com docs domain",
-    r"jonbogaty\.com/radioactive-ralph/_images": "README/docs assets should not depend on generated _images paths",
+    r"jonbogaty\.com/radioactive-ralph/_images": (
+        "README/docs assets should not depend on generated _images paths"
+    ),
 }
 SCAN_SUFFIXES = {".md", ".py", ".toml", ".json", ".yml", ".yaml"}
 
@@ -23,7 +25,8 @@ def iter_files() -> list[Path]:
     for path in ROOT.rglob("*"):
         if not path.is_file() or path.suffix not in SCAN_SUFFIXES:
             continue
-        if any(part in {".git", ".mypy_cache", ".pytest_cache", "__pycache__", "_build"} for part in path.parts):
+        ignored_parts = {".git", ".mypy_cache", ".pytest_cache", "__pycache__", "_build"}
+        if any(part in ignored_parts for part in path.parts):
             continue
         if path == Path(__file__).resolve():
             continue

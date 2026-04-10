@@ -5,7 +5,8 @@ from __future__ import annotations
 import os
 import sys
 from datetime import datetime
-from importlib.metadata import PackageNotFoundError, version as package_version
+from importlib.metadata import PackageNotFoundError
+from importlib.metadata import version as package_version
 
 sys.path.insert(0, os.path.abspath("../src"))
 
@@ -35,7 +36,17 @@ source_suffix = {
 }
 
 templates_path = ["_templates"]
-exclude_patterns = ["_build", "Thumbs.db", ".DS_Store"]
+exclude_patterns = [
+    "_build",
+    "Thumbs.db",
+    ".DS_Store",
+    "ARCHITECTURE.md",
+    "DEMO.md",
+    "DESIGN.md",
+    "LAUNCH.md",
+    "STATE.md",
+    "TESTING.md",
+]
 
 html_theme = "shibuya"
 html_logo = "../assets/brand/ralph-mascot.png"
@@ -69,6 +80,7 @@ autoapi_options = [
 autoapi_member_order = "bysource"
 autoapi_python_class_content = "both"
 autoapi_keep_files = False
+autoapi_add_toctree_entry = False
 
 myst_enable_extensions = [
     "colon_fence",

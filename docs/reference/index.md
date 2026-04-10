@@ -12,7 +12,7 @@ domain: technical
 | [Architecture](./architecture.md) | Two deployment modes, the orchestrator cycle, work priority, and model tiering |
 | [State](./state.md) | What exists today, what is next, and active implementation decisions |
 | [Testing](./testing.md) | Test strategy, commands, and repo-specific conventions |
-| [API Reference](../autoapi/index.html) | Generated API documentation from `src/radioactive_ralph` |
+| [API Reference](../autoapi/radioactive_ralph/index) | Generated API documentation from `src/radioactive_ralph` |
 
 ```{toctree}
 :hidden:
@@ -20,5 +20,5 @@ domain: technical
 architecture
 state
 testing
-../autoapi/index
+../autoapi/radioactive_ralph/index
 ```

@@ -43,8 +43,8 @@ jobs:
         with:
           python-version: "3.12"
           enable-cache: true
-      - name: Run hatch fmt --check
-        run: uvx hatch fmt --check
+      - name: Run ruff on source and docs tooling
+        run: uvx ruff check src/ docs/conf.py scripts/validate_docs.py typings/
 
   type-check:
     name: Type check
