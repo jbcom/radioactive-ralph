@@ -17,10 +17,8 @@ jobs:
       - uses: astral-sh/setup-uv@cec208311dfd045dd5311c1add060b2062131d57 # v8.0.0
         with:
           enable-cache: true
-      - name: Install Hatch
-        run: pipx install hatch
       - name: Build package
-        run: hatch build
+        run: uv build
       - name: Store artifact
         uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
         with:
