@@ -1,0 +1,37 @@
+name: Release Assets
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  update-assets:
+    name: Update demo GIF on release PR
+    # Only run on PRs created by release-please
+    if: startsWith(github.head_ref, 'release-please--')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ github.head_ref }}
+          token: ${{ secrets.CI_GITHUB_TOKEN }}
+      
+      - uses: astral-sh/setup-uv@cec208311dfd045dd5311c1add060b2062131d57 # v8.0.0
+      
+      - name: Install Ralph for VHS
+        run: uv pip install --system .
+        
+      - name: Generate demo gif
+        uses: charmbracelet/vhs-action@59641cdc7fadf3978db65eb8c6937ea2752f4ec3 # v2.1.0
+        with:
+          path: scripts/demo.tape
+          
+      - name: Commit changes
+        uses: stefanzweifel/git-auto-commit-action@04702edda442b2e678b25b537cec683a1493fcb9 # v7.1.0
+        with:
+          commit_message: "chore: update generated demo gif for release"
+          file_pattern: 'assets/*.gif'
+          branch: ${{ github.head_ref }}
