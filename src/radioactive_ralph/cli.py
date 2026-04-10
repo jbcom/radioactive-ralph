@@ -146,5 +146,68 @@ def stop() -> None:
         console.print(f"Sent SIGTERM to PID {pid}")
 
 
+@cli.command("install-skill")
+@click.option(
+    "--skills-dir",
+    default="~/.claude/skills",
+    show_default=True,
+    help="Target skills directory (Claude Code skill root)",
+)
+@click.option("--force", is_flag=True, help="Overwrite existing skill without prompting")
+def install_skill(skills_dir: str, force: bool) -> None:
+    """Install the /radioactive-ralph Claude Code skill.
+
+    Copies the bundled SKILL.md into the Claude Code skills directory so that
+    ``/radioactive-ralph`` is available as a first-class skill in any Claude
+    Code session — without needing a separate API key or daemon process.
+
+    The skill uses the Agent tool to spawn sub-agents within the running
+    Claude Code session, giving you the same autonomous orchestration loop
+    as ``ralph run`` but entirely inside Claude Code.
+
+    Example::
+
+        ralph install-skill
+        # Then in Claude Code: /radioactive-ralph
+    """
+    import importlib.resources
+
+    target_dir = Path(skills_dir).expanduser() / "radioactive-ralph"
+    target_file = target_dir / "SKILL.md"
+
+    if target_file.exists() and not force:
+        console.print(
+            f"[yellow]Skill already installed at {target_file}[/yellow]\n"
+            "Use [bold]--force[/bold] to overwrite."
+        )
+        return
+
+    # Locate the bundled SKILL.md relative to this package
+    try:
+        skill_source = importlib.resources.files("radioactive_ralph").joinpath(
+            "../../skill/SKILL.md"
+        )
+        skill_text = skill_source.read_text(encoding="utf-8")
+    except (FileNotFoundError, TypeError):
+        # Fallback: look relative to this file's package root
+        here = Path(__file__).parent
+        skill_path = here.parent.parent / "skill" / "SKILL.md"
+        if not skill_path.exists():
+            console.print(
+                "[red]Could not find bundled SKILL.md.[/red] "
+                "Re-install radioactive-ralph or clone the repo."
+            )
+            raise SystemExit(1) from None
+        skill_text = skill_path.read_text(encoding="utf-8")
+
+    target_dir.mkdir(parents=True, exist_ok=True)
+    target_file.write_text(skill_text, encoding="utf-8")
+
+    console.print(
+        f"[bold green]Installed:[/bold green] /radioactive-ralph skill → {target_file}\n"
+        "In any Claude Code session, type [bold]/radioactive-ralph[/bold] to start the loop."
+    )
+
+
 def main() -> None:
     cli()

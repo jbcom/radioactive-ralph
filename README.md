@@ -22,37 +22,52 @@ radioactive-ralph is an external persistent daemon that drives Claude Code acros
 
 **The only time you should be engaged is to brainstorm the vision.**
 
-## Quick start
+## Two ways to run
+
+radioactive-ralph supports two execution modes that share the same logic and state file.
+
+### Mode A — Claude Code skill (no API key needed)
+
+Runs _inside_ an active Claude Code session. Uses the session's Agent tool to spawn subagents — no separate API key or background process required.
+
+```bash
+# Install once
+pip install radioactive-ralph
+ralph install-skill
+
+# Then in any Claude Code session:
+/radioactive-ralph
+```
+
+### Mode B — Standalone daemon
+
+Runs as an independent background process. Survives session end, context resets, and machine restarts. Requires `ANTHROPIC_API_KEY`.
 
 ```bash
 # Run instantly — no install required
 uvx radioactive-ralph run
 
-# Or install permanently
+# Or install permanently and run as a daemon
 pip install radioactive-ralph
 ralph run
 ```
 
+Both modes read the same `~/.radioactive-ralph/config.toml` and write to the same `~/.radioactive-ralph/state.json`.
+
 ## How it works
 
 ```
-┌─────────────────────────────────────────────────────┐
-│                  radioactive-ralph                   │
-│                   (Python daemon)                    │
-│                                                      │
-│  scan PRs → merge ready → review → address feedback  │
-│       → discover work → spawn agents → loop          │
-│                                                      │
-│  State: ~/.radioactive-ralph/state.json              │
-└──────────────┬──────────────────────────────────────┘
-               │ spawns
-               ▼
-┌─────────────────────────────────────────────────────┐
-│            claude CLI subprocesses                   │
-│        (one per repo, run in parallel)               │
-│                                                      │
-│  Each agent: reads context, does work, opens PR      │
-└─────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────┐
+│                      radioactive-ralph                           │
+│                                                                  │
+│  scan PRs → merge ready → review → discover work → execute loop │
+│                                                                  │
+│  State: ~/.radioactive-ralph/state.json                          │
+└──────────────┬──────────────────────────┬───────────────────────┘
+               │ Mode A (skill)           │ Mode B (daemon)
+               ▼                          ▼
+   Agent tool subagents           claude CLI subprocesses
+   (within Claude Code)           (independent processes)
 ```
 
 ## Model tiering
@@ -83,20 +98,26 @@ Set `ANTHROPIC_API_KEY` in your environment.
 ## Commands
 
 ```bash
-ralph run          # Start the daemon
-ralph status       # Show current state
-ralph discover     # Show discovered work items
-ralph pr list      # List all open PRs with classification
-ralph pr merge     # Merge all MERGE_READY PRs
-ralph stop         # Stop the running daemon
+ralph install-skill  # Install /radioactive-ralph Claude Code skill
+ralph run            # Start the standalone daemon
+ralph status         # Show current state (works for both modes)
+ralph discover       # Show discovered work items
+ralph pr list        # List all open PRs with classification
+ralph pr merge       # Merge all MERGE_READY PRs
+ralph stop           # Stop the running daemon
 ```
 
 ## Requirements
 
 - Python 3.12+
-- `claude` CLI installed and authenticated (`claude login`)
 - `gh` CLI installed and authenticated (`gh auth login`)
+
+**Mode A (skill) additionally requires:**
+- Claude Code installed (`npm install -g @anthropic-ai/claude-code`)
+
+**Mode B (daemon) additionally requires:**
 - `ANTHROPIC_API_KEY` set in environment
+- `claude` CLI installed (`pip install claude-cli` or `npm install -g @anthropic-ai/claude-code`)
 
 ## Contributing
 
