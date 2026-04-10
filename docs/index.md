@@ -5,6 +5,7 @@
 :caption: Getting Started
 
 content/README
+DEMO
 ARCHITECTURE
 DESIGN
 LAUNCH
