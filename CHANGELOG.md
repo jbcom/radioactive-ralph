@@ -9,6 +9,13 @@ status: current
 All notable changes to this project will be documented in this file.
 Format: [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/), [Semantic Versioning](https://semver.org/).
 
+## [0.5.1](https://github.com/jbcom/radioactive-ralph/compare/v0.5.0...v0.5.1) (2026-04-10)
+
+
+### Bug Fixes
+
+* replace misleading comment in doctor.py health check function ([#22](https://github.com/jbcom/radioactive-ralph/issues/22)) ([774166b](https://github.com/jbcom/radioactive-ralph/commit/774166b75a169e04154413769cfe09b5ea321351))
+
 ## [0.5.0](https://github.com/jbcom/radioactive-ralph/compare/v0.4.0...v0.5.0) (2026-04-10)
 
 
