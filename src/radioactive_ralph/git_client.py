@@ -43,11 +43,30 @@ def _open_repo(path: str | Path) -> git.Repo:
         raise ValueError(f"Not a git repository: {path}") from e
 
 
+_WRITE_LOCKS: dict[str, asyncio.Lock] = {}
+
+
+def _get_write_lock(path: Path) -> asyncio.Lock:
+    """Return (creating if needed) a per-repo write lock.
+
+    Used to serialise mutating git operations (pull, checkout) so that
+    concurrent forge scans on the same repo cannot race.
+    """
+    key = str(path.resolve())
+    if key not in _WRITE_LOCKS:
+        _WRITE_LOCKS[key] = asyncio.Lock()
+    return _WRITE_LOCKS[key]
+
+
 class GitClient:
     """Async-friendly wrapper around GitPython for a single repository.
 
     All blocking GitPython operations are wrapped in :func:`asyncio.to_thread`
     so they do not block the event loop.
+
+    Mutating operations (``pull``) acquire a per-path :class:`asyncio.Lock`
+    to prevent concurrent writes to the same working tree when multiple
+    coroutines operate on the same repo simultaneously.
 
     Args:
         repo_path: Path to the git repository root (or any subdirectory).
@@ -60,6 +79,7 @@ class GitClient:
 
     def __init__(self, repo_path: str | Path) -> None:
         self._path = Path(repo_path)
+        self._write_lock = _get_write_lock(self._path)
 
     async def _run(self, fn, *args, **kwargs):  # type: ignore[no-untyped-def]
         """Run a synchronous function in a thread, returning its result."""
@@ -117,7 +137,8 @@ class GitClient:
                 return False
 
         repo = await self._repo()
-        return await self._run(_pull, repo)
+        async with self._write_lock:  # serialise writes on this repo path
+            return await self._run(_pull, repo)
 
     async def is_dirty(self) -> bool:
         """Return True if the working tree has uncommitted changes.

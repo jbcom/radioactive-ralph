@@ -168,7 +168,9 @@ class GitLabForge(ForgeClient):
             approvals = await self._get(
                 f"/projects/{self._encoded_slug}/merge_requests/{pr.number}/approvals",
             )
-            pr.review_count = approvals.get("approvals_required", 0)
+            # approved_by is the actual reviewer list; approvals_required is the policy threshold
+            approved_by = approvals.get("approved_by", [])
+            pr.review_count = len(approved_by)
             pr.review_approved = approvals.get("approved", False)
         except httpx.HTTPStatusError:
             pass
@@ -186,6 +188,11 @@ class GitLabForge(ForgeClient):
         )
         return self._parse_mr(raw)
 
+    async def _patch(self, path: str, json: dict[str, Any]) -> Any:
+        resp = await self._c().patch(path, json=json)
+        resp.raise_for_status()
+        return resp.json()
+
     async def merge_pr(self, pr: ForgePR) -> bool:
         try:
             await self._put(
@@ -194,5 +201,44 @@ class GitLabForge(ForgeClient):
             )
             return True
         except httpx.HTTPStatusError as e:
-            logger.warning("Failed to merge !%d: %s", pr.number, e.response.text)
+            logger.warning("Failed to merge !%d: HTTP %d", pr.number, e.response.status_code)
             return False
+
+    async def close_pr(self, pr: ForgePR) -> bool:
+        try:
+            await self._put(
+                f"/projects/{self._encoded_slug}/merge_requests/{pr.number}",
+                json={"state_event": "close"},
+            )
+            return True
+        except httpx.HTTPStatusError as e:
+            logger.warning("Failed to close !%d: HTTP %d", pr.number, e.response.status_code)
+            return False
+
+    async def add_comment(self, pr: ForgePR, body: str) -> None:
+        await self._post(
+            f"/projects/{self._encoded_slug}/merge_requests/{pr.number}/notes",
+            json={"body": body},
+        )
+
+    async def update_pr(
+        self,
+        pr: ForgePR,
+        *,
+        title: str | None = None,
+        body: str | None = None,
+        draft: bool | None = None,
+    ) -> ForgePR:
+        payload: dict[str, Any] = {}
+        if title is not None:
+            is_draft = draft if draft is not None else pr.is_draft
+            payload["title"] = ("Draft: " if is_draft else "") + title
+        if body is not None:
+            payload["description"] = body
+        if payload:
+            raw = await self._put(
+                f"/projects/{self._encoded_slug}/merge_requests/{pr.number}",
+                json=payload,
+            )
+            return self._parse_mr(raw)
+        return pr

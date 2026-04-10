@@ -138,3 +138,47 @@ class ForgeClient(ABC):
     @abstractmethod
     async def merge_pr(self, pr: ForgePR) -> bool:
         """Squash-merge (or equivalent) a PR. Returns True on success."""
+
+    @abstractmethod
+    async def close_pr(self, pr: ForgePR) -> bool:
+        """Close (without merging) a PR, e.g. to discard stale branches.
+
+        Args:
+            pr: The pull/merge request to close.
+
+        Returns:
+            True if closed successfully.
+        """
+
+    @abstractmethod
+    async def add_comment(self, pr: ForgePR, body: str) -> None:
+        """Post a review comment on a PR.
+
+        Used to surface CI failure summaries or review findings back to the
+        branch author without blocking the merge queue.
+
+        Args:
+            pr: The pull/merge request to comment on.
+            body: Markdown-formatted comment body.
+        """
+
+    @abstractmethod
+    async def update_pr(
+        self,
+        pr: ForgePR,
+        *,
+        title: str | None = None,
+        body: str | None = None,
+        draft: bool | None = None,
+    ) -> ForgePR:
+        """Update PR metadata (title, description, or draft status).
+
+        Args:
+            pr: The pull/merge request to update.
+            title: New title, or None to leave unchanged.
+            body: New description, or None to leave unchanged.
+            draft: New draft flag, or None to leave unchanged.
+
+        Returns:
+            Updated ForgePR reflecting the changes.
+        """

@@ -9,6 +9,7 @@ Token resolution order (matches gh CLI convention):
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import subprocess
@@ -97,11 +98,35 @@ class GitHubForge(ForgeClient):
 
     async def _get(self, path: str, **params: Any) -> Any:
         resp = await self._c().get(path, params=params)
+        if resp.status_code == 429:
+            retry_after = int(resp.headers.get("Retry-After", 60))
+            logger.warning("GitHub rate limited — sleeping %ds", retry_after)
+            await asyncio.sleep(retry_after)
+            resp = await self._c().get(path, params=params)
         resp.raise_for_status()
         return resp.json()
 
+    async def _get_paginated(self, path: str, **params: Any) -> list[Any]:
+        """Fetch all pages of a paginated GitHub API endpoint."""
+        results: list[Any] = []
+        page = 1
+        while True:
+            data = await self._get(path, per_page=100, page=page, **params)
+            if not data:
+                break
+            results.extend(data)
+            if len(data) < 100:
+                break
+            page += 1
+        return results
+
     async def _post(self, path: str, json: dict[str, Any]) -> Any:
         resp = await self._c().post(path, json=json)
+        if resp.status_code == 429:
+            retry_after = int(resp.headers.get("Retry-After", 60))
+            logger.warning("GitHub rate limited — sleeping %ds", retry_after)
+            await asyncio.sleep(retry_after)
+            resp = await self._c().post(path, json=json)
         resp.raise_for_status()
         return resp.json()
 
@@ -123,18 +148,27 @@ class GitHubForge(ForgeClient):
         )
 
     async def list_prs(self, state: str = "open") -> list[ForgePR]:
-        raw = await self._get(
+        raw = await self._get_paginated(
             f"/repos/{self.info.slug}/pulls",
-            state=state, per_page=100,
+            state=state,
         )
         return [self._parse_pr(r) for r in raw]
 
     async def get_pr_ci(self, pr: ForgePR) -> ForgeCI:
-        data = await self._get(
-            f"/repos/{self.info.slug}/commits/{pr.head_sha}/check-runs",
-            per_page=100,
-        )
-        runs = data.get("check_runs", [])
+        # check-runs endpoint wraps results — paginate manually
+        all_runs: list[Any] = []
+        page = 1
+        while True:
+            data = await self._get(
+                f"/repos/{self.info.slug}/commits/{pr.head_sha}/check-runs",
+                per_page=100, page=page,
+            )
+            batch = data.get("check_runs", [])
+            all_runs.extend(batch)
+            if len(batch) < 100:
+                break
+            page += 1
+        runs = all_runs
         if not runs:
             return ForgeCI(state=CIState.UNKNOWN)
 
@@ -173,6 +207,11 @@ class GitHubForge(ForgeClient):
         )
         return self._parse_pr(raw)
 
+    async def _patch(self, path: str, json: dict[str, Any]) -> Any:
+        resp = await self._c().patch(path, json=json)
+        resp.raise_for_status()
+        return resp.json()
+
     async def merge_pr(self, pr: ForgePR) -> bool:
         try:
             await self._post(
@@ -181,5 +220,45 @@ class GitHubForge(ForgeClient):
             )
             return True
         except httpx.HTTPStatusError as e:
-            logger.warning("Failed to merge #%d: %s", pr.number, e.response.text)
+            logger.warning("Failed to merge #%d: HTTP %d", pr.number, e.response.status_code)
             return False
+
+    async def close_pr(self, pr: ForgePR) -> bool:
+        try:
+            await self._patch(
+                f"/repos/{self.info.slug}/pulls/{pr.number}",
+                json={"state": "closed"},
+            )
+            return True
+        except httpx.HTTPStatusError as e:
+            logger.warning("Failed to close #%d: HTTP %d", pr.number, e.response.status_code)
+            return False
+
+    async def add_comment(self, pr: ForgePR, body: str) -> None:
+        await self._post(
+            f"/repos/{self.info.slug}/issues/{pr.number}/comments",
+            json={"body": body},
+        )
+
+    async def update_pr(
+        self,
+        pr: ForgePR,
+        *,
+        title: str | None = None,
+        body: str | None = None,
+        draft: bool | None = None,
+    ) -> ForgePR:
+        payload: dict[str, Any] = {}
+        if title is not None:
+            payload["title"] = title
+        if body is not None:
+            payload["body"] = body
+        if draft is not None:
+            payload["draft"] = draft
+        if payload:
+            raw = await self._patch(
+                f"/repos/{self.info.slug}/pulls/{pr.number}",
+                json=payload,
+            )
+            return self._parse_pr(raw)
+        return pr

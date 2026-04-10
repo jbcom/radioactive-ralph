@@ -215,6 +215,11 @@ class GiteaForge(ForgeClient):
         )
         return self._parse_pr(raw)
 
+    async def _patch(self, path: str, json: dict[str, Any]) -> Any:
+        resp = await self._c().patch(path, json=json)
+        resp.raise_for_status()
+        return resp.json()
+
     async def merge_pr(self, pr: ForgePR) -> bool:
         """Squash-merge a pull request and delete the source branch.
 
@@ -231,5 +236,68 @@ class GiteaForge(ForgeClient):
             )
             return True
         except httpx.HTTPStatusError as e:
-            logger.warning("Failed to merge #%d: %s", pr.number, e.response.text)
+            logger.warning("Failed to merge #%d: HTTP %d", pr.number, e.response.status_code)
             return False
+
+    async def close_pr(self, pr: ForgePR) -> bool:
+        """Close a pull request without merging.
+
+        Args:
+            pr: The pull request to close.
+
+        Returns:
+            True if closed successfully.
+        """
+        try:
+            await self._patch(
+                f"/repos/{self.info.slug}/pulls/{pr.number}",
+                json={"state": "closed"},
+            )
+            return True
+        except httpx.HTTPStatusError as e:
+            logger.warning("Failed to close #%d: HTTP %d", pr.number, e.response.status_code)
+            return False
+
+    async def add_comment(self, pr: ForgePR, body: str) -> None:
+        """Post a comment on a pull request.
+
+        Args:
+            pr: The pull request to comment on.
+            body: Markdown-formatted comment text.
+        """
+        await self._post(
+            f"/repos/{self.info.slug}/issues/{pr.number}/comments",
+            json={"body": body},
+        )
+
+    async def update_pr(
+        self,
+        pr: ForgePR,
+        *,
+        title: str | None = None,
+        body: str | None = None,
+        draft: bool | None = None,
+    ) -> ForgePR:
+        """Update PR metadata.
+
+        Args:
+            pr: The pull request to update.
+            title: New title, or None to leave unchanged.
+            body: New description, or None to leave unchanged.
+            draft: New draft state, or None to leave unchanged.
+
+        Returns:
+            Updated ForgePR.
+        """
+        payload: dict[str, Any] = {}
+        if title is not None:
+            payload["title"] = title
+        if body is not None:
+            payload["body"] = body
+        if payload:
+            raw = await self._patch(
+                f"/repos/{self.info.slug}/pulls/{pr.number}",
+                json=payload,
+            )
+            return self._parse_pr(raw)
+        return pr
