@@ -6,7 +6,7 @@ import hashlib
 import logging
 from pathlib import Path
 
-from .models import WorkItem, WorkPriority
+from radioactive_ralph.models import WorkItem, WorkPriority
 
 logger = logging.getLogger(__name__)
 
@@ -27,13 +27,31 @@ REQUIRED_DOCS = [
 
 
 def make_work_id(repo: str, source: str, description: str) -> str:
-    """Generate a deterministic work item ID."""
+    """Generate a deterministic work item ID.
+
+    Args:
+        repo: Description of repo.
+        source: Description of source.
+        description: Description of description.
+
+    Returns:
+        Description of return value.
+
+    """
     raw = f"{repo}:{source}:{description}"
     return hashlib.sha256(raw.encode()).hexdigest()[:12]
 
 
 def discover_missing_files(repo_path: Path) -> list[WorkItem]:
-    """Find required project files that are missing."""
+    """Find required project files that are missing.
+
+    Args:
+        repo_path: Description of repo_path.
+
+    Returns:
+        Description of return value.
+
+    """
     items: list[WorkItem] = []
     repo_name = repo_path.name
 
@@ -67,7 +85,15 @@ def discover_missing_files(repo_path: Path) -> list[WorkItem]:
 
 
 def parse_state_md(repo_path: Path) -> list[WorkItem]:
-    """Parse docs/STATE.md for next items."""
+    """Parse docs/STATE.md for next items.
+
+    Args:
+        repo_path: Description of repo_path.
+
+    Returns:
+        Description of return value.
+
+    """
     state_file = repo_path / "docs" / "STATE.md"
     if not state_file.exists():
         return []
@@ -109,7 +135,15 @@ def parse_state_md(repo_path: Path) -> list[WorkItem]:
 
 
 def parse_design_md(repo_path: Path) -> list[WorkItem]:
-    """Parse docs/DESIGN.md for feature ideas."""
+    """Parse docs/DESIGN.md for feature ideas.
+
+    Args:
+        repo_path: Description of repo_path.
+
+    Returns:
+        Description of return value.
+
+    """
     design_file = repo_path / "docs" / "DESIGN.md"
     if not design_file.exists():
         return []
@@ -151,7 +185,15 @@ def parse_design_md(repo_path: Path) -> list[WorkItem]:
 
 
 def discover_work(repo_path: Path) -> list[WorkItem]:
-    """Run all discovery sources for a single repo and return ranked items."""
+    """Run all discovery sources for a single repo and return ranked items.
+
+    Args:
+        repo_path: Description of repo_path.
+
+    Returns:
+        Description of return value.
+
+    """
     all_items: list[WorkItem] = []
 
     all_items.extend(discover_missing_files(repo_path))
@@ -163,7 +205,15 @@ def discover_work(repo_path: Path) -> list[WorkItem]:
 
 
 def discover_all_repos(repo_paths: list[Path]) -> list[WorkItem]:
-    """Discover work across all configured repos, ranked by priority."""
+    """Discover work across all configured repos, ranked by priority.
+
+    Args:
+        repo_paths: Description of repo_paths.
+
+    Returns:
+        Description of return value.
+
+    """
     all_items: list[WorkItem] = []
 
     for repo_path in repo_paths:

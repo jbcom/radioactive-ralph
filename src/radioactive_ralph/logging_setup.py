@@ -9,7 +9,14 @@ from rich.traceback import install as install_rich_tracebacks
 
 
 def setup_logging(level: int = logging.INFO) -> None:
-    """Configure rich logging with pretty tracebacks."""
+    """Configure rich logging with pretty tracebacks.
+
+    Args:
+        level: The logging level to use (e.g., logging.INFO, logging.DEBUG).
+
+    Returns:
+        None.
+    """
     install_rich_tracebacks(show_locals=True, max_frames=5)
     logging.basicConfig(
         level=level,
