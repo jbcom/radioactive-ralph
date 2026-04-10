@@ -9,6 +9,13 @@ status: current
 All notable changes to this project will be documented in this file.
 Format: [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/), [Semantic Versioning](https://semver.org/).
 
+## [0.4.0](https://github.com/jbcom/radioactive-ralph/compare/v0.3.0...v0.4.0) (2026-04-10)
+
+
+### Features
+
+* modernize documentation (Shibuya + AutoAPI + Fuzzy Bubbles) ([#12](https://github.com/jbcom/radioactive-ralph/issues/12)) ([2537f08](https://github.com/jbcom/radioactive-ralph/commit/2537f081343f3ca0900d77fb9733140b757afd5d))
+
 ## [0.3.0](https://github.com/jbcom/radioactive-ralph/compare/v0.2.0...v0.3.0) (2026-04-10)
 
 
