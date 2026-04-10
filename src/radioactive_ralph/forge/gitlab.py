@@ -116,13 +116,19 @@ class GitLabForge(ForgeClient):
         """Perform a POST request."""
         resp = await self._c().post(path, json=json)
         resp.raise_for_status()
-        return resp.json()
+        try:
+            return resp.json()
+        except ValueError:
+            return {}
 
     async def _put(self, path: str, json: dict[str, Any]) -> Any:
         """Perform a PUT request."""
         resp = await self._c().put(path, json=json)
         resp.raise_for_status()
-        return resp.json()
+        try:
+            return resp.json()
+        except ValueError:
+            return {}
 
     def _parse_mr(self, raw: dict[str, Any]) -> ForgePR:
         """Parse raw GitLab MR data into a ForgePR object."""

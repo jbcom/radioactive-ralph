@@ -86,7 +86,7 @@ class GitClient:
         try:
             repo = await self._repo()
             return await self._run(lambda r: str(r.remotes[remote].url), repo)
-        except (IndexError, AttributeError, ValueError):
+        except (IndexError, AttributeError, ValueError, KeyError):
             return None
 
     async def current_branch(self) -> str | None:

@@ -190,7 +190,10 @@ class GitHubForge(ForgeClient):
         """
         resp = await self._c().post(path, json=json)
         resp.raise_for_status()
-        return resp.json()
+        try:
+            return resp.json()
+        except ValueError:
+            return {}
 
     def _parse_pr(self, raw: dict[str, Any]) -> ForgePR:
         """Parse raw GitHub API PR data into a ForgePR object.

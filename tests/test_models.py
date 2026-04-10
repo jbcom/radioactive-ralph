@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from radioactive_ralph.config import RadioactiveRalphConfig
 from radioactive_ralph.models import (
+    AgentRun,
     OrchestratorState,
     PRInfo,
     PRStatus,
@@ -75,3 +76,27 @@ def test_orchestrator_state_defaults() -> None:
     assert state.active_runs == []
     assert state.cycle_count == 0
     assert state.work_queue == []
+
+
+def test_agent_run_is_active() -> None:
+    """Test the is_active property logic."""
+    from datetime import UTC, datetime
+    item = WorkItem(id="1", repo_path="p", description="d", priority=WorkPriority.LOW)
+    run = AgentRun(item=item, process_id=123, started_at=datetime.now(UTC))
+    assert run.is_active is True
+    
+    run.completed_at = datetime.now(UTC)
+    assert run.is_active is False
+
+
+def test_review_result_has_blocking_issues():
+    pr = PRInfo(
+        repo="r", number=1, title="t", author="a", branch="b",
+        url="u", status=PRStatus.NEEDS_REVIEW, 
+        updated_at=__import__("datetime").datetime.now(__import__("datetime").UTC)
+    )
+    res = ReviewResult(pr=pr, approved=False, summary="s", findings=[])
+    assert res.has_blocking_issues is False
+    
+    res.findings = [ReviewFinding(severity=ReviewSeverity.ERROR, file="f", issue="i")]
+    assert res.has_blocking_issues is True

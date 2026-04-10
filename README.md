@@ -1,8 +1,3 @@
----
-title: radioactive-ralph
-updated: 2026-04-10
-status: current
----
 
 # radioactive-ralph
 
