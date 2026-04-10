@@ -12,7 +12,7 @@ Messages are selected randomly within category so Ralph stays surprising.
 
 Example::
 
-    from .ralph_says import ralph_says, Variant
+    from radioactive_ralph.ralph_says import ralph_says, Variant
     ralph_says(Variant.GREEN, "startup")
     ralph_says(Variant.OLD_MAN, "merge", pr_number=42, repo="kings-road")
 """
@@ -37,7 +37,12 @@ _RECENT_EVENTS: deque[tuple[Variant, str, datetime]] = deque(maxlen=50)
 
 
 def recent_events() -> list[tuple[Variant, str, datetime]]:
-    """Return a snapshot of recent Ralph events (oldest→newest)."""
+    """Return a snapshot of recent Ralph events (oldest→newest).
+
+    Returns:
+        Description of return value.
+
+    """
     return list(_RECENT_EVENTS)
 
 
@@ -298,7 +303,16 @@ _VARIANT_OVERRIDES: dict[Variant, dict[str, list[str]]] = {
 
 
 def _get_quotes(variant: Variant, category: str) -> list[str]:
-    """Get quote list for variant+category, falling back to generic."""
+    """Get quote list for variant+category, falling back to generic.
+
+    Args:
+        variant: Description of variant.
+        category: Description of category.
+
+    Returns:
+        Description of return value.
+
+    """
     overrides = _VARIANT_OVERRIDES.get(variant, {})
     if category in overrides:
         return overrides[category]
@@ -312,13 +326,13 @@ def ralph_says(
 ) -> None:
     """Print a Rich-formatted Ralph message for the given variant and event.
 
-    Selects a random quote from the appropriate category, formats it with
-    kwargs (e.g. cycle=3, repo="kings-road"), and prints with variant color.
-
     Args:
-        variant: Which Ralph persona is speaking.
-        category: Event category (startup, merging, error, etc.).
-        **kwargs: Template variables to substitute into the quote text.
+        variant: Description of variant.
+        category: Description of category.
+
+    Returns:
+        Description of return value.
+
     """
     quotes = _get_quotes(variant, category)
     quote = random.choice(quotes)
@@ -347,10 +361,13 @@ def ralph_panel(
     """Print a Rich Panel with a Ralph message. Used for startup/shutdown banners.
 
     Args:
-        variant: Which Ralph persona is speaking.
-        category: Event category.
-        title: Panel title override. Defaults to the variant name.
-        **kwargs: Template variables.
+        variant: Description of variant.
+        category: Description of category.
+        title: Description of title.
+
+    Returns:
+        Description of return value.
+
     """
     quotes = _get_quotes(variant, category)
     quote = random.choice(quotes)

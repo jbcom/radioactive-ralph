@@ -30,18 +30,17 @@ import logging
 import re
 from pathlib import Path
 
-from .forge import ForgeClient, ForgePR, get_forge_client
-from .git_client import GitClient
-from .models import PRInfo, PRStatus
+from radioactive_ralph.forge import ForgeClient, ForgePR, get_forge_client
+from radioactive_ralph.git_client import GitClient
+from radioactive_ralph.models import PRInfo, PRStatus
 
 logger = logging.getLogger(__name__)
 
 
 def extract_pr_url(text: str) -> str | None:
-    """Extract the first GitHub-style PR URL from a block of text.
+    """Extract the first pull/merge request URL from a block of text.
 
-    Searches for URLs matching ``https://<host>/<org>/<repo>/pull/<n>``
-    or the GitLab equivalent ``/merge_requests/<n>``.
+    Supports GitHub, GitLab (including subgroups), and Gitea URL patterns.
 
     Args:
         text: Raw text output (e.g. from a Claude Code agent run).
@@ -50,7 +49,7 @@ def extract_pr_url(text: str) -> str | None:
         The first matching URL, or None if not found.
     """
     match = re.search(
-        r"https://[^\s/]+/[^/\s]+/[^/\s]+/(?:pull|merge_requests)/\d+",
+        r"https?://[^\s/]+/.+?/(?:pull|pulls|merge_requests)/\d+",
         text,
     )
     return match.group(0) if match else None

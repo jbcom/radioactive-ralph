@@ -20,9 +20,9 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
-from .models import OrchestratorState, PRStatus
-from .ralph_says import _COLORS, Variant, recent_events
-from .state import load_state
+from radioactive_ralph.models import OrchestratorState, PRStatus
+from radioactive_ralph.ralph_says import _COLORS, Variant, recent_events
+from radioactive_ralph.state import load_state
 
 _PR_STATUS_STYLE: dict[PRStatus, str] = {
     PRStatus.MERGE_READY: "bright_green",
@@ -36,7 +36,15 @@ _PR_STATUS_STYLE: dict[PRStatus, str] = {
 
 
 def _fmt_duration(seconds: float) -> str:
-    """Format a duration in seconds as a compact string."""
+    """Format a duration in seconds as a compact string.
+
+    Args:
+        seconds: Description of seconds.
+
+    Returns:
+        Description of return value.
+
+    """
     if seconds < 60:
         return f"{int(seconds)}s"
     if seconds < 3600:
@@ -47,7 +55,15 @@ def _fmt_duration(seconds: float) -> str:
 
 
 def _infer_daemon_state(state: OrchestratorState) -> str:
-    """Guess the current daemon phase from state shape."""
+    """Guess the current daemon phase from state shape.
+
+    Args:
+        state: Description of state.
+
+    Returns:
+        Description of return value.
+
+    """
     if state.active_runs:
         return "executing"
     if state.merge_queue:
@@ -58,7 +74,17 @@ def _infer_daemon_state(state: OrchestratorState) -> str:
 
 
 def _header(state: OrchestratorState, variant: Variant, started: datetime) -> Panel:
-    """Top banner with variant, cycle, uptime, and daemon state."""
+    """Top banner with variant, cycle, uptime, and daemon state.
+
+    Args:
+        state: Description of state.
+        variant: Description of variant.
+        started: Description of started.
+
+    Returns:
+        Description of return value.
+
+    """
     primary = _COLORS[variant]["primary"]
     accent = _COLORS[variant]["accent"]
     uptime = _fmt_duration((datetime.now(UTC) - started).total_seconds())
@@ -86,7 +112,16 @@ def _header(state: OrchestratorState, variant: Variant, started: datetime) -> Pa
 
 
 def _pr_table(state: OrchestratorState, variant: Variant) -> Panel:
-    """Most recent scanned PRs with status-colored classification."""
+    """Most recent scanned PRs with status-colored classification.
+
+    Args:
+        state: Description of state.
+        variant: Description of variant.
+
+    Returns:
+        Description of return value.
+
+    """
     primary = _COLORS[variant]["primary"]
     t = Table(expand=True, show_edge=False, pad_edge=False, box=None)
     t.add_column("Repo", style="bright_white", no_wrap=True)
@@ -114,7 +149,16 @@ def _pr_table(state: OrchestratorState, variant: Variant) -> Panel:
 
 
 def _work_table(state: OrchestratorState, variant: Variant) -> Panel:
-    """Top 10 items in the work queue, priority-ordered."""
+    """Top 10 items in the work queue, priority-ordered.
+
+    Args:
+        state: Description of state.
+        variant: Description of variant.
+
+    Returns:
+        Description of return value.
+
+    """
     primary = _COLORS[variant]["primary"]
     t = Table(expand=True, show_edge=False, pad_edge=False, box=None)
     t.add_column("Pri", width=4, justify="right")
@@ -140,7 +184,16 @@ def _work_table(state: OrchestratorState, variant: Variant) -> Panel:
 
 
 def _agents_panel(state: OrchestratorState, variant: Variant) -> Panel:
-    """Currently-running agents with task, repo, and elapsed time."""
+    """Currently-running agents with task, repo, and elapsed time.
+
+    Args:
+        state: Description of state.
+        variant: Description of variant.
+
+    Returns:
+        Description of return value.
+
+    """
     primary = _COLORS[variant]["primary"]
     t = Table(expand=True, show_edge=False, pad_edge=False, box=None)
     t.add_column("Repo", style="bright_white", no_wrap=True)
@@ -168,7 +221,15 @@ def _agents_panel(state: OrchestratorState, variant: Variant) -> Panel:
 
 
 def _activity_panel(variant: Variant) -> Panel:
-    """Last 20 Ralph events from the in-process ring buffer."""
+    """Last 20 Ralph events from the in-process ring buffer.
+
+    Args:
+        variant: Description of variant.
+
+    Returns:
+        Description of return value.
+
+    """
     primary = _COLORS[variant]["primary"]
     events = recent_events()[-20:]
 
@@ -190,7 +251,16 @@ def _activity_panel(variant: Variant) -> Panel:
 
 
 def _footer(state: OrchestratorState, variant: Variant) -> Panel:
-    """Bottom stats strip: merged / agents / cost / failures."""
+    """Bottom stats strip: merged / agents / cost / failures.
+
+    Args:
+        state: Description of state.
+        variant: Description of variant.
+
+    Returns:
+        Description of return value.
+
+    """
     primary = _COLORS[variant]["primary"]
     accent = _COLORS[variant]["accent"]
 
@@ -223,7 +293,15 @@ def _footer(state: OrchestratorState, variant: Variant) -> Panel:
 
 
 def _sleeping_placeholder(variant: Variant) -> Panel:
-    """Shown when the state file doesn't exist yet."""
+    """Shown when the state file doesn't exist yet.
+
+    Args:
+        variant: Description of variant.
+
+    Returns:
+        Description of return value.
+
+    """
     primary = _COLORS[variant]["primary"]
     body = Text.from_markup(
         "[bold]Ralph is sleeping (no state file yet).[/bold]\n\n"
@@ -245,9 +323,14 @@ def build_layout(
 ) -> Layout:
     """Assemble the full dashboard layout.
 
-    Public, pure, side-effect-free entry point for tests and snapshot
-    tooling. Safe to call repeatedly; returns a fresh ``rich.layout.Layout``
-    every time. ``run_dashboard`` delegates to this function.
+    Args:
+        state: Description of state.
+        variant: Description of variant.
+        started: Description of started.
+
+    Returns:
+        Description of return value.
+
     """
     if started is None:
         started = datetime.now(UTC)
@@ -257,7 +340,17 @@ def build_layout(
 def _build_layout(
     state: OrchestratorState | None, variant: Variant, started: datetime
 ) -> Layout:
-    """Assemble the full dashboard layout (internal)."""
+    """Assemble the full dashboard layout (internal).
+
+    Args:
+        state: Description of state.
+        variant: Description of variant.
+        started: Description of started.
+
+    Returns:
+        Description of return value.
+
+    """
     layout = Layout()
 
     if state is None:
@@ -291,10 +384,26 @@ def run_dashboard(
     variant: Variant = Variant.GREEN,
     refresh_per_second: float = 1.0,
 ) -> None:
-    """Launch the Live dashboard. Blocks until Ctrl+C."""
+    """Launch the Live dashboard. Blocks until Ctrl+C.
+
+    Args:
+        state_path: Description of state_path.
+        variant: Description of variant.
+        refresh_per_second: Description of refresh_per_second.
+
+    Returns:
+        Description of return value.
+
+    """
     started = datetime.now(UTC)
 
     def snapshot() -> OrchestratorState | None:
+        """Autogenerated docstring.
+
+        Returns:
+            Description of return value.
+
+        """
         try:
             return load_state(state_path)
         except FileNotFoundError:

@@ -19,7 +19,7 @@ import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from .config import RadioactiveRalphConfig, load_config
+from radioactive_ralph.config import RadioactiveRalphConfig, load_config
 
 OK = "OK"
 WARN = "WARN"
@@ -36,6 +36,11 @@ class DoctorResult:
     fix: str = ""
 
     def to_dict(self) -> dict[str, str]:
+        """Convert the result to a dictionary.
+
+        Returns:
+            A dictionary representation of the result.
+        """
         return {"name": self.name, "status": self.status, "detail": self.detail, "fix": self.fix}
 
 
@@ -47,17 +52,37 @@ class DoctorReport:
 
     @property
     def failed(self) -> int:
+        """Get the number of failed checks.
+
+        Returns:
+            The count of checks with FAIL status.
+        """
         return sum(1 for r in self.results if r.status == FAIL)
 
     @property
     def warnings(self) -> int:
+        """Get the number of warning checks.
+
+        Returns:
+            The count of checks with WARN status.
+        """
         return sum(1 for r in self.results if r.status == WARN)
 
     @property
     def ok(self) -> bool:
+        """Check if all checks passed without failures.
+
+        Returns:
+            True if there are no failures, False otherwise.
+        """
         return self.failed == 0
 
     def to_dict(self) -> dict[str, object]:
+        """Convert the report to a dictionary.
+
+        Returns:
+            A dictionary containing all check results and a summary.
+        """
         return {
             "checks": [r.to_dict() for r in self.results],
             "summary": {
@@ -70,7 +95,15 @@ class DoctorReport:
 
 
 def _run(cmd: list[str], timeout: int = 10) -> subprocess.CompletedProcess[str]:
-    """Run a command without raising. Returns CompletedProcess even on failure."""
+    """Run a command without raising. Returns CompletedProcess even on failure.
+
+    Args:
+        cmd: The command to run as a list of strings.
+        timeout: The timeout in seconds.
+
+    Returns:
+        A CompletedProcess instance.
+    """
     try:
         return subprocess.run(cmd, capture_output=True, text=True, check=False, timeout=timeout)
     except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
@@ -78,10 +111,23 @@ def _run(cmd: list[str], timeout: int = 10) -> subprocess.CompletedProcess[str]:
 
 
 def _which(binary: str) -> str | None:
+    """Find the path to an executable binary.
+
+    Args:
+        binary: The name of the binary to find.
+
+    Returns:
+        The absolute path to the binary, or None if not found.
+    """
     return shutil.which(binary)
 
 
 def check_python() -> DoctorResult:
+    """Check if the Python version meets requirements.
+
+    Returns:
+        A DoctorResult with the check status.
+    """
     major, minor, patch = sys.version_info[:3]
     ver = f"{major}.{minor}.{patch}"
     if (major, minor) >= (3, 12):
@@ -92,6 +138,11 @@ def check_python() -> DoctorResult:
 
 
 def check_uv() -> DoctorResult:
+    """Check if uv is installed and working.
+
+    Returns:
+        A DoctorResult with the check status.
+    """
     if _which("uv") is None:
         return DoctorResult(
             "uv", WARN, "not found on PATH",
@@ -104,6 +155,11 @@ def check_uv() -> DoctorResult:
 
 
 def check_git() -> DoctorResult:
+    """Check if git is installed and meets version requirements.
+
+    Returns:
+        A DoctorResult with the check status.
+    """
     if _which("git") is None:
         return DoctorResult("git", FAIL, "not found on PATH", "Install git (brew install git).")
     proc = _run(["git", "--version"])
@@ -115,6 +171,11 @@ def check_git() -> DoctorResult:
 
 
 def check_gh() -> DoctorResult:
+    """Check if the GitHub CLI (gh) is installed and authenticated.
+
+    Returns:
+        A DoctorResult with the check status.
+    """
     if _which("gh") is None:
         return DoctorResult("gh CLI", FAIL, "not found on PATH", "brew install gh")
     proc = _run(["gh", "auth", "status"])
@@ -127,6 +188,11 @@ def check_gh() -> DoctorResult:
 
 
 def check_claude() -> DoctorResult:
+    """Check if the Claude CLI is installed.
+
+    Returns:
+        A DoctorResult with the check status.
+    """
     if _which("claude") is None:
         return DoctorResult(
             "claude CLI", FAIL, "not found on PATH",
@@ -139,6 +205,11 @@ def check_claude() -> DoctorResult:
 
 
 def check_api_key() -> DoctorResult:
+    """Check if the ANTHROPIC_API_KEY environment variable is set.
+
+    Returns:
+        A DoctorResult with the check status.
+    """
     if os.environ.get("ANTHROPIC_API_KEY"):
         return DoctorResult("ANTHROPIC_API_KEY", OK, "set in environment")
     return DoctorResult(
@@ -148,6 +219,14 @@ def check_api_key() -> DoctorResult:
 
 
 def check_config(config_path: Path) -> tuple[DoctorResult, RadioactiveRalphConfig | None]:
+    """Check if the configuration file is valid and readable.
+
+    Args:
+        config_path: The path to the configuration file.
+
+    Returns:
+        A tuple containing the DoctorResult and the parsed config (or None).
+    """
     if not config_path.exists():
         try:
             cfg = load_config(config_path)
@@ -192,6 +271,14 @@ def check_config(config_path: Path) -> tuple[DoctorResult, RadioactiveRalphConfi
 
 
 def _check_single_repo(repo_path: Path) -> DoctorResult:
+    """Check the health of a single local repository.
+
+    Args:
+        repo_path: The path to the repository.
+
+    Returns:
+        A DoctorResult with the check status.
+    """
     name = f"repo: {repo_path.name}"
     if not repo_path.exists():
         return DoctorResult(name, FAIL, f"{repo_path} missing", "Clone or fix config path.")
@@ -215,6 +302,14 @@ def _check_single_repo(repo_path: Path) -> DoctorResult:
 
 
 def check_repos(cfg: RadioactiveRalphConfig | None) -> list[DoctorResult]:
+    """Check all configured repositories.
+
+    Args:
+        cfg: The parsed configuration object.
+
+    Returns:
+        A list of DoctorResult instances for each repository.
+    """
     if cfg is None:
         return []
     paths = cfg.all_repo_paths()
@@ -229,12 +324,28 @@ def check_repos(cfg: RadioactiveRalphConfig | None) -> list[DoctorResult]:
 
 
 def _resolved_state_path(cfg: RadioactiveRalphConfig | None) -> Path:
+    """Check all configured repositories.
+
+    Args:
+        cfg: The parsed configuration object.
+
+    Returns:
+        A list of DoctorResult instances for each repository.
+    """
     if cfg is None:
         return Path.home() / ".radioactive-ralph" / "state.json"
     return cfg.resolve_state_path()
 
 
 def check_state_file(cfg: RadioactiveRalphConfig | None) -> DoctorResult:
+    """Check all configured repositories.
+
+    Args:
+        cfg: The parsed configuration object.
+
+    Returns:
+        A list of DoctorResult instances for each repository.
+    """
     path = _resolved_state_path(cfg)
     if not path.exists():
         return DoctorResult("State file", WARN, f"{path} not yet created")
@@ -252,6 +363,14 @@ def check_state_file(cfg: RadioactiveRalphConfig | None) -> DoctorResult:
 
 
 def check_write_permissions(cfg: RadioactiveRalphConfig | None) -> DoctorResult:
+    """Check all configured repositories.
+
+    Args:
+        cfg: The parsed configuration object.
+
+    Returns:
+        A list of DoctorResult instances for each repository.
+    """
     parent = _resolved_state_path(cfg).parent
     try:
         parent.mkdir(parents=True, exist_ok=True)
@@ -268,7 +387,11 @@ def check_write_permissions(cfg: RadioactiveRalphConfig | None) -> DoctorResult:
 
 
 def check_plugin() -> DoctorResult:
-    """Informational: whether radioactive-ralph is installed as a Claude plugin."""
+    """Informational: whether radioactive-ralph is installed as a Claude plugin.
+
+    Returns:
+        A DoctorResult with the check status.
+    """
     if _which("claude") is None:
         return DoctorResult("Claude plugin", WARN, "claude CLI not found; skipped")
     proc = _run(["claude", "plugin", "list"], timeout=15)
@@ -284,7 +407,14 @@ def check_plugin() -> DoctorResult:
 
 
 def run_all_checks(config_path: Path) -> DoctorReport:
-    """Run every diagnostic check and return an aggregated report."""
+    """Run every diagnostic check and return an aggregated report.
+
+    Args:
+        config_path: The path to the configuration file.
+
+    Returns:
+        A DoctorReport containing the results of all checks.
+    """
     report = DoctorReport()
     for fn in (check_python, check_uv, check_git, check_gh, check_claude, check_api_key):
         report.results.append(fn())

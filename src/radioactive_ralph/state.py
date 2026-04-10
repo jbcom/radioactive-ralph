@@ -4,16 +4,27 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from .models import OrchestratorState, WorkItem
+from radioactive_ralph.models import OrchestratorState, WorkItem
 
 
 def default_state_path() -> Path:
-    """Return the default state file location."""
+    """Return the default state file location.
+
+    Returns:
+        The path to the default state file (~/.radioactive-ralph/state.json).
+    """
     return Path.home() / ".radioactive-ralph" / "state.json"
 
 
 def load_state(path: Path | None = None) -> OrchestratorState:
-    """Load orchestrator state from disk. Returns empty state if file missing."""
+    """Load orchestrator state from disk. Returns empty state if file missing.
+
+    Args:
+        path: Optional path to the state file. Defaults to `default_state_path()`.
+
+    Returns:
+        The parsed OrchestratorState object.
+    """
     if path is None:
         path = default_state_path()
 
@@ -28,7 +39,15 @@ def load_state(path: Path | None = None) -> OrchestratorState:
 
 
 def save_state(state: OrchestratorState, path: Path | None = None) -> Path:
-    """Persist orchestrator state to disk. Creates parent dirs if needed."""
+    """Persist orchestrator state to disk. Creates parent dirs if needed.
+
+    Args:
+        state: The OrchestratorState object to save.
+        path: Optional path to the state file. Defaults to `default_state_path()`.
+
+    Returns:
+        The path where the state was saved.
+    """
     if path is None:
         path = default_state_path()
 
@@ -40,14 +59,28 @@ def save_state(state: OrchestratorState, path: Path | None = None) -> Path:
 
 
 def reset_state(path: Path | None = None) -> OrchestratorState:
-    """Reset state to empty and persist."""
+    """Reset state to empty and persist.
+
+    Args:
+        path: Optional path to the state file. Defaults to `default_state_path()`.
+
+    Returns:
+        The newly created, empty OrchestratorState object.
+    """
     fresh = OrchestratorState()
     save_state(fresh, path)
     return fresh
 
 
 def export_state_summary(state: OrchestratorState) -> dict[str, object]:
-    """Export a human-readable summary of current state."""
+    """Export a human-readable summary of current state.
+
+    Args:
+        state: The current OrchestratorState object.
+
+    Returns:
+        A dictionary containing a summary of the state.
+    """
     active_repos = {run.task.repo_name for run in state.active_runs}
     completed_repos = {run.task.repo_name for run in state.completed_runs}
 
@@ -65,7 +98,15 @@ def export_state_summary(state: OrchestratorState) -> dict[str, object]:
 
 
 def prune_completed(state: OrchestratorState, keep: int = 100) -> int:
-    """Prune old completed runs, keeping the most recent `keep` entries."""
+    """Prune old completed runs, keeping the most recent `keep` entries.
+
+    Args:
+        state: The current OrchestratorState object.
+        keep: The number of recent completed runs to keep.
+
+    Returns:
+        The number of completed runs that were pruned.
+    """
     before = len(state.completed_runs)
     if before <= keep:
         return 0
@@ -82,8 +123,16 @@ def prune_completed(state: OrchestratorState, keep: int = 100) -> int:
 def merge_work_items(
     state: OrchestratorState, new_items: list[WorkItem]
 ) -> int:
-    """Add work items to the queue, deduplicating by ID. Returns count added."""
-    from .models import WorkItem
+    """Add work items to the queue, deduplicating by ID. Returns count added.
+
+    Args:
+        state: The current OrchestratorState object.
+        new_items: A list of new WorkItem objects to add.
+
+    Returns:
+        The number of new work items successfully added to the queue.
+    """
+    from radioactive_ralph.models import WorkItem
 
     existing_ids = {item.id for item in state.work_queue}
     active_ids = {run.task.id for run in state.active_runs}

@@ -19,6 +19,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from pathlib import Path
+from typing import Any, Callable
 
 import git
 
@@ -39,7 +40,7 @@ def _open_repo(path: str | Path) -> git.Repo:
     """
     try:
         return git.Repo(str(path), search_parent_directories=True)
-    except git.InvalidGitRepositoryError as e:
+    except (git.InvalidGitRepositoryError, git.NoSuchPathError) as e:
         raise ValueError(f"Not a git repository: {path}") from e
 
 
@@ -51,23 +52,47 @@ class GitClient:
 
     Args:
         repo_path: Path to the git repository root (or any subdirectory).
-
-    Example::
-
-        client = GitClient("/srv/repos/my-project")
-        url = await client.get_remote_url()
     """
 
     def __init__(self, repo_path: str | Path) -> None:
-        self._path = Path(repo_path)
+        """Initialize the git client.
 
-    async def _run(self, fn, *args, **kwargs):  # type: ignore[no-untyped-def]
-        """Run a synchronous function in a thread, returning its result."""
+        Args:
+            repo_path: Local path to the repository.
+        """
+        self._path = Path(repo_path)
+        self._repo_cache: git.Repo | None = None
+        self._lock = asyncio.Lock()
+
+    async def _run(self, fn: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
+        """Run a synchronous function in a thread, returning its result.
+
+        Args:
+            fn: The synchronous function to execute.
+            *args: Positional arguments for the function.
+            **kwargs: Keyword arguments for the function.
+
+        Returns:
+            The result of the function call.
+        """
         return await asyncio.to_thread(fn, *args, **kwargs)
 
     async def _repo(self) -> git.Repo:
-        """Open the repository (thread-safe, cached per call)."""
-        return await self._run(_open_repo, self._path)
+        """Open and cache the git repository instance.
+
+        Uses an asyncio.Lock to ensure thread-safe initialization.
+
+        Returns:
+            The cached :class:`git.Repo` instance.
+        """
+        async with self._lock:
+            if self._repo_cache is None:
+                self._repo_cache = await self._run(_open_repo, self._path)
+            return self._repo_cache
+
+    def clear_cache(self) -> None:
+        """Invalidate the cached repository instance."""
+        self._repo_cache = None
 
     async def get_remote_url(self, remote: str = "origin") -> str | None:
         """Return the URL of a named remote, or None if not found.
@@ -94,7 +119,7 @@ class GitClient:
         try:
             repo = await self._repo()
             return await self._run(lambda r: r.active_branch.name, repo)
-        except TypeError:
+        except (TypeError, ValueError):
             return None  # detached HEAD
 
     async def pull(self, remote: str = "origin", ff_only: bool = True) -> bool:
@@ -109,11 +134,13 @@ class GitClient:
         """
         def _pull(r: git.Repo) -> bool:
             try:
-                kwargs: dict = {"ff_only": ff_only} if ff_only else {}
-                r.remotes[remote].pull(**kwargs)
+                # remote(name) returns a Remote object
+                rem = r.remote(remote)
+                kwargs: dict[str, Any] = {"ff_only": ff_only} if ff_only else {}
+                rem.pull(**kwargs)
                 return True
-            except git.GitCommandError as e:
-                logger.warning("git pull failed: %s", e)
+            except (git.GitCommandError, ValueError) as e:
+                logger.warning("git pull failed for %s: %s", self._path, e)
                 return False
 
         repo = await self._repo()

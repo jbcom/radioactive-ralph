@@ -20,7 +20,15 @@ from radioactive_ralph.config import RadioactiveRalphConfig, load_config
 
 @pytest.fixture(autouse=True)
 def _clear_ralph_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Wipe any RALPH_* env vars so each test starts from a clean slate."""
+    """Wipe any RALPH_* env vars so each test starts from a clean slate.
+
+    Args:
+        monkeypatch: Description of monkeypatch.
+
+    Returns:
+        Description of return value.
+
+    """
     import os
 
     for key in list(os.environ):
@@ -30,7 +38,15 @@ def _clear_ralph_env(monkeypatch: pytest.MonkeyPatch) -> None:
 
 @pytest.fixture
 def toml_config(tmp_path: Path) -> Path:
-    """Write a minimal TOML fixture and return its path."""
+    """Write a minimal TOML fixture and return its path.
+
+    Args:
+        tmp_path: Description of tmp_path.
+
+    Returns:
+        Description of return value.
+
+    """
     cfg = tmp_path / "config.toml"
     cfg.write_text(
         'default_model = "claude-from-toml"\n'
@@ -47,7 +63,16 @@ def toml_config(tmp_path: Path) -> Path:
 
 
 def test_defaults_when_no_toml_no_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    """With no TOML and no env vars, defaults must win."""
+    """With no TOML and no env vars, defaults must win.
+
+    Args:
+        monkeypatch: Description of monkeypatch.
+        tmp_path: Description of tmp_path.
+
+    Returns:
+        Description of return value.
+
+    """
     monkeypatch.setenv("RALPH_CONFIG_PATH", str(tmp_path / "does-not-exist.toml"))
     cfg = RadioactiveRalphConfig()
     assert cfg.default_model == "claude-sonnet-4-6"
@@ -59,7 +84,16 @@ def test_defaults_when_no_toml_no_env(monkeypatch: pytest.MonkeyPatch, tmp_path:
 
 
 def test_toml_overrides_defaults(toml_config: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """A present TOML file should override the built-in defaults."""
+    """A present TOML file should override the built-in defaults.
+
+    Args:
+        toml_config: Description of toml_config.
+        monkeypatch: Description of monkeypatch.
+
+    Returns:
+        Description of return value.
+
+    """
     monkeypatch.setenv("RALPH_CONFIG_PATH", str(toml_config))
     cfg = RadioactiveRalphConfig()
     assert cfg.default_model == "claude-from-toml"
@@ -71,7 +105,16 @@ def test_toml_overrides_defaults(toml_config: Path, monkeypatch: pytest.MonkeyPa
 
 
 def test_env_overrides_toml(toml_config: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """RALPH_DEFAULT_MODEL env var must beat the TOML file."""
+    """RALPH_DEFAULT_MODEL env var must beat the TOML file.
+
+    Args:
+        toml_config: Description of toml_config.
+        monkeypatch: Description of monkeypatch.
+
+    Returns:
+        Description of return value.
+
+    """
     monkeypatch.setenv("RALPH_CONFIG_PATH", str(toml_config))
     monkeypatch.setenv("RALPH_DEFAULT_MODEL", "claude-from-env")
     monkeypatch.setenv("RALPH_MAX_PARALLEL_AGENTS", "42")
@@ -86,7 +129,16 @@ def test_env_overrides_toml(toml_config: Path, monkeypatch: pytest.MonkeyPatch) 
 def test_init_overrides_env_and_toml(
     toml_config: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Explicit constructor kwargs are the highest-priority source."""
+    """Explicit constructor kwargs are the highest-priority source.
+
+    Args:
+        toml_config: Description of toml_config.
+        monkeypatch: Description of monkeypatch.
+
+    Returns:
+        Description of return value.
+
+    """
     monkeypatch.setenv("RALPH_CONFIG_PATH", str(toml_config))
     monkeypatch.setenv("RALPH_DEFAULT_MODEL", "claude-from-env")
     cfg = RadioactiveRalphConfig(default_model="claude-from-init", max_parallel_agents=1)
@@ -97,7 +149,16 @@ def test_init_overrides_env_and_toml(
 def test_ralph_config_path_env_var_is_honored(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """RALPH_CONFIG_PATH should redirect the TOML source to a custom file."""
+    """RALPH_CONFIG_PATH should redirect the TOML source to a custom file.
+
+    Args:
+        tmp_path: Description of tmp_path.
+        monkeypatch: Description of monkeypatch.
+
+    Returns:
+        Description of return value.
+
+    """
     custom = tmp_path / "custom.toml"
     custom.write_text('default_model = "from-custom"\n', encoding="utf-8")
     monkeypatch.setenv("RALPH_CONFIG_PATH", str(custom))
@@ -108,7 +169,16 @@ def test_ralph_config_path_env_var_is_honored(
 def test_load_config_helper_sets_env_var(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """load_config(path=...) routes through the RALPH_CONFIG_PATH env var."""
+    """load_config(path=...) routes through the RALPH_CONFIG_PATH env var.
+
+    Args:
+        tmp_path: Description of tmp_path.
+        monkeypatch: Description of monkeypatch.
+
+    Returns:
+        Description of return value.
+
+    """
     custom = tmp_path / "explicit.toml"
     custom.write_text('default_model = "from-explicit"\n', encoding="utf-8")
     cfg = load_config(custom)
@@ -116,7 +186,16 @@ def test_load_config_helper_sets_env_var(
 
 
 def test_load_config_overrides_win(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """load_config(**overrides) must bypass env + TOML for the named keys."""
+    """load_config(**overrides) must bypass env + TOML for the named keys.
+
+    Args:
+        tmp_path: Description of tmp_path.
+        monkeypatch: Description of monkeypatch.
+
+    Returns:
+        Description of return value.
+
+    """
     custom = tmp_path / "explicit.toml"
     custom.write_text(
         'default_model = "toml-value"\nmax_parallel_agents = 3\n',
@@ -132,7 +211,16 @@ def test_load_config_overrides_win(tmp_path: Path, monkeypatch: pytest.MonkeyPat
 def test_attribution_disabled_produces_empty_strings(
     toml_config: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """When attribution_enabled=False, both helper strings collapse."""
+    """When attribution_enabled=False, both helper strings collapse.
+
+    Args:
+        toml_config: Description of toml_config.
+        monkeypatch: Description of monkeypatch.
+
+    Returns:
+        Description of return value.
+
+    """
     monkeypatch.setenv("RALPH_CONFIG_PATH", str(toml_config))
     cfg = RadioactiveRalphConfig()
     assert cfg.attribution_enabled is False
@@ -143,7 +231,16 @@ def test_attribution_disabled_produces_empty_strings(
 def test_attribution_enabled_by_default(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """When attribution is on, both helpers produce non-empty strings."""
+    """When attribution is on, both helpers produce non-empty strings.
+
+    Args:
+        monkeypatch: Description of monkeypatch.
+        tmp_path: Description of tmp_path.
+
+    Returns:
+        Description of return value.
+
+    """
     monkeypatch.setenv("RALPH_CONFIG_PATH", str(tmp_path / "missing.toml"))
     cfg = RadioactiveRalphConfig()
     assert cfg.attribution_enabled is True
@@ -154,7 +251,16 @@ def test_attribution_enabled_by_default(
 def test_resolve_state_path_defaults_to_home(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """With no explicit state_path, resolve_state_path uses ~/.radioactive-ralph."""
+    """With no explicit state_path, resolve_state_path uses ~/.radioactive-ralph.
+
+    Args:
+        monkeypatch: Description of monkeypatch.
+        tmp_path: Description of tmp_path.
+
+    Returns:
+        Description of return value.
+
+    """
     monkeypatch.setenv("RALPH_CONFIG_PATH", str(tmp_path / "missing.toml"))
     cfg = RadioactiveRalphConfig()
     resolved = cfg.resolve_state_path()
@@ -165,7 +271,16 @@ def test_resolve_state_path_defaults_to_home(
 def test_resolve_state_path_expands_user(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """An explicit state_path honoring ~ must be expanded."""
+    """An explicit state_path honoring ~ must be expanded.
+
+    Args:
+        monkeypatch: Description of monkeypatch.
+        tmp_path: Description of tmp_path.
+
+    Returns:
+        Description of return value.
+
+    """
     monkeypatch.setenv("RALPH_CONFIG_PATH", str(tmp_path / "missing.toml"))
     cfg = RadioactiveRalphConfig(state_path="~/.custom/state.json")
     resolved = cfg.resolve_state_path()
@@ -176,7 +291,16 @@ def test_resolve_state_path_expands_user(
 def test_malformed_toml_falls_back_to_defaults(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Parse errors in the TOML file are swallowed — defaults still apply."""
+    """Parse errors in the TOML file are swallowed — defaults still apply.
+
+    Args:
+        tmp_path: Description of tmp_path.
+        monkeypatch: Description of monkeypatch.
+
+    Returns:
+        Description of return value.
+
+    """
     bad = tmp_path / "broken.toml"
     bad.write_text("this is not valid TOML = = =\n[[[", encoding="utf-8")
     monkeypatch.setenv("RALPH_CONFIG_PATH", str(bad))
