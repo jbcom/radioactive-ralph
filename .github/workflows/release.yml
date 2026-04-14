@@ -5,22 +5,49 @@ on:
     tags: ["v*"]
 
 permissions:
-  contents: read
+  contents: write
+  packages: write
   id-token: write
 
 jobs:
-  publish-pypi:
-    name: Publish to PyPI
+  goreleaser:
+    name: GoReleaser
     runs-on: ubuntu-latest
-    permissions:
-      id-token: write
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-      - uses: astral-sh/setup-uv@cec208311dfd045dd5311c1add060b2062131d57 # v8.0.0
         with:
-          python-version: "3.12"
-          enable-cache: true
-      - name: Build distribution
-        run: uv build
-      - name: Publish to PyPI
-        uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b # v1.14.0
+          fetch-depth: 0
+      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+        with:
+          go-version-file: go.mod
+      - uses: sigstore/cosign-installer@d58896d6a1865668819e1d91763c7751a165e159 # v3.9.1
+
+      # Pre-flight: fail fast with a readable error if a required secret
+      # is unset, rather than waiting for GoReleaser to get a cryptic
+      # "token invalid" response mid-release. GitHub Actions masks any
+      # secret value in logs automatically, and this step only checks
+      # presence via `[[ -z ]]` without echoing the value.
+      - name: Verify release secrets are set
+        env:
+          BREW_TOKEN_SET: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN != '' }}
+          SCOOP_TOKEN_SET: ${{ secrets.SCOOP_BUCKET_GITHUB_TOKEN != '' }}
+        run: |
+          if [[ "$BREW_TOKEN_SET" != "true" ]]; then
+            echo "::error::HOMEBREW_TAP_GITHUB_TOKEN secret is not configured"
+            exit 1
+          fi
+          if [[ "$SCOOP_TOKEN_SET" != "true" ]]; then
+            echo "::error::SCOOP_BUCKET_GITHUB_TOKEN secret is not configured"
+            exit 1
+          fi
+          echo "Release secrets verified."
+
+      - uses: goreleaser/goreleaser-action@9ed2f89a662bf1735a48bc8557fd212fa902bebf # v6.4.0
+        with:
+          distribution: goreleaser
+          version: "~> v2"
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
+          SCOOP_BUCKET_GITHUB_TOKEN: ${{ secrets.SCOOP_BUCKET_GITHUB_TOKEN }}

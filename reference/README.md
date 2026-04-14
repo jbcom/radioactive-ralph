@@ -1,0 +1,30 @@
+# reference/ — the original Python implementation
+
+This directory contains the original Python implementation of radioactive-ralph
+as it existed at v0.5.1. The project is being rewritten in Go — see
+[`../docs/plans/2026-04-14-radioactive-ralph-rewrite.prq.md`](../docs/plans/2026-04-14-radioactive-ralph-rewrite.prq.md)
+for the rationale and the four-milestone plan.
+
+Nothing here is maintained or wired into CI. It is preserved to:
+
+1. Keep git history navigable via `git log --follow reference/src/...`.
+2. Give the Go rewrite a side-by-side reference for the preserved-idea
+   pieces (Ralph's personality voice, variant vocabulary, work-priority
+   thinking).
+
+When the Go rewrite reaches M4 (release of 1.0.0), this entire directory
+will be deleted in one commit. The `radioactive-ralph` package on PyPI
+at 0.5.1 remains available for anyone who pinned to it; the 1.0.0 release
+will be the Go binary only.
+
+## Running the Python code (if you really need to)
+
+```bash
+cd reference
+uv sync --all-extras
+uv run --all-extras pytest
+```
+
+Not recommended. Most of the daemon logic here is stubbed with
+`NotImplementedError` pointing at the PRD — the M1 PR that landed right
+before the Go pivot removed the broken implementations.

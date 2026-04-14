@@ -1,8 +1,35 @@
+# Go
+/ralph
+/ralph.exe
+/dist/
+/bin/
+*.test
+*.out
+coverage.txt
+go.work
+go.work.sum
+
+# GoReleaser
+/dist/
+/.goreleaser.yaml.bak
+
+# Editors
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Session/transient
+.remember/
+
+# Python (kept for reference/ tree)
 __pycache__/
 *.py[cod]
 *.egg-info/
-dist/
-build/
 .eggs/
 .venv/
 venv/
@@ -11,5 +38,6 @@ _build/
 coverage.xml
 coverage-*.xml
 pytest-results-*.xml
+
+# Generic logs
 *.log
-.DS_Store
