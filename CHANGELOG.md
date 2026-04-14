@@ -1,6 +1,6 @@
 ---
 title: CHANGELOG
-updated: 2026-04-10
+updated: 2026-04-14
 status: current
 ---
 
@@ -8,6 +8,52 @@ status: current
 
 All notable changes to this project will be documented in this file.
 Format: [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/), [Semantic Versioning](https://semver.org/).
+
+## [Unreleased]
+
+### Changed
+
+- **Architectural pivot** — the daemon is being rewritten into a per-repo
+  meta-orchestrator that owns managed `claude -p` subprocesses via stream-json
+  stdin/stdout. Rationale and full plan in
+  [`docs/plans/2026-04-14-radioactive-ralph-rewrite.prq.md`](docs/plans/2026-04-14-radioactive-ralph-rewrite.prq.md).
+- `.claude-plugin/marketplace.json` — marketplace renamed to `jbcom-plugins`,
+  plugin renamed to `ralph`, `strict: false`, skills listed explicitly. The
+  previous name collision (`radioactive-ralph@radioactive-ralph`) made the
+  install invocation ambiguous; the new invocation is
+  `claude plugin install ralph@jbcom-plugins`.
+- README install + command documentation corrected to match the real CLI.
+  The four phantom commands (`dashboard`, `discover`, `pr list/merge`,
+  `install-skill`) and the `claude --print subprocesses` fiction are gone.
+- Auth helpers moved from `github_client.py` to `forge/auth.py` where they
+  properly belong alongside the `forge/github.py` that uses them.
+
+### Removed
+
+- `src/radioactive_ralph/github_client.py` (the legacy `GitHubClient` class).
+  Dead code — `forge/github.py` was already the real implementation.
+- `.claude-plugin/plugin.json` — redundant with `strict: false` marketplace entry.
+
+### Deprecated / stubbed pending rewrite
+
+- `Orchestrator.run()` and `Orchestrator.stop()` raise `NotImplementedError`
+  with a pointer to the PRD. Inner helpers (`_merge_ready`, `_review_pending`,
+  `_should_discover`) preserved as reusable building blocks for M2.
+- `agent_runner.run_parallel_agents()` raises `NotImplementedError`. The
+  previous implementation called `claude --message --yes`, which is not a
+  real Claude CLI flag. Replacement lands in M2 (stream-json subprocess
+  control).
+- `ralph run` CLI subcommand exits 2 with the rewrite pointer.
+
+### Fixed
+
+- `tests/test_cli.py::test_main_verbose` had an empty `pass` body; now
+  asserts `--verbose` dispatches through `logging.basicConfig` with
+  `DEBUG` level.
+- `tests/test_orchestrator.py::test_step_spawns_agents` passed
+  `repo_name` as a Pydantic kwarg where it's defined as a computed
+  property; the test is removed (the underlying `_step` method is
+  stubbed pending M2).
 
 ## [0.5.1](https://github.com/jbcom/radioactive-ralph/compare/v0.5.0...v0.5.1) (2026-04-10)
 

@@ -133,6 +133,7 @@ async def merge_pr(pr: PRInfo, repo_path: Path) -> bool:
         async with get_forge_client(remote_url) as forge:
             # Reconstruct ForgePR for the client
             from radioactive_ralph.forge.base import ForgePR
+
             f_pr = ForgePR(
                 number=pr.number,
                 title=pr.title,

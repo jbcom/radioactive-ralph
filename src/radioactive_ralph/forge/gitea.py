@@ -31,9 +31,7 @@ def _discover_gitea_token() -> str:
         if tok := os.environ.get(var):
             logger.debug("Gitea token from %s", var)
             return tok
-    raise AuthError(
-        "No Gitea/Forgejo token found. Set GITEA_TOKEN or FORGEJO_TOKEN."
-    )
+    raise AuthError("No Gitea/Forgejo token found. Set GITEA_TOKEN or FORGEJO_TOKEN.")
 
 
 def _parse_status_state(status: str) -> CIState:
@@ -60,7 +58,7 @@ class GiteaForge(ForgeClient):
         self,
         info: ForgeInfo,
         token: str | None = None,
-        http_client: httpx.AsyncClient | None = None
+        http_client: httpx.AsyncClient | None = None,
     ) -> None:
         """Initialize the Gitea forge client.
 
@@ -109,7 +107,8 @@ class GiteaForge(ForgeClient):
         updated_raw = raw.get("updated_at", "")
         updated_at = (
             datetime.fromisoformat(updated_raw.replace("Z", "+00:00"))
-            if updated_raw else datetime.now(UTC)
+            if updated_raw
+            else datetime.now(UTC)
         )
         head = raw.get("head", {})
         return ForgePR(
@@ -127,7 +126,8 @@ class GiteaForge(ForgeClient):
         """List pull requests for the repo."""
         raw = await self._get(
             f"/repos/{self.info.slug}/pulls",
-            state=state, limit=50,
+            state=state,
+            limit=50,
         )
         return [self._parse_pr(r) for r in raw]
 

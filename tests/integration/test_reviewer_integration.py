@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-import pytest
-from unittest.mock import AsyncMock, MagicMock
-from pathlib import Path
 from datetime import UTC, datetime
+from pathlib import Path
+
+import pytest
 
 from radioactive_ralph.models import PRInfo, PRStatus, ReviewSeverity
 from radioactive_ralph.reviewer import review_pr
@@ -23,12 +23,13 @@ async def test_review_pr_integration(mocker) -> None:
         url="https://github.com/org/repo/pull/42",
         status=PRStatus.NEEDS_REVIEW,
         updated_at=datetime.now(UTC),
-        ci_passed=True
+        ci_passed=True,
     )
-    
+
     # 1. Mock ForgeClient
-    mock_forge = MagicMock()
-    mock_forge.get_pr_diff = AsyncMock(return_value="""
+    mock_forge = mocker.MagicMock()
+    mock_forge.get_pr_diff = mocker.AsyncMock(
+        return_value="""
 diff --git a/src/main.py b/src/main.py
 index 123..456 100644
 --- a/src/main.py
@@ -38,12 +39,16 @@ index 123..456 100644
 -    pass
 +    print("Hello World")
 +    eval(input())  # Security risk!
-""")
+"""
+    )
 
     # 2. Mock Anthropic client
-    mock_anthropic = MagicMock()
-    mock_anthropic.messages.create = AsyncMock(return_value=MagicMock(
-        content=[MagicMock(text="""
+    mock_anthropic = mocker.MagicMock()
+    mock_anthropic.messages.create = mocker.AsyncMock(
+        return_value=mocker.MagicMock(
+            content=[
+                mocker.MagicMock(
+                    text="""
 ```json
 {
   "approved": false,
@@ -59,22 +64,22 @@ index 123..456 100644
   ]
 }
 ```
-""")]
-    ))
+"""
+                )
+            ]
+        )
+    )
 
     # 3. Run review
     result = await review_pr(
-        pr, 
-        repo_path=Path("/tmp/fake-repo"), 
-        forge=mock_forge,
-        client=mock_anthropic
+        pr, repo_path=Path("/tmp/fake-repo"), forge=mock_forge, client=mock_anthropic
     )
-    
+
     assert result.approved is False
     assert len(result.findings) == 1
     assert result.findings[0].severity == ReviewSeverity.ERROR
     assert "eval()" in result.findings[0].issue
-    
+
     # Verify forge was called
     mock_forge.get_pr_diff.assert_called_once()
     # Verify anthropic was called with the diff

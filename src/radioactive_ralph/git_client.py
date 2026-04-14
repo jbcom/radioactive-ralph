@@ -111,6 +111,7 @@ class GitClient:
         Returns:
             True if pull succeeded, False on error.
         """
+
         def _pull(r: git.Repo) -> bool:
             try:
                 rem = r.remote(remote)
@@ -148,6 +149,7 @@ class GitClient:
         Returns:
             Dict where keys are remote names and values are URLs.
         """
+
         def _remotes(r: git.Repo) -> dict[str, str]:
             return {str(rem.name): str(rem.url) for rem in r.remotes}
 

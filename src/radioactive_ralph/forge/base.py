@@ -26,9 +26,9 @@ class CIState(Enum):
 class ForgeInfo:
     """Parsed metadata from a git remote URL."""
 
-    host: str          # e.g. "github.com", "gitlab.com", "git.example.com"
-    slug: str          # e.g. "jbcom/radioactive-ralph"
-    forge_type: str    # "github" | "gitlab" | "gitea"
+    host: str  # e.g. "github.com", "gitlab.com", "git.example.com"
+    slug: str  # e.g. "jbcom/radioactive-ralph"
+    forge_type: str  # "github" | "gitlab" | "gitea"
     api_base_url: str  # e.g. "https://api.github.com"
 
     @property
@@ -98,8 +98,8 @@ class PRCreateParams:
 
     title: str
     body: str
-    head: str          # source branch
-    base: str          # target branch (default: main)
+    head: str  # source branch
+    base: str  # target branch (default: main)
     draft: bool = False
 
 
@@ -111,11 +111,7 @@ class ForgeClient(ABC):
         http_client: Optional pre-configured httpx.AsyncClient.
     """
 
-    def __init__(
-        self,
-        info: ForgeInfo,
-        http_client: httpx.AsyncClient | None = None
-    ) -> None:
+    def __init__(self, info: ForgeInfo, http_client: httpx.AsyncClient | None = None) -> None:
         self.info = info
         self._external_client = http_client
         self._http: httpx.AsyncClient | None = http_client

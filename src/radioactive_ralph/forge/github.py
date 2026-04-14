@@ -16,6 +16,7 @@ from typing import Any
 
 import httpx
 
+from radioactive_ralph.forge.auth import GITHUB_API_VERSION, get_github_token
 from radioactive_ralph.forge.base import (
     CIState,
     ForgeCI,
@@ -24,7 +25,6 @@ from radioactive_ralph.forge.base import (
     ForgePR,
     PRCreateParams,
 )
-from radioactive_ralph.github_client import GITHUB_API_VERSION, get_github_token
 
 logger = logging.getLogger(__name__)
 
@@ -81,7 +81,7 @@ class GitHubForge(ForgeClient):
         self,
         info: ForgeInfo,
         token: str | None = None,
-        http_client: httpx.AsyncClient | None = None
+        http_client: httpx.AsyncClient | None = None,
     ) -> None:
         """Initialize the GitHub forge client.
 
@@ -207,7 +207,8 @@ class GitHubForge(ForgeClient):
         updated_raw = raw.get("updated_at", "")
         updated_at = (
             datetime.fromisoformat(updated_raw.replace("Z", "+00:00"))
-            if updated_raw else datetime.now(UTC)
+            if updated_raw
+            else datetime.now(UTC)
         )
         return ForgePR(
             number=raw["number"],
