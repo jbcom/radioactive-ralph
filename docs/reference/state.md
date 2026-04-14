@@ -64,7 +64,7 @@ four-milestone plan.
 
 ### M3 — ten variants + pre-flight + voice
 
-- `VariantProfile` dataclass; ten variant files (≤300 LOC each)
+- `Profile` dataclass; ten variant files (≤300 LOC each)
 - Pre-flight wizard with shared question registry (CLI + skill)
 - Voice template library per variant
 - Safety floors with two-step override for destructive variants

@@ -80,7 +80,7 @@ Every variant declares defaults for four dimensions; each can be overridden in
 
 See the [variants index](../variants/index.md) for the current variant list.
 In M3 this is replaced by an auto-generated `variants-matrix.md` sourced
-directly from the `VariantProfile` dataclasses.
+directly from the `Profile` dataclasses.
 
 ## Supervisor lifecycle
 
@@ -153,7 +153,7 @@ it in the CLI or through a skill — the registry is shared.
   mirror, retry; destructive variants default to `full` object store.
 - **Multiplexer macOS quirks** — tmux strongly recommended; stdlib setsid
   fallback rather than relying on `python-daemon`.
-- **Scope creep** — public API = CLI + `VariantProfile` extension point only.
+- **Scope creep** — public API = CLI + `Profile` extension point only.
 
 See the [PRD](../plans/2026-04-14-radioactive-ralph-rewrite.prq.md) for the
 full risk register.

@@ -529,7 +529,42 @@ operator.
 
 Rich behavioral lore moves into `internal/variant/green.go` docstrings
 and `docs/variants/green-ralph.md` which auto-regenerates from
-`VariantProfile` at build time (M3).
+`Profile` at build time (M3).
+
+### 4.6 Plans discipline + Fixit as advisor
+
+Every repo using radioactive-ralph must have `.radioactive-ralph/plans/index.md`
+with YAML frontmatter (`status`, `updated`, `domain`,
+`variant_recommendation`) referencing at least one real plan file.
+Alternatively, `[daemon] plans_dir = "xdg"` in `config.toml` puts plans
+under XDG state instead of in-repo (private plans on public repos).
+
+Nine of the ten variants **refuse to run** without a valid plans
+setup. The refusal message directs operators to `ralph run --variant
+fixit` — because `fixit-ralph` is the **only** variant capable of
+reasoning about which Ralph to use.
+
+Fixit auto-detects its mode from the plans state:
+
+- **Advisor mode** — no plans dir, malformed `index.md`, or
+  `--advise` passed. Walks the codebase + any provided description,
+  writes a recommendation to
+  `.radioactive-ralph/plans/<topic>-advisor.md`. Primary variant
+  always; alternate only when real tradeoffs exist. If Fixit
+  recommends itself that's fine — still the only Ralph that made the
+  call. With `--auto-handoff` AND high confidence AND no tradeoffs,
+  Fixit spawns the recommended variant as a follow-up.
+
+- **ROI banger mode** — valid plans setup present. Classic Joe-Fixit
+  persona: N cycles, highest-ROI task per cycle, ≤5 files / ≤200 LOC
+  PRs, bill at the end.
+
+This structure enforces plans-first discipline: no variant grinds
+against a repo that hasn't had its scope examined, and exactly one
+variant knows how to do that examination. The rename from
+`joe-fixit-ralph` to `fixit-ralph` (2026-04-14) reflects this
+expanded role — the Joe-Fixit persona is preserved as character
+flavor, but the variant does more than ROI now.
 
 ---
 
@@ -605,7 +640,7 @@ passes `go test ./...` + `golangci-lint run`.
 
 ### M3 — Ten variants + pre-flight + voice + worktree orchestration
 
-- **M3.T1 — `internal/variant/profile.go`**: `VariantProfile`,
+- **M3.T1 — `internal/variant/profile.go`**: `Profile`,
   `Stage`, `Model`, `TerminationPolicy`, `PreflightQuestion`,
   `VoiceProfile`, `SafetyFloors`, `BiasCategory`, `BiasSnippet` types.
 - **M3.T2 — Ten variant files**: `internal/variant/{green,grey,red,
@@ -624,7 +659,7 @@ passes `go test ./...` + `golangci-lint run`.
 - **M3.T7 — Skills rewritten to ≤30 lines**: each SKILL.md delegates
   to `ralph run`.
 - **M3.T8 — Auto-generated variants-matrix.md**: `cmd/matrixgen` reads
-  every `VariantProfile`, emits `docs/reference/variants-matrix.md`.
+  every `Profile`, emits `docs/reference/variants-matrix.md`.
   CI drift check fails on diff.
 - **M3.T9 — Per-variant docs pages**: `docs/variants/*.md` auto-generated
   from profiles + hand-written lore sections allowed above/below.
@@ -781,7 +816,7 @@ working tree. Service-context detection refuses floor-gated variants
 under launchd/systemd.
 
 ### R6 — Scope creep
-Explicit out-of-scope list. Public API = CLI + `VariantProfile` fields.
+Explicit out-of-scope list. Public API = CLI + `Profile` fields.
 No internal package is semver-stable.
 
 ### R7 — `config.toml` teammate breakage

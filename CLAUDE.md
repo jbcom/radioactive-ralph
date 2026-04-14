@@ -22,7 +22,7 @@ cmd/ralph/                         # kong CLI entry point
 internal/xdg/                      # state dir + repo-hash helpers
 internal/config/                   # kong args + TOML loader + Resolve() with safety floors
 internal/inventory/                # shell-based skill/MCP/plugin discovery
-internal/variant/                  # VariantProfile + skill biases (M3 fills)
+internal/variant/                  # Profile + skill biases (M3 fills)
 internal/workspace/                # mirror + worktree + LFS (four orthogonal knobs)
 internal/db/                       # SQLite + sqlite-vec event log, WAL
 internal/ipc/                      # Unix socket server + client

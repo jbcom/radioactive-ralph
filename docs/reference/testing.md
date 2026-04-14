@@ -81,7 +81,7 @@ M2 adds `tests/daemon/` covering:
 - `ClaudeSession` stream-json parsing (mocked subprocess)
 
 M3 adds `tests/variants/` covering:
-- Every `VariantProfile` loads with valid fields
+- Every `Profile` loads with valid fields
 - Safety-floor enforcement (two-step override paths)
 - Tool allowlist subset assertion per variant
 - Pre-flight question registry rendering
