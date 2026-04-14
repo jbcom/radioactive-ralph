@@ -7,7 +7,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 README = ROOT / "README.md"
-PLUGIN = ROOT / ".claude-plugin" / "plugin.json"
+MARKETPLACE = ROOT / ".claude-plugin" / "marketplace.json"
 PYPROJECT = ROOT / "pyproject.toml"
 DISALLOWED_PATTERNS = {
     r"docs/content": "remove docs/content shadow-tree references",
@@ -55,7 +55,22 @@ def project_version() -> str:
 
 
 def plugin_version() -> str:
-    return json.loads(PLUGIN.read_text())["version"]
+    """Read the plugin version from the marketplace.json metadata.
+
+    Under `strict: false`, the plugin's version lives in the marketplace entry
+    rather than a separate plugin.json. We track `metadata.version` for the
+    marketplace overall; individual plugins can declare their own `version`
+    inside their entry (falling back to marketplace metadata if missing).
+    """
+    data = json.loads(MARKETPLACE.read_text())
+    plugins = {p["name"]: p for p in data.get("plugins", [])}
+    ralph = plugins.get("ralph")
+    if ralph and "version" in ralph:
+        return ralph["version"]
+    meta = data.get("metadata", {})
+    if "version" in meta:
+        return meta["version"]
+    raise RuntimeError("Could not find plugin version in marketplace.json")
 
 
 def main() -> int:
@@ -77,7 +92,9 @@ def main() -> int:
         errors.append("docs/content should not exist")
 
     if project_version() != plugin_version():
-        errors.append(".claude-plugin/plugin.json version does not match pyproject.toml")
+        errors.append(
+            ".claude-plugin/marketplace.json plugin/metadata version does not match pyproject.toml"
+        )
 
     for path in iter_files():
         text = path.read_text()

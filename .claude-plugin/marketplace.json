@@ -1,18 +1,46 @@
 {
-  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
-  "name": "radioactive-ralph",
-  "description": "Autonomous continuous development orchestrator for Claude Code. A family of ten Ralph variants, each a genuinely distinct operating mode.",
+  "name": "jbcom-plugins",
   "owner": {
     "name": "jbcom",
     "url": "https://github.com/jbcom"
   },
+  "metadata": {
+    "description": "jbcom's Claude Code plugins. Currently ships radioactive-ralph.",
+    "version": "0.5.1"
+  },
   "plugins": [
     {
-      "name": "radioactive-ralph",
+      "name": "ralph",
       "source": "./",
-      "description": "Ten Ralph variants — green, grey, red, blue, professor, savage, immortal, joe-fixit, old-man, world-breaker. Each one a different autonomous operating mode with its own personality logging and tool constraints.",
+      "strict": false,
+      "version": "0.5.1",
+      "description": "Radioactive Ralph — ten Ralph variants (green, grey, red, blue, professor, joe-fixit, immortal, savage, old-man, world-breaker) for autonomous continuous development. The skills launch a Python daemon that keeps Claude subprocesses alive across days of work.",
+      "homepage": "https://github.com/jbcom/radioactive-ralph",
+      "repository": "https://github.com/jbcom/radioactive-ralph",
+      "license": "MIT",
+      "keywords": [
+        "orchestrator",
+        "autonomous",
+        "loop",
+        "claude-code",
+        "automation",
+        "multi-repo",
+        "pr-management",
+        "ralph"
+      ],
       "category": "automation",
-      "homepage": "https://github.com/jbcom/radioactive-ralph"
+      "skills": [
+        "./skills/green-ralph",
+        "./skills/grey-ralph",
+        "./skills/red-ralph",
+        "./skills/blue-ralph",
+        "./skills/professor-ralph",
+        "./skills/joe-fixit-ralph",
+        "./skills/immortal-ralph",
+        "./skills/savage-ralph",
+        "./skills/old-man-ralph",
+        "./skills/world-breaker-ralph"
+      ]
     }
   ]
 }

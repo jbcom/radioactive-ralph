@@ -1,43 +1,98 @@
 ---
 title: State
-updated: 2026-04-10
+updated: 2026-04-14
 status: current
 domain: context
 ---
 
 # State — radioactive-ralph
 
+The project is mid-rewrite. This page tracks concrete status per component.
+See [the PRD](../plans/2026-04-14-radioactive-ralph-rewrite.prq.md) for the
+four-milestone plan.
+
 ## What's done
 
-- Core Pydantic models (`models.py`) — PR status, work priority, orchestrator state
-- PR manager (`pr_manager.py`) — classify, merge, and scan pull requests across repos
-- Internal reviewer (`reviewer.py`) — Anthropic-powered review with tiered models
-- Work discovery (`work_discovery.py`) — missing files, `docs/STATE.md`, and `docs/DESIGN.md` parsing
-- Agent runner (`agent_runner.py`) — `claude` CLI subprocess orchestration
-- State persistence (`state.py`) — JSON roundtrip, deduplication, pruning
+### M1 (this branch): marketplace + hygiene
+
+- `.claude-plugin/marketplace.json` — marketplace renamed to `jbcom-plugins`,
+  plugin renamed to `ralph`, `strict: false`, skills listed explicitly.
+  Validates under `claude plugin validate .`.
+- README install + command documentation corrected — no more claims of
+  commands that don't exist, no more `claude --print` fiction.
+- Dead code removed — `github_client.py` (the legacy class) deleted.
+  Auth helpers moved to `forge/auth.py` where they belong.
+- Broken implementations stubbed — `Orchestrator.run`,
+  `Orchestrator.stop`, `agent_runner.run_parallel_agents` raise
+  `NotImplementedError` with pointers to the PRD. The inner helpers
+  (`_merge_ready`, `_review_pending`, `_should_discover`) are preserved
+  as reusable building blocks for M2.
+- CLI surface pruned — `ralph status` + `ralph doctor` implemented;
+  `ralph run` is a stub that exits 2 with the PRD pointer.
+- Two broken tests fixed — `test_cli.py::test_main_verbose` had an empty
+  `pass` body; `test_orchestrator.py::test_step_spawns_agents` passed
+  `repo_name` to a Pydantic model where it's a computed property.
+- Domain docs (`architecture.md`, `design.md`, `state.md`, `testing.md`)
+  rewritten to the target architecture.
+
+### Previously done (pre-rewrite, preserved)
+
+- Core Pydantic models (`models.py`)
+- PR manager (`pr_manager.py`) — classify, merge, scan
+- Internal reviewer (`reviewer.py`) — Anthropic-powered with tiered models
+- Work discovery (`work_discovery.py`) — missing-file heuristics
+- State persistence (`state.py`) — JSON roundtrip, dedup, prune
 - Config loader (`config.py`) — TOML + env layering
-- Click CLI (`cli.py`) — `run`, `dashboard`, `status`, `discover`, `pr`, `stop`, `install-skill`
-- Test suite — models, state, work discovery, PR manager
-- Branded Shibuya docs with docs-native IA under `docs/getting-started`, `docs/guides`, `docs/variants`, and `docs/reference`
-- GitHub Actions split into CI validation, `main` docs publishing, tag-based PyPI release, release asset refresh, and automerge
+- Forge abstraction (`forge/`) — GitHub + Gitea + GitLab backends
+- Test suite — 143 tests, covering models, state, forges, reviewer,
+  PR manager, work discovery, dashboard, doctor, CLI, ralph_says
+- Shibuya-themed docs site published at <https://jonbogaty.com/radioactive-ralph/>
+- GitHub Actions split across CI validation, docs publishing, tag-based
+  PyPI release, and automerge
 
-## Next
+## What's planned
 
-- Record and commit `assets/demo.gif`
-- Design and upload `assets/social-preview.png`
-- Produce per-variant SVG icons in `assets/variants/`
-- Build the architecture SVG called for in `assets/ASSETS.md`
-- Add integration coverage for the long-running daemon loop
+### M2 — daemon skeleton + per-repo config + XDG workspace + session control
 
-## Known issues
+- `ralph init` wizard creating `.radioactive-ralph/`
+- `WorkspaceManager` dispatching across four isolation modes
+- SQLite + sqlite-vec event log with WAL
+- Unix socket IPC for `ralph status / attach / enqueue / stop`
+- `ClaudeSession` wrapping `claude -p --input-format stream-json`
+- Multiplexer abstraction (tmux → screen → setsid fallback)
+- `Orchestrator` rewrite as a per-repo supervisor
 
-- The demo GIF and social preview are still intentionally missing assets
-- Some orchestrator follow-up work is still documented in this file rather than promoted into issues
-- Long-running integration scenarios remain manual for now
+### M3 — ten variants + pre-flight + voice
+
+- `VariantProfile` dataclass; ten variant files (≤300 LOC each)
+- Pre-flight wizard with shared question registry (CLI + skill)
+- Voice template library per variant
+- Safety floors with two-step override for destructive variants
+- Auto-generated variants-matrix.md (CI drift check)
+- Skills rewritten as thin entry points (<30 lines each)
+
+### M4 — integration harness + doctor + release
+
+- Integration test scenarios (grey-ralph end-to-end; session death
+  recovery; pre-flight refusal; multiplexer fallback; LFS detection;
+  hook preservation; shared-object corruption recovery)
+- `ralph doctor` rewrite with concrete remediation output
+- Demo GIF recording the full flow
+- Release 1.0.0 to PyPI
+
+## Known issues (during rewrite)
+
+- `ralph run` is stubbed (exits 2). Real daemon lands in M2.
+- Ten variants are still SKILL.md files; behavior is not yet in Python.
+- Mirror-based workspace architecture is documented but not implemented.
+- No `.radioactive-ralph/` directory is created anywhere yet.
 
 ## Active decisions
 
 - Import package name: `radioactive_ralph` (PyPI name: `radioactive-ralph`)
-- State location: `~/.radioactive-ralph/state.json` — never `.claude/`
-- Default docs domain: `https://jonbogaty.com/radioactive-ralph/`
-- Docs source model: root README for GitHub/PyPI, `skills/*/README.md` for skill canon, docs pages for curation and navigation
+- Config location: `.radioactive-ralph/config.toml` per repo (committed)
+- State location: `$XDG_STATE_HOME/radioactive-ralph/<repo-hash>/`
+  (never `.claude/`, never the repo)
+- Docs domain: <https://jonbogaty.com/radioactive-ralph/>
+- Docs source model: README for GitHub/PyPI; skill files for skill canon;
+  `docs/` pages for curated narrative and auto-generated matrices

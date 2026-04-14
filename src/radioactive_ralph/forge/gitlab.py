@@ -35,18 +35,20 @@ def _discover_gitlab_token() -> str:
     try:
         result = subprocess.run(
             ["glab", "auth", "status", "--show-token"],
-            capture_output=True, text=True, timeout=5,
+            capture_output=True,
+            text=True,
+            timeout=5,
         )
         if result.returncode == 0:
             import re
+
             if match := re.search(r"Token: (\S+)", result.stdout):
                 logger.debug("GitLab token from `glab auth status`")
                 return match.group(1)
     except (FileNotFoundError, subprocess.TimeoutExpired):
         pass
     raise AuthError(
-        "No GitLab token found. "
-        "Set GITLAB_TOKEN or GL_TOKEN, or run `glab auth login`."
+        "No GitLab token found. Set GITLAB_TOKEN or GL_TOKEN, or run `glab auth login`."
     )
 
 
@@ -75,7 +77,7 @@ class GitLabForge(ForgeClient):
         self,
         info: ForgeInfo,
         token: str | None = None,
-        http_client: httpx.AsyncClient | None = None
+        http_client: httpx.AsyncClient | None = None,
     ) -> None:
         """Initialize the GitLab forge client.
 
@@ -135,7 +137,8 @@ class GitLabForge(ForgeClient):
         updated_raw = raw.get("updated_at", "")
         updated_at = (
             datetime.fromisoformat(updated_raw.replace("Z", "+00:00"))
-            if updated_raw else datetime.now(UTC)
+            if updated_raw
+            else datetime.now(UTC)
         )
         sha = str(raw.get("sha") or raw.get("diff_refs", {}).get("head_sha", ""))
         return ForgePR(
@@ -155,7 +158,8 @@ class GitLabForge(ForgeClient):
         gl_state = "opened" if state == "open" else state
         raw = await self._get(
             f"/projects/{self._encoded_slug}/merge_requests",
-            state=gl_state, per_page=100,
+            state=gl_state,
+            per_page=100,
         )
         return [self._parse_mr(r) for r in raw]
 
@@ -166,7 +170,8 @@ class GitLabForge(ForgeClient):
         try:
             pipelines = await self._get(
                 f"/projects/{self._encoded_slug}/pipelines",
-                sha=pr.head_sha, per_page=5,
+                sha=pr.head_sha,
+                per_page=5,
             )
         except httpx.HTTPError:
             return ForgeCI(state=CIState.UNKNOWN)

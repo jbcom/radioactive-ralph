@@ -78,7 +78,7 @@ def ralph_panel(variant: Variant, title: str) -> Generator[None, None, None]:
         Panel(
             f"Starting {title}...",
             title=f"Radioactive Ralph - {variant.value}",
-            border_style="magenta"
+            border_style="magenta",
         )
     )
     yield

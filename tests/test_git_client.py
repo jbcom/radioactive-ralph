@@ -1,4 +1,3 @@
-import asyncio
 from pathlib import Path
 
 import git
@@ -9,7 +8,7 @@ from radioactive_ralph.git_client import GitClient, _open_repo
 
 def test_open_repo_success(mocker):
     mock_repo = mocker.patch("git.Repo")
-    repo = _open_repo("/fake/path")
+    _open_repo("/fake/path")
     mock_repo.assert_called_once_with("/fake/path", search_parent_directories=True)
 
 
@@ -50,7 +49,7 @@ async def test_get_remote_url_success(git_client, mocker, mock_repo):
     mock_remote = mocker.Mock()
     mock_remote.url = "https://github.com/org/repo.git"
     mock_repo.remotes = {"origin": mock_remote}
-    
+
     url = await git_client.get_remote_url()
     assert url == "https://github.com/org/repo.git"
 
@@ -59,7 +58,7 @@ async def test_get_remote_url_success(git_client, mocker, mock_repo):
 async def test_get_remote_url_error(git_client, mocker, mock_repo):
     mocker.patch.object(git_client, "_repo", return_value=mock_repo)
     mock_repo.remotes = {}  # This will raise an error when trying to access "origin"
-    
+
     url = await git_client.get_remote_url()
     assert url is None
 
@@ -70,7 +69,7 @@ async def test_current_branch_success(git_client, mocker, mock_repo):
     mock_branch = mocker.Mock()
     mock_branch.name = "main"
     mock_repo.active_branch = mock_branch
-    
+
     branch = await git_client.current_branch()
     assert branch == "main"
 
@@ -79,7 +78,7 @@ async def test_current_branch_success(git_client, mocker, mock_repo):
 async def test_current_branch_detached(git_client, mocker, mock_repo):
     mocker.patch.object(git_client, "_repo", return_value=mock_repo)
     type(mock_repo).active_branch = mocker.PropertyMock(side_effect=TypeError)
-    
+
     branch = await git_client.current_branch()
     assert branch is None
 
@@ -89,7 +88,7 @@ async def test_pull_success(git_client, mocker, mock_repo):
     mocker.patch.object(git_client, "_repo", return_value=mock_repo)
     mock_remote = mocker.Mock()
     mock_repo.remote.return_value = mock_remote
-    
+
     result = await git_client.pull()
     assert result is True
     mock_repo.remote.assert_called_once_with("origin")
@@ -101,7 +100,7 @@ async def test_pull_no_ff(git_client, mocker, mock_repo):
     mocker.patch.object(git_client, "_repo", return_value=mock_repo)
     mock_remote = mocker.Mock()
     mock_repo.remote.return_value = mock_remote
-    
+
     result = await git_client.pull(ff_only=False)
     assert result is True
     mock_remote.pull.assert_called_once_with()
@@ -113,7 +112,7 @@ async def test_pull_error(git_client, mocker, mock_repo):
     mock_remote = mocker.Mock()
     mock_remote.pull.side_effect = git.GitCommandError("pull", 1)
     mock_repo.remote.return_value = mock_remote
-    
+
     result = await git_client.pull()
     assert result is False
 
@@ -122,7 +121,7 @@ async def test_pull_error(git_client, mocker, mock_repo):
 async def test_is_dirty(git_client, mocker, mock_repo):
     mocker.patch.object(git_client, "_repo", return_value=mock_repo)
     mock_repo.is_dirty.return_value = True
-    
+
     is_dirty = await git_client.is_dirty()
     assert is_dirty is True
     mock_repo.is_dirty.assert_called_once()
@@ -136,7 +135,7 @@ async def test_get_head_sha(git_client, mocker, mock_repo):
     mock_head = mocker.Mock()
     mock_head.commit = mock_commit
     mock_repo.head = mock_head
-    
+
     sha = await git_client.get_head_sha()
     assert sha == "abcdef1234567890abcdef1234567890abcdef12"
 
@@ -144,17 +143,17 @@ async def test_get_head_sha(git_client, mocker, mock_repo):
 @pytest.mark.asyncio
 async def test_list_remotes(git_client, mocker, mock_repo):
     mocker.patch.object(git_client, "_repo", return_value=mock_repo)
-    
+
     remote1 = mocker.Mock()
     remote1.name = "origin"
     remote1.url = "git@github.com:org/repo1.git"
-    
+
     remote2 = mocker.Mock()
     remote2.name = "upstream"
     remote2.url = "https://github.com/org/repo2.git"
-    
+
     mock_repo.remotes = [remote1, remote2]
-    
+
     remotes = await git_client.list_remotes()
     assert remotes == {
         "origin": "git@github.com:org/repo1.git",

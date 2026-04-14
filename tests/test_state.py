@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 from datetime import UTC, datetime
+from pathlib import Path
 
 from radioactive_ralph.models import (
     AgentRun,
@@ -25,10 +25,10 @@ def test_load_state_invalid_json(tmp_path: Path, mocker) -> None:
     """Test that loading invalid JSON returns a fresh state."""
     state_file = tmp_path / "bad.json"
     state_file.write_text("{bad json}")
-    
+
     mock_logger = mocker.patch("radioactive_ralph.state.logger")
     state = load_state(state_file)
-    
+
     assert isinstance(state, OrchestratorState)
     assert state.cycle_count == 0
     mock_logger.warning.assert_called_once()
@@ -39,7 +39,7 @@ def test_save_and_load_state(tmp_path: Path) -> None:
     state_file = tmp_path / "state.json"
     state = OrchestratorState(cycle_count=42)
     save_state(state, state_file)
-    
+
     loaded = load_state(state_file)
     assert loaded.cycle_count == 42
 
@@ -48,27 +48,25 @@ def test_save_state_exception(tmp_path: Path, mocker) -> None:
     """Test exception handling during save_state."""
     state = OrchestratorState(cycle_count=42)
     state_file = tmp_path / "state.json"
-    
+
     # Mock mkdir to raise an exception
     mocker.patch("pathlib.Path.mkdir", side_effect=PermissionError("Denied"))
     mock_logger = mocker.patch("radioactive_ralph.state.logger")
-    
+
     save_state(state, state_file)
-    
+
     mock_logger.error.assert_called_once()
     assert not state_file.exists()
 
 
 def test_merge_work_items() -> None:
     """Test that merging work items avoids duplicates by ID."""
-    existing = [
-        WorkItem(id="1", repo_path="p1", description="d1", priority=WorkPriority.LOW)
-    ]
+    existing = [WorkItem(id="1", repo_path="p1", description="d1", priority=WorkPriority.LOW)]
     new_items = [
         WorkItem(id="1", repo_path="p1", description="d1", priority=WorkPriority.LOW),
-        WorkItem(id="2", repo_path="p2", description="d2", priority=WorkPriority.HIGH)
+        WorkItem(id="2", repo_path="p2", description="d2", priority=WorkPriority.HIGH),
     ]
-    
+
     merged = merge_work_items(existing, new_items)
     assert len(merged) == 2
     assert {item.id for item in merged} == {"1", "2"}
@@ -79,9 +77,11 @@ def test_prune_completed() -> None:
     item = WorkItem(id="w1", repo_path="p1", description="d1", priority=WorkPriority.LOW)
     runs = [
         AgentRun(item=item, process_id=1, started_at=datetime.now(UTC)),
-        AgentRun(item=item, process_id=2, started_at=datetime.now(UTC), completed_at=datetime.now(UTC))
+        AgentRun(
+            item=item, process_id=2, started_at=datetime.now(UTC), completed_at=datetime.now(UTC)
+        ),
     ]
-    
+
     active = prune_completed(runs)
     assert len(active) == 1
     assert active[0].process_id == 1

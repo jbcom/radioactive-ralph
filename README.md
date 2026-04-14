@@ -20,10 +20,12 @@ radioactive-ralph drives Claude Code across a portfolio of git repos — continu
 
 ## What it is
 
+radioactive-ralph is currently under significant rewrite. See [`docs/plans/2026-04-14-radioactive-ralph-rewrite.prq.md`](docs/plans/2026-04-14-radioactive-ralph-rewrite.prq.md) for the architectural pivot: per-repo Python daemon that keeps `claude -p` subprocesses alive across days of work, driven from either the CLI directly or from the slash-command skills below.
+
 | Mode | What you get | Best for |
 |---|---|---|
-| Claude Code plugin | Ten Ralph variants installed into Claude Code as a marketplace plugin | In-session autonomy with explicit tool/safety boundaries |
-| Python daemon | `ralph run` loop that survives context resets and spawns `claude --print` subprocesses | Long-running orchestration outside any single Claude session |
+| Claude Code plugin (skills) | Ten Ralph variants — each a slash command that launches the daemon in the background and returns control to the outer session | In-session invocation, the skill handles pre-flight checks and hand-off |
+| Python daemon (CLI) | `ralph init` then `ralph run --variant X` — runs the orchestrator directly outside any Claude session | Long-running orchestration, multi-day autonomous work on a codebase |
 
 ## Meet the Ralphs
 
@@ -45,8 +47,8 @@ See the full [variants index](https://jonbogaty.com/radioactive-ralph/variants/)
 ## Install as a Claude Code plugin
 
 ```bash
-claude plugins marketplace add github:jbcom/radioactive-ralph
-claude plugin install radioactive-ralph@radioactive-ralph
+claude plugin marketplace add jbcom/radioactive-ralph
+claude plugin install ralph@jbcom-plugins
 
 # inside Claude Code
 /green-ralph
@@ -55,24 +57,25 @@ claude plugin install radioactive-ralph@radioactive-ralph
 ## Install as a standalone daemon
 
 ```bash
-uvx radioactive-ralph run
+uvx radioactive-ralph --help
 
 # or install permanently
 pip install radioactive-ralph
-ralph run
+ralph --help
 ```
 
-## Core commands
+## Commands
 
-```bash
-ralph run
-ralph dashboard
-ralph status
-ralph discover
-ralph pr list
-ralph pr merge
-ralph install-skill --all
-```
+The CLI surface during the rewrite. See [the PRD](docs/plans/2026-04-14-radioactive-ralph-rewrite.prq.md) for target shape; implementation status is tracked per-milestone.
+
+| Command | Status | Purpose |
+|---------|--------|---------|
+| `ralph status` | implemented | Show current orchestrator state |
+| `ralph doctor` | implemented | Check environment health |
+| `ralph init` | planned (M2) | Per-repo setup wizard |
+| `ralph run --variant X [--detach]` | planned (M2) | Launch the daemon for a variant |
+| `ralph attach --variant X` | planned (M2) | Stream daemon events from Unix socket |
+| `ralph stop [--variant X]` | planned (M2) | Graceful shutdown |
 
 ## Docs and design system
 

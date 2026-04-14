@@ -1,115 +1,159 @@
 ---
 title: Architecture
-updated: 2026-04-10
+updated: 2026-04-14
 status: current
 domain: technical
 ---
 
 # Architecture — radioactive-ralph
 
-## Two-mode design
+radioactive-ralph is under architectural rewrite. This page describes the
+**target** architecture. See [`docs/plans/2026-04-14-radioactive-ralph-rewrite.prq.md`](../plans/2026-04-14-radioactive-ralph-rewrite.prq.md)
+for the four-milestone rollout plan. Implementation status per component is
+tracked in [state](./state.md).
 
-radioactive-ralph ships in two deployment modes, backed by the same work-discovery,
-PR-classification, and forge-interaction code:
+## Critical design constraint
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│  Mode 1: Claude Code plugin (10 Ralph variants)              │
-│  /green-ralph, /red-ralph, /professor-ralph, …               │
-│  Runs inside an active Claude Code session via the Agent     │
-│  tool. Uses the user's existing auth — no separate API key.  │
-│  Survives: the length of the Claude Code session.            │
-│  Install: claude plugin install radioactive-ralph            │
-└─────────────────────────────────────────────────────────────┘
+Claude Code has no supported mechanism to inject user-role messages into a
+running interactive session from an external process. The only cross-process
+channel is the `--input-format stream-json` stdio protocol in headless
+(`-p`) mode. Every decision below follows from that.
 
-┌─────────────────────────────────────────────────────────────┐
-│  Mode 2: External daemon (this Python package)               │
-│  `ralph run` — Python asyncio daemon, spawns `claude`        │
-│  CLI subprocesses per work item. Lives *outside* any Claude  │
-│  session.                                                    │
-│  Survives: context resets, PR merges, process restarts,      │
-│  rate limits, network blips (via immortal-ralph mode).       │
-│  State: ~/.radioactive-ralph/state.json                      │
-│  Config: pydantic-settings layered over TOML + env vars.     │
-│  Install: pip install radioactive-ralph (or uvx ...)         │
-└─────────────────────────────────────────────────────────────┘
-```
+## Two invocation modes, one daemon engine
 
-Both modes share the same skill family and the same Ralph Wiggum personality
-module (`ralph_says.py`) — the daemon logs in Ralph's voice, the plugin prompts
-the in-session agent to behave like the chosen variant.
+| Mode | How you launch | What happens |
+|------|----------------|--------------|
+| CLI direct | `ralph run --variant X` | Terminal runs the pre-flight wizard, launches the supervisor in a detached multiplexer, returns control |
+| In-session skill | `/green-ralph` inside a Claude session | Skill runs a Ralphspeak pre-flight wizard, shells out to `ralph run --detach`, reports back *"Ralph is playing with his friends"* |
 
-## Module map
+Both modes end up running the same supervisor process with the same variant
+profile. The only difference is who asks the pre-flight questions and in
+what voice.
 
-| Module | Responsibility |
-|--------|---------------|
-| `cli.py` | Click entry point — `ralph run/status/discover/pr/stop` |
-| `orchestrator.py` | Main async daemon loop — 8-phase cycle |
-| `pr_manager.py` | `gh` CLI wrapper — classify, merge, sync |
-| `reviewer.py` | Anthropic API code review — haiku/sonnet tiered |
-| `work_discovery.py` | Repo assessment — missing files, STATE.md, DESIGN.md |
-| `agent_runner.py` | Spawn `claude` CLI subprocesses |
-| `state.py` | JSON state read/write, dedup, prune |
-| `models.py` | All Pydantic models |
-| `config.py` | TOML config loader |
+## Per-repo config directory
 
-## Orchestrator cycle (8 phases)
+Every repo that uses Ralph has `.radioactive-ralph/` alongside `.git/`:
 
 ```
-ORIENT → DRAIN_MERGE_QUEUE → INTERNAL_REVIEW → ADDRESS_FEEDBACK
-      → DISCOVER_WORK → SPAWN_AGENTS → HANDLE_COMPLETIONS → SLEEP(30s)
+.radioactive-ralph/
+├── config.toml          # committed: variant policy, safety floors, workspace defaults
+├── .gitignore           # committed: excludes local.toml
+└── local.toml           # gitignored: operator-local overrides (multiplexer pref, etc.)
 ```
 
-1. **ORIENT** — load state, check signal handlers
-2. **DRAIN_MERGE_QUEUE** — merge all MERGE_READY + CI-passed PRs, sync local
-3. **INTERNAL_REVIEW** — run Anthropic review on NEEDS_REVIEW PRs
-4. **ADDRESS_FEEDBACK** — spawn agents to fix HIGH/ERROR findings
-5. **DISCOVER_WORK** — scan repos for missing files, STATE.md next items
-6. **SPAWN_AGENTS** — launch `claude` subprocesses up to `max_parallel_agents`
-7. **HANDLE_COMPLETIONS** — collect results, extract PR URLs, update state
-8. **SLEEP** — 30s, then loop
+`ralph init` creates this tree and appends `.radioactive-ralph/local.toml` to
+the repo's root `.gitignore`. Missing `config.toml` = refuse to run with an
+in-voice nudge.
 
-## PR status lifecycle
+## XDG state directory
+
+Heavy, transient, non-portable state lives at
+`$XDG_STATE_HOME/radioactive-ralph/<repo-hash>/`, via
+`platformdirs.user_state_dir("radioactive-ralph")`. Per-repo per-machine.
 
 ```
-DRAFT → IN_PROGRESS → NEEDS_REVIEW → [INTERNAL_REVIEW] → NEEDS_FIXES
-                                   → MERGE_READY → merged
-                   → CI_FAILING → (fix) → NEEDS_REVIEW
-                   → STALE → (prune)
+$XDG_STATE_HOME/radioactive-ralph/
+└── <repo-hash>/                   # sha256(abspath(operator repo))[:16]
+    ├── mirror.git/                # only if any variant uses mirror-* isolation
+    ├── shallow/                   # only if any variant uses shallow isolation
+    ├── worktrees/
+    │   └── <variant>-<n>/         # parallel worktrees, per-variant namespaced
+    ├── state.db                   # SQLite + sqlite-vec event log
+    └── sessions/
+        ├── <variant>.sock         # per-variant Unix socket for IPC
+        ├── <variant>.pid          # supervisor PID + lock
+        ├── <variant>.alive        # mtime heartbeat
+        └── <variant>.log          # supervisor stdout/stderr
 ```
 
-## Work priority
+## Four orthogonal workspace knobs
 
-Lower number = higher priority. CI failures always win.
+Every variant declares defaults for four dimensions; each can be overridden in
+`config.toml`, subject to variant safety floors.
 
-| Priority | Value | Trigger |
-|----------|-------|---------|
-| CI_FAILURE | 1 | Any CI failure in any repo |
-| PR_FIXES | 2 | Review findings with ERROR severity |
-| DOC_SWEEP | 3 | Missing standard doc files |
-| MISSING_FILES | 4 | Missing CLAUDE.md, AGENTS.md, etc. |
-| STATE_NEXT | 5 | `## Next` section in docs/STATE.md |
-| DESIGN_FEATURE | 6 | `## Features` section in docs/DESIGN.md |
-| POLISH | 7 | Quality improvements when nothing else |
+| Knob | Values | Purpose |
+|------|--------|---------|
+| `isolation` | `shared`, `shallow`, `mirror-single`, `mirror-pool` | Where the work happens |
+| `object_store` | `reference`, `full` | Share operator's `.git/objects` or clone independently |
+| `sync_source` | `local`, `origin`, `both` | Where the mirror fetches from |
+| `lfs_mode` | `full`, `on-demand`, `pointers-only`, `excluded` | How LFS-tracked content is handled |
 
-## Model tiering
+See the [variants index](../variants/index.md) for the current variant list.
+In M3 this is replaced by an auto-generated `variants-matrix.md` sourced
+directly from the `VariantProfile` dataclasses.
 
-| Task | Model | Reason |
-|------|-------|--------|
-| DOC_SWEEP, MISSING_FILES | haiku | Bulk mechanical work |
-| Feature work, PR review, bug fixes | sonnet | General purpose |
-| DESIGN_FEATURE, security, architecture | opus | Deep reasoning required |
+## Supervisor lifecycle
 
-## State persistence
+1. **Pre-flight wizard** — universal checks (clean tree, default branch, `gh`
+   auth, `claude` version, multiplexer) + variant-specific questions
+   (confirmation gates, budget caps, risky-ops consent). Rendered in plain
+   prompts via `rich` for CLI or in Ralphspeak via templates for skill mode.
+2. **Multiplexer probe** — `tmux` → `screen` → stdlib `setsid` + double-fork
+   fallback. Supervisor runs as a detached child.
+3. **Supervisor boot** — acquire `<variant>.pid` lock, open SQLite in WAL,
+   bind Unix socket, load variant profile, replay event log, protocol-ping
+   a throwaway `claude -p` to verify stream-json parses, initialize the
+   `WorkspaceManager`, spawn the session pool.
+4. **Event loop** — read stream-json events from each managed session,
+   append to SQLite event log (both parsed and raw payload for protocol-drift
+   resilience), act on results (commit, open PR, enqueue follow-up). On
+   subprocess exit, classify and either resume (`claude -p --resume <uuid>`)
+   or finalize.
+5. **IPC** — Unix socket serves `ralph status`, `ralph attach`, `ralph enqueue`,
+   `ralph stop` commands from sibling processes.
+6. **Termination** — per variant policy. Drain events, close socket, remove
+   PID, clean worktrees per variant rule, exit.
 
-State is a single `OrchestratorState` JSON file. Location (in priority order):
-1. `--state-path` CLI flag
-2. `state_path` in config TOML
-3. `~/.radioactive-ralph/state.json` (default)
+## Managed-session strategy
 
-Never use `.claude/` — triggers security firewalls in some environments.
+Every daemon-owned Claude subprocess:
 
-## `uvx` compatibility
+```bash
+claude -p --bare \
+  --input-format stream-json \
+  --output-format stream-json \
+  --include-partial-messages --verbose \
+  --permission-mode acceptEdits \
+  --allowedTools <variant.tool_allowlist> \
+  --model <variant.model_for(stage)> \
+  --session-id <stable-uuid> \
+  --append-system-prompt <variant-system-prompt>
+```
 
-`[project.dependencies]` contains only runtime deps (`anthropic`, `click`, `pydantic`, `rich`).
-`uvx radioactive-ralph run` installs and runs in an isolated environment in seconds.
+The supervisor pins a stable UUID per session. Resume reuses the same UUID.
+Permission mode is `acceptEdits` by default; `bypassPermissions` gated for
+destructive variants (old-man, world-breaker).
+
+## Safety floors
+
+Variants declare floors that cannot be weakened by config, env, or a single
+CLI flag. Examples:
+
+| Variant | Floor | Override |
+|---------|-------|----------|
+| old-man | `object_store = full`; refuses default branch; fresh `--confirm-no-mercy` per run | Two CLI flags + config |
+| world-breaker | `object_store = full`; fresh `--confirm-burn-everything` per run; spend cap | Two flags + spend cap |
+| savage | Spend cap required; fresh `--confirm-burn-budget` per run | Operator raises cap with flag |
+| any `shared` isolation | Tool allowlist must exclude `Edit` + `Write` | Impossible (compile-time check) |
+
+## Ralph voice
+
+Ten variant "voices" drive pre-flight questions, status output, attach-stream
+events, and shutdown messages. Each variant has its own template library
+keyed by `(variant, event_type)`. The voice is the same whether you're seeing
+it in the CLI or through a skill — the registry is shared.
+
+## Risk mitigations at a glance
+
+- **Stream-json drift** — `claude` version range pinned in `doctor`; protocol-ping
+  on supervisor boot; Pydantic `extra=allow` + raw-event storage.
+- **Session resume drift** — sentinel re-prompt after every resume with task-ID
+  verification; task-state checkpoints sufficient to reseed a fresh session.
+- **Shared-object corruption** — detect broken refs, `git repack -a -d` in
+  mirror, retry; destructive variants default to `full` object store.
+- **Multiplexer macOS quirks** — tmux strongly recommended; stdlib setsid
+  fallback rather than relying on `python-daemon`.
+- **Scope creep** — public API = CLI + `VariantProfile` extension point only.
+
+See the [PRD](../plans/2026-04-14-radioactive-ralph-rewrite.prq.md) for the
+full risk register.

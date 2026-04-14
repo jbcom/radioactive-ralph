@@ -67,6 +67,7 @@ async def get_pr_diff(pr: PRInfo, forge: ForgeClient) -> str | None:
     try:
         # Convert PRInfo back to a lightweight ForgePR for the client
         from radioactive_ralph.forge.base import ForgePR
+
         f_pr = ForgePR(
             number=pr.number,
             title=pr.title,

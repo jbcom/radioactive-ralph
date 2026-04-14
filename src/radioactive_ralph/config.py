@@ -62,11 +62,7 @@ class _TomlConfigSource(PydanticBaseSettingsSource):
             self._data = {}
         return self._data
 
-    def get_field_value(
-        self,
-        field: Any,
-        field_name: str
-    ) -> tuple[Any, str, bool]:
+    def get_field_value(self, field: Any, field_name: str) -> tuple[Any, str, bool]:
         value = self._load().get(field_name)
         return value, field_name, value is not None
 
@@ -110,8 +106,7 @@ class RadioactiveRalphConfig(BaseSettings):
     # ── Attribution (credit Ralph on every commit / PR the daemon produces) ─
     attribution_enabled: bool = True
     attribution_text: str = (
-        "🤖 Orchestrated by [radioactive-ralph]"
-        "(https://github.com/jbcom/radioactive-ralph)"
+        "🤖 Orchestrated by [radioactive-ralph](https://github.com/jbcom/radioactive-ralph)"
     )
     attribution_footer_trailer: str = "Ralph-Orchestrated-By: radioactive-ralph"
 
