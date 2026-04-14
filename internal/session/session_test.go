@@ -158,6 +158,27 @@ func TestResumeSendsSentinelOnSpawn(t *testing.T) {
 	}
 }
 
+// TestRealClaudeVersionSpawn verifies we can spawn the real `claude`
+// binary for an unauthenticated operation (--version). Authenticated
+// end-to-end tests live in the integration suite (B08) gated on
+// CLAUDE_AUTHENTICATED.
+//
+// This test skips when claude is not on PATH so CI environments
+// without Node.js installed still pass.
+func TestRealClaudeVersionSpawn(t *testing.T) {
+	path, err := exec.LookPath("claude")
+	if err != nil {
+		t.Skip("claude binary not on PATH; skipping real-binary spawn test")
+	}
+	out, err := exec.Command(path, "--version").CombinedOutput()
+	if err != nil {
+		t.Fatalf("claude --version: %v\n%s", err, out)
+	}
+	if !strings.Contains(string(out), "Claude") && !strings.Contains(string(out), "claude") {
+		t.Errorf("unexpected --version output: %s", out)
+	}
+}
+
 // ── PromptRenderer tests ---------------------------------------------
 
 func TestRenderSystemPromptInjectsInventorySkill(t *testing.T) {
