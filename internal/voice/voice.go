@@ -35,7 +35,7 @@ const (
 	VariantRed          Variant = "red"
 	VariantBlue         Variant = "blue"
 	VariantProfessor    Variant = "professor"
-	VariantJoeFixit     Variant = "joe-fixit"
+	VariantFixit        Variant = "fixit"
 	VariantImmortal     Variant = "immortal"
 	VariantSavage       Variant = "savage"
 	VariantOldMan       Variant = "old-man"

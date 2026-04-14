@@ -9,7 +9,7 @@
 //     belong in git: multiplexer preference, log verbosity, etc.
 //
 // The config package only parses and validates. Applying variant defaults
-// and safety floors happens via Resolve() once a VariantProfile is
+// and safety floors happens via Resolve() once a variant.Profile is
 // available; the profile itself is defined in the variant package.
 package config
 
