@@ -1,15 +1,15 @@
 ---
-title: radioactive-ralph rewrite — per-repo daemon with mirror workspaces
+title: radioactive-ralph rewrite — Go daemon, mirror workspaces, inventory-aware biases
 created: 2026-04-14
 status: draft
 domain: product
 ---
 
-# Feature: radioactive-ralph — per-repo daemon with mirror workspaces
+# Feature: radioactive-ralph — Go rewrite with mirror workspaces and inventory-aware biases
 
 **Created**: 2026-04-14
-**Version**: 3.0 (supersedes v2.0; adopts XDG mirror architecture)
-**Timeframe**: 4 sequential PRs, several weeks total
+**Version**: 4.0 (Go pivot; supersedes v3.0 which assumed Python)
+**Timeframe**: four PRs, several weeks total
 
 ## Priority: P0 (the project does not work today)
 
@@ -18,7 +18,7 @@ domain: product
 ## Table of contents
 
 1. Overview
-2. Critical constraint — why this architecture
+2. Critical constraints
 3. Architecture
 4. Core concepts
    - Per-repo config directory
@@ -26,11 +26,13 @@ domain: product
    - Four workspace knobs
    - Variant-default matrix
    - Safety floors
-   - Pre-flight wizard
+   - Capability inventory + skill biases
+   - Pre-flight wizard (capability-matching)
    - Daemon lifecycle
    - Managed-session strategy
+   - Service integration (brew / launchd / systemd)
    - Skills as entry points
-5. Tasks (M1 → M4)
+5. Tasks (M2 → M4, M1 already merged)
 6. Acceptance criteria
 7. Technical notes
 8. Risks
@@ -40,73 +42,151 @@ domain: product
 
 ## 1. Overview
 
-radioactive-ralph today is a pair of products wearing the same name:
+radioactive-ralph M1 (merged in PR #26) deleted broken daemon claims,
+stubbed non-functional Python code behind `NotImplementedError`, fixed
+the marketplace install, and aligned the docs with the target
+architecture. This PRD covers the remaining milestones — M2-M4 — which
+are now **written in Go**, not Python.
 
-1. **Ten Claude Code slash-command skills** (`/green-ralph`, `/red-ralph`, etc.) — well-documented, behaviorally distinct, functional inside a Claude session.
-2. **A Python daemon** (`ralph run`) — advertised as the durable outer loop but broken in almost every meaningful way: calls `claude` with a non-existent `--message --yes` flag, implements message templates for only 2 of 10 variants, exposes 7 CLI commands in docs that don't exist in code, carries a dead HTTP client.
+The daemon's job is narrow and well-defined:
 
-This PRD rewrites the daemon into a **per-repo meta-orchestrator** that keeps a fleet of Claude subprocesses alive, focused, and productive across days of autonomous work. The daemon is the "Ralph of Ralphs" — it runs either directly from the CLI or is launched in the background by a skill, and in both cases it owns N managed `claude -p` subprocesses (one per worktree), talks to them via stream-json stdin/stdout, and resumes them when they die.
+1. Manage `claude -p` subprocesses with `--input-format stream-json`
+   stdin/stdout, resume them on death via `--resume <uuid>`.
+2. Own a SQLite event log (with sqlite-vec for task dedup) that
+   survives daemon crashes and multi-day runs.
+3. Run a capability-matching pre-flight wizard that discovers installed
+   skills/MCP servers, lets the operator pick preferences for ambiguous
+   categories (multiple review skills, multiple docs-query methods),
+   and persists the choices to a committed per-repo `config.toml`.
+4. Apply variant profiles that encode parallelism, model tiering,
+   commit cadence, termination policy, safety floors, and
+   skill-preference biases.
+5. Manage git worktrees off a mirror clone in XDG state, isolating all
+   Ralph's work from the operator's real working tree.
+6. Expose a Unix socket for `ralph status / attach / enqueue / stop`.
+7. Integrate with OS service managers (`brew services` on macOS,
+   `systemd --user` on Linux, WSL2+systemd on Windows) so the three
+   service-appropriate variants (green, immortal, blue --daemon) can
+   run as durable background services.
 
-The ten variants stop being just markdown files. They become **behavior profiles** — Pydantic dataclasses declaring parallelism, models, commit cadence, termination policy, tool allowlist, safety floors, and four orthogonal *workspace knobs* (isolation, object store, sync source, LFS handling).
+**Everything else — code review, PR classification, work discovery,
+commits, CI checks, merge queue — happens inside the worktree Claude
+sessions using whatever skills the operator has installed.** The
+daemon dispatches and supervises; Claude does the work. This is the
+key architectural decision that shrinks the daemon to a small, sharp
+tool.
 
-The skills become thin in-session entry points: `/green-ralph` triggers a Ralphspeak pre-flight wizard, launches the daemon in a detached multiplexer (tmux → screen → python-daemon fallback), and returns control to the outer Claude with *"Ralph is playing with his friends."*
+## 2. Critical constraints
 
----
+### 2.1 No external injection into interactive Claude sessions
 
-## 2. Critical constraint — why this architecture
+Claude Code 2.1.89+ exposes no supported mechanism to inject user-role
+messages into a running *interactive* session from an external
+process. The only cross-process channel is the
+`--input-format stream-json` stdio protocol in headless (`-p`) mode.
+Therefore the daemon never "manages" an outer Claude session — every
+managed session is a `claude -p` subprocess the daemon spawned itself,
+with its stdin piped.
 
-**Claude Code has no supported mechanism to inject user-role messages into a running interactive session from an external process.** Confirmed via research of Claude Code 2.1.89+ and Claude Agent SDK docs (2026-04-14). The only cross-process channel is the `--input-format stream-json` stdio protocol in headless (`-p`) mode.
+### 2.2 The daemon does one thing well
 
-Consequences:
+Code review, PR merging, branch hygiene, work discovery, CI monitoring
+— Claude already knows how to do all of these, and does them better
+when given a good prompt and access to the right skills in the
+worktree. Re-implementing any of that in the daemon violates the
+single-responsibility contract and duplicates capability that already
+exists inside the session.
 
-1. The daemon **never** manages an "outer" Claude session. Sessions the daemon owns are always `claude -p` subprocesses it spawned.
-2. A skill running inside an operator's Claude session cannot stay "in touch" with a background daemon via MCP or any other bridge. It launches the daemon and hands off.
-3. Resume works via `claude -p --resume <uuid>` reading `~/.claude/projects/<encoded-cwd>/<uuid>.jsonl`. The daemon pins `--session-id <uuid>` on spawn so resume is deterministic.
+Preserved Python modules that violated this (`reviewer.py`,
+`pr_manager.py`, `work_discovery.py`, `forge/*`) are **not ported to
+Go**. They stay in `reference/` for history and are deleted along with
+the rest of the reference tree at v1.0.0.
 
-Earlier PRD versions proposed an MCP server as a live bridge. Abandoned. The skill-launches-detached-daemon shape is the only one that works in Claude Code 2026.
+### 2.3 Capability inventory shapes every spawn
+
+What skills, MCP servers, subagents, and Claude Code plugins the
+operator has installed varies per machine and per project. The daemon
+discovers this inventory at launch time and uses it to *steer* each
+managed session:
+
+- If `coderabbit:review` is installed and the operator prefers it,
+  `red-ralph` tells Claude "after every fix, invoke /coderabbit:review."
+- If `plugin:context7:context7` is installed, `professor-ralph` tells
+  Claude "during planning phase, query context7 for library docs."
+- If `sec-context-depth` is installed, `blue-ralph` tells Claude
+  "invoke /sec-context-depth on every diff you review."
+
+Variant profiles declare *preferred categories* (review, security
+review, docs query, debugging, brainstorming). The operator resolves
+ambiguity (multiple review skills) once during `ralph init`. The
+supervisor composes per-spawn system prompts based on
+(variant, stage, operator preferences, actual inventory).
+
+### 2.4 Distribution is native binaries, not pip install
+
+Ralph is distributed as a Go binary via:
+
+- **Homebrew tap** (`jbcom/homebrew-tap`) — primary on macOS and
+  Linux, including WSL2+Linuxbrew
+- **Plugin skill** — marketplace skill that bootstraps the binary on
+  first run
+- **`curl | sh` install script** — hosted at
+  `jonbogaty.com/radioactive-ralph/install.sh`
+- **Scoop + WinGet** — Windows native package managers, both published
+  from one GoReleaser tag
+
+No code signing in initial releases. All three primary install paths
+bypass macOS Gatekeeper (brew formulae, `curl | sh`, and skill-invoked
+shell installs do not set the `com.apple.quarantine` xattr).
+Direct-download users from GitHub Releases will see a Gatekeeper
+warning and can bypass with `xattr -d com.apple.quarantine <binary>`.
+This is the standard FOSS practice (lazygit, zellij, mise, atuin,
+hugo, asdf-vm all ship unsigned).
 
 ---
 
 ## 3. Architecture
 
-```
+```text
 OPERATOR (~/src/myproject/)
-  → runs `ralph init` once per repo → writes .radioactive-ralph/config.toml
-  → either `ralph run --variant X` (direct) or `/green-ralph` (in-session)
+  → runs `ralph init` once per repo (capability-matching wizard)
+  → either `ralph run --variant X` (direct) or `/green-ralph` (skill)
+     or `brew services start ralph-green` (for green/immortal/blue)
 
                  DIRECT CLI                    SKILL WRAPPER
                      │                              │
             ┌────────┴──────────┐         ┌─────────┴────────────┐
-            │ pre-flight wizard │         │ Ralphspeak wizard    │
-            │ (unless --yes)    │         │ (same registry)      │
-            │ spawn daemon      │         │ launch detached      │
-            │ attach to logs    │         │ return to outer      │
+            │ pre-flight checks │         │ skill discovers,     │
+            │ (tmux? gh? git?)  │         │ runs `ralph init`    │
+            │ spawn supervisor  │         │ if needed, launches  │
+            │ via multiplexer   │         │ `ralph run --detach` │
             └────────┬──────────┘         └─────────┬────────────┘
                      │                              │
                      └────────────┬─────────────────┘
                                   ▼
                    ┌──────────────────────────────┐
-                   │   RALPH DAEMON (supervisor)  │
-                   │   backgrounded via:          │
-                   │     tmux (optimal) →         │
-                   │     screen (workable) →      │
-                   │     setsid fallback          │
-                   │                              │
-                   │   Unix socket for IPC        │
-                   │   SQLite + sqlite-vec log    │
-                   │   Variant profile loaded     │
-                   └──────────────┬───────────────┘
+                   │  RALPH SUPERVISOR (Go)        │
+                   │  backgrounded via:            │
+                   │    tmux (optimal) →           │
+                   │    screen (workable) →        │
+                   │    syscall.Setsid fallback    │
+                   │    launchd/systemd (service)  │
+                   │                               │
+                   │  Unix socket for IPC          │
+                   │  SQLite + sqlite-vec log      │
+                   │  Variant profile + inventory  │
+                   └──────────────┬────────────────┘
                                   │ resolves workspace
                                   ▼
                    ┌──────────────────────────────┐
-                   │   WORKSPACE MANAGER          │
-                   │   isolation/object_store/    │
-                   │   sync_source/lfs_mode       │
-                   │                              │
-                   │   SHARED → operator's repo   │
-                   │   SHALLOW → $XDG/shallow/    │
-                   │   MIRROR_* → $XDG/mirror.git │
-                   └──────────────┬───────────────┘
+                   │   WORKSPACE MANAGER           │
+                   │   isolation / object_store /  │
+                   │   sync_source / lfs_mode      │
+                   │                               │
+                   │   shared → operator's repo    │
+                   │   shallow → $XDG/shallow/     │
+                   │   mirror-* → $XDG/mirror.git  │
+                   └──────────────┬────────────────┘
                                   │ spawns + manages
                                   ▼
                    ┌──────────────────────────────┐
@@ -115,7 +195,9 @@ OPERATOR (~/src/myproject/)
                    │  stream-json, one per        │
                    │  worktree; daemon pipes      │
                    │  messages in, reads events   │
-                   │  out, resumes on death       │
+                   │  out, resumes on death.      │
+                   │  System prompt injects       │
+                   │  variant's skill biases.     │
                    └──────────────────────────────┘
                                   ▲
                                   │  ralph attach / ralph status
@@ -124,28 +206,29 @@ OPERATOR (~/src/myproject/)
                           OPERATOR (other terminal)
 ```
 
-XDG state layout (via `platformdirs.user_state_dir("radioactive-ralph")`):
+XDG state layout:
 
-```
-$XDG_STATE_HOME/radioactive-ralph/
-└── <repo-hash>/                 # sha256(abspath(operator repo))[:16]
-    ├── mirror.git/              # only if any variant uses mirror-* isolation
-    ├── shallow/                 # only if any variant uses shallow
+```text
+$XDG_STATE_HOME/radioactive-ralph/        (on macOS: ~/Library/Application Support/radioactive-ralph/)
+└── <repo-hash>/                          # sha256(abspath(operator-repo))[:16]
+    ├── mirror.git/                       # only if any variant uses mirror-* isolation
+    ├── shallow/                          # only if any variant uses shallow isolation
     ├── worktrees/
-    │   ├── green-1/ ... green-6/
-    │   └── grey-current/
-    ├── state.db                 # SQLite event log (shared across variants)
+    │   └── <variant>-<n>/
+    ├── inventory.json                    # capability discovery output
+    ├── state.db                          # SQLite + sqlite-vec event log
     ├── state.db-wal
-    ├── sessions/
-    │   ├── green.sock           # per-variant IPC
-    │   ├── green.pid
-    │   ├── green.log
-    │   ├── green.alive          # heartbeat mtime
-    │   └── ...
-    └── logs/<variant>/<date>.log
+    └── sessions/
+        ├── <variant>.sock                # per-variant Unix socket
+        ├── <variant>.pid                 # supervisor PID + flock
+        ├── <variant>.alive               # heartbeat mtime
+        └── <variant>.log                 # supervisor stdout/stderr
 ```
 
-Operator's repo stays clean — only `.radioactive-ralph/config.toml` and `.radioactive-ralph/.gitignore` are committed; `.radioactive-ralph/local.toml` is gitignored.
+Operator's repo stays clean — only `.radioactive-ralph/config.toml`
+and `.radioactive-ralph/.gitignore` are committed;
+`.radioactive-ralph/local.toml` is gitignored for operator-specific
+overrides.
 
 ---
 
@@ -153,152 +236,218 @@ Operator's repo stays clean — only `.radioactive-ralph/config.toml` and `.radi
 
 ### 4.1 Per-repo config directory
 
-```
+```text
 ~/src/myproject/.radioactive-ralph/
-├── config.toml          # committed: variant policy, floors, workspace defaults
+├── config.toml          # committed: capabilities, variant policy, workspace defaults
 ├── .gitignore           # committed: excludes local.toml
-└── local.toml           # gitignored: XDG path, multiplexer pref, operator overrides
+└── local.toml           # gitignored: operator-specific (tmux pref, log level, etc.)
 ```
 
-`ralph init` creates this tree, writes both TOML files, appends `.radioactive-ralph/local.toml` to the repo's root `.gitignore` (not the inner one — we want teammates who clone to be forced through `ralph init --local-only` rather than inheriting the originator's paths).
+`ralph init` creates this tree, runs the capability-matching wizard,
+writes both TOML files, and appends `.radioactive-ralph/local.toml` to
+the repo's root `.gitignore`. Missing `config.toml` = refuse to run
+with a clear message.
 
-**Config is the gate.** No `config.toml`, no `ralph run`. Skill refuses with in-voice nudge: *"Ralph hasn't settled in here yet. Run `ralph init` first."*
+`config.toml` example post-init:
+
+```toml
+# Auto-generated by `ralph init`. Re-run `ralph init --refresh` to
+# detect newly-installed skills without losing your choices.
+
+[capabilities]
+# Skills Ralph biases toward during certain tasks. Operator chose
+# these during init from the set of actually-installed skills.
+review          = "coderabbit:review"
+security_review = "sec-context-depth"
+docs_query      = "plugin:context7:context7"
+brainstorm      = "superpowers:brainstorming"
+debugging       = "superpowers:systematic-debugging"
+
+# Skills the operator doesn't want Ralph to bias toward even if present.
+disabled_biases = []
+
+[daemon]
+default_object_store       = "reference"
+default_lfs_mode           = "on-demand"
+copy_hooks                 = true
+allow_concurrent_variants  = true
+
+[variants.green]
+# Empty section = use the variant's hardcoded defaults.
+
+[variants.red]
+review_bias = "coderabbit:review"
+
+[variants.blue]
+security_review_bias = "sec-context-depth"
+
+[variants.immortal]
+object_store = "full"   # multi-day discipline
+
+[variants.old_man]
+# Safety floor: object_store = "full" is pinned. See docs.
+```
 
 ### 4.2 XDG state directory
 
-All heavy, transient, non-portable state lives in `$XDG_STATE_HOME/radioactive-ralph/<repo-hash>/`. Per-repo per-machine. Operator can blow it away any time to reset — no damage to their working repo.
+`$XDG_STATE_HOME/radioactive-ralph/<repo-hash>/` via Go's
+`platformdirs`-equivalent (stdlib `os.UserConfigDir` + fallback to
+`$XDG_STATE_HOME`). Per-repo per-machine.
 
-**Repo hash**: `hashlib.sha256(str(Path.resolve(operator_repo_root)).encode()).hexdigest()[:16]`. Stable per-repo per-machine. Same repo cloned to two locations = two independent mirror workspaces (correct).
+`<repo-hash>` = `sha256(abspath(operator-repo-root))[:16]`, stable per
+location. Operator cloning the same repo to two paths gets two
+independent workspaces.
 
 ### 4.3 Four orthogonal workspace knobs
 
-Every variant declares defaults for four workspace dimensions. Operator can override each via `config.toml`, subject to variant safety floors.
+| Knob | Values | Default | Purpose |
+|------|--------|---------|---------|
+| `isolation` | `shared`, `shallow`, `mirror-single`, `mirror-pool` | varies by variant | Where the work happens |
+| `object_store` | `reference`, `full` | `reference` unless floor-pinned | Share operator's objects or fully clone |
+| `sync_source` | `local`, `origin`, `both` | `both` | Where the mirror fetches from |
+| `lfs_mode` | `full`, `on-demand`, `pointers-only`, `excluded` | `on-demand` | How LFS content is handled |
 
-#### Knob 1 — Isolation mode
-
-| Value | Meaning |
-|---|---|
-| `shared` | Runs in operator's actual repo directory. No clone, no mirror, no worktree. Only valid for variants that exclude `Edit` and `Write` from their tool allowlist (enforced floor). |
-| `shallow` | `git clone --depth=1 --filter=blob:none --no-checkout` into `$XDG/shallow/`. Cheap isolated view of committed work. No history, no worktree pool. |
-| `mirror-single` | `git clone --mirror` into `$XDG/mirror.git` + a single live worktree at a time under `$XDG/worktrees/`. |
-| `mirror-pool` | Same mirror, N concurrent worktrees (N = variant's `max_parallel_worktrees`). |
-
-#### Knob 2 — Object store (relevant only for `mirror-*`)
-
-| Value | Meaning |
-|---|---|
-| `reference` | Mirror borrows objects from operator's `.git/objects` via `git clone --mirror --reference <operator-repo> --dissociate=false`. Fast clone, small disk, coupled to operator's gc. Daemon handles repack-on-corruption. |
-| `full` | Independent clone, no sharing. Slower first clone, larger disk, zero coupling. Default for variants that rewrite history. |
-
-#### Knob 3 — Sync source (relevant only for `mirror-*`)
-
-| Value | Meaning |
-|---|---|
-| `local` | Fetch only from operator's local repo via `file://` remote. Fast; sees all committed work even unpushed. |
-| `origin` | Fetch only from real origin. Only sees pushed work. |
-| `both` | Default. Two remotes configured (`local` + `origin`). Default fetch from `local`, push to `origin`. |
-
-#### Knob 4 — LFS mode
-
-| Value | Meaning |
-|---|---|
-| `full` | Clone LFS objects normally. All worktree checkouts pull binary content. Expensive but complete. |
-| `on-demand` | Pointers by default; `git lfs pull --include=<path>` per-file when Ralph's task touches them. |
-| `pointers-only` | `GIT_LFS_SKIP_SMUDGE=1`, fetch never pulls LFS blobs. Ralph cannot read/modify LFS-tracked files. |
-| `excluded` | `lfs.fetchexclude = *`. Ralph refuses tasks that touch LFS paths with clear error. |
-
-LFS settings are ignored entirely if the repo has no `.gitattributes` with `filter=lfs` entries. Detected on init.
-
-#### Precedence
-
-CLI flags > env vars (`RALPH_*`) > `.radioactive-ralph/config.toml` per-variant override > `.radioactive-ralph/config.toml` `[daemon]` default > variant-profile default > hard-coded project defaults.
-
-Safety floors can pin any knob; floors are not weakened by lower layers.
+Safety floors can pin any knob for risky variants. Precedence: CLI
+flags > env vars (`RALPH_*`) > `config.toml` per-variant > `config.toml`
+`[daemon]` default > variant profile default > project default.
 
 ### 4.4 Variant-default matrix
 
-Defaults each variant declares. Operator can override except where noted (see Safety Floors).
-
-| Variant | Isolation | Parallel | Object store | Sync | LFS |
-|---|---|---|---|---|---|
-| blue | `shared` (default) or `shallow` | 0 | n/a | n/a | `pointers-only` |
-| grey | `mirror-single` | 1 | `reference` | `both` | `pointers-only` |
-| red | `mirror-pool` | 8 | `reference` | `both` | `on-demand` |
-| green | `mirror-pool` | 6 | `reference` | `both` | `on-demand` |
-| professor | `mirror-pool` | 4 | `reference` | `both` | `on-demand` |
-| joe-fixit | `mirror-single` | 1 | `reference` | `both` | `pointers-only` |
-| immortal | `mirror-pool` | 3 | `full` | `both` | `pointers-only` |
-| savage | `mirror-pool` | 10 | `reference` | `both` | `on-demand` |
-| **old-man** | `mirror-single` | 1 | **`full` (floor)** | `both` | `on-demand` |
-| **world-breaker** | `mirror-pool` | 10 | **`full` (floor)** | `both` | `full` |
+| Variant | Isolation | Parallel | Object store | LFS | Gate |
+|---------|-----------|----------|--------------|-----|------|
+| blue | `shared` (default, operator choice) | 0 | n/a | pointers-only | — |
+| grey | mirror-single | 1 | reference | pointers-only | — |
+| red | mirror-pool | 8 | reference | on-demand | — |
+| green | mirror-pool | 6 | reference | on-demand | — |
+| professor | mirror-pool | 4 | reference | on-demand | — |
+| joe-fixit | mirror-single | 1 | reference | pointers-only | — |
+| immortal | mirror-pool | 3 | full | pointers-only | — |
+| savage | mirror-pool | 10 | reference | on-demand | `--confirm-burn-budget` |
+| old-man | mirror-single | 1 | **full (floor)** | on-demand | `--confirm-no-mercy` |
+| world-breaker | mirror-pool | 10 | **full (floor)** | full | `--confirm-burn-everything` |
 
 ### 4.5 Safety floors
 
-Declared per variant. Cannot be weakened by config, env, or single-flag CLI.
-
 | Variant | Floor | Override path |
-|---|---|---|
-| Any with `shared` isolation | Tool allowlist MUST exclude `Edit` and `Write` | Impossible — variant with write tools in `shared` mode refuses to launch |
-| old-man | `object_store = "full"`; refuses to run on repo's default branch (detected via `git symbolic-ref refs/remotes/origin/HEAD`); requires fresh `--confirm-no-mercy` per invocation | Object-store override needs `--confirm-no-mercy` AND `--confirm-shared-objects-unsafe` AND `object_store = "reference"` in config. All three. |
-| world-breaker | `object_store = "full"`; spend-cap default $100 if not set; requires fresh `--confirm-burn-everything` per invocation | Same two-step + spend cap |
-| savage | Spend-cap default $50 if not set; requires fresh `--confirm-burn-budget` per invocation | Operator can raise cap with new CLI flag `--spend-cap-usd N`; cannot remove |
+|---------|-------|---------------|
+| Any with `shared` isolation | Tool allowlist must exclude `Edit` + `Write` | Impossible (compile-time validator) |
+| old-man | `object_store = full`; refuses default branch; fresh gate per invocation | Two CLI flags (both `--confirm-no-mercy` and `--confirm-shared-objects-unsafe`) + config override |
+| world-breaker | `object_store = full`; spend cap required; fresh gate per invocation | Two-step override + explicit spend cap |
+| savage | Spend cap required; fresh gate per invocation | Operator raises cap with `--spend-cap-usd N` |
+| savage, old-man, world-breaker | Refuse to run when invoked under launchd/systemd (service context) | No override — service-unsafe by design |
 
-Default-branch detection uses `git symbolic-ref refs/remotes/origin/HEAD` first; falls back to hard-coded `{main, master, trunk, develop, production, release/*}` only if the symbolic-ref query fails.
+Default-branch detection uses `git symbolic-ref refs/remotes/origin/HEAD`,
+falling back to the hardcoded list
+`{main, master, trunk, develop, production, release/*}`.
 
-### 4.6 Pre-flight wizard
+### 4.6 Capability inventory and skill biases
 
-One question registry, two presenters (CLI via rich.prompt, skill via Ralphspeak templates). Each question has:
+Discovered at `ralph init` (for operator review) and at each `ralph run`
+(for runtime steering). Shell-based discovery:
 
-```python
-class PreflightQuestion:
-    id: str
-    severity: Literal["blocking", "warning", "info"]
-    detector: Callable[[Context], QuestionOutcome]   # pure; returns SKIP | ASK | FAIL
-    cli_prompt: str
-    voice_templates: dict[VariantName, str]          # Ralphspeak per variant
-    resolutions: list[Resolution]                    # e.g. "branch from here", "abort"
+- Enumerate `~/.claude/skills/*/SKILL.md` frontmatter `name` field
+- Parse `~/.claude/settings.json` for `mcpServers`, `enabledPlugins`,
+  `extraKnownMarketplaces`
+- Parse `.claude/settings.json` in the repo for project-scoped additions
+- Enumerate `~/.claude/plugins/cache/*/` directories
+- Call `claude plugin marketplace list --json` if the CLI exposes it
+
+Stored as `inventory.json`:
+
+```json
+{
+  "generated_at": "2026-04-14T20:45:00Z",
+  "claude_version": "2.1.89",
+  "skills": ["coderabbit:review", "context7:query-docs", "..."],
+  "mcp_servers": [{"name": "context7", "reachable": true}],
+  "agents": ["code-reviewer", "feature-dev:code-explorer"],
+  "environment": {"gh_authenticated": true, "in_claude_code": true}
+}
 ```
 
-Universal questions (run every variant): working tree clean, on default branch, `gh auth status`, `claude --version` within supported range, multiplexer available, config.toml exists.
+Variant profiles declare `SkillBiases map[BiasCategory]BiasSnippet`.
+At spawn time, supervisor:
 
-Variant-specific questions declared in each profile (e.g. old-man's "this rewrites history, are you sure you're on a disposable branch").
+1. Reads config.toml `[capabilities]` + `[variants.<name>]` overrides.
+2. Reads inventory.json.
+3. For each bias category the variant cares about, picks the operator's
+   preferred skill if available in inventory, else falls back to
+   variant's default, else skips silently.
+4. Injects the chosen bias snippets into the system prompt via
+   `--append-system-prompt`.
 
-**`--yes` flag** skips info + warning; blocking questions still require answer (operator can pre-answer via config.toml defaults). Skill mode always presents — skill wrapper itself is `--yes` from daemon's POV, skill handles interaction.
+Missing biases are logged at INFO. `ralph doctor` flags drift.
 
-**Remembered answers**: operator's config.toml records per-variant answers:
+### 4.7 Pre-flight wizard (capability-matching)
 
-```toml
-[variants.green]
-auto_branch_strategy = "from_current"      # answered once, never asked again
-budget_cap_usd = 50
-```
+`ralph init` is a first-class CLI command, not just a config bootstrap.
 
-### 4.7 Daemon lifecycle
+1. **Discover**: run shell commands to enumerate skills, MCP servers,
+   agents, plugins.
+2. **Categorize**: group findings by capability type (review,
+   security review, docs query, etc.). Multi-candidate categories are
+   flagged for operator input.
+3. **Ask**: for each multi-candidate category, prompt operator to pick
+   preferred or explicitly disable. Single-candidate categories
+   auto-select with a one-line confirmation.
+4. **Suggest per-variant defaults**: "red-ralph will bias toward
+   coderabbit:review during fix cycles — override?"
+5. **Write**: config.toml + local.toml + `.gitignore` entries. All
+   choices commented with alternatives for later edit.
 
-1. **Entry point**: `ralph run --variant X` resolves profile + overrides, runs pre-flight, if OK spawns supervisor via multiplexer.
-2. **Multiplexer probe**: `$TMUX` set or `tmux` on PATH → tmux. Else `screen` → screen. Else stdlib `os.setsid()` + double-fork fallback. (Dropping `python-daemon` dep after prototyping — stdlib is enough.)
-3. **Supervisor boot** (`ralph _supervisor` internal cmd):
-   - Acquires lock on `$XDG/.../sessions/<variant>.pid` (refuses if live).
-   - Opens SQLite in WAL, loads sqlite-vec (soft-fails to FTS5 if extension unavailable).
-   - Binds Unix socket at `$XDG/.../sessions/<variant>.sock`.
-   - Starts heartbeat thread (touches `<variant>.alive` every 10s).
-   - Loads variant profile + resolved workspace config.
-   - Replays event log → rebuild in-memory state.
-   - Protocol-ping: spawn throwaway `claude -p`, send "respond PONG", verify parse. Abort boot on failure.
-   - Initializes WorkspaceManager per isolation mode.
-   - Starts session pool.
-4. **Workspace init (first run)**: WorkspaceManager creates mirror/shallow/worktree as needed. Copies operator's `.git/hooks/` to mirror's `.git/hooks/` (unless `copy_hooks = false`). Detects LFS usage. Applies knobs.
-5. **Session pool**: per slot, create/reuse worktree, spawn `claude -p --input-format stream-json --session-id <uuid>` with stage-appropriate system prompt. Record session in SQLite.
-6. **Event loop**: read stream-json events, append to log (parsed + raw), act on result events. On subprocess exit, classify (clean | context-exhausted | rate-limited | crashed | operator-killed) and:
-   - clean/task-done → mark task complete, pick next
-   - context-exhausted → resume with `--resume <uuid>` + sentinel re-prompt ("what task ID are you working on?") for mismatch detection
+`ralph init --refresh` re-discovers and proposes updates without
+losing existing choices.
+
+Universal pre-flight checks run at `ralph run` start (not `init`):
+
+- `gh auth status` green
+- `claude --version` within pinned supported range
+- Working tree clean (offer to stash/branch if not)
+- Not on default branch (offer to branch if so, for destructive variants)
+- Multiplexer available (tmux → screen → setsid)
+
+`--yes` skips non-blocking checks; blocking checks still require answer
+(operator can pre-answer in config.toml).
+
+### 4.8 Daemon lifecycle
+
+1. **Entry**: `ralph run --variant X` resolves profile + overrides,
+   runs pre-flight, if OK spawns supervisor via multiplexer (or runs
+   in-foreground for `--foreground` / service invocation).
+2. **Supervisor boot**:
+   - Acquire flock on `<variant>.pid` (refuses if live supervisor)
+   - Open SQLite in WAL + load sqlite-vec extension (soft-fail to FTS5)
+   - Bind Unix socket
+   - Start heartbeat goroutine (touches `<variant>.alive` every 10s)
+   - Load variant profile + resolved workspace config + inventory
+   - Replay event log to rebuild in-memory state
+   - Protocol-ping: spawn throwaway `claude -p`, send "reply PONG",
+     verify parse. Abort boot on failure.
+   - Initialize WorkspaceManager per isolation mode
+   - Start session pool
+3. **Workspace init (first run for variant)**: WorkspaceManager creates
+   mirror/shallow/worktree as needed. Copies operator's `.git/hooks/`
+   to mirror's `.git/hooks/` unless `copy_hooks = false`. Detects LFS
+   usage. Applies knobs.
+4. **Session pool**: for each slot, create/reuse worktree, spawn
+   `claude -p --input-format stream-json --session-id <uuid>` with
+   stage-appropriate system prompt (variant + inventory biases).
+   Record session in SQLite.
+5. **Event loop**: read stream-json events from each session, append
+   to event log (parsed + raw for protocol-drift resilience), act on
+   result events. On subprocess exit, classify:
+   - clean → task done, pick next
+   - context-exhausted → resume with `--resume <uuid>` + sentinel
+     re-prompt ("what task ID are you working on?")
    - rate-limited → exponential backoff, resume when clear
-   - crashed → log, resume once, then escalate to operator if it crashes again
+   - crashed → log, resume once, escalate to operator on repeat
    - operator-killed → graceful drain
-7. **IPC**: Unix socket accepts JSON-line commands: `status`, `attach` (stream events), `enqueue <task-json>`, `stop [--graceful]`, `reload-config`.
-8. **Termination**: per variant's termination policy. On termination: drain events, close socket, remove PID, clean worktrees (per variant policy: destroy for mirror-single, keep for mirror-pool unless operator says), exit.
+6. **IPC**: Unix socket serves `status`, `attach`, `enqueue`, `stop`,
+   `reload-config` as JSON lines.
+7. **Termination**: per variant policy. Drain events, close socket,
+   remove PID, clean worktrees per variant rule, exit.
 
-### 4.8 Managed-session strategy
+### 4.9 Managed-session strategy
 
 Every managed invocation:
 
@@ -307,293 +456,378 @@ claude -p --bare \
   --input-format stream-json \
   --output-format stream-json \
   --include-partial-messages --verbose \
-  --permission-mode <acceptEdits|bypassPermissions> \
-  --allowedTools <variant.tool_allowlist> \
-  --model <variant.model_for(stage)> \
-  --session-id <stable-uuid> \
-  --append-system-prompt <path-to-variant-system-prompt>
+  --permission-mode <acceptEdits | bypassPermissions> \
+  --allowedTools <variant.ToolAllowlist> \
+  --model <variant.ModelForStage(currentStage)> \
+  --session-id <stableUUID> \
+  --append-system-prompt <variant-system-prompt-with-inventory-biases>
 ```
 
-- `--bare` skips project CLAUDE.md / hook / MCP auto-discovery for reproducibility. Variant's system prompt via `--append-system-prompt`.
-- `--permission-mode default` NEVER used (daemon has no TTY for interactive prompts).
-- `acceptEdits` for normal variants; `bypassPermissions` for old-man/world-breaker behind their gates.
+- `--bare` skips project CLAUDE.md / hook / MCP auto-discovery for
+  reproducibility. Variant provides system prompt via
+  `--append-system-prompt`.
+- `--permission-mode default` never used (no TTY for interactive prompts).
+- `acceptEdits` for normal variants; `bypassPermissions` for old-man /
+  world-breaker behind their gates.
 
-**Spend tracking**: supervisor parses `usage` field from stream-json result events, accumulates `input_tokens`/`output_tokens` per model in SQLite, computes USD from hardcoded-updated pricing table. On cap reached → graceful stop with Ralphspeak message *"Ralph burned his allowance. Going home."*
+Spend tracking: supervisor parses `usage` field from stream-json result
+events, accumulates per-model in SQLite, computes USD from pricing
+table. Cap-hit → graceful stop, voiced as
+*"Ralph burned his allowance. Going home."*
 
-**Session ID pinning** — daemon supplies `--session-id <uuid>` on every spawn and resume. Avoids Claude Code issue #44607 (interactive mode ID ≠ on-disk filename; issue does not affect `-p` mode).
+Session ID pinning via `--session-id <uuid>` avoids Claude Code issue
+#44607 (interactive mode ID ≠ on-disk filename; does not affect `-p` mode).
 
-### 4.9 Skills as entry points
+### 4.10 Service integration
 
-Each `skills/<variant>/SKILL.md` ≤30 lines, body structure:
+Three variants are eligible to run as persistent system services:
+
+| Variant | Service suitable? | Scheduler kind |
+|---------|-------------------|----------------|
+| green | ✅ always-on daemon | `KeepAlive=true` |
+| immortal | ✅ always-on, survives reboot | `KeepAlive=true` + `RunAtLoad=true` |
+| blue (with `--daemon`) | ✅ PR observer | `KeepAlive=true` |
+| grey | ⏰ timer, not daemon | weekly `StartCalendarInterval` / systemd `.timer` |
+| professor | ⏰ timer, not daemon | daily `.timer` |
+| red, joe-fixit | ❌ on-demand only | (value in operator reading the output) |
+| savage, old-man, world-breaker | ❌ refuse service context | fresh confirmation gate required |
+
+The CLI exposes `ralph service install --variant X` that emits the
+appropriate plist (macOS), systemd user unit (Linux), or Scoop
+persistence entry (Windows), and wraps `brew services` / `systemctl
+--user` commands.
+
+`--foreground` flag on `ralph run` runs the supervisor inline (stdout /
+stderr to caller), bypassing the multiplexer. This is what the service
+unit's `ExecStart` invokes so launchd / systemd is the actual
+supervisor.
+
+Floor-gated variants detect service context (env vars
+`LAUNCHED_BY=launchd` or `INVOCATION_ID=*` for systemd) and refuse to
+run, printing a clear error and exiting non-zero. Detected at pre-flight,
+before any workspace setup.
+
+### 4.11 Skills as entry points
+
+Each `skills/<variant>/SKILL.md` ≤30 lines. Skeleton:
 
 ```markdown
 ---
 name: green-ralph
-description: The Classic. Unlimited loop, all repos, sensible model tiering. Launches the radioactive-ralph daemon in the background and returns.
+description: The Classic. Unlimited loop, sensible model tiering. Launches the ralph daemon in the background.
 ---
 
-1. Check `.radioactive-ralph/config.toml`. If missing, run `ralph init` interactively and wait for operator to commit the result.
-2. Run the green-ralph pre-flight checks: working tree, branch policy, `gh`/`claude` auth, multiplexer availability. Speak in Ralph's green-tier voice.
-3. For each failure, offer resolutions (branch from here, switch branch, re-auth) and apply the operator's choice.
-4. When all checks pass, shell out: `ralph run --variant green --detach`
-5. Report in Ralphspeak: "Ralph is playing with his friends on branch `ralph/green-<date>`. Check on him with `ralph status` or `ralph attach`."
+If `.radioactive-ralph/config.toml` is missing, run `ralph init`
+interactively and wait for the operator to review.
+
+Otherwise shell out: `ralph run --variant green --detach`
+
+The daemon's own pre-flight checks, Ralphspeak banter, and handoff
+message handle everything else. Return whatever the CLI prints to the
+operator.
 ```
 
-Rich behavioral lore moves into `VariantProfile.voice` templates and auto-generated `docs/variants/<name>.md` pages.
+Rich behavioral lore moves into `internal/variant/green.go` docstrings
+and `docs/variants/green-ralph.md` which auto-regenerates from
+`VariantProfile` at build time (M3).
 
 ---
 
 ## 5. Tasks
 
-### Milestone 1 — Marketplace fix + aggressive cleanup (this PR, branch `fix/marketplace-structure-and-docs-audit`)
+### M1 (merged, PR #26)
 
-- **M1.T1** — Fix `.claude-plugin/marketplace.json`:
-  - Rename marketplace → `jbcom-plugins`
-  - Rename plugin → `ralph`
-  - Keep `source: "./"` (matches `anthropics/skills`)
-  - Set `"strict": false`
-  - List skills explicitly under `skills: [...]`
-  - Remove non-standard `$schema`
-- **M1.T2** — Update or delete `.claude-plugin/plugin.json` (strict=false makes it optional).
-- **M1.T3** — Rewrite README install section with correct syntax:
-  ```
-  claude plugin marketplace add jbcom/radioactive-ralph
-  claude plugin install ralph@jbcom-plugins
-  ```
-- **M1.T4** — Rewrite README "Core commands" — currently 7 nonexistent commands. Show the future-facing CLI (`ralph init/run/status/attach/stop/doctor`), mark each implemented/planned with milestone reference.
-- **M1.T5** — Delete the false `claude --print subprocesses` claim. Replace with: "Under rewrite — see `docs/plans/2026-04-14-radioactive-ralph-rewrite.prq.md`."
-- **M1.T6** — Delete dead code: `src/radioactive_ralph/github_client.py` (superseded by `forge/github.py`).
-- **M1.T7** — Stub broken implementations with `NotImplementedError("under rewrite, see PRD M2")`:
-  - `agent_runner._spawn_agent`
-  - `orchestrator.Orchestrator.run`
-- **M1.T8** — Prune `cli.py` to the real surface: `status`, `doctor`. `run` raises `NotImplementedError` with PRD pointer. Remove any stubs for dashboard/discover/pr/install-skill if present.
-- **M1.T9** — Fix `tests/test_cli.py::test_main_verbose` — currently empty `pass` body. Assert exit status + log level.
-- **M1.T10** — Fix `tests/test_orchestrator.py::test_step_spawns_agents` — passes `repo_name` as kwarg but `WorkItem.repo_name` is a computed property. Correct to `repo_path=...` and derive.
-- **M1.T11** — Rewrite `docs/reference/architecture.md` to the new architecture. Mark `updated: 2026-04-14`.
-- **M1.T12** — Rewrite `docs/guides/design.md` with new UX (`ralph init` then CLI or skill, "Ralph plays with his friends" metaphor, per-repo config + XDG state).
-- **M1.T13** — Rewrite `docs/reference/state.md` — what's done (hygiene), what's planned (M2/M3/M4).
-- **M1.T14** — Rewrite `docs/reference/testing.md` — preserve unit strategy, add integration plan, `CLAUDE_AUTHENTICATED` gate note.
-- **M1.T15** — Update `CLAUDE.md` module map (currently 7 of 16). Remove `pr_manager.py` "gh CLI wrapper" mischaracterization. Add "What radioactive-ralph is NOT" section mirroring this PRD's out-of-scope list.
-- **M1.T16** — `CHANGELOG.md` — new `[Unreleased]` entry describing the architectural pivot.
-- **M1.T17** — Commit this PRD to `docs/plans/2026-04-14-radioactive-ralph-rewrite.prq.md`.
-- **M1.T18** — `hatch run test`, `hatch fmt --check`, `hatch run hatch-test:type-check`, `hatch run docs:build` all green. Fix any breakage from deletions/stubs.
+Done. Marketplace fix, README/docs truthfulness, dead Python code
+removed, broken implementations stubbed behind `NotImplementedError`,
+two broken tests fixed, all canonical domain docs rewritten, PRD
+committed.
 
-### Milestone 2 — Daemon skeleton + per-repo config + XDG workspace + session control
+### M2 — Go rewrite of the daemon (this branch)
 
-- **M2.T1** — `src/radioactive_ralph/init.py`: `ralph init` wizard. Creates `.radioactive-ralph/` tree, writes `config.toml` + `local.toml`, appends `local.toml` to repo root `.gitignore`.
-- **M2.T1b** — `src/radioactive_ralph/workspace/modes.py`: `IsolationMode`, `ObjectStoreMode`, `SyncSourceMode`, `LfsMode` enums + `WorkspaceConfig` Pydantic model.
-- **M2.T1c** — `src/radioactive_ralph/workspace/manager.py`: `WorkspaceManager`. Dispatches on isolation:
-  - `shared` → no-op, cwd is operator repo
-  - `shallow` → `git clone --depth=1 --filter=blob:none --no-checkout` into `$XDG/shallow/` + `GIT_LFS_SKIP_SMUDGE=1`
-  - `mirror-*` → `git clone --mirror` with `--reference`/`--dissociate=false` flags per `object_store`, two remotes per `sync_source`, hook copy, LFS detection, per-mode LFS config
-- **M2.T1d** — Mirror sync manager: per-variant cadence (config-driven), handles `git fetch` + `git lfs fetch --include` on demand.
-- **M2.T1e** — Repack-on-corruption: detect broken shared-object refs (missing blob error during worktree checkout), `git repack -a -d` in mirror, retry. Logged in event log.
-- **M2.T1f** — LFS detection on init: parse `.gitattributes`, log detected LFS filter paths. If zero LFS files detected, skip all LFS configuration regardless of `lfs_mode`.
-- **M2.T2** — `src/radioactive_ralph/config.py` rewrite: Pydantic-settings layered (CLI → env → config.toml per-variant → config.toml [daemon] → variant defaults → project defaults). Per-variant `[variants.<name>]` sections support all four knobs plus remembered pre-flight answers.
-- **M2.T2a** — `XDGPaths` helper using `platformdirs.user_state_dir("radioactive-ralph")`, derives repo-hash, builds workspace subdirectory paths.
-- **M2.T3** — `src/radioactive_ralph/daemon/db.py`: SQLite + WAL + sqlite-vec loadable extension (graceful fallback to FTS5). Schema under `src/radioactive_ralph/daemon/schema/*.sql`. `EventLog.append(Event)` + `EventLog.replay() -> Iterator[Event]`. `events` table stores both `payload_parsed` (JSON) and `payload_raw` (bytes) for protocol-drift resilience.
-- **M2.T3a** — `tasks` table + `sessions` table + `task_vec` virtual table (vec0) for semantic dedup. Task-state checkpoints as distinct event types, rich enough to reseed a fresh session from scratch on resume failure.
-- **M2.T4** — `src/radioactive_ralph/daemon/socket_ipc.py`: Unix socket server + client, JSON-line protocol. Commands: `status`, `attach`, `enqueue`, `stop`, `reload-config`.
-- **M2.T4a** — Heartbeat: supervisor writes `<variant>.alive` mtime every 10s. `ralph status` treats >30s stale as dead regardless of PID file.
-- **M2.T5** — `src/radioactive_ralph/daemon/multiplexer.py`: probe tmux → screen → setsid fallback. `spawn_detached(cmd, log_path, pid_path)`. Session names `ralph-<variant>-<repohash[:8]>`.
-- **M2.T5a** — Fallback detach uses stdlib `os.setsid()` + double-fork + `stdin=DEVNULL` + redirect stdout/stderr to log file. No `python-daemon` dependency.
-- **M2.T6** — `src/radioactive_ralph/daemon/session.py`: `ClaudeSession` wrapping `claude -p --input-format stream-json`. Methods `send_user_message`, `iter_events`, `interrupt`, `wait_for_idle`, `resume`. Records session in SQLite.
-- **M2.T6a** — Protocol-ping handshake in `ClaudeSession.__init__`: send "respond PONG", verify parsed event, abort on mismatch. Integration tested on every CI run with `CLAUDE_AUTHENTICATED`.
-- **M2.T6b** — Sentinel re-prompt after resume: daemon sends "what task ID are you currently on?" right after `--resume <uuid>`. On mismatch or no-response, treat as context-lost, reseed task from checkpoint events.
-- **M2.T7** — `src/radioactive_ralph/daemon/supervisor.py`: PID lock, socket bind, event replay, session pool, IPC loop, termination.
-- **M2.T7a** — Multi-variant coexistence: supervisor names all paths per-variant (`<variant>.sock`, `<variant>.pid`, etc.). SQLite is shared across variants in the same repo — WAL handles single-writer per variant supervisor; cross-variant events interleave cleanly. `ralph status --all` aggregates.
-- **M2.T8** — `src/radioactive_ralph/cli.py` commands:
-  - `ralph init [--local-only]`
-  - `ralph run --variant X [--detach] [--yes] [--spend-cap-usd N]`
-  - `ralph status [--variant X | --all]`
-  - `ralph attach --variant X`
-  - `ralph stop [--variant X | --all] [--graceful]`
-  - `ralph doctor`
-  - `ralph _supervisor --variant X --repo-root P` (hidden)
-- **M2.T9** — Unit tests. ≥90% coverage on `src/radioactive_ralph/daemon/`, ≥85% on config/init/workspace.
-- **M2.T10** — Integration test (always-on): `ralph init` in a temp repo → `ralph run --variant blue --detach` (blue is read-only; requires only config.toml and real claude for the protocol-ping, which we skip unless `CLAUDE_AUTHENTICATED`). Assert socket reachable, `ralph status` returns healthy, `ralph stop` clean. No leftover PID/socket/worktree.
-- **M2.T10a** — CI matrix: add `macos-14` for integration tests.
-- **M2.T11** — Integration test (gated on `CLAUDE_AUTHENTICATED=1`): spawn real `claude -p`, send message, verify response event logged, kill subprocess, resume via session ID, verify continuity + sentinel re-prompt success.
+Subdivided into commits so the git log tells the story. Each commit
+passes `go test ./...` + `golangci-lint run`.
 
-### Milestone 3 — Ten variants + pre-flight wizard + voice
+- **M2.T0 — Python → reference/** ✅ (first commit on this branch)
+- **M2.T1 — Go bootstrap**: `go.mod`, `cmd/ralph/main.go` with kong
+  CLI skeleton, `Makefile`, GitHub Actions CI (go test, golangci-lint,
+  govulncheck), replace existing Python workflows.
+- **M2.T2 — `internal/xdg` + `internal/config`**: repo-hash derivation,
+  state-dir path helpers, kong CLI struct, TOML loader, precedence
+  `Resolve()` function, safety floor enforcement.
+- **M2.T3 — `internal/inventory`**: shell discovery of skills / MCPs /
+  plugins, JSON roundtrip, consumed by init + supervisor.
+- **M2.T4 — `internal/db`**: SQLite + sqlite-vec (via `modernc.org/sqlite`
+  + `asg017/sqlite-vec-go-bindings`), WAL, schema migrations,
+  `EventLog.Append` / `.Replay`, tasks + sessions + task_vec tables,
+  raw + parsed payload storage.
+- **M2.T5 — `internal/ipc`**: net.UnixListener server + client,
+  JSON-line protocol, `status` / `attach` / `enqueue` / `stop` /
+  `reload-config` commands, heartbeat file mtime for liveness.
+- **M2.T6 — `internal/multiplexer`**: tmux / screen / syscall.Setsid
+  probe, `SpawnDetached(cmd, logPath, pidPath)`.
+- **M2.T7 — `internal/workspace`**: IsolationMode / ObjectStoreMode /
+  SyncSourceMode / LfsMode enums, `WorkspaceManager` dispatching on
+  isolation, mirror init with `--reference`, two-remote fetch
+  (`local` / `origin`), worktree add/remove/reconcile, LFS detection
+  + per-mode config, repack-on-corruption recovery.
+- **M2.T8 — `internal/session`**: `ClaudeSession` wrapping `claude -p`
+  via `exec.CommandContext`, stream-json stdin/stdout (bufio Scanner),
+  `SendUserMessage` / `Events` / `Interrupt` / `WaitForIdle` / `Resume`,
+  protocol-ping handshake, sentinel re-prompt after resume with task-ID
+  verification, `PromptRenderer` combining variant + inventory biases.
+- **M2.T9 — `internal/service`**: `ralph service install/uninstall/list/status`
+  commands, platform-dispatching among launchd / systemd-user /
+  brew-services, service-context detection in pre-flight.
+- **M2.T10 — `internal/supervisor`**: PID flock, socket bind, event
+  replay, session pool, IPC request loop, multi-variant coexistence via
+  per-variant paths, graceful termination.
+- **M2.T11 — `internal/initcmd`**: capability-matching wizard, writes
+  `config.toml` + `local.toml`, appends to repo `.gitignore`, supports
+  `--refresh` to re-discover without losing choices.
+- **M2.T12 — `internal/doctor`**: environment health — git version,
+  claude version range, gh auth, tmux/screen/setsid, platformdirs
+  writable, config.toml present.
+- **M2.T13 — `internal/voice`**: Ralph personality templates (thin in
+  M2, variant-specific fills in M3).
+- **M2.T14 — `cmd/ralph/main.go`**: kong CLI wiring —
+  `init / run / status / attach / stop / doctor / service / version` +
+  hidden `_supervisor`.
+- **M2.T15 — Homebrew tap + GoReleaser + install script**: create
+  `jbcom/homebrew-tap` repo via `gh`, `.goreleaser.yaml` with brew +
+  Scoop + WinGet + tarballs + checksums + cosign provenance, install
+  script at `docs/install.sh`, docs page explaining the three install
+  paths.
+- **M2.T16 — Integration tests**: always-on `ralph init` + `ralph run
+  --variant blue --detach` round-trip. Gated-on-CLAUDE_AUTHENTICATED
+  real `claude -p` spawn + resume + sentinel verification.
+- **M2.T17 — macOS + Linux CI matrix**: run integration tests on both
+  platforms. Windows is deferred (WSL2+systemd coverage is enough).
 
-- **M3.T1** — `src/radioactive_ralph/variants/base.py`: `VariantProfile`, `Stage`, `Model`, `TerminationPolicy`, `PreflightQuestion`, `VoiceProfile`, `SafetyFloors` dataclasses. `VariantProfile` is a public extension point — documented for users who want custom variants.
-- **M3.T1a** — `ralph run --variant-module X.Y.Z` loads a user-provided module and expects a `VARIANT: VariantProfile`. Documented as trust-on-first-use: importing means executing. Docs warn.
-- **M3.T2** — Ten variant files under `src/radioactive_ralph/variants/` (`green.py` ... `world_breaker.py`), each ≤300 LOC, each exporting a frozen `VariantProfile` faithful to the current `skills/*/SKILL.md`.
-- **M3.T2a** — Each profile declares all four workspace knobs (isolation, object_store, sync_source, lfs_mode) at their documented defaults.
-- **M3.T2b** — `SafetyFloors` sub-structure on each profile. old-man + world-breaker pin `object_store = full`, require two-step override (`--confirm-<variant>` + `--confirm-shared-objects-unsafe` + config). savage requires spend cap.
-- **M3.T2c** — First-invocation dry-run mode for risky variants: `old-man`, `world-breaker`, `savage` on their first run in a given repo print a full plan in Ralphspeak and require `ralph run --variant X --yes-ive-read-the-plan` on second invocation. Consent recorded per-repo in `local.toml`.
-- **M3.T3** — `src/radioactive_ralph/workspace/worktree.py`: `WorktreeManager` for `mirror-*` isolation modes. Creates/destroys/reconciles worktrees under `$XDG/.../worktrees/`. On boot, reconcile against `git -C mirror.git worktree list --porcelain` — destroy orphans.
-- **M3.T3a** — Hook copying: on mirror init, copy operator's `.git/hooks/` (executable files only) to mirror's `.git/hooks/`. Override via `config.toml` (`copy_hooks = false`). Documented.
-- **M3.T4** — `src/radioactive_ralph/preflight.py`: question registry + runner. Each question has severity + detector + resolutions. Default-branch detection via `git symbolic-ref refs/remotes/origin/HEAD` with fallback list.
-- **M3.T4a** — Remembered-answer logic: operator's answers written to `config.toml` per-variant section; subsequent runs skip those questions unless operator passes `--reask`.
-- **M3.T5** — `src/radioactive_ralph/voice.py`: per-variant voice generator. Template library keyed by `(variant, event_type)`. Every user-facing emission (status, events, pre-flight prompts, Ralphspeak handoff lines) is voiced.
-- **M3.T5a** — Spend tracking: supervisor parses `usage` events, accumulates per-model, computes USD from pricing table. Cap-hit → graceful stop, voiced as *"Ralph burned his allowance. Going home."* Pricing table is a module-level dict; stale prices are a known risk, documented.
-- **M3.T6** — Rewrite all 10 `skills/*/SKILL.md` as thin entry points (<30 lines). Each: (1) check/bootstrap config, (2) run variant's pre-flight, (3) shell out to `ralph run --detach`, (4) return Ralphspeak handoff.
-- **M3.T7** — `scripts/generate_variants_matrix.py`: reads every `VariantProfile`, emits `docs/reference/variants-matrix.md`. Committed; CI re-runs and fails on drift.
-- **M3.T8** — Rewrite per-variant docs under `docs/variants/*.md` to pull from the profile (auto-generated tables) + hand-written lore sections allowed above/below.
-- **M3.T9** — Unit tests:
-  - Parameterized test — each profile loads, fields are valid, tool allowlist is subset of known tools, gated variants declare gate.
-  - blue profile excludes `Edit`/`Write` from allowlist.
-  - Any variant with `shared` isolation excludes `Edit`/`Write` (floor enforced at profile-compile time via validator).
-  - savage/old-man/world-breaker declare gates + spend caps.
-  - grey is single-pass, max_parallel_worktrees=1.
-  - All 10 profiles type-check under `mypy --strict`.
-- **M3.T9a** — Safety-floor unit tests: TOML override alone cannot weaken old-man `object_store`. Only `--confirm-no-mercy` + `--confirm-shared-objects-unsafe` + TOML together succeed.
-- **M3.T9b** — Config round-trip tests: each variant's defaults round-trip through `config.toml` write → read → compare.
-- **M3.T10** — Pre-flight unit tests: each variant's pre-flight with mocked repo state produces expected questions/refusals.
+### M3 — Ten variants + pre-flight + voice + worktree orchestration
 
-### Milestone 4 — Integration harness + doctor + release
+- **M3.T1 — `internal/variant/profile.go`**: `VariantProfile`,
+  `Stage`, `Model`, `TerminationPolicy`, `PreflightQuestion`,
+  `VoiceProfile`, `SafetyFloors`, `BiasCategory`, `BiasSnippet` types.
+- **M3.T2 — Ten variant files**: `internal/variant/{green,grey,red,
+  blue,professor,joe_fixit,immortal,savage,old_man,world_breaker}.go`.
+  Each ≤300 LOC, each faithful to the current SKILL.md.
+- **M3.T3 — Safety floors enforcement**: compile-time validators for
+  `shared`-isolation tool allowlist; runtime two-step override for
+  destructive variants' object_store.
+- **M3.T4 — Dry-run + spend-cap**: first-invocation dry-run mode for
+  risky variants; spend-cap tracking parses stream-json `usage` events.
+- **M3.T5 — `internal/voice` fills**: per-variant voice template library,
+  used by pre-flight questions, status output, attach stream,
+  handoff messages.
+- **M3.T6 — Pre-flight wizard as question registry**: severity-tiered
+  (blocking / warning / info), CLI + skill renderers share the registry.
+- **M3.T7 — Skills rewritten to ≤30 lines**: each SKILL.md delegates
+  to `ralph run`.
+- **M3.T8 — Auto-generated variants-matrix.md**: `cmd/matrixgen` reads
+  every `VariantProfile`, emits `docs/reference/variants-matrix.md`.
+  CI drift check fails on diff.
+- **M3.T9 — Per-variant docs pages**: `docs/variants/*.md` auto-generated
+  from profiles + hand-written lore sections allowed above/below.
+- **M3.T10 — Unit tests per variant**: parameterized test asserts
+  every profile's fields in range, tool allowlist subset of known
+  tools, gated variants declare gates, blue excludes Edit+Write, grey
+  is single-pass with max_parallel=1, safety floors non-overridable.
 
-- **M4.T1** — `tests/integration/conftest.py`: tmp git repo fixture, fake origin (`git init --bare` in tmp), optional real `claude -p` if `CLAUDE_AUTHENTICATED` set, fake gh responses via respx.
-- **M4.T2** — Scenario: full grey-ralph single-pass end-to-end. `ralph init` → `ralph run --variant grey` → assert PR to fake origin → supervisor exits cleanly → mirror persists, worktrees cleaned.
-- **M4.T3** — Scenario: green-ralph partial run with SIGTERM. Spawn, let 2 PRs open, SIGTERM multiplexer, assert graceful drain.
-- **M4.T4** — Scenario: session death + resume. Start supervisor, one managed session active, SIGKILL `claude -p` subprocess mid-stream, assert supervisor detects, resumes, sentinel prompt verifies continuity.
-- **M4.T5** — Scenario: pre-flight refusal. old-man on default branch without gate → supervisor exits 2 with clear remediation.
-- **M4.T5a** — Scenario: safety floor rejections — old-man with TOML `object_store = reference` but only one confirm flag → refuses. With both flags → proceeds.
-- **M4.T6** — Scenario: multiplexer fallback. Force PATH without tmux → screen used. Without screen → setsid fallback used. Each case: daemon comes up, socket reachable, status healthy.
-- **M4.T6a** — Scenario: `shared` isolation (blue-ralph default) creates no mirror, no worktree. Reads operator repo, posts review comments, exits.
-- **M4.T6b** — Scenario: `shallow` isolation creates `$XDG/shallow/`, no mirror machinery, no worktree pool.
-- **M4.T6c** — Scenario: `mirror-single` + `reference` object store. Share operator's objects; simulate operator `git gc --aggressive` → Ralph detects broken refs → repacks mirror → resumes.
-- **M4.T6d** — Scenario: LFS detection. Repo with `.gitattributes` containing `*.psd filter=lfs`. Blue-ralph pointers-only → never pulls blobs. Green-ralph on-demand → pulls when task touches a `.psd`.
-- **M4.T6e** — Scenario: pinned hooks. Mirror init copies operator's `.git/hooks/pre-commit`. Ralph commit triggers the pre-commit hook. Verify hook ran.
-- **M4.T7** — `ralph doctor` full rewrite:
-  - git version ≥ 2.5
-  - `claude --version` within supported range (pinned in code)
-  - `gh auth status`
-  - tmux OR screen OR Python stdlib sufficient for fallback
-  - sqlite3 with loadable-extension support; sqlite-vec loadable (warn-only if missing, FTS5 fallback)
-  - `platformdirs.user_state_dir` writable
-  - Operator repo has `.radioactive-ralph/config.toml` (warn if absent + offer to run `ralph init`)
-  - Exit 0 green; exit 1 with ranked remediation list
-- **M4.T7a** — Doctor version-range check: if `claude --version` outside pinned range, exit 1 with exact `npm install -g @anthropic-ai/claude-code@<range>` suggestion.
-- **M4.T8** — Docs polish: final architecture diagram in `docs/reference/architecture.md`; UX walkthrough in `docs/guides/design.md`; auto-generated `variants-matrix.md`; extension guide in `docs/guides/custom-variants.md`.
-- **M4.T8a** — `docs/guides/custom-variants.md` — how to write your own `VariantProfile` and load via `--variant-module`. Clearly marked trust-on-first-use.
-- **M4.T9** — Release 1.0.0 via release-please; publish to PyPI via existing release workflow. Record `assets/demo.gif` of the full `ralph init → ralph run --variant grey → PR opens → ralph stop` flow.
+### M4 — Integration harness + doctor + service install + release 1.0.0
 
----
+- **M4.T1 — Integration scenarios**: full grey-ralph single-pass
+  end-to-end against fake origin; green-ralph SIGTERM mid-run;
+  session death + resume continuity; pre-flight refusal for old-man
+  on default branch; safety-floor override two-step; mirror `--reference`
+  + repack-on-corruption recovery; LFS detection applied per-variant;
+  hook preservation (operator's pre-commit runs inside mirror); multi-variant
+  coexistence (green + grey simultaneous supervisors).
+- **M4.T2 — Service install integration**: `ralph service install
+  --variant green` writes plist/unit correctly; `brew services start`
+  invokes supervisor in foreground; service-context detection refuses
+  floor-gated variants.
+- **M4.T3 — `ralph doctor` comprehensive**: exit 0 green, exit 1 with
+  ranked remediation. Checks git version, claude version range, gh
+  auth, tmux/screen/setsid fallback, platformdirs writable,
+  sqlite-vec loadable, workspace config.toml present, inventory fresh.
+- **M4.T4 — Docs completion**: final architecture diagram, UX
+  walkthrough with both CLI + skill + service paths, auto-generated
+  variants matrix committed.
+- **M4.T5 — Release 1.0.0**: GoReleaser publishes to GitHub Releases
+  + Homebrew tap + Scoop bucket + WinGet (microsoft/winget-pkgs PR).
+  Install script live at `jonbogaty.com/radioactive-ralph/install.sh`.
+  `assets/demo.gif` records full `ralph init` → `ralph run --variant grey`
+  → PR opens → `ralph stop`.
+- **M4.T6 — Purge `reference/`**: delete the entire Python tree in one
+  commit at release. `radioactive-ralph==0.5.1` on PyPI remains
+  available; no further Python releases.
 
 ## 6. Acceptance criteria
 
-### Milestone 1 — marketplace + hygiene
-- `claude plugin marketplace add jbcom/radioactive-ralph && claude plugin install ralph@jbcom-plugins` succeeds post-merge.
-- No README claim references a command or flag that doesn't exist.
-- `hatch run test` passes (2 broken tests fixed).
-- `hatch run docs:build` passes.
-- `ruff check` clean; `mypy --strict` clean on remaining source.
-- All touched `docs/` pages carry `updated: 2026-04-14`.
-- `.radioactive-ralph/` does NOT yet exist in this PR — lands in M2 with `ralph init`.
-- `docs/plans/2026-04-14-radioactive-ralph-rewrite.prq.md` committed.
-- `CHANGELOG.md` `[Unreleased]` section describes the pivot.
-- PR description links this PRD.
+### M2
+- `go test ./...` passes locally and in CI on both macOS and Linux
+- `golangci-lint run` clean
+- `govulncheck ./...` clean
+- `ralph --version` prints the compiled version
+- `ralph init` in a fresh temp repo creates `.radioactive-ralph/`
+  correctly and writes a sensible starter `config.toml` with
+  capability discoveries
+- `ralph run --variant blue --detach` launches a backgrounded
+  supervisor; `ralph status` returns healthy; `ralph stop` terminates
+  cleanly; no leftover PID/socket/worktree
+- `ralph doctor` exit 0 on healthy machine, exit 1 with remediation
+  list on broken
+- Gated integration test (real `claude -p`, `CLAUDE_AUTHENTICATED=1`):
+  spawn, inject message, verify response event, kill, resume, sentinel
+  re-prompt succeeds
+- `.claude-plugin/marketplace.json` validates under
+  `claude plugin validate .` (unchanged from M1)
+- GoReleaser dry-run succeeds: `goreleaser release --snapshot --clean`
+  produces all artifacts (brew formula, Scoop manifest, WinGet manifest,
+  tarballs, checksums)
+- Homebrew tap repo `jbcom/homebrew-tap` exists with an initial
+  Formula/ralph.rb placeholder
 
-### Milestone 2 — daemon skeleton
-- `ralph init` creates `.radioactive-ralph/` tree correctly in a fresh temp repo, writes both TOML files, appends to root `.gitignore`.
-- `ralph run --variant blue --detach` launches a backgrounded supervisor; `ralph status` healthy; `ralph stop` clean.
-- `pytest tests/daemon/` ≥90% coverage on daemon/.
-- Gated integration test (real claude) passes: spawn, inject, verify, kill, resume, sentinel-verify continuity.
-- `.claude-plugin/marketplace.json` validates under `claude plugin validate .`.
-- `ralph _supervisor` hidden from `--help`.
+### M3
+- All 10 variant profiles type-check and pass `golangci-lint`
+- Safety-floor tests pass (single-flag rejected, two-step accepted)
+- `grey`: single-pass with `MaxParallel == 1`
+- `blue`: excludes Edit + Write from tool allowlist (compile-time)
+- Auto-generated variants-matrix.md is stable across consecutive runs
+- Skills ≤30 lines each
 
-### Milestone 3 — variants + workspaces + preflight
-- `pytest tests/variants/ -v` — all 10 variants pass parameterized tests.
-- `shared`-mode variants' tool allowlist enforced at profile-compile time.
-- old-man/world-breaker safety-floor tests pass (single-flag rejected, two-flag accepted).
-- grey: single-pass + max_parallel_worktrees=1.
-- All variants type-check under `mypy --strict`.
-- `scripts/generate_variants_matrix.py` stable across consecutive runs.
-- Skills ≤30 lines each.
-
-### Milestone 4 — integration + release
-- `pytest tests/integration/` all scenarios pass (gated skip cleanly).
-- `ralph doctor` exit 0 healthy, exit 1 with remediation on broken.
-- `docs/reference/variants-matrix.md` generated, CI drift check passes.
-- 1.0.0 published to PyPI.
-- `assets/demo.gif` records end-to-end demo.
-
----
+### M4
+- All integration scenarios pass (gated ones skip cleanly without
+  `CLAUDE_AUTHENTICATED`)
+- `ralph doctor` passes on both macOS and Linux CI runners
+- `ralph service install --variant green` installs and can be
+  `brew services start`-ed on macOS CI
+- 1.0.0 published to GitHub Releases, Homebrew tap, Scoop, WinGet
+- Install script at `jonbogaty.com/radioactive-ralph/install.sh` works
+  end-to-end on macOS and Linux
+- `reference/` deleted
 
 ## 7. Technical notes
 
-**Session ID strategy.** Stable UUID per managed session via `--session-id <uuid>`. Avoids issue #44607 (interactive mode only; `-p` mode is sound).
+**Go deps (target)**:
+- `github.com/alecthomas/kong` — CLI parsing
+- `github.com/BurntSushi/toml` or `github.com/pelletier/go-toml/v2` —
+  config TOML
+- `modernc.org/sqlite` — pure-Go SQLite (no CGo)
+- `github.com/asg017/sqlite-vec-go-bindings` — vec0 virtual table
+- `github.com/gofrs/flock` — cross-platform file locking
+- `github.com/google/uuid` — session IDs
+- stdlib: `os/exec`, `encoding/json`, `bufio`, `net`, `syscall`,
+  `context`, `sync`, `log/slog`
 
-**sqlite-vec vs FTS5.** Ship with sqlite-vec for embeddings. Graceful degrade to FTS5 if extension loading fails. Never sqlite-vss.
+**No Anthropic SDK**. The daemon speaks to Claude only through the
+`claude -p` binary. If we ever need a direct Anthropic API call (we
+don't in the current design), it's a ~100-line `net/http` struct.
 
-**`--bare` flag.** All daemon-spawned sessions. Skip project CLAUDE.md/hooks/MCP for reproducibility. Variant provides system prompt via `--append-system-prompt`.
+**No GitHub API client**. Forge interactions happen inside worktree
+Claude sessions via the `gh` CLI, which Claude already knows how to
+drive.
 
-**Permission mode.** Daemon sessions never use `default`. `acceptEdits` normal; `bypassPermissions` gated for old-man/world-breaker.
+**`--bare` flag on every managed spawn** for reproducibility.
+Supervisor owns the system prompt via `--append-system-prompt`.
 
-**State directory.** `.radioactive-ralph/` in-repo for config only; `$XDG_STATE_HOME/radioactive-ralph/<repo-hash>/` for everything else. Operator can nuke XDG to reset; zero working-repo impact.
+**Session ID strategy**: stable UUID per session, pinned via
+`--session-id <uuid>`. Supervisor stores in SQLite. Resume reuses.
 
-**Concurrency.** SQLite WAL one-writer + N-readers. Per-variant supervisors coexist; shared event log interleaves cleanly. Cross-repo supervisors are independent.
+**sqlite-vec vs FTS5**: prefer sqlite-vec for semantic task dedup;
+soft-fail to FTS5 if extension loading fails at runtime.
 
-**Default-branch detection.** `git symbolic-ref refs/remotes/origin/HEAD` first. Fallback hard-coded list `{main, master, trunk, develop, production, release/*}`.
+**State directory**: `$XDG_STATE_HOME/radioactive-ralph/<repo-hash>/`
+on Linux / WSL; `~/Library/Application Support/radioactive-ralph/
+<repo-hash>/` on macOS per Apple conventions.
 
-**Hook preservation.** Mirror init copies executable files from operator's `.git/hooks/` to mirror's `.git/hooks/`. Override via `copy_hooks = false`.
+**Cross-platform daemon detach**: `syscall.Setsid()` + `fork/exec`
+pattern for the Python-free fallback (Linux + macOS). Windows is not
+supported for the `ralph run` direct invocation; Windows users invoke
+via WSL2+Linuxbrew where the Linux path works. The `ralph` binary on
+Windows only supports `ralph init / status / doctor` (config-manipulation
+commands); the supervisor requires a POSIX environment.
 
-**LFS handling.** Detected on init via `.gitattributes`. Skipped entirely if no LFS. Otherwise applies variant's `lfs_mode`.
+**Release tooling**: GoReleaser generates brew, Scoop, WinGet artifacts
+from one `.goreleaser.yaml` on git tag push. No code signing in initial
+releases. cosign for supply-chain provenance.
 
-**Multiplexer detection.** `$TMUX` set OR tmux on PATH → tmux. Else screen. Else stdlib setsid + double-fork. No python-daemon dep.
-
-**Spend tracking pricing table.** Hardcoded; stale prices = undercharging/overcharging. Known risk; doctor warns when pricing table is >30 days old (ship date).
-
-**Nested claude.** Managed subprocess may spawn claude if the task requires it. Second-level is the managed session's responsibility, not the daemon's.
-
-**Sandbox.** If Claude Code has strict sandboxing, the skill's Bash launch of `ralph run` needs `$XDG_STATE_HOME/radioactive-ralph/` in `additionalDirectories`. Documented in skill prereqs.
-
-**Default-branch detection is per-remote.** Ralph queries `origin`'s default branch, not `local`'s. Some operator repos have diverging locally-default vs origin-default branches; Ralph trusts origin because that's where PRs go.
-
-**Variant trust-on-first-use.** `--variant-module X.Y.Z` imports arbitrary Python. Users run at own risk. Docs note this.
-
----
-
-## 8. Risks (consolidated with mitigations)
+## 8. Risks
 
 ### R1 — Stream-json protocol drift
-Mitigations: pin `claude` version range in doctor; protocol-ping on supervisor boot; Pydantic `extra=allow` + raw-event storage for forward compat; integration test gated on `CLAUDE_AUTHENTICATED`.
+Pin `claude` version range in doctor. Protocol-ping on supervisor boot.
+Raw + parsed payload storage so forward-compat fixes can replay old
+events.
 
 ### R2 — Session file format drift
-Mitigations: sentinel re-prompt after every resume with task-ID verification; task-state checkpoints in own event log sufficient to reseed a fresh session; doctor pins `claude` version; integration resume test on every CI.
+Sentinel re-prompt with task-ID verification after every resume.
+Task-state checkpoints rich enough to reseed a fresh session if resume
+fails.
 
 ### R3 — Pre-flight UX complexity
-Mitigations: silent-when-passing detectors; remembered answers in config.toml; `--yes` flag; three severity levels; single registry shared by CLI + skill.
+Silent-when-passing detectors. Remembered answers in config.toml.
+`--yes` flag. Three severity levels.
 
-### R4 — Multiplexer fallback quirks on macOS
-Mitigations: tmux strongly recommended (doctor gives top-priority remediation); hand-rolled stdlib setsid instead of python-daemon; heartbeat file detects liveness independent of PID; macOS CI matrix.
+### R4 — Multiplexer quirks on macOS
+tmux strongly recommended (doctor top-priority remediation). Stdlib
+`syscall.Setsid` fallback instead of external daemon library.
+Heartbeat file detects liveness independently of PID.
 
-### R5 — Risky variants run unattended
-Mitigations: per-variant safety floors (old-man `object_store=full` pinned; two-step override requires both CLI flag AND explicit config); spend caps for savage/world-breaker; first-invocation dry-run consent; mirror-based isolation means destructive ops stay in XDG-land, never touch operator's working tree.
+### R5 — Risky variants running unattended
+Per-variant safety floors (`object_store = full` pinned for destructive
+ones; two-step override). Spend caps. First-invocation dry-run consent.
+Mirror-based isolation keeps destructive ops in XDG, never operator's
+working tree. Service-context detection refuses floor-gated variants
+under launchd/systemd.
 
 ### R6 — Scope creep
-Mitigations: explicit out-of-scope list; public API = CLI + VariantProfile extension point only; no module-level semver promises; `--variant-module` is the extension mechanism, core stays narrow.
+Explicit out-of-scope list. Public API = CLI + `VariantProfile` fields.
+No internal package is semver-stable.
 
-### R7 — config.toml-as-gate breaks for teammate who cloned
-Mitigations: `local.toml` gitignored, operator-specific; `ralph init --local-only` for existing-config bootstrap; skill/CLI detect missing `local.toml` and prompt.
+### R7 — `config.toml` teammate breakage
+Two-file split (`config.toml` committed, `local.toml` gitignored per-
+operator). `ralph init --local-only` bootstraps a teammate's local.toml.
 
 ### R8 — Multi-variant race conditions
-Mitigations: per-variant-scoped paths (`<variant>.sock`, `<variant>.pid`, `<variant>-<n>` worktrees); SQLite WAL handles interleaved writes; `ralph status --all` aggregates; `allow_concurrent_variants` config toggle if operator wants exclusivity.
+Per-variant-scoped paths (`<variant>.sock`, etc.). SQLite WAL handles
+interleaved writes. `allow_concurrent_variants` config toggle.
 
 ### R9 — Shared-object reference corruption
-Mitigations: repack-on-corruption with automatic recovery; integration test simulates operator `git gc --aggressive`; destructive variants default to `full` object store and require two-step override for `reference`.
+Repack-on-corruption recovery. Destructive variants default to `full`
+object store. Integration test simulates aggressive `git gc`.
 
 ### R10 — LFS surprises
-Mitigations: auto-detect; variant-appropriate defaults; pointers-only for blue/grey/joe-fixit/immortal; operator override per variant; `excluded` mode refuses tasks that touch LFS paths with clear error.
+Auto-detect on init. Variant-appropriate defaults. `excluded` mode
+refuses tasks that touch LFS paths with clear error.
 
 ### R11 — Hook skipping
-Mitigations: copy operator's `.git/hooks/` to mirror on init; override via `copy_hooks = false`; documented.
+Copy operator's `.git/hooks/` into mirror on init. `copy_hooks = false`
+opt-out.
 
 ### R12 — Spend-tracking pricing drift
-Mitigations: doctor warns when pricing table is >30 days old; pricing table is a module-level dict in `src/radioactive_ralph/pricing.py`, updated on each release.
+Pricing table is a generated constant updated on each release. Doctor
+warns when >30 days old.
 
----
+### R13 — GoReleaser cascade failures
+GitHub Actions release.yml pins GoReleaser version. Brew tap / Scoop
+bucket / WinGet PR each retriable.
 
-## 9. Out of scope (explicitly)
+### R14 — Inventory staleness
+`ralph init --refresh` re-discovers without losing choices. Supervisor
+logs at INFO when config.toml references skills not in inventory.
 
-- Web dashboard / TUI beyond `ralph attach` streaming. `gh pr list` + terminal is sufficient.
-- Multi-operator coordination. One operator per daemon per variant per repo.
-- Non-git workspaces.
-- Hosted / SaaS mode. Local-only.
-- LLM providers other than Anthropic.
-- MCP server acting as a live bridge between outer Claude session and daemon. Confirmed impossible in Claude Code 2026.
-- Automatic pricing-table updates. Out-of-band release cadence.
-- Variant modules published as PyPI plugins. `--variant-module` loads user-provided modules; no discovery/registry system.
+## 9. Out of scope
+
+- Web dashboard beyond `ralph attach` streaming
+- Multi-operator coordination (one operator per daemon per variant per repo)
+- Non-git workspaces
+- Hosted / SaaS mode
+- LLM providers other than Anthropic
+- MCP server acting as a live bridge (confirmed impossible in Claude Code 2026)
+- Automatic pricing-table updates (out-of-band release cadence)
+- Variant modules published as separate packages (operator customization via config.toml is the extension story)
+- Direct internal git operations in the daemon (every git op happens via Claude in a worktree, or via `os/exec` in the workspace manager for mirror/worktree management only)
+- Direct forge API calls in the daemon (Claude uses `gh` CLI in worktrees)
+- Direct Anthropic API calls in the daemon (Claude runs via `claude -p` subprocesses)
+- Windows `ralph run` direct invocation (WSL2+Linuxbrew is the Windows path)
+- macOS code signing / notarization (unsigned FOSS binaries are the ecosystem standard; brew + curl|sh bypass Gatekeeper)

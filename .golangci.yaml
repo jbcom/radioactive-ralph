@@ -1,0 +1,53 @@
+version: "2"
+
+run:
+  timeout: 5m
+
+linters:
+  default: none
+  enable:
+    - errcheck
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+    - gocritic
+    - gosec
+    - misspell
+    - revive
+    - unconvert
+    - gocyclo
+    - dupl
+    - prealloc
+  exclusions:
+    rules:
+      - path: _test\.go
+        linters:
+          - dupl
+          - gocyclo
+          - gosec
+      - path: reference/
+        linters:
+          - errcheck
+          - govet
+          - ineffassign
+          - staticcheck
+          - unused
+          - gocritic
+          - gosec
+          - misspell
+          - revive
+          - unconvert
+          - gocyclo
+          - dupl
+          - prealloc
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
+    - gci
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0

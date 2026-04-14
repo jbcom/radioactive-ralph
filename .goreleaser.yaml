@@ -1,0 +1,145 @@
+# GoReleaser config for radioactive-ralph
+# https://goreleaser.com/customization/
+
+version: 2
+
+project_name: ralph
+
+before:
+  hooks:
+    - go mod tidy
+    - go mod download
+
+builds:
+  - id: ralph
+    main: ./cmd/ralph
+    binary: ralph
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ignore:
+      - goos: windows
+        goarch: arm64
+    ldflags:
+      - -s -w
+      - -X main.Version={{.Version}}
+      - -X main.Commit={{.ShortCommit}}
+      - -X main.Date={{.Date}}
+    flags:
+      - -trimpath
+
+archives:
+  - id: default
+    ids: [ralph]
+    name_template: >-
+      ralph_{{ .Version }}_
+      {{- if eq .Os "darwin" }}darwin_{{ .Arch }}
+      {{- else if eq .Os "linux" }}linux_{{ .Arch }}
+      {{- else if eq .Os "windows" }}windows_{{ .Arch }}
+      {{- end }}
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    files:
+      - LICENSE
+      - README.md
+      - CHANGELOG.md
+
+checksum:
+  name_template: "checksums.txt"
+  algorithm: sha256
+
+signs:
+  - cmd: cosign
+    signature: "${artifact}.cosign.sig"
+    certificate: "${artifact}.cosign.pem"
+    args:
+      - sign-blob
+      - "--output-signature=${signature}"
+      - "--output-certificate=${certificate}"
+      - "${artifact}"
+      - "--yes"
+    artifacts: checksum
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-next"
+
+changelog:
+  sort: asc
+  use: github
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+      - Merge pull request
+      - Merge branch
+
+brews:
+  - name: ralph
+    ids: [default]
+    repository:
+      owner: jbcom
+      name: homebrew-tap
+      branch: main
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+    directory: Formula
+    homepage: https://github.com/jbcom/radioactive-ralph
+    description: Autonomous continuous development orchestrator for Claude Code
+    license: MIT
+    commit_author:
+      name: jbcom-bot
+      email: noreply@jonbogaty.com
+    test: |
+      system "#{bin}/ralph", "--version"
+    install: |
+      bin.install "ralph"
+    # Service block is intentionally omitted for now.
+    # `ralph service install --variant <name>` handles per-variant
+    # service registration at runtime, since only three of the ten
+    # variants are service-appropriate and they take different flags.
+
+scoops:
+  - name: ralph
+    ids: [default]
+    repository:
+      owner: jbcom
+      name: scoop-bucket
+      branch: main
+      token: "{{ .Env.SCOOP_BUCKET_GITHUB_TOKEN }}"
+    homepage: https://github.com/jbcom/radioactive-ralph
+    description: Autonomous continuous development orchestrator for Claude Code
+    license: MIT
+
+release:
+  github:
+    owner: jbcom
+    name: radioactive-ralph
+  draft: false
+  prerelease: auto
+  name_template: "v{{ .Version }}"
+  footer: |
+    ## Install
+
+    Homebrew (macOS / Linux / WSL2+Linuxbrew):
+    ```
+    brew tap jbcom/tap
+    brew install ralph
+    ```
+
+    Scoop (Windows):
+    ```
+    scoop bucket add jbcom https://github.com/jbcom/scoop-bucket
+    scoop install ralph
+    ```
+
+    curl | sh:
+    ```
+    curl -sSL https://jonbogaty.com/radioactive-ralph/install.sh | sh
+    ```

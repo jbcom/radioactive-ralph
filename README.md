@@ -9,23 +9,26 @@
 </p>
 
 <p align="center">
-  <a href="https://pypi.org/project/radioactive-ralph/"><img src="https://img.shields.io/pypi/v/radioactive-ralph" alt="PyPI"/></a>
   <a href="https://github.com/jbcom/radioactive-ralph/actions/workflows/ci.yml"><img src="https://github.com/jbcom/radioactive-ralph/actions/workflows/ci.yml/badge.svg" alt="CI"/></a>
-  <a href="https://sonarcloud.io/summary/new_code?id=jbcom_radioactive-ralph"><img src="https://sonarcloud.io/api/project_badges/measure?project=jbcom_radioactive-ralph&metric=vulnerabilities" alt="Vulnerabilities"/></a>
   <a href="https://jonbogaty.com/radioactive-ralph/"><img src="https://img.shields.io/badge/docs-jonbogaty.com%2Fradioactive--ralph-22c55e" alt="Docs"/></a>
   <a href="./LICENSE"><img src="https://img.shields.io/badge/license-MIT-green" alt="MIT License"/></a>
 </p>
 
 radioactive-ralph drives Claude Code across a portfolio of git repos — continuously, with a sense of humor, and with enough structure to keep the funny little guy from burning the school down.
 
-## What it is
+## Under active rewrite
 
-radioactive-ralph is currently under significant rewrite. See [`docs/plans/2026-04-14-radioactive-ralph-rewrite.prq.md`](docs/plans/2026-04-14-radioactive-ralph-rewrite.prq.md) for the architectural pivot: per-repo Python daemon that keeps `claude -p` subprocesses alive across days of work, driven from either the CLI directly or from the slash-command skills below.
+radioactive-ralph is mid-architectural-pivot. The project started as a Python package; it is being rewritten as a Go binary. See the [PRD](docs/plans/2026-04-14-radioactive-ralph-rewrite.prq.md) for the four-milestone plan. The old Python tree is preserved in [`reference/`](reference/) until the Go rewrite ships v1.0.0.
+
+Status: **M1 merged** (marketplace hygiene, broken implementations stubbed, docs aligned to target architecture). **M2 in progress** (Go skeleton, capability-matching init wizard, SQLite event log, Unix socket IPC, stream-json session control, mirror-based worktree orchestration, brew/launchd/systemd service integration).
+
+## What it is
 
 | Mode | What you get | Best for |
 |---|---|---|
 | Claude Code plugin (skills) | Ten Ralph variants — each a slash command that launches the daemon in the background and returns control to the outer session | In-session invocation, the skill handles pre-flight checks and hand-off |
-| Python daemon (CLI) | `ralph init` then `ralph run --variant X` — runs the orchestrator directly outside any Claude session | Long-running orchestration, multi-day autonomous work on a codebase |
+| `ralph` binary (CLI) | `ralph init` then `ralph run --variant X` — runs the orchestrator directly outside any Claude session | Long-running orchestration, multi-day autonomous work on a codebase |
+| System service | `ralph service install --variant green` — launchd on macOS, systemd --user on Linux, brew-services wrapped either way | Always-on autonomous operation for green, immortal, or blue variants |
 
 ## Meet the Ralphs
 
@@ -44,53 +47,51 @@ radioactive-ralph is currently under significant rewrite. See [`docs/plans/2026-
 
 See the full [variants index](https://jonbogaty.com/radioactive-ralph/variants/) for bios, arguments, and safety profiles.
 
-## Install as a Claude Code plugin
+## Install (once M2 ships)
+
+Three paths, all shipping from one GoReleaser release:
 
 ```bash
+# Homebrew (macOS, Linux via Linuxbrew, WSL2+Linuxbrew on Windows)
+brew tap jbcom/tap
+brew install ralph
+
+# curl | sh (any POSIX environment)
+curl -sSL https://jonbogaty.com/radioactive-ralph/install.sh | sh
+
+# Claude Code plugin skill (bootstraps the binary on first run)
 claude plugin marketplace add jbcom/radioactive-ralph
 claude plugin install ralph@jbcom-plugins
-
-# inside Claude Code
-/green-ralph
 ```
 
-## Install as a standalone daemon
+For Windows natively (no WSL), `scoop install ralph` or `winget install jbcom.ralph` install the binary, but the supervisor itself runs only in POSIX environments; on Windows you'll use Ralph via WSL2.
+
+## Commands (target CLI surface, post-M2)
 
 ```bash
-uvx radioactive-ralph --help
-
-# or install permanently
-pip install radioactive-ralph
-ralph --help
+ralph init                               # per-repo capability-matching wizard
+ralph run --variant X [--detach]         # launch supervisor
+ralph status [--variant X | --all]       # query via Unix socket
+ralph attach --variant X                 # stream events
+ralph stop [--variant X]                 # graceful shutdown
+ralph doctor                             # environment health check
+ralph service install --variant X        # emit launchd/systemd unit
+ralph service list                       # show registered services
 ```
-
-## Commands
-
-The CLI surface during the rewrite. See [the PRD](docs/plans/2026-04-14-radioactive-ralph-rewrite.prq.md) for target shape; implementation status is tracked per-milestone.
-
-| Command | Status | Purpose |
-|---------|--------|---------|
-| `ralph status` | implemented | Show current orchestrator state |
-| `ralph doctor` | implemented | Check environment health |
-| `ralph init` | planned (M2) | Per-repo setup wizard |
-| `ralph run --variant X [--detach]` | planned (M2) | Launch the daemon for a variant |
-| `ralph attach --variant X` | planned (M2) | Stream daemon events from Unix socket |
-| `ralph stop [--variant X]` | planned (M2) | Graceful shutdown |
 
 ## Docs and design system
 
 - [Getting started](https://jonbogaty.com/radioactive-ralph/getting-started/)
 - [Ralph variants](https://jonbogaty.com/radioactive-ralph/variants/)
 - [Architecture reference](https://jonbogaty.com/radioactive-ralph/reference/architecture/)
-- [API reference](https://jonbogaty.com/radioactive-ralph/autoapi/)
 - [Launch guide](https://jonbogaty.com/radioactive-ralph/guides/launch/)
 
 ## Requirements
 
-- Python 3.12+
 - `claude` CLI installed and authenticated (`claude login`)
 - `gh` CLI installed and authenticated (`gh auth login`)
-- `ANTHROPIC_API_KEY` set in the environment for daemon mode only
+- `git` ≥ 2.5 (for worktrees)
+- `tmux` strongly recommended (the supervisor falls through to `screen` or `setsid` if not)
 
 ## Contributing
 
@@ -99,8 +100,9 @@ See [AGENTS.md](./AGENTS.md), [STANDARDS.md](./STANDARDS.md), and [CONTRIBUTING 
 ```bash
 git clone git@github.com:jbcom/radioactive-ralph.git
 cd radioactive-ralph
-python3 -m pip install --user hatch
-python3 -m hatch test
+make test          # go test ./...
+make lint          # golangci-lint run
+make build         # build ralph binary into ./dist/
 ```
 
 ## License
