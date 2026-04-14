@@ -1,4 +1,5 @@
 import os
+import subprocess
 from datetime import UTC, datetime
 
 import httpx
@@ -60,14 +61,21 @@ async def test_forge_init_and_http_client(forge_info, mocker):
 def test_discover_github_token_errors(mocker):
     from radioactive_ralph.forge.auth import AuthError, get_github_token
 
-    # 1. No token at all
+    # 1. No token at all, gh CLI not on PATH
     mocker.patch.dict(os.environ, {}, clear=True)
-    mocker.patch("subprocess.run", side_effect=FileNotFoundError)
+    mocker.patch("radioactive_ralph.forge.auth.shutil.which", return_value=None)
     with pytest.raises(AuthError) as exc:
         get_github_token()
     assert "No GitHub token found" in str(exc.value)
 
-    # 2. Inside Claude Code hint
+    # 2. No token, gh exists but auth subprocess times out
+    mocker.patch("radioactive_ralph.forge.auth.shutil.which", return_value="/usr/bin/gh")
+    mocker.patch("subprocess.run", side_effect=subprocess.TimeoutExpired(cmd="gh", timeout=5))
+    with pytest.raises(AuthError) as exc:
+        get_github_token()
+    assert "No GitHub token found" in str(exc.value)
+
+    # 3. Inside Claude Code hint
     mocker.patch.dict(os.environ, {"CLAUDECODE": "1"})
     with pytest.raises(AuthError) as exc:
         get_github_token()

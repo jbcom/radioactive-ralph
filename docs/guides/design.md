@@ -39,17 +39,22 @@ of Claude subprocesses alive, focused, and productive across days of work.
 - A vendor lock-in — uses `claude` CLI and `gh` CLI, both open
 - A general-purpose task runner, tmux replacement, or SaaS orchestrator
 
-## User experience
+## User experience (target — M2+)
+
+The commands below describe the **target** UX post-rewrite. In M1 (the current
+branch), only `ralph status` and `ralph doctor` are implemented; `ralph init`,
+`ralph run`, `ralph attach`, and `ralph stop` land in M2 along with the real
+daemon. See [state](../reference/state.md) for live implementation status.
 
 ```bash
-# One-time per repo
+# One-time per repo (M2)
 ralph init
 
-# Invoke directly from the terminal
+# Invoke directly from the terminal (M2)
 ralph run --variant green --detach
 ralph attach --variant green         # stream events
 
-# Or invoke from inside a Claude session
+# Or invoke from inside a Claude session (M3 — skills become thin entry points)
 /green-ralph
 # → Ralphspeak pre-flight, background launch, hand-off
 # → "Ralph is playing with his friends. Use the CLI to check on him."
@@ -58,8 +63,8 @@ ralph attach --variant green         # stream events
 Operator walks away. Comes back to:
 
 ```bash
-gh pr list                           # PRs open across repos
-ralph status --all                   # aggregate view of every variant
+gh pr list                           # PRs open across repos (always works)
+ralph status --all                   # aggregate view of every variant (M2)
 ```
 
 ## Core principles
@@ -99,7 +104,7 @@ Rather than worktrees off the operator's repo (which fails if the operator
 is already in a worktree, and pollutes their branch namespace), Ralph
 mirrors the repo into XDG state and does all work there:
 
-```
+```text
 ~/src/myproject/                    ← operator works here, untouched by Ralph
 ├── .git/
 └── .radioactive-ralph/
@@ -132,7 +137,7 @@ Ten variants, each a distinct operating mode:
 - **joe-fixit** — ROI-scored N-cycle bursts. Small PRs, bounded diffs.
 - **immortal** — Multi-day resilient loop. Sonnet only, journaled state.
 - **savage** — Max throughput. 10-worktree parallel, +1 tier, zero sleep. Gated.
-- **old-man** — Forceful imposition. Force-resets, history rewrites. Hard gated.
+- **old-man** — Forceful imposition. Force-resets, history rewrites. Hard-gated.
 - **world-breaker** — All-opus everywhere. For catastrophes. Hardest gate.
 
 See [variants index](../variants/index.md) for the full matrix.

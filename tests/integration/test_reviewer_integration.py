@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -28,8 +27,8 @@ async def test_review_pr_integration(mocker) -> None:
     )
 
     # 1. Mock ForgeClient
-    mock_forge = MagicMock()
-    mock_forge.get_pr_diff = AsyncMock(
+    mock_forge = mocker.MagicMock()
+    mock_forge.get_pr_diff = mocker.AsyncMock(
         return_value="""
 diff --git a/src/main.py b/src/main.py
 index 123..456 100644
@@ -44,11 +43,11 @@ index 123..456 100644
     )
 
     # 2. Mock Anthropic client
-    mock_anthropic = MagicMock()
-    mock_anthropic.messages.create = AsyncMock(
-        return_value=MagicMock(
+    mock_anthropic = mocker.MagicMock()
+    mock_anthropic.messages.create = mocker.AsyncMock(
+        return_value=mocker.MagicMock(
             content=[
-                MagicMock(
+                mocker.MagicMock(
                     text="""
 ```json
 {

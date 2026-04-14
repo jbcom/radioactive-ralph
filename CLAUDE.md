@@ -16,7 +16,7 @@ M4: integration + release).
 
 ## Quick orientation
 
-```
+```text
 src/radioactive_ralph/
 ├── cli.py          # Click CLI — `ralph status` / `doctor` implemented; `run` stubbed pending M2
 ├── orchestrator.py # Legacy loop stubbed; helpers preserved (_merge_ready, _review_pending, _should_discover)

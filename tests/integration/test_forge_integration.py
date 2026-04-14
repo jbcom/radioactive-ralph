@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -22,7 +21,7 @@ async def test_github_forge_list_prs_integration(mocker) -> None:
     )
 
     # Mock the HTTP client
-    mock_resp1 = MagicMock()
+    mock_resp1 = mocker.MagicMock()
     mock_resp1.json.return_value = [
         {
             "number": 1,
@@ -36,9 +35,9 @@ async def test_github_forge_list_prs_integration(mocker) -> None:
     mock_resp1.headers = {
         "link": '<https://api.github.com/repos/org/repo/pulls?page=2>; rel="next"'
     }
-    mock_resp1.raise_for_status = MagicMock()
+    mock_resp1.raise_for_status = mocker.MagicMock()
 
-    mock_resp2 = MagicMock()
+    mock_resp2 = mocker.MagicMock()
     mock_resp2.json.return_value = [
         {
             "number": 2,
@@ -50,10 +49,10 @@ async def test_github_forge_list_prs_integration(mocker) -> None:
         }
     ]
     mock_resp2.headers = {}
-    mock_resp2.raise_for_status = MagicMock()
+    mock_resp2.raise_for_status = mocker.MagicMock()
 
-    mock_client = MagicMock()
-    mock_client.get = AsyncMock(side_effect=[mock_resp1, mock_resp2])
+    mock_client = mocker.MagicMock()
+    mock_client.get = mocker.AsyncMock(side_effect=[mock_resp1, mock_resp2])
 
     # Patch get_github_token so it doesn't shell out
     mocker.patch("radioactive_ralph.forge.github.get_github_token", return_value="fake-token")
@@ -77,21 +76,21 @@ async def test_github_forge_get_ci_integration(mocker) -> None:
         api_base_url="https://api.github.com",
     )
 
-    mock_resp_runs = MagicMock()
+    mock_resp_runs = mocker.MagicMock()
     mock_resp_runs.json.return_value = {
         "check_runs": [{"name": "test", "status": "completed", "conclusion": "success"}]
     }
     mock_resp_runs.headers = {}
-    mock_resp_runs.raise_for_status = MagicMock()
+    mock_resp_runs.raise_for_status = mocker.MagicMock()
 
-    mock_resp_status = MagicMock()
+    mock_resp_status = mocker.MagicMock()
     mock_resp_status.json.return_value = {
         "statuses": [{"context": "security/audit", "state": "success"}]
     }
-    mock_resp_status.raise_for_status = MagicMock()
+    mock_resp_status.raise_for_status = mocker.MagicMock()
 
-    mock_client = MagicMock()
-    mock_client.get = AsyncMock(side_effect=[mock_resp_runs, mock_resp_status])
+    mock_client = mocker.MagicMock()
+    mock_client.get = mocker.AsyncMock(side_effect=[mock_resp_runs, mock_resp_status])
 
     mocker.patch("radioactive_ralph.forge.github.get_github_token", return_value="fake-token")
 

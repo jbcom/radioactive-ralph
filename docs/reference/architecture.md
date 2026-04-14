@@ -34,7 +34,7 @@ what voice.
 
 Every repo that uses Ralph has `.radioactive-ralph/` alongside `.git/`:
 
-```
+```text
 .radioactive-ralph/
 ├── config.toml          # committed: variant policy, safety floors, workspace defaults
 ├── .gitignore           # committed: excludes local.toml
@@ -51,7 +51,7 @@ Heavy, transient, non-portable state lives at
 `$XDG_STATE_HOME/radioactive-ralph/<repo-hash>/`, via
 `platformdirs.user_state_dir("radioactive-ralph")`. Per-repo per-machine.
 
-```
+```text
 $XDG_STATE_HOME/radioactive-ralph/
 └── <repo-hash>/                   # sha256(abspath(operator repo))[:16]
     ├── mirror.git/                # only if any variant uses mirror-* isolation
