@@ -7,8 +7,16 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strings"
 	"syscall"
 )
+
+// shellQuote wraps s in single quotes, escaping any embedded single
+// quotes via the '\” idiom. Output is safe to substitute into a
+// shell command that uses single-quote string literals.
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
 
 // SpawnDetached spawns req fully detached using the Detacher's chosen
 // backend. See the package-level comment for the precedence order.
@@ -55,10 +63,14 @@ func (d *Detacher) spawnTmux(req SpawnRequest) (Spawned, error) {
 	}
 
 	// pipe-pane the output to our log for `ralph attach` fallback reads.
+	// The tmux pipe-pane argument is shell-interpreted by tmux's own
+	// default-shell, so shell-quote the path (defence in depth — the
+	// path comes from xdg.Paths which is already controlled, but a
+	// future caller with weaker invariants could introduce metacharacters).
 	// Non-fatal if it fails — the supervisor can still run.
-	pipeCmd := exec.Command( //nolint:gosec // values are controlled
+	pipeCmd := exec.Command( //nolint:gosec // tmux is hardcoded; logPath is shell-quoted before interpolation
 		"tmux", "pipe-pane", "-t", req.SessionName,
-		fmt.Sprintf("cat >> %s", req.LogPath),
+		fmt.Sprintf("cat >> %s", shellQuote(req.LogPath)),
 	)
 	_ = pipeCmd.Run()
 
