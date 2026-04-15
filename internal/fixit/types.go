@@ -105,11 +105,19 @@ type VariantScore struct {
 	Disqualifying []string // hard exclusions; non-empty means score=0
 }
 
-// Task is one item in a PlanProposal's task list.
+// Task is one item in a PlanProposal's task list. The DAG-oriented
+// fields (VariantHint, ContextBoundary, AcceptanceCriteria, DependsOn)
+// are populated when Stage 4 emits enough structure to build a real
+// DAG. When omitted, EmitToDAG falls back to an implicit linear
+// chain.
 type Task struct {
-	Title  string `json:"title"`
-	Effort string `json:"effort"` // S | M | L
-	Impact string `json:"impact"` // S | M | L
+	Title              string   `json:"title"`
+	Effort             string   `json:"effort"` // S | M | L
+	Impact             string   `json:"impact"` // S | M | L
+	VariantHint        string   `json:"variant_hint,omitempty"`
+	ContextBoundary    bool     `json:"context_boundary,omitempty"`
+	AcceptanceCriteria []string `json:"acceptance_criteria,omitempty"`
+	DependsOn          []string `json:"depends_on,omitempty"`
 }
 
 // PlanProposal is Stage 4 output — the structured JSON the constrained

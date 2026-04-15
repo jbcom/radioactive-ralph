@@ -121,6 +121,17 @@ func repoHash(absPath string) string {
 
 // stateRoot returns the absolute path to the Ralph state root for this
 // machine and user, respecting overrides.
+// StateRoot returns the machine-wide state directory for Ralph,
+// honoring the $RALPH_STATE_DIR override for tests.
+//
+// Exported so packages outside the xdg package (the plan subcommand,
+// the MCP server bootstrap, etc.) can land the plandag SQLite file
+// and other global artifacts under the same root as per-repo
+// workspaces.
+func StateRoot() (string, error) {
+	return stateRoot()
+}
+
 func stateRoot() (string, error) {
 	if override := os.Getenv("RALPH_STATE_DIR"); override != "" {
 		return filepath.Clean(override), nil

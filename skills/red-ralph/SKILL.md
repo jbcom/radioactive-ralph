@@ -27,33 +27,44 @@ Reach for `red-ralph` when:
 
 ## Running this skill
 
-When the operator invokes `/red-ralph` in Claude Code, this skill hands off to
-the `ralph` binary via Bash so the daemon runs outside the current session
-and the outer Claude remains responsive:
+This skill drives `red-ralph` via the `radioactive_ralph` MCP server.
+The server is registered as an MCP endpoint Claude Code reads on startup
+(see `.claude/settings.json` in the operator's repo or globally).
+
+When the operator invokes `/red-ralph`, walk through these steps:
 
 ```bash
-# 1. Verify the ralph binary is installed.
-if ! command -v ralph >/dev/null 2>&1; then
+# 1. Verify the binary is installed (the MCP server runs under it).
+if ! command -v radioactive_ralph >/dev/null 2>&1; then
   cat <<'EOS'
-ralph is not installed on PATH. Install via one of:
+radioactive_ralph is not installed on PATH. Install via:
 
-  brew tap jbcom/tap && brew install ralph        # macOS, Linuxbrew
-  curl -sSL https://jonbogaty.com/radioactive-ralph/install.sh | sh
+  brew tap jbcom/tap && brew install radioactive-ralph    # macOS / Linux
+  scoop bucket add jbcom https://github.com/jbcom/pkgs && scoop install radioactive-ralph    # Windows
+  choco install radioactive-ralph                              # Windows (chocolatey)
 EOS
   exit 1
 fi
 
-# 2. Ensure the repo is initialized. ralph init --yes is idempotent and
-#    scaffolds .radioactive-ralph/{config,local,plans/index.md}.
-ralph init --yes
-
-# 3. Launch the supervisor. Foreground mode so the operator sees progress inside this session.
-ralph run --variant red --foreground
+# 2. Verify the repo is initialized. Idempotent — also seeds an active
+#    plan in plandag so the plans-first gate passes.
+radioactive_ralph init --yes
 ```
 
-If the operator wants to stop the supervisor later, they run
-`radioactive_ralph stop --variant red`. For live status, `radioactive_ralph status --variant red`.
+Then call the MCP tools (the outer Claude invokes these through the
+registered `radioactive_ralph` MCP server — no shell-out from the skill):
 
+1. `plan.list` to discover the active plan id (or pick by slug)
+2. `plan.next` with `variant: "red"` to see what's ready
+3. `variant.spawn` with `variant_name: "red"` to launch a subprocess
+4. `plan.claim` to atomically check out a task for the new variant
+5. Iterate: read variant output, call `variant.say` to feed it
+   guidance, watch the plan DAG advance via `plan.show`
+6. `variant.kill` when the plan is exhausted or operator stops the run
+
+The MCP server keeps the plandag DB warm across calls, owns the variant
+pool, writes heartbeat rows, and reaps dead subprocesses on the next
+invocation.
 ## Behavioral Constraints
 
 **DOES:**

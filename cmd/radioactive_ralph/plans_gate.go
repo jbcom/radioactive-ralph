@@ -1,38 +1,33 @@
 package main
 
 import (
-	"errors"
+	"context"
 	"fmt"
-	"os"
-	"path/filepath"
-	"strings"
+
+	"github.com/jbcom/radioactive-ralph/internal/plandag"
 )
 
-// requirePlansIndex enforces the plans-first discipline: every variant
-// except fixit refuses to run unless .radioactive-ralph/plans/index.md
-// exists and has minimum YAML frontmatter.
+// requireActivePlan enforces the plans-first discipline: every
+// variant except fixit refuses to run unless at least one plan with
+// status='active' exists in the plandag store. Fixit is the sole
+// creator of plans and bypasses this check.
 //
-// This is the M2 shape — a strict file-exists + frontmatter-present
-// check. Full frontmatter validation (status, updated, domain,
-// variant_recommendation) lives in a dedicated plans package added
-// alongside fixit's advisor-mode write path.
-func requirePlansIndex(repoRoot string) error {
-	indexPath := filepath.Join(repoRoot, ".radioactive-ralph", "plans", "index.md")
-	raw, err := os.ReadFile(indexPath) //nolint:gosec // repo-owned path
-	if errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf(
-			"plans-first discipline: %s not found — run `radioactive_ralph run --variant fixit --advise` to scaffold it",
-			indexPath,
-		)
-	}
+// Replaces the former markdown-file gate (plans/index.md). Plans
+// now live in SQLite under $XDG_STATE_HOME/radioactive_ralph/.
+func requireActivePlan(ctx context.Context) error {
+	store, err := openPlanStore(ctx)
 	if err != nil {
-		return fmt.Errorf("read %s: %w", indexPath, err)
+		return fmt.Errorf("plans-first discipline: %w", err)
 	}
-	content := string(raw)
-	if !strings.HasPrefix(strings.TrimSpace(content), "---") {
+	defer store.Close()
+
+	plans, err := store.ListPlans(ctx, []plandag.PlanStatus{plandag.PlanStatusActive})
+	if err != nil {
+		return fmt.Errorf("plans-first discipline: query plans: %w", err)
+	}
+	if len(plans) == 0 {
 		return fmt.Errorf(
-			"%s is missing YAML frontmatter — run `radioactive_ralph init --refresh` to regenerate",
-			indexPath,
+			"plans-first discipline: no active plan found; run `radioactive_ralph run --variant fixit --advise` to create one",
 		)
 	}
 	return nil

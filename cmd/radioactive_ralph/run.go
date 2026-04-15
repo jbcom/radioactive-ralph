@@ -70,12 +70,12 @@ func (c *RunCmd) Run(rc *runContext) error {
 	// yet. Either way, run the advisor and exit before the supervisor
 	// spawn path.
 	if p.Name == variant.Fixit {
-		plansOK := requirePlansIndex(repo) == nil
+		plansOK := requireActivePlan(rc.ctx) == nil
 		if c.Advise || !plansOK {
 			return c.runAdvisor(rc.ctx, repo, plansOK)
 		}
-	} else if err := requirePlansIndex(repo); err != nil {
-		// Every non-fixit variant refuses without valid plans.
+	} else if err := requireActivePlan(rc.ctx); err != nil {
+		// Every non-fixit variant refuses without an active plan.
 		return err
 	}
 

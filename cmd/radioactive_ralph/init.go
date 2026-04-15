@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"os"
 	"strconv"
@@ -9,8 +10,45 @@ import (
 
 	"github.com/jbcom/radioactive-ralph/internal/initcmd"
 	"github.com/jbcom/radioactive-ralph/internal/inventory"
+	"github.com/jbcom/radioactive-ralph/internal/plandag"
 	"github.com/jbcom/radioactive-ralph/internal/variant"
 )
+
+// seedBootstrapPlan inserts a placeholder active plan in plandag so
+// non-fixit variants can boot the supervisor immediately after init.
+// Idempotent — does nothing if a plan with this slug already exists.
+func seedBootstrapPlan(ctx context.Context, repo string) error {
+	store, err := openPlanStore(ctx)
+	if err != nil {
+		return err
+	}
+	defer store.Close()
+
+	const slug = "bootstrap"
+	// Check for existing plan first to keep init re-runnable.
+	plans, err := store.ListPlans(ctx, []plandag.PlanStatus{
+		plandag.PlanStatusActive, plandag.PlanStatusDraft,
+	})
+	if err != nil {
+		return err
+	}
+	for _, p := range plans {
+		if p.Slug == slug && p.RepoPath == repo {
+			return nil
+		}
+	}
+
+	id, err := store.CreatePlan(ctx, plandag.CreatePlanOpts{
+		Slug:           slug,
+		Title:          "Bootstrap plan (placeholder; run fixit --advise to populate)",
+		RepoPath:       repo,
+		PrimaryVariant: "fixit",
+	})
+	if err != nil {
+		return err
+	}
+	return store.SetPlanStatus(ctx, id, plandag.PlanStatusActive)
+}
 
 // InitCmd is `radioactive_ralph init`.
 type InitCmd struct {
@@ -60,6 +98,15 @@ func (c *InitCmd) Run(rc *runContext) error {
 	})
 	if err != nil {
 		return err
+	}
+
+	// Seed an initial active plan in plandag so non-fixit variants
+	// can run immediately. The placeholder plan has zero tasks; an
+	// operator runs `radioactive_ralph run --variant fixit --advise`
+	// to populate real tasks against it.
+	if err := seedBootstrapPlan(rc.ctx, repo); err != nil {
+		// Non-fatal — fixit will create the real plan on first run.
+		fmt.Fprintf(os.Stderr, "ralph init: bootstrap plan seed warning: %v\n", err)
 	}
 
 	fmt.Printf("wrote %s\n", res.ConfigPath)

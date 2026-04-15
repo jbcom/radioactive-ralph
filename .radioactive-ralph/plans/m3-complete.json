@@ -1,0 +1,128 @@
+{
+  "slug": "m3-complete",
+  "title": "Finish M3: variantpool + MCP server + fixit rewire onto plandag",
+  "primary_variant": "green",
+  "confidence": 90,
+  "intent": "Continue M3 work: plandag is shipped and tested. Remaining: variantpool for subprocess lifecycles, MCP server (stdio first, HTTP later), port fixit Emit onto plandag, replace markdown plans_gate with plandag-based HasActivePlan check, and ship release tag with Homebrew/Scoop/Chocolatey manifests landing in jbcom/pkgs.",
+  "tasks": [
+    {
+      "id": "variantpool-pkg",
+      "description": "Create internal/variantpool package: Spawn(), Say(), Kill(), Status() primitives over os/exec. Parent-death signaling via syscall.SysProcAttr.Pdeathsig on Linux, lifeline-pipe fallback on macOS and Windows. Heartbeats written to plandag.HeartbeatSession + per-variant row updates.",
+      "complexity": "L",
+      "effort": "L",
+      "variant_hint": "green",
+      "context_boundary": true,
+      "acceptance": [
+        "internal/variantpool/ package exists with Spawn/Say/Kill/Status",
+        "Test: spawn fake-claude subprocess, send a message, receive response, kill cleanly",
+        "Test: parent process dies → child subprocess terminates within 2s via lifeline pipe",
+        "Heartbeat runs every 30s and updates session_variants.last_heartbeat"
+      ]
+    },
+    {
+      "id": "proclife-pkg",
+      "description": "Create internal/proclife package with per-platform parent-death primitives. linux.go uses Pdeathsig. darwin.go uses kqueue NOTE_EXIT. windows.go uses Job Objects. portable.go uses lifeline pipe as the universal fallback that works on all three without syscalls.",
+      "complexity": "M",
+      "effort": "M",
+      "variant_hint": "green",
+      "context_boundary": true,
+      "acceptance": [
+        "Linux build uses Pdeathsig via go:build linux",
+        "Darwin build uses kqueue via go:build darwin",
+        "Windows build uses CreateJobObject via go:build windows",
+        "Lifeline pipe wraps exec.Cmd on all platforms",
+        "proclife_test.go verifies child self-terminates on parent death"
+      ]
+    },
+    {
+      "id": "fixit-emit-plandag",
+      "description": "Port internal/fixit/emit.go to write plans into plandag.CreatePlan + CreateTask + AddDep instead of emitting markdown. Keep the markdown renderer as a separate Render() function callable via `radioactive_ralph plan render <plan-id>` for human-readable output.",
+      "complexity": "M",
+      "effort": "M",
+      "variant_hint": "green",
+      "context_boundary": true,
+      "acceptance": [
+        "emit.go invokes plandag.CreatePlan + CreateTask + AddDep",
+        "Existing fixit tests pass against the new emit path",
+        "radioactive_ralph plan render <id> produces the legacy markdown shape for UX continuity",
+        "fixit no longer writes files under .radioactive-ralph/plans/*.md"
+      ]
+    },
+    {
+      "id": "drop-markdown-gate",
+      "description": "Replace plans_gate.go's markdown-file check with plandag.ListPlans(active) >= 1. Update the error message to tell operators to run fixit if no active plan exists. Delete the old plans_gate.go once the new gate lands.",
+      "complexity": "S",
+      "effort": "S",
+      "variant_hint": "green",
+      "context_boundary": true,
+      "depends_on": ["fixit-emit-plandag"],
+      "acceptance": [
+        "cmd/radioactive_ralph/plans_gate.go replaced or deleted",
+        "Gate checks plandag instead of markdown",
+        "Error message references `radioactive_ralph run --variant fixit --advise`",
+        "Integration tests updated to seed a plandag plan instead of markdown"
+      ]
+    },
+    {
+      "id": "mcp-server-stdio",
+      "description": "internal/mcp/ package exposing plan.list / plan.show / plan.next_ready / plan.claim / plan.mark_done / variant.spawn / variant.say / variant.status tools over stdio transport via modelcontextprotocol/go-sdk. Server reads session_id from env or generates one on start + writes to sessions table.",
+      "complexity": "L",
+      "effort": "L",
+      "variant_hint": "green",
+      "context_boundary": true,
+      "depends_on": ["variantpool-pkg"],
+      "acceptance": [
+        "go get github.com/modelcontextprotocol/go-sdk",
+        "internal/mcp/server/stdio.go implements NewStdioServer()",
+        "All six plan.* tools routed to plandag methods",
+        "All three variant.* tools routed to variantpool methods",
+        "Smoke test: pipe a JSON-RPC request to stdin, verify response on stdout"
+      ]
+    },
+    {
+      "id": "serve-mcp-command",
+      "description": "Add `radioactive_ralph serve --mcp` subcommand. Defaults to stdio; --http :port binds HTTP+SSE transport. Integrates with plandag (opens once, shared across tool handlers) and variantpool (one pool per server).",
+      "complexity": "M",
+      "effort": "M",
+      "variant_hint": "green",
+      "context_boundary": true,
+      "depends_on": ["mcp-server-stdio"],
+      "acceptance": [
+        "radioactive_ralph serve --mcp runs stdio server to completion",
+        "Ctrl-C shuts down gracefully (plandag.CloseSession fires)",
+        "--http :9876 binds a working HTTP+SSE endpoint",
+        "Integration test: spawn server in subprocess, call a tool, verify response"
+      ]
+    },
+    {
+      "id": "skills-invoke-mcp",
+      "description": "Update the 10 skills/<variant>/SKILL.md files to invoke `radioactive_ralph serve --mcp` as a subprocess and route variant actions through MCP tools instead of shelling out to the binary directly.",
+      "complexity": "M",
+      "effort": "M",
+      "variant_hint": "grey",
+      "context_boundary": false,
+      "depends_on": ["serve-mcp-command"],
+      "acceptance": [
+        "All 10 SKILL.md files reference radioactive_ralph serve --mcp",
+        "Example MCP tool invocation in each skill's Running section",
+        "Each skill documents the variant.spawn call it makes"
+      ]
+    },
+    {
+      "id": "release-tag-v0-7-0",
+      "description": "Tag v0.7.0 on main; GoReleaser publishes Homebrew formula + Scoop manifest + Chocolatey nupkg to jbcom/pkgs + chocolatey community feed. Verify brew install radioactive-ralph works end-to-end from a fresh Mac.",
+      "complexity": "S",
+      "effort": "M",
+      "variant_hint": "green",
+      "context_boundary": true,
+      "depends_on": ["serve-mcp-command", "drop-markdown-gate"],
+      "acceptance": [
+        "git tag v0.7.0 pushed",
+        "GoReleaser CI run succeeds",
+        "Formula/radioactive-ralph.rb on jbcom/pkgs main has real sha256 checksums",
+        "brew tap jbcom/tap && brew install radioactive-ralph installs the built binary",
+        "Chocolatey community feed shows radioactive-ralph 0.7.0"
+      ]
+    }
+  ]
+}

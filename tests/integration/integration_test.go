@@ -125,7 +125,9 @@ func TestRalphRunStatusStopRoundTrip(t *testing.T) {
 		"RALPH_SERVICE_CONTEXT=", // clear any inherited flag
 	)
 
-	// Bootstrap: init.
+	// Bootstrap: init. The init command now also seeds a placeholder
+	// active plan in plandag so non-fixit variants pass the
+	// plans-first gate immediately.
 	initCmd := exec.Command(bin, "init", "--yes")
 	initCmd.Dir = repo
 	initCmd.Env = env

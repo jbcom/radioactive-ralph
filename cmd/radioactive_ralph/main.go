@@ -35,6 +35,8 @@ type cli struct {
 	Stop    StopCmd    `cmd:"" help:"Ask the running supervisor to shut down gracefully."`
 	Doctor  DoctorCmd  `cmd:"" help:"Run environment health checks."`
 	Service ServiceCmd `cmd:"" help:"Install/uninstall/list OS service units."`
+	Plan    PlanCmd    `cmd:"" help:"Query + manage plans in the plan DAG."`
+	Serve   ServeCmd   `cmd:"" help:"Run an MCP server exposing the plan + variant tool surface."`
 
 	// Supervisor is the hidden entry invoked by launchd/systemd/service
 	// wrappers. Human operators never call it directly.
