@@ -70,8 +70,20 @@ func roundTrip(ctx context.Context, socket string, req ipc.Request) (ipc.Respons
 
 // resolveRepoRoot returns the operator's repo — defaulting to cwd.
 func resolveRepoRoot(override string) (string, error) {
-	if override != "" {
-		return override, nil
+	repo := override
+	if repo == "" {
+		cwd, err := os.Getwd()
+		if err != nil {
+			return "", err
+		}
+		repo = cwd
 	}
-	return os.Getwd()
+	abs, err := filepath.Abs(repo)
+	if err != nil {
+		return "", fmt.Errorf("resolve repo root %q: %w", repo, err)
+	}
+	if evaluated, err := filepath.EvalSymlinks(abs); err == nil {
+		abs = evaluated
+	}
+	return abs, nil
 }

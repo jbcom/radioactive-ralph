@@ -31,34 +31,39 @@ His strength has no known ceiling — the madder he gets, the stronger he gets. 
 
 ---
 
-## The Skill
+## The Persona
 
-**`/green-ralph`** — The flagship. Unlimited loop across all configured repos. Full priority coverage. Sensible model tiering. The one you run when you want the standard radioactive-ralph experience.
+**`radioactive_ralph run --variant green`** — the flagship Ralph mode. This is
+the default helpful little guy: broad, strong, and willing to keep going.
 
 ### What it does
 
-- Runs indefinitely until interrupted
-- Covers all repos in `~/.radioactive-ralph/config.toml`
-- All priority tiers: CI failures → PR fixes → missing docs → feature work → polish
-- Up to 6 parallel agents per cycle
-- haiku for bulk/mechanical, sonnet for features, opus for architecture
+- Declares the broadest general-purpose posture in the persona registry
+- Profile defaults to mirror-pool isolation with up to 6 worktrees
+- Represents the default "Ralph, please help" temperament
+- Aims to be the standard long-running workhorse once the supervisor matures
 
 ### When to use it
 
-When you want the loop running and you don't have a specific crisis. The default autonomous mode. When someone says "run ralph" with no qualifier, they mean this one.
+When you want the default personality and do not have a more specialized need.
 
 ### Quick start
 
 ```bash
-claude plugin marketplace add github:jbcom/radioactive-ralph
-claude plugin install radioactive_ralph@jbcom-plugins
-/green-ralph
+radioactive_ralph init
+radioactive_ralph run --variant green --foreground
 ```
+
+### Current runtime notes
+
+- Green is selected through the binary, not a marketplace skill.
+- The current provider implementation still uses the `claude` CLI underneath.
+- The deeper long-running orchestration behavior is partly persona contract and
+  partly ongoing supervisor work.
 
 ### Arguments
 
-- `--config <path>` — alternate config file
-- `--once` — single cycle then stop
-- `--focus <repo>` — limit to one repo
+- No green-only flags today; choose it with `--variant green`.
+- Use the shared `run` flags such as `--foreground` and `--repo-root`.
 
 [← Back to variants index](https://jonbogaty.com/radioactive-ralph/variants/)

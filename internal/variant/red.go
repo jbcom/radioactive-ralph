@@ -1,7 +1,7 @@
 package variant
 
 // redProfile — Red Ralph (Principal Skinner). Single-cycle triage.
-// Spec: skills/red-ralph/SKILL.md.
+// Spec: docs/variants/red-ralph.md.
 //
 // One cycle only, exits when done. Up to 8 parallel agents (speed
 // matters in triage). Sonnet default; STUCK agents respawn once at

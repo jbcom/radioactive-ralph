@@ -1,16 +1,7 @@
 // Package mcp wraps modelcontextprotocol/go-sdk to expose Ralph's
-// plan-DAG and variant-pool surface as MCP tools. The outer Claude
-// session orchestrates ralphs by calling these tools.
-//
-// Two transports:
-//   - Stdio: portable mode. Spawned as a subprocess of the outer
-//     Claude session via a Skill.
-//   - HTTP+SSE: durable mode. Long-running server bound to a port,
-//     installed via brew services / launchd / systemd.
-//
-// Both transports expose the same tool surface — server.go owns
-// the tool registry; transports are thin wrappers in stdio.go and
-// http.go.
+// plan-DAG and variant-pool surface as MCP tools. Claude Code talks to
+// the binary through this server over stdio; the binary remains the
+// durable product surface and MCP is the structured control plane.
 package mcp
 
 import (

@@ -1,6 +1,6 @@
 ---
 title: Fixit delegation — plan creation pipeline
-description: How fixit advisor mode turns a one-line ask into a recommendation report and later informs execution.
+description: How fixit advisor mode turns a one-line ask into a recommendation report and a durable DAG plan.
 ---
 
 `fixit` is the only variant that can recommend peer variants and write a
@@ -17,9 +17,10 @@ radioactive_ralph run --variant fixit --advise \
 
 `--advise` puts fixit into advisor mode. It scans the repo, assesses
 what's known vs. unknown, writes a recommendation report to
-`.radioactive-ralph/plans/<topic>-advisor.md`, and can optionally
-handoff to the recommended variant. Without `--advise`, fixit behaves
-as a bounded ROI worker.
+`.radioactive-ralph/plans/<topic>-advisor.md`, syncs that proposal into
+the durable plan DAG on first creation for the topic slug, and can
+optionally hand off to the recommended variant. Without `--advise`,
+fixit behaves as a bounded ROI worker.
 
 ## The six stages
 
@@ -38,8 +39,7 @@ from the operator intent so later passes can detect drift.
 ### 3. Initial task set
 
 Using the intent plus analysis, fixit drafts a first-pass task list and
-variant recommendation. This is still advisory at this stage, not an
-imported DAG.
+variant recommendation.
 
 ### 4. Confidence threshold + refinement
 
@@ -52,11 +52,13 @@ report that is actually actionable.
 fixit synthesizes acceptance criteria for the recommendation so the
 operator or downstream variant has a concrete definition of done.
 
-### 6. Report emission + optional handoff
+### 6. Report emission, DAG sync, and optional handoff
 
 Finally, fixit writes `.radioactive-ralph/plans/<topic>-advisor.md`.
-If `--auto-handoff` is enabled and the recommendation is unambiguous,
-fixit can spawn the recommended variant as a follow-up run.
+If this is the first durable plan for that repo/topic slug, fixit also
+creates the executable DAG plan. If `--auto-handoff` is enabled and the
+recommendation is unambiguous, fixit launches the recommended variant as
+a follow-up run.
 
 ## Handoff
 
@@ -78,4 +80,6 @@ radioactive_ralph run --variant fixit --advise \
 ```
 
 That re-runs the analysis and refinement loop and overwrites the
-advisor report with current context.
+advisor report with current context. Today it does not rewrite an
+existing durable DAG plan with the same slug; it refreshes the human
+report and leaves the stored plan in place.

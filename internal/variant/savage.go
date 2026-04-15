@@ -1,7 +1,7 @@
 package variant
 
 // savageProfile — Savage Ralph. Maximum throttle.
-// Spec: skills/savage-ralph/SKILL.md.
+// Spec: docs/variants/savage-ralph.md.
 //
 // 10 parallel agents, every model escalated one tier (haiku→sonnet,
 // sonnet→opus, opus→opus), zero sleep between cycles, all priority

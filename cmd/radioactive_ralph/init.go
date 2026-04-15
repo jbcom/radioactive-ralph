@@ -2,7 +2,6 @@ package main
 
 import (
 	"bufio"
-	"context"
 	"fmt"
 	"os"
 	"strconv"
@@ -10,67 +9,24 @@ import (
 
 	"github.com/jbcom/radioactive-ralph/internal/initcmd"
 	"github.com/jbcom/radioactive-ralph/internal/inventory"
-	"github.com/jbcom/radioactive-ralph/internal/plandag"
 	"github.com/jbcom/radioactive-ralph/internal/variant"
 )
 
-// seedBootstrapPlan inserts a placeholder active plan in plandag so
-// non-fixit variants can boot the supervisor immediately after init.
-// Idempotent — does nothing if a plan with this slug already exists.
-func seedBootstrapPlan(ctx context.Context, repo string) error {
-	store, err := openPlanStore(ctx)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = store.Close() }()
-
-	const slug = "bootstrap"
-	// Check for existing plan first to keep init re-runnable.
-	plans, err := store.ListPlans(ctx, []plandag.PlanStatus{
-		plandag.PlanStatusActive, plandag.PlanStatusDraft,
-	})
-	if err != nil {
-		return err
-	}
-	for _, p := range plans {
-		if p.Slug == slug && p.RepoPath == repo {
-			return nil
-		}
-	}
-
-	id, err := store.CreatePlan(ctx, plandag.CreatePlanOpts{
-		Slug:           slug,
-		Title:          "Bootstrap plan (placeholder; run fixit --advise to populate)",
-		RepoPath:       repo,
-		PrimaryVariant: "fixit",
-	})
-	if err != nil {
-		return err
-	}
-	return store.SetPlanStatus(ctx, id, plandag.PlanStatusActive)
-}
-
 // InitCmd is `radioactive_ralph init`.
 type InitCmd struct {
-	RepoRoot     string `help:"Repo root to initialize. Defaults to cwd." type:"path" default:""`
-	Force        bool   `help:"Overwrite existing config.toml."`
-	Refresh      bool   `help:"Re-discover capabilities while preserving existing operator choices."`
-	Yes          bool   `help:"Skip interactive prompts; auto-select first candidate for multi-candidate categories."`
-	SkipMCP      bool   `help:"Skip the 'claude mcp add' registration step. Default is to register."`
-	MCPTransport string `help:"Transport for the MCP registration: stdio or http." default:"stdio" enum:"stdio,http"`
-	MCPScope     string `help:"Scope for the MCP registration: local, user, or project." default:"user" enum:"local,user,project"`
-	MCPHTTPAddr  string `help:"For --mcp-transport=http, the URL Claude should connect to." default:"http://localhost:7777/mcp"`
+	RepoRoot string `help:"Repo root to initialize. Defaults to cwd." type:"path" default:""`
+	Force    bool   `help:"Overwrite existing config.toml."`
+	Refresh  bool   `help:"Re-discover capabilities while preserving existing operator choices."`
+	Yes      bool   `help:"Skip interactive prompts; auto-select first candidate for multi-candidate categories."`
+	SkipMCP  bool   `help:"Skip the Claude Code MCP registration step. Default is to register."`
+	MCPScope string `help:"Scope for the MCP registration: local, user, or project." default:"user" enum:"local,user,project"`
 }
 
 // Run executes the init subcommand.
 func (c *InitCmd) Run(rc *runContext) error {
-	repo := c.RepoRoot
-	if repo == "" {
-		cwd, err := os.Getwd()
-		if err != nil {
-			return fmt.Errorf("cwd: %w", err)
-		}
-		repo = cwd
+	repo, err := resolveRepoRoot(c.RepoRoot)
+	if err != nil {
+		return err
 	}
 
 	inv, errs := inventory.Discover(inventory.Options{})
@@ -104,15 +60,6 @@ func (c *InitCmd) Run(rc *runContext) error {
 		return err
 	}
 
-	// Seed an initial active plan in plandag so non-fixit variants
-	// can run immediately. The placeholder plan has zero tasks; an
-	// operator runs `radioactive_ralph run --variant fixit --advise`
-	// to populate real tasks against it.
-	if err := seedBootstrapPlan(rc.ctx, repo); err != nil {
-		// Non-fatal — fixit will create the real plan on first run.
-		fmt.Fprintf(os.Stderr, "radioactive_ralph init: bootstrap plan seed warning: %v\n", err)
-	}
-
 	fmt.Printf("wrote %s\n", res.ConfigPath)
 	fmt.Printf("wrote %s (gitignored)\n", res.LocalPath)
 	fmt.Printf("scaffolded %s/index.md\n", res.PlansPath)
@@ -124,10 +71,8 @@ func (c *InitCmd) Run(rc *runContext) error {
 	// variant.* tools. If claude isn't on PATH, we warn and continue.
 	if !c.SkipMCP {
 		reg := &MCPRegisterCmd{
-			Name:      "radioactive_ralph",
-			Scope:     c.MCPScope,
-			Transport: c.MCPTransport,
-			HTTPAddr:  c.MCPHTTPAddr,
+			Name:  "radioactive_ralph",
+			Scope: c.MCPScope,
 		}
 		if err := reg.Run(rc); err != nil {
 			fmt.Fprintf(os.Stderr,
@@ -137,9 +82,9 @@ func (c *InitCmd) Run(rc *runContext) error {
 		}
 	}
 	if len(res.Choices) > 0 {
-		fmt.Println("\nResolved bias preferences:")
-		for cat, skill := range res.Choices {
-			fmt.Printf("  %s → %s\n", cat, skill)
+		fmt.Println("\nResolved helper preferences:")
+		for cat, helper := range res.Choices {
+			fmt.Printf("  %s → %s\n", cat, helper)
 		}
 	}
 	if len(res.Disabled) > 0 {

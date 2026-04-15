@@ -13,9 +13,9 @@ import "github.com/jbcom/radioactive-ralph/internal/variant"
 
 Package variant defines the ten Ralph behavior profiles.
 
-Each variant is a distinct operating mode with its own parallelism, model tiering, commit cadence, termination policy, tool allowlist, safety floors, and skill\-bias preferences. The Profile struct is the canonical source of truth the supervisor reads to decide how to spawn and manage Claude subprocesses.
+Each variant is a distinct operating mode with its own parallelism, model tiering, commit cadence, termination policy, tool allowlist, safety floors, and capability\-bias preferences. The Profile struct is the canonical source of truth the supervisor reads to decide how to spawn and manage Claude subprocesses.
 
-Each profile is registered from its own file \(blue.go, grey.go, ...\) so any operator can read the full definition of a single variant without wading through the others. Every profile is faithful to skills/\<name\>\-ralph/SKILL.md.
+Each profile is registered from its own file \(blue.go, grey.go, ...\) so any operator can read the full definition of a single variant without wading through the others. The operator\-facing narrative lives in docs/variants/.
 
 ## Index
 
@@ -100,9 +100,9 @@ func ResetRegistryForTesting()
 ResetRegistryForTesting clears the registry and re\-registers the built\-in variants. Tests that mutate the registry call this from a t.Cleanup to avoid bleeding state between tests.
 
 <a name="BiasCategory"></a>
-## type [BiasCategory](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/variant/variant.go#L151>)
+## type [BiasCategory](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/variant/variant.go#L146>)
 
-BiasCategory identifies a skill bias slot declared by the variant. Matches the keys the operator configures in \[capabilities\] in .radioactive\-ralph/config.toml.
+BiasCategory identifies a helper\-capability bias slot declared by the variant. Matches the keys the operator configures in \[capabilities\] in .radioactive\-ralph/config.toml.
 
 ```go
 type BiasCategory string
@@ -121,18 +121,18 @@ const (
 ```
 
 <a name="BiasSnippet"></a>
-## type [BiasSnippet](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/variant/variant.go#L167>)
+## type [BiasSnippet](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/variant/variant.go#L162>)
 
-BiasSnippet is the system\-prompt injection used when a bias slot has a matching skill in the inventory.
+BiasSnippet is the system\-prompt injection used when a bias slot has a matching helper in the inventory.
 
-Placeholder: \{skill\} expands to the chosen skill's full name.
+Placeholder: \{skill\} expands to the chosen helper's full name.
 
 ```go
 type BiasSnippet string
 ```
 
 <a name="IsolationMode"></a>
-## type [IsolationMode](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/variant/variant.go#L51>)
+## type [IsolationMode](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/variant/variant.go#L46>)
 
 IsolationMode controls where Ralph does its work relative to the operator's repo. See docs/reference/architecture.md for the full four\-knob explanation.
 
@@ -162,7 +162,7 @@ const (
 ```
 
 <a name="LFSMode"></a>
-## type [LFSMode](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/variant/variant.go#L99>)
+## type [LFSMode](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/variant/variant.go#L94>)
 
 LFSMode controls LFS handling.
 
@@ -189,7 +189,7 @@ const (
 ```
 
 <a name="Model"></a>
-## type [Model](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/variant/variant.go#L129>)
+## type [Model](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/variant/variant.go#L124>)
 
 Model identifies a specific Claude model tier.
 
@@ -208,11 +208,11 @@ const (
 ```
 
 <a name="Name"></a>
-## type [Name](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/variant/variant.go#L31>)
+## type [Name](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/variant/variant.go#L26>)
 
 Name is the canonical variant identifier used internally in this package \(e.g. "blue", "fixit"\). This is the operator\-facing CLI \-\-variant value and the key used by voice.Variant.
 
-Note that the corresponding skill directory on disk has a "\-ralph" suffix \(e.g. skills/blue\-ralph/, skills/fixit\-ralph/\) and the SKILL.md frontmatter \`name\` field includes that suffix too \("blue\-ralph", "fixit\-ralph"\). The two naming conventions are deliberate: the code uses the shorter form because every identifier in this package is already variant\-scoped, while the skill files use the longer form because they live in the broader Claude Code skills/ directory alongside non\-ralph skills and need the context.
+Docs and CLI use the longer "\-ralph" display form in prose \("blue\-ralph", "fixit\-ralph"\), but the code keeps the shorter form because every identifier in this package is already variant\-scoped.
 
 ```go
 type Name string
@@ -236,7 +236,7 @@ const (
 ```
 
 <a name="ObjectStoreMode"></a>
-## type [ObjectStoreMode](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/variant/variant.go#L71>)
+## type [ObjectStoreMode](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/variant/variant.go#L66>)
 
 ObjectStoreMode applies to the mirror\-\* isolation modes.
 
@@ -260,7 +260,7 @@ const (
 ```
 
 <a name="Profile"></a>
-## type [Profile](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/variant/variant.go#L208-L233>)
+## type [Profile](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/variant/variant.go#L203-L228>)
 
 Profile is the canonical description of a variant.
 
@@ -286,8 +286,8 @@ type Profile struct {
     // invariant. Bash is strictly more powerful than Edit+Write (it can
     // commit, rm, network-exec), so permitting it under shared
     // isolation is an explicit trust decision the profile declaration
-    // must own. Blue sets it to true because its SKILL.md restricts
-    // Bash to `gh pr review --comment` / read-only gh queries; other
+    // must own. Blue sets it to true because its runtime posture restricts
+    // Bash to read-focused queries; other
     // shared variants must follow the same discipline or refuse Bash.
     ShellExplicitlyTrusted bool
 }
@@ -357,7 +357,7 @@ func (p Profile) WritesAllowed() bool
 WritesAllowed reports whether the variant's tool allowlist permits Edit or Write. Shared\-isolation variants must return false.
 
 <a name="SafetyFloors"></a>
-## type [SafetyFloors](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/variant/variant.go#L186-L205>)
+## type [SafetyFloors](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/variant/variant.go#L181-L200>)
 
 SafetyFloors pins specific fields that cannot be weakened by config.toml, env vars, or single\-flag CLI overrides.
 
@@ -385,7 +385,7 @@ type SafetyFloors struct {
 ```
 
 <a name="Stage"></a>
-## type [Stage](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/variant/variant.go#L118>)
+## type [Stage](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/variant/variant.go#L113>)
 
 Stage identifies which phase of a variant's workflow a particular session spawn is for. Variants with a single stage \(grey, fixit\) always use StageExecute.
 
@@ -405,7 +405,7 @@ const (
 ```
 
 <a name="SyncSource"></a>
-## type [SyncSource](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/variant/variant.go#L85>)
+## type [SyncSource](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/variant/variant.go#L80>)
 
 SyncSource controls where the mirror fetches from.
 
@@ -429,7 +429,7 @@ const (
 ```
 
 <a name="TerminationPolicy"></a>
-## type [TerminationPolicy](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/variant/variant.go#L139>)
+## type [TerminationPolicy](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/variant/variant.go#L134>)
 
 TerminationPolicy classifies how a variant ends.
 

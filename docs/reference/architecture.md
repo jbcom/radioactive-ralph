@@ -5,154 +5,123 @@ lastUpdated: 2026-04-15
 
 # Architecture — radioactive-ralph
 
-radioactive-ralph is under architectural rewrite. This page describes the
-**target** architecture. See [`docs/plans/2026-04-14-radioactive-ralph-rewrite.prq.md`](../plans/2026-04-14-radioactive-ralph-rewrite.prq.md)
-for the four-milestone rollout plan. Implementation status per component is
-tracked in [state](./state.md).
+This page describes the **current architecture direction** for the live product.
+The implementation still has gaps, but the contract is now clearer than it was:
+radioactive-ralph is a binary-first tool with in-code personas, and Claude Code
+is treated as a client of that binary over stdio MCP.
 
-## Critical design constraint
+## Core commitment
 
-Claude Code has no supported mechanism to inject user-role messages into a
-running interactive session from an external process. The only cross-process
-channel is the `--input-format stream-json` stdio protocol in headless
-(`-p`) mode. Every decision below follows from that.
+The repo is no longer trying to be all of these at once:
 
-## Two invocation modes, one daemon engine
+- a Claude marketplace plugin
+- a family of slash-command skills
+- a binary
+- a durable HTTP MCP service
+- a provider-agnostic runtime
 
-| Mode | How you launch | What happens |
-|------|----------------|--------------|
-| CLI direct | `radioactive_ralph run --variant X` | Terminal runs the pre-flight wizard, launches the supervisor in a detached multiplexer, returns control |
-| In-session skill | `/fixit-ralph` inside a Claude session | Skill interprets the operator's free-form ask, writes an advisor plan when context is missing, and hands off to the same supervisor + plan tooling the CLI uses |
+The active direction is narrower:
 
-Both modes end up running the same supervisor process with the same variant
-profile. The only difference is who asks the pre-flight questions and in
-what voice.
+1. **One binary** — `radioactive_ralph`
+2. **One durable state model** — repo config plus XDG/App Support runtime state
+3. **One Claude integration path** — stdio MCP
+4. **One persona source of truth** — code-defined Ralph variants
 
-## Per-repo config directory
+## Product shape
+
+| Layer | Role |
+|---|---|
+| `radioactive_ralph` binary | The product boundary: init, plan store, supervisor, doctor, and MCP server |
+| Claude Code MCP | Structured control plane into the binary |
+| Variant profiles | Built-in Ralph personas that shape system prompt, safety posture, and runtime behavior |
+| Provider bindings | Future abstraction for non-Claude agent CLIs |
+
+## Repo-visible state
 
 Every repo that uses Ralph has `.radioactive-ralph/` alongside `.git/`:
 
 ```text
 .radioactive-ralph/
-├── config.toml          # committed: variant policy, safety floors, workspace defaults
-├── .gitignore           # committed: excludes local.toml
-└── local.toml           # gitignored: operator-local overrides (multiplexer pref, etc.)
+├── config.toml
+├── .gitignore
+├── local.toml
+└── plans/
+    ├── index.md
+    └── <topic>-advisor.md
 ```
 
-`radioactive_ralph init` creates this tree and appends `.radioactive-ralph/local.toml` to
-the repo's root `.gitignore`. Missing `config.toml` = refuse to run with an
-in-voice nudge.
+- `config.toml` is committed repo policy.
+- `local.toml` is gitignored operator-local state.
+- `plans/` contains the human-readable planning artifacts.
 
-## XDG state directory
+## Machine-local state
 
-Heavy, transient, non-portable state lives at
-`$XDG_STATE_HOME/radioactive-ralph/<repo-hash>/`, via
-`platformdirs.user_state_dir("radioactive-ralph")`. Per-repo per-machine.
+Machine-local runtime state lives under the Ralph state root:
 
 ```text
 $XDG_STATE_HOME/radioactive-ralph/
-└── <repo-hash>/                   # sha256(abspath(operator repo))[:16]
-    ├── mirror.git/                # only if any variant uses mirror-* isolation
-    ├── shallow/                   # only if any variant uses shallow isolation
-    ├── worktrees/
-    │   └── <variant>-<n>/         # parallel worktrees, per-variant namespaced
-    ├── state.db                   # SQLite + sqlite-vec event log
-    └── sessions/
-        ├── <variant>.sock         # per-variant Unix socket for IPC
-        ├── <variant>.pid          # supervisor PID + lock
-        ├── <variant>.alive        # mtime heartbeat
-        └── <variant>.log          # supervisor stdout/stderr
+└── <repo-hash>/
+    ├── plans.db
+    ├── sessions/
+    ├── logs/
+    └── worktrees/
 ```
 
-## Four orthogonal workspace knobs
+This is where the durable plan DAG, runtime sessions, and per-repo transient
+state belong. Never store this under `.claude/`.
 
-Every variant declares defaults for four dimensions; each can be overridden in
-`config.toml`, subject to variant safety floors.
+## Claude integration
 
-| Knob | Values | Purpose |
-|------|--------|---------|
-| `isolation` | `shared`, `shallow`, `mirror-single`, `mirror-pool` | Where the work happens |
-| `object_store` | `reference`, `full` | Share operator's `.git/objects` or clone independently |
-| `sync_source` | `local`, `origin`, `both` | Where the mirror fetches from |
-| `lfs_mode` | `full`, `on-demand`, `pointers-only`, `excluded` | How LFS-tracked content is handled |
+Claude Code is integrated through stdio MCP:
 
-See the [variants index](../variants/index.md) for the current variant list.
-In M3 this is replaced by an auto-generated `variants-matrix.md` sourced
-directly from the `Profile` dataclasses.
+- `radioactive_ralph init` registers the binary with `claude mcp add`
+- Claude spawns `radioactive_ralph serve --mcp`
+- the MCP server exposes plan and runtime control surface
+- the binary remains the authority over variant behavior and state
 
-## Supervisor lifecycle
+The abandoned complexity was trying to make plugin skills, service-managed HTTP,
+and binary control all equally primary. They are not.
 
-1. **Pre-flight wizard** — universal checks (clean tree, default branch, `gh`
-   auth, `claude` version, multiplexer) + variant-specific questions
-   (confirmation gates, budget caps, risky-ops consent). Rendered in plain
-   prompts via `rich` for CLI or in Ralphspeak via templates for skill mode.
-2. **Multiplexer probe** — `tmux` → `screen` → stdlib `setsid` + double-fork
-   fallback. Supervisor runs as a detached child.
-3. **Supervisor boot** — acquire `<variant>.pid` lock, open SQLite in WAL,
-   bind Unix socket, load variant profile, replay event log, protocol-ping
-   a throwaway `claude -p` to verify stream-json parses, initialize the
-   `WorkspaceManager`, spawn the session pool.
-4. **Event loop** — read stream-json events from each managed session,
-   append to SQLite event log (both parsed and raw payload for protocol-drift
-   resilience), act on results (commit, open PR, enqueue follow-up). On
-   subprocess exit, classify and either resume (`claude -p --resume <uuid>`)
-   or finalize.
-5. **IPC** — Unix socket serves `radioactive_ralph status`,
-   `radioactive_ralph attach`, and `radioactive_ralph stop` commands
-   from sibling processes.
-6. **Termination** — per variant policy. Drain events, close socket, remove
-   PID, clean worktrees per variant rule, exit.
+## Personas, not skills
 
-## Managed-session strategy
+Ralph has many personalities, but the source of truth is now the code:
 
-Every daemon-owned Claude subprocess:
+- `internal/variant/` defines the behavioral profiles
+- `internal/voice/` defines the Ralph voice layer
+- `docs/variants/` explains each personality to operators
 
-```bash
-claude -p --bare \
-  --input-format stream-json \
-  --output-format stream-json \
-  --include-partial-messages --verbose \
-  --permission-mode acceptEdits \
-  --allowedTools <variant.tool_allowlist> \
-  --model <variant.model_for(stage)> \
-  --session-id <stable-uuid> \
-  --append-system-prompt <variant-system-prompt>
-```
+This keeps the canon in one place. A persona may eventually be surfaced through
+different front ends, but it should not require a separate parallel skill spec
+to exist.
 
-The supervisor pins a stable UUID per session. Resume reuses the same UUID.
-Permission mode is `acceptEdits` by default; `bypassPermissions` gated for
-destructive variants (old-man, world-breaker).
+## Current provider reality
 
-## Safety floors
+Today the runtime still assumes the `claude` CLI for agent execution. The code
+therefore still knows about Claude-specific concerns such as model tier names,
+reasoning effort, and CLI session behavior.
 
-Variants declare floors that cannot be weakened by config, env, or a single
-CLI flag. Examples:
+That is **current implementation**, not the long-term contract.
 
-| Variant | Floor | Override |
-|---------|-------|----------|
-| old-man | `object_store = full`; refuses default branch; fresh `--confirm-no-mercy` per run | Two CLI flags + config |
-| world-breaker | `object_store = full`; fresh `--confirm-burn-everything` per run; spend cap | Two flags + spend cap |
-| savage | Spend cap required; fresh `--confirm-burn-budget` per run | Operator raises cap with flag |
-| any `shared` isolation | Tool allowlist must exclude `Edit` + `Write` | Impossible (compile-time check) |
+## Provider direction
 
-## Ralph voice
+The target shape is a declarative provider binding layer inside repo config.
+Conceptually that means each repo can say:
 
-Ten variant "voices" drive pre-flight questions, status output, attach-stream
-events, and shutdown messages. Each variant has its own template library
-keyed by `(variant, event_type)`. The voice is the same whether you're seeing
-it in the CLI or through a skill — the registry is shared.
+- which agent CLI to invoke
+- how to set model
+- how to set effort
+- how to append the Ralph persona prompt
+- how to pass the task/user prompt
+- what structured output format to expect back
 
-## Risk mitigations at a glance
+That would allow the same Ralph personas to drive Claude, Codex, Gemini, OpenAI
+CLI tooling, or any other provider with the necessary bindings.
 
-- **Stream-json drift** — `claude` version range pinned in `doctor`; protocol-ping
-  on supervisor boot; Pydantic `extra=allow` + raw-event storage.
-- **Session resume drift** — sentinel re-prompt after every resume with task-ID
-  verification; task-state checkpoints sufficient to reseed a fresh session.
-- **Shared-object corruption** — detect broken refs, `git repack -a -d` in
-  mirror, retry; destructive variants default to `full` object store.
-- **Multiplexer macOS quirks** — tmux strongly recommended; stdlib setsid
-  fallback rather than relying on `python-daemon`.
-- **Scope creep** — public API = CLI + `Profile` extension point only.
+## Current gaps
 
-See the [PRD](../plans/2026-04-14-radioactive-ralph-rewrite.prq.md) for the
-full risk register.
+- Fixit still writes markdown advice but does not yet fully populate the live DAG.
+- Plan gating is not yet properly repo-scoped.
+- `run` still exposes less safety/runtime wiring than the variant docs imply.
+- Provider bindings are still a design direction, not live code.
+
+See [state](./state.md) for the explicit status of those gaps.

@@ -1,27 +1,37 @@
 ---
 title: AGENTS.md — radioactive-ralph
-updated: 2026-04-15
-status: current
-domain: technical
+lastUpdated: 2026-04-15
 ---
 
 # Extended Agent Protocols — radioactive-ralph
 
-## Architecture
+## Product contract
 
-radioactive-ralph currently ships as a **Go binary** with two practical entry
-paths:
+radioactive-ralph is a **binary-first** orchestration tool.
 
-1. **`radioactive_ralph` CLI** — the repo-scoped supervisor, MCP server, plan
-   tooling, doctor checks, and service installation surface all live under
+The live product is:
+
+1. **`radioactive_ralph` CLI** — repo init, plan storage, supervisor launch,
+   doctor checks, MCP serving, and service installation all live under
    `cmd/radioactive_ralph/`.
-2. **Claude Code skills / plugin packaging** — the slash-command variants in
-   `skills/` and `.claude-plugin/` are the interactive front door, but they
-   target the same current Go-era Ralph surface rather than the archived Python
-   implementation.
+2. **Claude Code via MCP** — Claude is treated as a client of the binary, not
+   the product boundary. `radioactive_ralph init` registers stdio MCP so Claude
+   can inspect plans and control Ralph through the binary.
 
-The old Python daemon is preserved under `reference/` as historical context.
-Treat it as archive material, not the live implementation.
+Do not write or review docs as though the main product is a Claude marketplace
+plugin or a family of slash-command skills. That is no longer the active
+direction.
+
+## Personas
+
+Ralph is one little guy with many personalities.
+
+- Variants are defined in code under `internal/variant/`.
+- Voice and flavor live in `internal/voice/`.
+- The operator-facing narrative for each personality lives in `docs/variants/`.
+- Fixit Ralph is the planning bridge personality: when a repo lacks usable plan
+  context, fixit is the variant that should interpret a free-form ask and
+  convert it into the real plan flow.
 
 ## State
 
@@ -35,12 +45,11 @@ radioactive-ralph has two state layers:
 - **Machine-local runtime state**
   - `$RALPH_STATE_DIR` if set
   - otherwise the XDG/App Support root resolved by `internal/xdg`
-  - contains the per-repo workspace, `state.db`, sockets, logs, and the
-    durable plan DAG SQLite store
+  - includes `plans.db`, sockets, logs, and per-repo runtime state
 
 Never store runtime state under `.claude/`.
 
-## Current Command Surface
+## Current command surface
 
 The live CLI is:
 
@@ -55,41 +64,40 @@ The live CLI is:
 - `radioactive_ralph serve --mcp`
 - `radioactive_ralph mcp <register|unregister|status>`
 
-If documentation mentions the old discover / PR-list / dashboard command family
-or Python-era daemon commands, treat it as stale unless it is clearly marked as
-archive material.
+If documentation presents the product as a Claude plugin, a family of slash
+commands, or an HTTP MCP service first, treat that as stale unless it is
+clearly marked as archive or target-state design.
 
-## Fixit Ralph
+## Provider direction
 
-`fixit-ralph` is the only Ralph variant that can bridge a user-directed ask
-into the live plan system. It is the plan/advisor specialist:
+Today the runtime targets the `claude` CLI directly. The intended long-term
+shape is broader:
 
-- when plans are missing or malformed, `fixit-ralph --advise` inspects the
-  repo, interprets the operator prompt, and writes a repo-visible advisor report
-- when executable tasks need to exist in the durable store, fixit is the
-  variant that understands how to translate that intent into the live SQLite
-  plan DAG workflow
-- every other variant depends on that plans-first discipline and should defer to
-  fixit when no valid initialized plan context exists
+- code-defined persona prompts
+- declarative provider bindings in repo config
+- support for any compatible agent CLI once prompt/model/effort/output bindings
+  are defined
 
-## Testing Patterns
+When writing docs or code comments, describe Claude as the **current provider**,
+not the permanent identity of the system.
+
+## Testing patterns
 
 - Use `go test ./...` for the main test pass.
 - Use `make test`, `make lint`, and `make vuln` for the standard repo targets.
-- Use `python3 -m tox -e docs` for docs validation + Sphinx build.
+- Use `python3 -m tox -e docs` for docs validation and Sphinx build.
 - Run `bash scripts/generate-api-docs.sh` when exported Go API surface changes.
 
-## Adding A Command
+## Adding a command
 
 1. Add the command struct under `cmd/radioactive_ralph/`.
 2. Implement the backing logic in the relevant `internal/` package.
 3. Add or extend tests under `internal/` or `tests/integration/`.
-4. Update the live docs in `docs/` and regenerate API reference if exported
-   surface changed.
+4. Update the live docs in `docs/`.
 
-## PR Workflow
+## PR workflow
 
 - Work on branches and merge through GitHub PRs.
 - Prefer squash merges.
-- Keep `main` tracking `origin/main` exactly; delete merged topic branches.
+- Keep `main` tracking `origin/main` exactly.
 - Resolve review threads and keep CI green before merge.

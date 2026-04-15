@@ -62,7 +62,7 @@ RenderSystemPrompt combines the variant's bias snippets with operator preference
 
 Rules:
 
-1. For each bias category the variant declares a snippet for: a. If OperatorChoices has Disabled=true, skip. b. Else if OperatorChoices has Skill\!="" AND inventory has it, render the snippet with \{skill\} expanded. c. Else if variant snippet contains \{skill\} and inventory has ANY skill matching the category name, pick the first alphabetically for determinism. d. Else skip.
+1. For each bias category the variant declares a snippet for: a. If OperatorChoices has Disabled=true, skip. b. Else if OperatorChoices has Skill\!="" AND inventory has it, render the snippet with \{skill\} expanded. c. Else if variant snippet contains \{skill\} and inventory has ANY helper matching the category name, pick the first alphabetically for determinism. d. Else skip.
 
 2. Output is newline\-joined with a fixed preamble announcing the variant and a safety note about the tool allowlist.
 
@@ -73,7 +73,7 @@ Rules:
 
 BiasChoice is the operator's resolved preference for a single bias category. Typically sourced from config.toml's \[capabilities\] section plus per\-variant overrides.
 
-Skill is the full skill name \(e.g. "coderabbit:review"\). Empty means "no preference, use variant default if inventory has it".
+Skill is the full helper name \(e.g. "coderabbit:review"\). Empty means "no preference, use variant default if inventory has it".
 
 Disabled means "skip this bias entirely regardless of inventory".
 

@@ -8,6 +8,11 @@ orphan: true
 
 # Feature: radioactive-ralph — Go rewrite with mirror workspaces and inventory-aware biases
 
+> Historical plan note:
+> This PRD captures an earlier architecture direction. It still discusses
+> marketplace/plugin packaging, service-managed daemon behavior, and skill-era
+> helper terminology that are no longer the active product contract.
+
 **Created**: 2026-04-14
 **Version**: 4.0 (Go pivot; supersedes v3.0 which assumed Python)
 **Timeframe**: four PRs, several weeks total

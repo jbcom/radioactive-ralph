@@ -1,7 +1,7 @@
 package variant
 
 // oldManProfile — Old-Man Ralph (The Maestro). Totalitarian branch imposition.
-// Spec: skills/old-man-ralph/SKILL.md.
+// Spec: docs/variants/old-man-ralph.md.
 //
 // Single pass, force-resets branches to operator's target state,
 // resolves all merge conflicts with `-X ours`, deletes blocking

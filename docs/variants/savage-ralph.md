@@ -33,34 +33,34 @@ He actively despises regular small Ralph — sees him as a cage, a jailer, the s
 
 ---
 
-## The Skill
+## The Persona
 
-**`/savage-ralph`** — Maximum parallelism. All models escalated one tier. Zero sleep. Requires `--confirm-burn-budget`.
+**`radioactive_ralph run --variant savage`** — maximum throttle. Savage is the
+burn-the-budget persona.
 
 ### What it does
 
-- 10 parallel agents per cycle
-- Model escalation: what would be haiku becomes sonnet; what would be sonnet becomes opus
-- Zero sleep between cycles
-- Discovers repos beyond configured list (checks standard org paths)
-- Never stops on task failure — logs it, moves on
-- Warns loudly and requires explicit confirmation before starting
+- Declares the high-throughput, low-patience posture
+- Intended for maximum output when spend is not the limiting factor
+- Carries an explicit confirmation gate and spend-cap requirement
 
 ### When to use it
 
-When normal pace is unacceptable and budget is not the constraint. For clearing a large backlog fast, or when you want maximum throughput for a finite time window. When you need a Ralph with no off switch and you have signed the permission slip.
+When speed matters more than thrift.
 
 ### Quick start
 
 ```bash
-claude plugin marketplace add github:jbcom/radioactive-ralph
-claude plugin install radioactive_ralph@jbcom-plugins
-/savage-ralph --confirm-burn-budget
+radioactive_ralph init
+radioactive_ralph run --variant savage \
+  --confirm-burn-budget \
+  --spend-cap-usd 50 \
+  --foreground
 ```
 
 ### Arguments
 
-- `--confirm-burn-budget` — **required**, without this it refuses to start
-- `--config <path>` — alternate config
+- `--confirm-burn-budget` — required confirmation gate
+- `--spend-cap-usd <amount>` — required spend cap
 
 [← Back to variants index](https://jonbogaty.com/radioactive-ralph/variants/)

@@ -14,7 +14,7 @@ import (
 //
 // Replaces the former markdown-file gate (plans/index.md). Plans
 // now live in SQLite under $XDG_STATE_HOME/radioactive_ralph/.
-func requireActivePlan(ctx context.Context) error {
+func requireActivePlan(ctx context.Context, repo string) error {
 	store, err := openPlanStore(ctx)
 	if err != nil {
 		return fmt.Errorf("plans-first discipline: %w", err)
@@ -25,10 +25,12 @@ func requireActivePlan(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("plans-first discipline: query plans: %w", err)
 	}
-	if len(plans) == 0 {
-		return fmt.Errorf(
-			"plans-first discipline: no active plan found; run `radioactive_ralph run --variant fixit --advise` to create one",
-		)
+	for _, plan := range plans {
+		if plan.RepoPath == repo {
+			return nil
+		}
 	}
-	return nil
+	return fmt.Errorf(
+		"plans-first discipline: no active plan found for this repo; run `radioactive_ralph run --variant fixit --advise` to create one",
+	)
 }

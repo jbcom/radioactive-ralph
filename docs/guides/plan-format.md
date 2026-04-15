@@ -34,11 +34,10 @@ retries, and lifecycle events.
 
 ## What `init` creates
 
-`radioactive_ralph init` seeds the repo with bootstrap plan scaffolding so
-variants have an explicit place to point operators:
+`radioactive_ralph init` seeds the repo with human-facing scaffolding so
+operators have an explicit place to point Ralph:
 
 - `.radioactive-ralph/plans/index.md` as a human-facing landing page
-- an initial active plan in the SQLite store
 - per-repo config and local override files
 
 ## What fixit writes
@@ -50,8 +49,12 @@ variants have an explicit place to point operators:
 ```
 
 That report is for humans. It records the recommendation, tradeoffs,
-and suggested tasks. It does **not** become executable merely by
-existing.
+and suggested tasks.
+
+On first creation for a given repo/topic slug, fixit also syncs the
+proposal into the durable SQLite plan DAG. If a plan with the same slug
+already exists for that repo, the markdown report is refreshed and the
+existing DAG plan is left untouched.
 
 ## What `plan import` accepts today
 
@@ -70,11 +73,13 @@ That is the current supported machine-ingest path.
 1. Run `radioactive_ralph init`.
 2. Ask fixit for advice with `radioactive_ralph run --variant fixit --advise ...`.
 3. Review `.radioactive-ralph/plans/<topic>-advisor.md`.
-4. If you need to seed executable tasks programmatically, import JSON with `radioactive_ralph plan import`.
-5. Execute or inspect plans with `plan ls`, `plan show`, `plan next`, and `plan mark-done`.
+4. Inspect the durable plan with `radioactive_ralph plan ls` and `radioactive_ralph plan show <slug>`.
+5. If you need to seed executable tasks programmatically, import JSON with `radioactive_ralph plan import`.
+6. Execute or inspect plans with `plan next` and `plan mark-done`.
 
 ## Current limitation
 
 Markdown PRQ import is not the live path right now. If you want a
-machine-loaded plan today, feed JSON into `plan import`; if you want
-human-readable planning, use the advisor markdown reports.
+machine-loaded plan today, use fixit's advisor sync or feed JSON into
+`plan import`; if you want human-readable planning, use the advisor
+markdown reports.

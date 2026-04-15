@@ -5,9 +5,11 @@ lastUpdated: 2026-04-15
 
 # Ralph has many forms
 
-radioactive-ralph ships as a family of ten Claude Code skills. Each one is a separate operating mode with its own safety profile, budget shape, voice, and tool posture.
+radioactive-ralph ships ten built-in personas. Each one is a separate
+operating mode with its own safety profile, budget shape, voice, and tool
+posture. Pick a persona with `radioactive_ralph run --variant <name>`.
 
-| Variant | Specialty | Best when | Gate |
+| Variant | Specialty | Best when | Declared gate |
 |---|---|---|---|
 | [`green-ralph`](./green-ralph.md) | The classic always-on loop | You want the default orchestrator behavior | — |
 | [`grey-ralph`](./grey-ralph.md) | Cheap mechanical hygiene | You need frontmatter, CHANGELOG, and governance cleanup | — |

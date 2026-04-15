@@ -31,34 +31,37 @@ He has defeated Bart Simpson. He has defeated the Abomination (who in this telli
 
 ---
 
-## The Skill
+## The Persona
 
-**`/red-ralph`** — Single cycle. High-priority only. Battlefield assessment and remediation. Reports like a principal to a school board.
+**`radioactive_ralph run --variant red`** — the incident-response Ralph. Red is
+the one you call when something is on fire and you want focused heat back.
 
 ### What it does
 
-- Runs **one cycle** then stops with a structured report
-- Covers only **CI_FAILURE** and **PR_FIXES** — nothing else
-- sonnet for execution; escalates to opus if a problem is genuinely hard
-- Outputs a structured "battlefield report" showing what was broken, what was fixed, what's still open
+- Frames work as incident response rather than ambient improvement
+- Intended for CI failures, urgent PR blockers, and high-priority repair work
+- Trades breadth for focus
 
 ### When to use it
 
-When something is on fire. CI failing. PR blocked on review feedback. You don't need the whole loop — you need the broken things fixed, now, with a clear report you can hand to your team lead the way Principal Skinner hands a report to Superintendent Chalmers.
+When the repo is broken right now and you want the urgent persona, not the
+generalist.
 
 ### Quick start
 
 ```bash
-claude plugin marketplace add github:jbcom/radioactive-ralph
-claude plugin install radioactive_ralph@jbcom-plugins
-/red-ralph
-# Or scoped:
-/red-ralph --repo ~/src/my-project
+radioactive_ralph init
+radioactive_ralph run --variant red --foreground
 ```
+
+### Current runtime notes
+
+- Red is selected through `--variant red`, not a marketplace skill.
+- The current runtime surface is still shared across personas; red-specific
+  orchestration behavior is a profile/runtime concern rather than a separate CLI.
 
 ### Arguments
 
-- `--repo <path>` — single repo mode (default: all configured repos)
-- `--config <path>` — alternate config
+- No red-only flags today; choose it with `--variant red`.
 
 [← Back to variants index](https://jonbogaty.com/radioactive-ralph/variants/)

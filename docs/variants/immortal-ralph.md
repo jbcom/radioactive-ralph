@@ -33,34 +33,35 @@ He can't be sent home. He comes back the next morning. And each time he comes ba
 
 ---
 
-## The Skill
+## The Persona
 
-**`/immortal-ralph`** — Crash-resistant. Always recovers. Never stops unless you explicitly stop it.
+**`radioactive_ralph run --variant immortal`** — the one who keeps coming
+back. Immortal is the recovery-first, persistence-first Ralph.
 
 ### What it does
 
-- Persists state obsessively — after every sub-step, not just every cycle
-- On any error: logs it, waits 60s, retries
-- After 10 consecutive failures: enters a 30-minute cooldown, then resumes
-- Never stops due to API errors, rate limits, or transient failures
-- Conservative: sonnet only, maximum 3 parallel agents, skips risky changes
-- Maintains a separate state file (`~/.local/share/radioactive-ralph/immortal-state.json`) independent of the main daemon state
+- Represents the resilience-first temperament in the lineup
+- Best for long-running work where survival matters more than aggressiveness
+- Favors continuity and recovery over flash
 
 ### When to use it
 
-When you want the loop running overnight or over a weekend and need it to survive anything: network blips, rate limits, transient API errors, partial tool failures. Set it and come back to a report. Every time you check on it, it will still be there, the way Ralph is still there when you come back to pick him up from the principal's office.
+When you want the most stubborn Ralph.
 
 ### Quick start
 
 ```bash
-claude plugin marketplace add github:jbcom/radioactive-ralph
-claude plugin install radioactive_ralph@jbcom-plugins
-/immortal-ralph
+radioactive_ralph init
+radioactive_ralph run --variant immortal --foreground
 ```
+
+### Current runtime notes
+
+- Immortal is selected through the shared binary surface.
+- The durability story is still a mix of live code and target-state supervisor work.
 
 ### Arguments
 
-- `--config <path>` — alternate config
-- `--cooldown-minutes <n>` — override the 30-minute cooldown (default: 30)
+- No immortal-only flags today; choose it with `--variant immortal`.
 
 [← Back to variants index](https://jonbogaty.com/radioactive-ralph/variants/)

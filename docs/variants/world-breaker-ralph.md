@@ -35,36 +35,36 @@ He is completely correct about what was done to him. The tragedy is that being c
 
 ---
 
-## The Skill
+## The Persona
 
-**`/world-breaker-ralph`** — Everything at opus. Maximum parallelism. Zero sleep. All repos. Reserved for genuine emergencies.
+**`radioactive_ralph run --variant world-breaker`** — the catastrophic mode.
+World-breaker is grief weaponized into throughput.
 
 ⚠️ **Requires `--confirm-burn-everything`. Significant API budget consumption.**
 
 ### What it does
 
-- Every agent runs at **opus** — no exceptions
-- 10 parallel agents per cycle
-- Zero sleep between cycles
-- All repos across all configured orgs, simultaneously
-- opus review of every PR, opus merge decisions
-- Never stops until interrupted
+- Declares the most expensive and extreme persona posture
+- Intended for genuinely catastrophic situations
+- Carries both a confirmation gate and a spend-cap requirement
 
 ### When to use it
 
-A critical incident. A major architecture decision to propagate everywhere. A large backlog you need cleared in one overwhelming session. Budget is not the constraint. Something has been taken from you and the only response is to make every other thing right.
+When the problem is bad enough that ordinary Ralphs feel irresponsible.
 
 ### Quick start
 
 ```bash
-claude plugin marketplace add github:jbcom/radioactive-ralph
-claude plugin install radioactive_ralph@jbcom-plugins
-/world-breaker-ralph --confirm-burn-everything
+radioactive_ralph init
+radioactive_ralph run --variant world-breaker \
+  --confirm-burn-everything \
+  --spend-cap-usd 100 \
+  --foreground
 ```
 
 ### Arguments
 
-- `--confirm-burn-everything` — **required**
-- `--config <path>` — alternate config
+- `--confirm-burn-everything` — required confirmation gate
+- `--spend-cap-usd <amount>` — required spend cap
 
 [← Back to variants index](https://jonbogaty.com/radioactive-ralph/variants/)

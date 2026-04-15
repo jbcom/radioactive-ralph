@@ -33,33 +33,36 @@ In radioactive-ralph's universe, we claim this archetype: the blue variant is th
 
 ---
 
-## The Skill
+## The Persona
 
-**`/blue-ralph`** — Read-only review mode. Structural enforcement: `Write` and `Edit` are excluded from allowed-tools, making non-interference a harness guarantee, not just a promise.
+**`radioactive_ralph run --variant blue`** — the observer. Blue is the quiet
+read-only Ralph who looks carefully before anyone else starts swinging.
 
 ### What it does
 
-- Scans all open PRs and posts detailed review comments
-- Never approves, never merges, never opens PRs
-- Flags issues with severity (blocking / warning / suggestion)
-- Posts structured review comments via forge API
-- sonnet for all reviews
+- Read-focused review posture
+- Structural non-interference remains the point of the persona
+- Best for diagnostics, review, and "tell me what is wrong without changing it"
 
 ### When to use it
 
-When you want a comprehensive review pass across your repos before you act. When you want a second opinion without any risk of modification. When you want to know what's wrong before deciding what to do about it. When you need a Ralph that keeps his hands in his pockets.
+When you want answers before edits.
 
 ### Quick start
 
 ```bash
-claude plugin marketplace add github:jbcom/radioactive-ralph
-claude plugin install radioactive_ralph@jbcom-plugins
-/blue-ralph
+radioactive_ralph init
+radioactive_ralph run --variant blue --foreground
 ```
+
+### Current runtime notes
+
+- Blue remains the cleanest example of a personality expressed as runtime
+  posture rather than separate command surface.
+- The current implementation still uses the shared `run` entrypoint.
 
 ### Arguments
 
-- `--config <path>` — alternate config
-- `--repo <path>` — single repo mode
+- No blue-only flags today; choose it with `--variant blue`.
 
 [← Back to variants index](https://jonbogaty.com/radioactive-ralph/variants/)

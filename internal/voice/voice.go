@@ -28,7 +28,8 @@ import (
 // a proper enum in the variant package; M2 uses lower-case strings.
 type Variant string
 
-// Canonical variant names. Kept in sync with skills/<name>-ralph/SKILL.md.
+// Canonical variant names. Kept in sync with the variant registry and
+// the operator-facing docs/variants pages.
 const (
 	VariantGreen        Variant = "green"
 	VariantGrey         Variant = "grey"

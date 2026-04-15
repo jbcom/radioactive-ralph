@@ -35,34 +35,36 @@ Marvel's MCU used this form in Avengers: Endgame — though the comics version p
 
 ---
 
-## The Skill
+## The Persona
 
-**`/professor-ralph`** — Think first, act second. Three-phase cycle: opus planning → sonnet execution → sonnet reflection.
+**`radioactive_ralph run --variant professor`** — the strategic Ralph. This is
+the personality for thinking before moving.
 
 ### What it does
 
-- **Phase 1 (Planning):** Uses opus to read ARCHITECTURE.md, DESIGN.md, STATE.md, recent git log, open PRs, and open issues across all repos — forms a strategic plan before touching anything
-- **Phase 2 (Execution):** Executes the plan with up to 4 parallel sonnet agents
-- **Phase 3 (Reflection):** Updates docs/STATE.md with what was learned, what changed, what's next
-- 5-minute sleep between cycles (slower than green-ralph, more deliberate)
+- Represents the plan-first temperament in the persona lineup
+- Prefers deliberate reasoning over raw throughput
+- Best suited to architectural, directional, and sequencing-heavy work
 
 ### When to use it
 
-When you want the orchestrator to understand the codebase before it acts. When you're working on something architecturally significant. When "doing the next obvious thing" isn't enough and you want judgment applied first. When you want a Ralph with a library card.
+When judgment matters more than speed.
 
 ### Quick start
 
 ```bash
-claude plugin marketplace add github:jbcom/radioactive-ralph
-claude plugin install radioactive_ralph@jbcom-plugins
-/professor-ralph
-# Or planning only:
-/professor-ralph --plan-only
+radioactive_ralph init
+radioactive_ralph run --variant professor --foreground
 ```
+
+### Current runtime notes
+
+- The current CLI does not yet expose a separate professor-only `--plan-only`
+  flow.
+- Professor still exists as a real in-code persona and documentation target.
 
 ### Arguments
 
-- `--plan-only` — run the planning phase and report, don't execute
-- `--config <path>` — alternate config
+- No professor-only flags today; choose it with `--variant professor`.
 
 [← Back to variants index](https://jonbogaty.com/radioactive-ralph/variants/)

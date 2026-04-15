@@ -12,6 +12,7 @@ lastUpdated: 2026-04-15
 | macOS / Linuxbrew / WSL2+Linuxbrew | `brew tap jbcom/pkgs && brew install radioactive-ralph` |
 | Windows Scoop | `scoop bucket add jbcom https://github.com/jbcom/pkgs && scoop install radioactive-ralph` |
 | Windows Chocolatey | `choco install radioactive-ralph` |
+| POSIX curl installer | `curl -sSL https://jonbogaty.com/radioactive-ralph/install.sh | sh` |
 
 ## Initialize a repo
 
@@ -21,31 +22,34 @@ Run the initializer at the repo root once:
 radioactive_ralph init
 ```
 
-That creates `.radioactive-ralph/`, seeds the bootstrap plan scaffolding, and registers the MCP server with Claude Code unless you pass `--skip-mcp`.
+That creates `.radioactive-ralph/`, writes the repo config files, scaffolds
+`plans/index.md`, and registers `radioactive_ralph` with Claude Code as a
+stdio MCP server unless you pass `--skip-mcp`.
 
-## Ask fixit what to do first
+## Ask Fixit what should happen first
 
-When you're starting from a plain-English goal instead of an existing plan,
-start with Fixit Ralph:
+When you are starting from a plain-English goal, begin with Fixit Ralph:
 
 ```bash
-radioactive_ralph run --variant fixit --advise --topic "finish the next docs pass"
+radioactive_ralph run --variant fixit --advise \
+  --topic finish-docs-pass \
+  --description "finish the docs pass and line up the next implementation phase"
 ```
 
-That writes `.radioactive-ralph/plans/<topic>-advisor.md` and gives the rest of
-the variant system a concrete initialized plan context to work from.
+Today that writes an advisor report to `.radioactive-ralph/plans/<topic>-advisor.md`
+and, on first creation for that repo/topic slug, syncs the recommendation into
+the durable plan DAG every other Ralph depends on.
 
-## Launch the recommended variant
+## Launch a working persona
 
-Once fixit has translated the ask into a plan, launch the working variant you
-actually want to run. For a first foreground run:
+Once you have plan context, run the persona you actually want:
 
 ```bash
 radioactive_ralph plan ls
 radioactive_ralph run --variant green --foreground
 ```
 
-Useful follow-up commands after a variant is running:
+Useful follow-up commands:
 
 ```bash
 radioactive_ralph status --variant green
@@ -53,29 +57,25 @@ radioactive_ralph attach --variant green
 radioactive_ralph stop --variant green
 ```
 
-Inside Claude Code, the normal entry point for a free-form ask is Fixit Ralph:
-
-```text
-/fixit-ralph
-```
-
 ## Core commands
 
 | Command | What it does |
 |---|---|
-| `radioactive_ralph init` | Set up `.radioactive-ralph/` and capability selections for the current repo |
-| `radioactive_ralph run --variant fixit --advise` | Interpret a free-form goal and write the advisor plan other variants can follow |
-| `radioactive_ralph run --variant <name>` | Launch a supervisor for a specific Ralph variant once valid plan context exists |
+| `radioactive_ralph init` | Set up `.radioactive-ralph/` and register Claude MCP |
+| `radioactive_ralph run --variant fixit --advise` | Interpret a free-form goal, write the advisor report, and seed the durable plan |
+| `radioactive_ralph run --variant <name>` | Launch a supervisor for a specific Ralph persona |
 | `radioactive_ralph status --variant <name>` | Query a running supervisor over its Unix socket |
 | `radioactive_ralph attach --variant <name>` | Stream supervisor events live |
 | `radioactive_ralph stop --variant <name>` | Shut a supervisor down gracefully |
-| `radioactive_ralph plan ls` | List plans in the local plan store |
-| `radioactive_ralph serve --mcp` | Run the MCP server in stdio mode |
-| `radioactive_ralph mcp register` | Register the MCP server with Claude Code |
+| `radioactive_ralph plan ls` | List plans in the durable plan store |
+| `radioactive_ralph serve --mcp` | Run the stdio MCP server |
+| `radioactive_ralph mcp register` | Register the stdio MCP server with Claude Code |
 
-## Requirements
+## Current requirements
 
-- Git
+- `git`
 - `claude` CLI installed and authenticated
-- `gh` CLI recommended for GitHub workflows
-- `tmux` or `screen` recommended if you use detached runs
+- `gh` recommended for GitHub workflows
+
+Claude is the current provider implementation. The product direction is broader:
+binary-first, persona-first, and eventually provider-agnostic.

@@ -17,7 +17,7 @@ import (
 // This is the durable plan-DAG surface — direct CRUD against the
 // SQLite store under $XDG_STATE_HOME/radioactive_ralph/.
 type PlanCmd struct {
-	Ls   PlanLsCmd   `cmd:"" help:"List plans in this operator's state dir."`
+	Ls   PlanLsCmd   `cmd:"" help:"List plans for this repo by default. Use --all-repos to widen the view."`
 	Show PlanShowCmd `cmd:"" help:"Show one plan's tasks and current ready set."`
 	Next PlanNextCmd `cmd:"" help:"Print the next ready task for a plan (without claiming it)."`
 
@@ -32,7 +32,8 @@ type PlanCmd struct {
 
 // PlanLsCmd implements `plan ls`.
 type PlanLsCmd struct {
-	All bool `help:"Include archived + abandoned plans."`
+	All      bool `help:"Include archived + abandoned plans."`
+	AllRepos bool `help:"Include plans from every repo in the operator state dir."`
 }
 
 func (c *PlanLsCmd) Run(rc *runContext) error {
@@ -56,13 +57,28 @@ func (c *PlanLsCmd) Run(rc *runContext) error {
 	if err != nil {
 		return err
 	}
+	repo := ""
+	if !c.AllRepos {
+		repo, err = resolveRepoRoot("")
+		if err != nil {
+			return err
+		}
+	}
 	if len(plans) == 0 {
 		fmt.Println("no plans in this state dir (yet)")
 		return nil
 	}
+	found := false
 	for _, p := range plans {
+		if repo != "" && p.RepoPath != repo {
+			continue
+		}
+		found = true
 		fmt.Printf("%s  %-20s  %-12s  %s\n",
 			p.ID, trunc(p.Slug, 20), p.Status, trunc(p.Title, 60))
+	}
+	if !found {
+		fmt.Println("no plans for this repo (yet)")
 	}
 	return nil
 }
@@ -78,8 +94,12 @@ func (c *PlanShowCmd) Run(rc *runContext) error {
 		return err
 	}
 	defer func() { _ = store.Close() }()
+	repo, err := resolveRepoRoot("")
+	if err != nil {
+		return err
+	}
 
-	plan, err := resolvePlan(rc.ctx, store, c.IDOrSlug)
+	plan, err := resolvePlan(rc.ctx, store, c.IDOrSlug, repo)
 	if err != nil {
 		return err
 	}
@@ -109,8 +129,12 @@ func (c *PlanNextCmd) Run(rc *runContext) error {
 		return err
 	}
 	defer func() { _ = store.Close() }()
+	repo, err := resolveRepoRoot("")
+	if err != nil {
+		return err
+	}
 
-	plan, err := resolvePlan(rc.ctx, store, c.IDOrSlug)
+	plan, err := resolvePlan(rc.ctx, store, c.IDOrSlug, repo)
 	if err != nil {
 		return err
 	}
@@ -189,7 +213,10 @@ func (c *PlanImportCmd) Run(rc *runContext) error {
 	defer func() { _ = store.Close() }()
 
 	// Try to resolve repo path from cwd for indexing.
-	repoPath, _ := os.Getwd()
+	repoPath, err := resolveRepoRoot("")
+	if err != nil {
+		return err
+	}
 
 	planID, err := store.CreatePlan(rc.ctx, plandag.CreatePlanOpts{
 		Slug:           f.Slug,
@@ -248,8 +275,12 @@ func (c *PlanMarkDoneCmd) Run(rc *runContext) error {
 		return err
 	}
 	defer func() { _ = store.Close() }()
+	repo, err := resolveRepoRoot("")
+	if err != nil {
+		return err
+	}
 
-	plan, err := resolvePlan(rc.ctx, store, c.PlanIDOrSlug)
+	plan, err := resolvePlan(rc.ctx, store, c.PlanIDOrSlug, repo)
 	if err != nil {
 		return err
 	}
@@ -325,11 +356,18 @@ func openPlanStore(ctx context.Context) (*plandag.Store, error) {
 }
 
 // resolvePlan accepts either a full UUID or a slug and returns the
-// matching plan.
-func resolvePlan(ctx context.Context, store *plandag.Store, ref string) (*plandag.Plan, error) {
+// matching plan for the current repo.
+func resolvePlan(ctx context.Context, store *plandag.Store, ref string, repo string) (*plandag.Plan, error) {
 	// Try by id first (UUID v7 looks like 36 chars with hyphens).
 	if len(ref) == 36 && strings.Count(ref, "-") == 4 {
-		return store.GetPlan(ctx, ref)
+		plan, err := store.GetPlan(ctx, ref)
+		if err != nil {
+			return nil, err
+		}
+		if repo != "" && plan.RepoPath != repo {
+			return nil, fmt.Errorf("plan %q belongs to a different repo", ref)
+		}
+		return plan, nil
 	}
 	// Otherwise treat as slug; scan all plans for the match.
 	plans, err := store.ListPlans(ctx, []plandag.PlanStatus{
@@ -341,11 +379,11 @@ func resolvePlan(ctx context.Context, store *plandag.Store, ref string) (*planda
 		return nil, err
 	}
 	for _, p := range plans {
-		if p.Slug == ref {
+		if p.Slug == ref && p.RepoPath == repo {
 			return &p, nil
 		}
 	}
-	return nil, fmt.Errorf("no plan matching %q", ref)
+	return nil, fmt.Errorf("no plan matching %q for this repo", ref)
 }
 
 // trunc cuts s to n chars with an ellipsis.

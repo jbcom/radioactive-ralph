@@ -5,92 +5,62 @@ lastUpdated: 2026-04-15
 
 # State — radioactive-ralph
 
-The project is mid-rewrite. This page tracks concrete status per component.
-See [the PRD](../plans/2026-04-14-radioactive-ralph-rewrite.prq.md) for the
-four-milestone plan.
+This page tracks the live state of the rewrite after the binary-first pivot.
 
-## What's done
+## What changed in the contract
 
-### M1 (this branch): marketplace + hygiene
+The repo no longer treats the Claude marketplace/plugin path as the main
+identity of the product.
 
-- `.claude-plugin/marketplace.json` — marketplace renamed to `jbcom-plugins`,
-  plugin named `radioactive_ralph`, `strict: false`, skills listed explicitly.
-  Validates under `claude plugin validate .`.
-- README install + command documentation corrected — no more claims of
-  commands that don't exist, no more `claude --print` fiction.
-- Dead code removed — `github_client.py` (the legacy class) deleted.
-  Auth helpers moved to `forge/auth.py` where they belong.
-- Broken implementations stubbed — `Orchestrator.run`,
-  `Orchestrator.stop`, `agent_runner.run_parallel_agents` raise
-  `NotImplementedError` with pointers to the PRD. The inner helpers
-  (`_merge_ready`, `_review_pending`, `_should_discover`) are preserved
-  as reusable building blocks for M2.
-- CLI surface pruned — `radioactive_ralph status` + `radioactive_ralph doctor` implemented;
-  `radioactive_ralph run` is a stub that exits 2 with the PRD pointer.
-- Two broken tests fixed — `test_cli.py::test_main_verbose` had an empty
-  `pass` body; `test_orchestrator.py::test_step_spawns_agents` passed
-  `repo_name` to a Pydantic model where it's a computed property.
-- Domain docs (`architecture.md`, `design.md`, `state.md`, `testing.md`)
-  rewritten to the target architecture.
+The active contract is now:
 
-### Previously done (pre-rewrite, preserved)
+- `radioactive_ralph` binary first
+- Claude Code via stdio MCP
+- personas defined in code
+- provider abstraction as the target direction
 
-- Core Pydantic models (`models.py`)
-- PR manager (`pr_manager.py`) — classify, merge, scan
-- Internal reviewer (`reviewer.py`) — Anthropic-powered with tiered models
-- Work discovery (`work_discovery.py`) — missing-file heuristics
-- State persistence (`state.py`) — JSON roundtrip, dedup, prune
-- Config loader (`config.py`) — TOML + env layering
-- Forge abstraction (`forge/`) — GitHub + Gitea + GitLab backends
-- Test suite — 143 tests, covering models, state, forges, reviewer,
-  PR manager, work discovery, dashboard, doctor, CLI, ralph_says
-- Shibuya-themed docs site published at <https://jonbogaty.com/radioactive-ralph/>
-- GitHub Actions split across CI validation, docs publishing, tag-based
-  PyPI release, and automerge
+## What is live today
 
-## What's planned
+- Go CLI under `cmd/radioactive_ralph/`
+- repo init and config scaffolding
+- durable SQLite-backed plan store
+- stdio MCP server via `radioactive_ralph serve --mcp`
+- MCP registration via `radioactive_ralph mcp register`
+- service installation commands
+- repo-root Sphinx docs
+- generated Go API reference under `docs/api/`
 
-### M2 — daemon skeleton + per-repo config + XDG workspace + session control
+## What is now explicitly deprecated
 
-- `radioactive_ralph init` wizard creating `.radioactive-ralph/`
-- `WorkspaceManager` dispatching across four isolation modes
-- SQLite + sqlite-vec event log with WAL
-- Unix socket IPC for `radioactive_ralph status / attach / enqueue / stop`
-- `ClaudeSession` wrapping `claude -p --input-format stream-json`
-- Multiplexer abstraction (tmux → screen → setsid fallback)
-- `Orchestrator` rewrite as a per-repo supervisor
+- treating marketplace plugin skills as the main product story
+- treating HTTP MCP as a first-class integration path
+- describing the personas as external skill files first and code second
 
-### M3 — ten variants + pre-flight + voice
+Legacy plugin/skill material may still exist in the tree or in archive/history
+documents, but it is no longer the architectural center.
 
-- `Profile` dataclass; ten variant files (≤300 LOC each)
-- Pre-flight wizard with shared question registry (CLI + skill)
-- Voice template library per variant
-- Safety floors with two-step override for destructive variants
-- Auto-generated variants-matrix.md (CI drift check)
-- Skills rewritten as thin entry points (<30 lines each)
+## High-priority implementation gaps
 
-### M4 — integration harness + doctor + release
+### Fixit rewrites are still append-only at the DAG layer
 
-- Integration test scenarios (grey-ralph end-to-end; session death
-  recovery; pre-flight refusal; multiplexer fallback; LFS detection;
-  hook preservation; shared-object corruption recovery)
-- `radioactive_ralph doctor` rewrite with concrete remediation output
-- Demo GIF recording the full flow
-- Release 1.0.0 to PyPI
+Fixit now seeds the durable DAG on first creation for a topic slug, but reruns
+with the same slug refresh the human report and leave the existing DAG plan in
+place. Plan revision/replacement semantics are still missing.
 
-## Known issues (during rewrite)
+### Provider abstraction is still design, not code
 
-- `radioactive_ralph run` is stubbed (exits 2). Real daemon lands in M2.
-- Ten variants are still SKILL.md files; behavior is not yet in Python.
-- Mirror-based workspace architecture is documented but not implemented.
-- No `.radioactive-ralph/` directory is created anywhere yet.
+The current runtime still shells out to `claude`. The broader provider-binding
+model is the next architecture phase, not a shipped feature.
 
-## Active decisions
+### Safety and gating are still incomplete
 
-- Import package name: `radioactive_ralph` (PyPI name: `radioactive-ralph`)
-- Config location: `.radioactive-ralph/config.toml` per repo (committed)
-- State location: `$XDG_STATE_HOME/radioactive-ralph/<repo-hash>/`
-  (never `.claude/`, never the repo)
-- Docs domain: <https://jonbogaty.com/radioactive-ralph/>
-- Docs source model: README for GitHub/PyPI; skill files for skill canon;
-  `docs/` pages for curated narrative and auto-generated matrices
+Some variant gate and spend-cap behavior exists in profiles/docs but is not yet
+fully reflected in the runtime surface.
+
+## What is intentionally true now
+
+- Ralph is one binary with many personalities.
+- Claude is a client of the binary, not the other way around.
+- Repo config should become the place where future provider bindings live.
+- The docs should describe the current product honestly and mark target-state
+  material as target-state.

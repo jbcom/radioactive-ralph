@@ -63,20 +63,6 @@ jobs:
           go install golang.org/x/vuln/cmd/govulncheck@latest
           govulncheck ./...
 
-  marketplace-validate:
-    name: Marketplace validate
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-      - name: Setup Node
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
-        with:
-          node-version: '22'
-      - name: Install Claude Code CLI
-        run: npm install -g @anthropic-ai/claude-code@latest
-      - name: Validate marketplace manifest
-        run: claude plugin validate .
-
   docs:
     name: Docs
     runs-on: ubuntu-latest

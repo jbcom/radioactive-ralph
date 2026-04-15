@@ -18,16 +18,16 @@ Everything needed before the LinkedIn / Hacker News drop.
 
 ### Documentation and packaging
 - [x] Root README stabilized for GitHub + PyPI rendering
-- [x] Skill READMEs reworked with structured above-the-fold tables
+- [x] Persona docs reworked with structured above-the-fold tables
 - [x] Docs IA reorganized around `getting-started`, `guides`, `variants`, and `reference`
 - [x] Docs publishing split from release automation
 - [ ] `brew install radioactive-ralph` tested from a clean machine
 
 ### Demo verification
-- [ ] `/fixit-ralph` turns a plain-English ask into `.radioactive-ralph/plans/<topic>-advisor.md`
-- [ ] `/green-ralph` runs end-to-end in single-cycle mode
-- [ ] `/red-ralph` handles a known CI failure cleanly
-- [ ] `/fixit-ralph --cycles 1` prints the bill
+- [ ] `radioactive_ralph run --variant fixit --advise` turns a plain-English ask into a durable plan plus `.radioactive-ralph/plans/<topic>-advisor.md`
+- [ ] `radioactive_ralph run --variant green --foreground` runs end-to-end in single-cycle mode
+- [ ] `radioactive_ralph run --variant red --foreground` handles a known CI failure cleanly
+- [ ] `radioactive_ralph run --variant fixit --foreground` respects the ROI budget settings
 - [ ] `radioactive_ralph status`, `radioactive_ralph plan ls`, and `radioactive_ralph mcp status` return promptly on empty state
 
 ## Social links

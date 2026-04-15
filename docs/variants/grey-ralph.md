@@ -31,34 +31,36 @@ He is weaker than the green form physically (capped around 70-100 paste jars bas
 
 ---
 
-## The Skill
+## The Persona
 
-**`/grey-ralph`** — The mechanical workhorse. Single repo. Haiku only. File hygiene only. No judgment required.
+**`radioactive_ralph run --variant grey`** — the cheap mechanical pass. Grey is
+the paste-eating cleanup specialist.
 
 ### What it does
 
-- Works only on the current repo (or `--repo <path>`)
-- Uses **haiku for everything** — no sonnet, no opus
-- Handles only safe, mechanical work: missing governance files, frontmatter, CHANGELOG entries, stub docs
-- Never writes or rewrites source code
-- Does one thing, opens one PR, exits
+- Declares a narrow, low-drama posture for hygiene and maintenance work
+- Optimized around mechanical cleanup rather than judgment-heavy implementation
+- Best for frontmatter, doc polish, and repo housekeeping
 
 ### When to use it
 
-When you have a repo that needs its governance files sorted out and you don't want to spend tokens thinking about it. Send in grey-ralph, let him do the rote work, move on. He will eat some paste on the way out but he won't touch your source code.
+When the work is obvious, repetitive, and not worth a broader persona.
 
 ### Quick start
 
 ```bash
-claude plugin marketplace add github:jbcom/radioactive-ralph
-claude plugin install radioactive_ralph@jbcom-plugins
-/grey-ralph
-# Or scoped:
-/grey-ralph --repo ~/src/my-project
+radioactive_ralph init
+radioactive_ralph run --variant grey --foreground
 ```
+
+### Current runtime notes
+
+- Grey is a binary persona, not a slash command.
+- The current runtime does not expose grey-specific CLI flags; the specialization
+  lives in the persona profile.
 
 ### Arguments
 
-- `--repo <path>` — target repo (default: cwd)
+- No grey-only flags today; choose it with `--variant grey`.
 
 [← Back to variants index](https://jonbogaty.com/radioactive-ralph/variants/)

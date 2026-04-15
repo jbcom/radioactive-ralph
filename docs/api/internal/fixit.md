@@ -158,16 +158,18 @@ type EmitToDAGOpts struct {
 ```
 
 <a name="EmittedPlan"></a>
-## type [EmittedPlan](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/fixit/types.go#L162-L167>)
+## type [EmittedPlan](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/fixit/types.go#L163-L170>)
 
 EmittedPlan describes what Stage 6 wrote.
 
 ```go
 type EmittedPlan struct {
-    Path       string
-    Status     PlanStatus
-    Proposal   PlanProposal // zero-valued when Status=fallback
-    Validation ValidationResult
+    Path        string
+    Status      PlanStatus
+    Proposal    PlanProposal // zero-valued when Status=fallback
+    Validation  ValidationResult
+    Intent      IntentSpec
+    RepoContext RepoContext
 }
 ```
 
@@ -183,7 +185,7 @@ Emit runs Stage 6 — write the plan to disk and return what happened. The statu
 The emitted file ALWAYS has valid plan\-format frontmatter so it satisfies the shape the plans\-first discipline expects, even when status is fallback or provisional — other variants gate on the status field, not on presence of frontmatter.
 
 <a name="EmitFallback"></a>
-### func [EmitFallback](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/fixit/emit.go#L42-L44>)
+### func [EmitFallback](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/fixit/emit.go#L44-L46>)
 
 ```go
 func EmitFallback(plansDir, topic string, reason string, rawOutput string, intent IntentSpec, rc RepoContext) (EmittedPlan, error)
@@ -285,9 +287,9 @@ func CaptureIntent(opts IntentOptions) (IntentSpec, error)
 CaptureIntent runs Stage 1. In non\-interactive mode it returns immediately with whatever the caller supplied. In interactive mode it asks three short questions on stdout and reads answers from stdin. Either way it consults a TOPIC.md at the repo root for an operator\-prepared description if \-\-description wasn't passed.
 
 <a name="InventorySnapshot"></a>
-## type [InventorySnapshot](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/fixit/types.go#L64-L68>)
+## type [InventorySnapshot](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/fixit/types.go#L65-L69>)
 
-InventorySnapshot is a flattened view of the capability inventory \(skills, MCPs, agents\). The full inventory.Inventory has more detail but the advisor only needs counts \+ names.
+InventorySnapshot is a flattened view of the operator capability inventory \(helper integrations, MCPs, agents\). The full inventory.Inventory has more detail but the advisor only needs names and high\-level availability.
 
 ```go
 type InventorySnapshot struct {
@@ -298,7 +300,7 @@ type InventorySnapshot struct {
 ```
 
 <a name="PlanProposal"></a>
-## type [PlanProposal](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/fixit/types.go#L125-L133>)
+## type [PlanProposal](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/fixit/types.go#L126-L134>)
 
 PlanProposal is Stage 4 output — the structured JSON the constrained Claude subprocess returns.
 
@@ -326,7 +328,7 @@ Analyze runs Stage 4. Returns a parsed PlanProposal on success, or \(zero, error
 One retry on JSON\-parse failure: when Claude returns text that doesn't unmarshal cleanly, we re\-spawn with the parse error appended so the model can self\-correct. Second failure bubbles up.
 
 <a name="PlanStatus"></a>
-## type [PlanStatus](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/fixit/types.go#L144>)
+## type [PlanStatus](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/fixit/types.go#L145>)
 
 PlanStatus captures whether the emitted plan satisfies the plans\- first discipline gate.
 
@@ -339,7 +341,7 @@ type PlanStatus string
 ```go
 const (
     // StatusCurrent means the plan passed every validation rule and
-    // other variants will accept it as a valid plans/index.md target.
+    // other variants will accept it as a valid durable plan.
     StatusCurrent PlanStatus = "current"
 
     // StatusProvisional means at least one validation rule failed but
@@ -413,7 +415,7 @@ Refine runs Stage 4 repeatedly, feeding validation failures back into each subse
 The LLM sees each prior attempt's failures appended to the system prompt, so it can deliberately address them rather than randomly redrafting.
 
 <a name="RepoContext"></a>
-## type [RepoContext](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/fixit/types.go#L72-L98>)
+## type [RepoContext](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/fixit/types.go#L73-L99>)
 
 RepoContext is Stage 2 output — everything the deterministic exploration discovered about the repo.
 
@@ -508,7 +510,7 @@ type RunOptions struct {
 ```
 
 <a name="Task"></a>
-## type [Task](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/fixit/types.go#L113-L121>)
+## type [Task](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/fixit/types.go#L114-L122>)
 
 Task is one item in a PlanProposal's task list. The DAG\-oriented fields \(VariantHint, ContextBoundary, AcceptanceCriteria, DependsOn\) are populated when Stage 4 emits enough structure to build a real DAG. When omitted, EmitToDAG falls back to an implicit linear chain.
 
@@ -525,7 +527,7 @@ type Task struct {
 ```
 
 <a name="ValidationResult"></a>
-## type [ValidationResult](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/fixit/types.go#L137-L140>)
+## type [ValidationResult](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/fixit/types.go#L138-L141>)
 
 ValidationResult is Stage 5 output — whether the proposal passed every rule and, if not, what failed.
 
@@ -546,7 +548,7 @@ func Validate(p PlanProposal, rc RepoContext, intent IntentSpec) ValidationResul
 Validate runs Stage 5. Returns \(passed, failures\). A passing validation means the plan gets \`status: current\`; a failing validation still emits the plan but downgrades status to \`provisional\` so other variants' plans\-first gate refuses it.
 
 <a name="VariantScore"></a>
-## type [VariantScore](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/fixit/types.go#L101-L106>)
+## type [VariantScore](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/fixit/types.go#L102-L107>)
 
 VariantScore is one entry in Stage 3's deterministic ranking.
 

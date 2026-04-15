@@ -11,14 +11,7 @@ description: Go API reference for the mcp package.
 import "github.com/jbcom/radioactive-ralph/internal/mcp"
 ```
 
-Package mcp wraps modelcontextprotocol/go\-sdk to expose Ralph's plan\-DAG and variant\-pool surface as MCP tools. The outer Claude session orchestrates ralphs by calling these tools.
-
-Two transports:
-
-- Stdio: portable mode. Spawned as a subprocess of the outer Claude session via a Skill.
-- HTTP\+SSE: durable mode. Long\-running server bound to a port, installed via brew services / launchd / systemd.
-
-Both transports expose the same tool surface — server.go owns the tool registry; transports are thin wrappers in stdio.go and http.go.
+Package mcp wraps modelcontextprotocol/go\-sdk to expose Ralph's plan\-DAG and variant\-pool surface as MCP tools. Claude Code talks to the binary through this server over stdio; the binary remains the durable product surface and MCP is the structured control plane.
 
 ## Index
 
@@ -26,12 +19,11 @@ Both transports expose the same tool surface — server.go owns the tool registr
 - [type Server](<#Server>)
   - [func New\(o Options\) \(\*Server, error\)](<#New>)
   - [func \(s \*Server\) MCPServer\(\) \*mcpsdk.Server](<#Server.MCPServer>)
-  - [func \(s \*Server\) ServeHTTP\(ctx context.Context, addr string\) error](<#Server.ServeHTTP>)
   - [func \(s \*Server\) ServeStdio\(ctx context.Context\) error](<#Server.ServeStdio>)
 
 
 <a name="Options"></a>
-## type [Options](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/mcp/server.go#L28-L42>)
+## type [Options](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/mcp/server.go#L19-L33>)
 
 Options configures Server creation.
 
@@ -54,7 +46,7 @@ type Options struct {
 ```
 
 <a name="Server"></a>
-## type [Server](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/mcp/server.go#L45-L48>)
+## type [Server](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/mcp/server.go#L36-L39>)
 
 Server bundles the registered MCP server with its options.
 
@@ -65,7 +57,7 @@ type Server struct {
 ```
 
 <a name="New"></a>
-### func [New](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/mcp/server.go#L51>)
+### func [New](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/mcp/server.go#L42>)
 
 ```go
 func New(o Options) (*Server, error)
@@ -74,24 +66,13 @@ func New(o Options) (*Server, error)
 New builds an MCP server with every Ralph tool registered.
 
 <a name="Server.MCPServer"></a>
-### func \(\*Server\) [MCPServer](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/mcp/server.go#L76>)
+### func \(\*Server\) [MCPServer](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/mcp/server.go#L67>)
 
 ```go
 func (s *Server) MCPServer() *mcpsdk.Server
 ```
 
 MCPServer returns the underlying SDK server. Useful for tests that drive the server via in\-memory transports.
-
-<a name="Server.ServeHTTP"></a>
-### func \(\*Server\) [ServeHTTP](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/mcp/http.go#L21>)
-
-```go
-func (s *Server) ServeHTTP(ctx context.Context, addr string) error
-```
-
-ServeHTTP runs the MCP server over streamable HTTP. Blocks until ctx is canceled or the listener errors.
-
-Used by the durable mode service \(\`radioactive\_ralph serve \-\-mcp \-\-http :port\`\), typically managed by launchd/systemd. One process hosts a single shared session — every client that connects pipes JSON\-RPC over the same stream.
 
 <a name="Server.ServeStdio"></a>
 ### func \(\*Server\) [ServeStdio](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/mcp/stdio.go#L15>)

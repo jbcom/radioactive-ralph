@@ -114,7 +114,7 @@ Path returns the absolute path to config.toml for repoRoot.
 <a name="Capabilities"></a>
 ## type [Capabilities](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/config/config.go#L55-L67>)
 
-Capabilities declares the operator's preferred skill per bias category. A zero\-valued string means "no preference / don't bias". The keys match the BiasCategory constants defined in the variant package \(M3\).
+Capabilities declares the operator's preferred helper per bias category. A zero\-valued string means "no preference / don't bias". The keys match the BiasCategory constants defined in the variant package \(M3\).
 
 ```go
 type Capabilities struct {
@@ -124,9 +124,9 @@ type Capabilities struct {
     Brainstorm     string `toml:"brainstorm"`
     Debugging      string `toml:"debugging"`
 
-    // DisabledBiases lists skills the operator explicitly never wants
+    // DisabledBiases lists helpers the operator explicitly never wants
     // Ralph to bias toward, even when they're present in the inventory.
-    // This is how operators opt out of a specific review skill in favor
+    // This is how operators opt out of a specific review helper in favor
     // of another.
     DisabledBiases []string `toml:"disabled_biases"`
 }

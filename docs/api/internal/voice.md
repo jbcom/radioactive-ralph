@@ -31,7 +31,7 @@ Design: templates are plain Go string/template\-literal pairs rather than text/t
 
 
 <a name="Register"></a>
-## func [Register](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/voice/voice.go#L122>)
+## func [Register](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/voice/voice.go#L123>)
 
 ```go
 func Register(variant Variant, event Event, template string)
@@ -40,7 +40,7 @@ func Register(variant Variant, event Event, template string)
 Register adds or replaces a template for one variant \+ event. Called by the variant package at init time; tests can also use it to override specific templates and inspect the output.
 
 <a name="RegisterFallback"></a>
-## func [RegisterFallback](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/voice/voice.go#L133>)
+## func [RegisterFallback](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/voice/voice.go#L134>)
 
 ```go
 func RegisterFallback(event Event, template string)
@@ -49,7 +49,7 @@ func RegisterFallback(event Event, template string)
 RegisterFallback sets the default template used when a variant lacks a specific event template.
 
 <a name="ResetForTesting"></a>
-## func [ResetForTesting](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/voice/voice.go#L142>)
+## func [ResetForTesting](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/voice/voice.go#L143>)
 
 ```go
 func ResetForTesting()
@@ -58,7 +58,7 @@ func ResetForTesting()
 ResetForTesting clears the registry and re\-registers the built\-in variants. Tests that mutate the registry call this in a t.Cleanup to avoid bleeding state between tests.
 
 <a name="Say"></a>
-## func [Say](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/voice/voice.go#L105>)
+## func [Say](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/voice/voice.go#L106>)
 
 ```go
 func Say(variant Variant, event Event, f Fields) string
@@ -67,7 +67,7 @@ func Say(variant Variant, event Event, f Fields) string
 Say returns Ralph's voiced message for a given variant \+ event. Falls back to the default template if the variant hasn't registered one; falls back to a canonical event name if no template exists at all. Never panics.
 
 <a name="Event"></a>
-## type [Event](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/voice/voice.go#L46>)
+## type [Event](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/voice/voice.go#L47>)
 
 Event is the kind\-of\-emission key. Small, documented set.
 
@@ -98,7 +98,7 @@ const (
 ```
 
 <a name="Fields"></a>
-## type [Fields](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/voice/voice.go#L72-L81>)
+## type [Fields](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/voice/voice.go#L73-L82>)
 
 Fields are the values substituted into templates. Only the subset relevant to the event is consulted — renderers gracefully tolerate zero values.
 
@@ -124,7 +124,7 @@ Variant is an identifier matching the variant profile. M3 makes this a proper en
 type Variant string
 ```
 
-<a name="VariantGreen"></a>Canonical variant names. Kept in sync with skills/\<name\>\-ralph/SKILL.md.
+<a name="VariantGreen"></a>Canonical variant names. Kept in sync with the variant registry and the operator\-facing docs/variants pages.
 
 ```go
 const (

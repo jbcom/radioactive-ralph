@@ -31,40 +31,39 @@ He is Ralph's id in a tiny suit — selfish, pleasure-seeking, morally flexible,
 
 ---
 
-## The Skill
+## The Persona
 
-**`/fixit-ralph`** — the one Ralph every other variant defers to when no valid plan/init context exists. Advisor first, ROI banger second.
+**`radioactive_ralph run --variant fixit`** — the one Ralph every other
+variant should defer to when plan context is missing. Advisor first, operator
+bridge first, bursts second.
 
 ### What it does
 
-- When `.radioactive-ralph/` or valid initialized plan context is missing, switches into advisor mode and interprets the operator's prompt into plan-facing next steps
-- Writes `.radioactive-ralph/plans/<topic>-advisor.md` so there is a durable repo-visible artifact for the recommendation
-- Acts as the bridge from a human-directed "go do this" request into the initialized SQLite-backed plan workflow every other variant expects
-- Runs exactly **N cycles** (default: 3) then stops with a full summary report
-- Single repo (current directory or `--repo`)
-- Scores every discovered work item by impact/effort ratio — picks the highest-ROI task per cycle
-- Enforces small, targeted PRs: ≤5 files changed, ≤200 LOC per PR
-- Outputs a "bill" at the end: what was done, estimated token cost, ROI per task
-- haiku for mechanical work, sonnet for logic — never opus unless explicitly allowed
+- Interprets a free-form ask when the operator does not yet have usable plan context
+- Writes `.radioactive-ralph/plans/<topic>-advisor.md` as the human-visible artifact
+- Should become the bridge from operator intent into the durable SQLite plan flow
+- Carries the budget-conscious, ROI-sensitive temperament in the lineup
 
 ### When to use it
 
-When you don't yet have a valid initialized plan and need one Ralph to make sense of the ask. When you want exactly N focused improvements with a clear report of what you got for it. Budget-conscious sessions. When you want small, reviewable PRs rather than sweeping changes. When you have 20 minutes and want to know exactly what happened and what it cost you in Squishees.
+When the human ask is still vague and one Ralph needs to hammer it into shape.
 
 ### Quick start
 
 ```bash
-claude plugin marketplace add github:jbcom/radioactive-ralph
-claude plugin install radioactive_ralph@jbcom-plugins
-/fixit-ralph
-# Or with explicit cycle count:
-/fixit-ralph --cycles 5
+radioactive_ralph init
+radioactive_ralph run --variant fixit --advise \
+  --topic next-pass \
+  --description "figure out the next useful move in this repo"
 ```
 
 ### Arguments
 
-- `--cycles <n>` — number of cycles to run (default: 3)
-- `--repo <path>` — target repo (default: cwd)
-- `--allow-opus` — permit opus for genuinely hard tasks (off by default)
+- `--advise` — run fixit in advisor mode
+- `--topic <slug>` — name the advisor output topic
+- `--description <text>` — pass the operator ask directly
+- `--auto-handoff` — print the follow-up command when the recommendation is unambiguous
+- `--max-iterations`, `--min-confidence`, `--plan-model`, `--plan-effort` — tuning knobs for the advisor pipeline
+- `--spend-cap-usd` — required when fixit is running non-advisor budgeted work
 
 [← Back to variants index](https://jonbogaty.com/radioactive-ralph/variants/)

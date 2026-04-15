@@ -1,18 +1,18 @@
-// Package inventory discovers the operator's installed Claude Code skills,
-// MCP servers, subagents, and plugins by walking the filesystem and
+// Package inventory discovers the operator's installed Claude Code helper
+// integrations, MCP servers, and subagents by walking the filesystem and
 // parsing Claude Code's settings files.
 //
 // Discovery is pure shell / filesystem work. No Claude is involved — we
 // don't prompt any session to self-describe. This package runs during
 // `radioactive_ralph init` so the operator can pick preferences for ambiguous
-// categories (multiple review skills, for instance) and is re-run at
-// `radioactive_ralph run` start so the supervisor can filter variant biases against
-// what's actually installed at runtime.
+// helper categories (multiple review helpers, for instance) and is re-run at
+// `radioactive_ralph run` start so the supervisor can filter variant biases
+// against what's actually installed at runtime.
 //
 // Discovery sources, in order:
 //
-//  1. User-level skills at ~/.claude/skills/<name>/SKILL.md
-//  2. Plugin-bundled skills at ~/.claude/plugins/cache/<marketplace>/
+//  1. User-level helpers at ~/.claude/skills/<name>/SKILL.md
+//  2. Plugin-bundled helpers at ~/.claude/plugins/cache/<marketplace>/
 //     <plugin>/<version>/skills/<name>/SKILL.md
 //  3. User-level subagents at ~/.claude/agents/
 //  4. MCP servers declared in ~/.claude/settings.json "mcpServers"
@@ -37,7 +37,7 @@ import (
 )
 
 // Inventory is the JSON-serialisable discovery snapshot. It's the single
-// source of truth for "what capabilities does this operator have?" and is
+// source of truth for "what helper capabilities does this operator have?" and is
 // consumed by the init wizard, the supervisor's prompt renderer, and
 // `radioactive_ralph doctor`.
 type Inventory struct {
@@ -49,20 +49,20 @@ type Inventory struct {
 	Environment   Environment `json:"environment"`
 }
 
-// Skill represents one discovered skill. The Name field matches the
-// `name:` value in SKILL.md frontmatter; for plugin-bundled skills the
+// Skill represents one discovered helper entry. The Name field matches the
+// `name:` value in SKILL.md frontmatter; for plugin-bundled helpers the
 // Plugin field holds the plugin ID that provides it (e.g. "superpowers")
-// so operators can disambiguate same-named skills from different plugins.
+// so operators can disambiguate same-named helpers from different plugins.
 type Skill struct {
 	Name        string `json:"name"`
 	Description string `json:"description,omitempty"`
-	Plugin      string `json:"plugin,omitempty"` // empty for user-level skills
+	Plugin      string `json:"plugin,omitempty"` // empty for user-level helpers
 	Source      string `json:"source"`           // absolute path to SKILL.md
 }
 
 // FullName returns "plugin:name" when the skill is plugin-bundled, or
-// just "name" when it's a user-level skill. This matches how variant
-// profiles reference skills in their BiasSnippet tables.
+// just "name" when it's a user-level helper. This matches how variant
+// profiles reference helpers in their BiasSnippet tables.
 func (s Skill) FullName() string {
 	if s.Plugin == "" {
 		return s.Name

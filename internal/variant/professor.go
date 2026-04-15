@@ -1,7 +1,7 @@
 package variant
 
 // professorProfile — Professor Ralph. Plan → Execute → Reflect.
-// Spec: skills/professor-ralph/SKILL.md.
+// Spec: docs/variants/professor-ralph.md.
 //
 // Three-phase cycle: opus planning, sonnet execution (up to 4
 // parallel), sonnet reflection. 5min sleep between cycles. No haiku

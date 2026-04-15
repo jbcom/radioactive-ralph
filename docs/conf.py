@@ -4,12 +4,11 @@ from __future__ import annotations
 
 import os
 import subprocess
-from datetime import datetime
 from pathlib import Path
 
 project = "radioactive-ralph"
 author = "Jon Bogaty"
-copyright = f"{datetime.now().year}, {author}"
+copyright = f"2026, {author}"
 html_title = project
 html_baseurl = "https://jonbogaty.com/radioactive-ralph/"
 

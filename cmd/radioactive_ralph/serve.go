@@ -10,14 +10,13 @@ import (
 	"github.com/jbcom/radioactive-ralph/internal/variantpool"
 )
 
-// ServeCmd is `radioactive_ralph serve --mcp [--http :port]`.
+// ServeCmd is `radioactive_ralph serve --mcp`.
 //
-// Stdio is the default — the spawning Claude Code session pipes
-// JSON-RPC over stdin/stdout. HTTP+SSE is a future addition for the
-// durable mode that brew services manages.
+// Claude Code spawns this as a stdio MCP server. One process = one
+// Claude session; the binary remains the source of truth and the MCP
+// layer is just the structured control plane.
 type ServeCmd struct {
-	MCP  bool   `help:"Required. Serve the MCP protocol."`
-	HTTP string `help:"Bind HTTP+SSE on host:port. Empty (default) means stdio mode."`
+	MCP bool `help:"Required. Serve the MCP protocol."`
 }
 
 // Run implements the kong-dispatched serve command.
@@ -68,12 +67,6 @@ func (c *ServeCmd) Run(rc *runContext) error {
 		return fmt.Errorf("mcp.New: %w", err)
 	}
 
-	if c.HTTP != "" {
-		if err := server.ServeHTTP(ctx, c.HTTP); err != nil {
-			return fmt.Errorf("serve http: %w", err)
-		}
-		return nil
-	}
 	if err := server.ServeStdio(ctx); err != nil {
 		return fmt.Errorf("serve stdio: %w", err)
 	}

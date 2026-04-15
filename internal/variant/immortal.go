@@ -1,7 +1,7 @@
 package variant
 
 // immortalProfile — Immortal Ralph. Crash-resistant marathon loop.
-// Spec: skills/immortal-ralph/SKILL.md.
+// Spec: docs/variants/immortal-ralph.md.
 //
 // Loops forever, survives transient failures, resumes from state on
 // startup. Sonnet for EVERYTHING. Max 3 parallel agents (resilience >

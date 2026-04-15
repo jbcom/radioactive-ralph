@@ -8,7 +8,7 @@
 # Downloads the appropriate GitHub release archive, verifies the
 # checksum, extracts radioactive_ralph into $INSTALL_DIR (default
 # /usr/local/bin if writable, else ~/.local/bin), and prints the
-# next-step MCP registration command.
+# next-step MCP registration command and PATH guidance.
 
 set -eu
 
@@ -139,9 +139,24 @@ install -m 0755 "$TMP/$BIN" "$INSTALL_DIR/$BIN"
 echo
 echo "Installed $BIN $VERSION to $INSTALL_DIR"
 echo
+
+if ! printf '%s' "${PATH:-}" | tr ':' '\n' | grep -Fx "$INSTALL_DIR" >/dev/null 2>&1; then
+  PROFILE="$HOME/.profile"
+  if [ -n "${SHELL:-}" ]; then
+    case "$(basename "$SHELL")" in
+      zsh) PROFILE="$HOME/.zprofile" ;;
+      bash) PROFILE="$HOME/.bash_profile" ;;
+    esac
+  fi
+  echo "Your current PATH does not include $INSTALL_DIR"
+  echo "Add this line to $PROFILE if you want the binary available in new shells:"
+  echo
+  echo "  export PATH=\"$INSTALL_DIR:\$PATH\""
+  echo
+fi
+
 echo "Next step — register as an MCP server for Claude Code:"
 echo
 echo "  $INSTALL_DIR/$BIN mcp register"
 echo
-echo "See https://jonbogaty.com/radioactive-ralph/guides/transports/"
-echo "for transport options (stdio vs HTTP)."
+echo "This registers the binary as a stdio MCP server for Claude Code."

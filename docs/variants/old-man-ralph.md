@@ -37,37 +37,34 @@ The present-day small Ralph defeats him not through strength — the Maestro is 
 
 ---
 
-## The Skill
+## The Persona
 
-**`/old-man-ralph`** — Totalitarian precision. Force-resets branches. Resolves conflicts your way. Deletes obstacles. Does not negotiate.
+**`radioactive_ralph run --variant old-man`** — the Maestro mode. Old-man is
+the forceful imposition persona.
 
 ⚠️ **Requires `--confirm-no-mercy`. Protected branches (main/master/production/release*) are exempt even here. The Maestro is ruthless, not suicidal.**
 
 ### What it does
 
-- Force-resets target branch to exact specified state
-- Resolves ALL merge conflicts with `-X ours` — your branch wins, always
-- Deletes blocking branches without asking
-- Closes PRs that contradict the target vision
-- Pushes; if remote resists, force-pushes (not force-with-lease — force)
-- Single-pass, not a loop — comes in, imposes, leaves
+- Declares the most authoritarian non-apocalyptic Ralph posture
+- Intended for operator-directed imposition of a chosen target state
+- Carries an explicit confirmation gate because it is not a casual persona
 
 ### When to use it
 
-When you have a clear, exact target state and you want it imposed, not negotiated. When the existing branch history is wrong and you don't care about preserving it. When you would rather start over than reason about what went wrong. When you have been alive for a hundred years and you are out of patience.
+When negotiation is over and you know exactly what you want.
 
 ### Quick start
 
 ```bash
-claude plugin marketplace add github:jbcom/radioactive-ralph
-claude plugin install radioactive_ralph@jbcom-plugins
-/old-man-ralph --confirm-no-mercy
+radioactive_ralph init
+radioactive_ralph run --variant old-man \
+  --confirm-no-mercy \
+  --foreground
 ```
 
 ### Arguments
 
-- `--confirm-no-mercy` — **required**, without this it refuses to start
-- `--repo <path>` — target repo (default: cwd)
-- `--target-branch <branch>` — branch to impose as ground truth
+- `--confirm-no-mercy` — required confirmation gate
 
 [← Back to variants index](https://jonbogaty.com/radioactive-ralph/variants/)

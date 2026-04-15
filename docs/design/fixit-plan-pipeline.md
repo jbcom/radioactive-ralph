@@ -56,7 +56,7 @@ Failure at any stage halts and produces a diagnostic, not a guess.
 │   • read existing .radioactive-ralph/plans/ tree                │
 │   • gh pr list --json (if gh authenticated)                     │
 │   • gh issue list --label "ai-welcome" --json                   │
-│   • capability inventory snapshot (what skills are installed)   │
+│   • capability inventory snapshot (what helpers are installed)  │
 │   • produces: RepoContext{commits, docs, plans, prs, issues,    │
 │                            inventory}                            │
 │   • NO LLM CALLS YET                                            │
@@ -185,7 +185,7 @@ type RepoContext struct {
     OpenIssues        []GHIssue
     AIWelcomeIssues   []GHIssue         // labeled ai-welcome
 
-    Inventory         InventorySnapshot // skills/MCPs/agents installed
+    Inventory         InventorySnapshot // helpers/MCPs/agents installed
 
     LangCounts        map[string]int    // .go/.py/.ts/.tf/etc
     GovernanceMissing []string          // CHANGELOG, dependabot, etc
