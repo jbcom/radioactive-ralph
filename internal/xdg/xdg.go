@@ -119,10 +119,9 @@ func repoHash(absPath string) string {
 	return hex.EncodeToString(sum[:])[:RepoHashLen]
 }
 
-// stateRoot returns the absolute path to the Ralph state root for this
-// machine and user, respecting overrides.
-// StateRoot returns the machine-wide state directory for Ralph,
-// honoring the $RALPH_STATE_DIR override for tests.
+// StateRoot returns the absolute path to the Ralph state root for this
+// machine and user, respecting overrides. Honors the $RALPH_STATE_DIR
+// override for tests.
 //
 // Exported so packages outside the xdg package (the plan subcommand,
 // the MCP server bootstrap, etc.) can land the plandag SQLite file

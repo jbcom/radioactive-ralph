@@ -16,7 +16,7 @@ func TestDAGRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
-	defer s.Close()
+	defer func() { _ = s.Close() }()
 
 	planID, err := s.CreatePlan(ctx, CreatePlanOpts{
 		Slug: "roundtrip", Title: "Roundtrip test",
@@ -120,7 +120,7 @@ func TestCycleRejection(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
-	defer s.Close()
+	defer func() { _ = s.Close() }()
 
 	planID, err := s.CreatePlan(ctx, CreatePlanOpts{Slug: "cyc", Title: "cycle test"})
 	if err != nil {
@@ -157,7 +157,7 @@ func TestRetryRequeues(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
-	defer s.Close()
+	defer func() { _ = s.Close() }()
 
 	planID, err := s.CreatePlan(ctx, CreatePlanOpts{Slug: "retry", Title: "retry test"})
 	if err != nil {

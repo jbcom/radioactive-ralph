@@ -22,7 +22,7 @@ func seedBootstrapPlan(ctx context.Context, repo string) error {
 	if err != nil {
 		return err
 	}
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 
 	const slug = "bootstrap"
 	// Check for existing plan first to keep init re-runnable.

@@ -25,7 +25,7 @@ func TestOpenRunsMigrations(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
-	defer s.Close()
+	defer func() { _ = s.Close() }()
 
 	var version int
 	if err := s.DB().QueryRowContext(ctx, "PRAGMA user_version").Scan(&version); err != nil {
@@ -75,13 +75,13 @@ func TestReopenIsIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("insert plan: %v", err)
 	}
-	s1.Close()
+	_ = s1.Close()
 
 	s2, err := Open(ctx, Options{DSN: dsn})
 	if err != nil {
 		t.Fatalf("reopen: %v", err)
 	}
-	defer s2.Close()
+	defer func() { _ = s2.Close() }()
 
 	var count int
 	if err := s2.DB().QueryRowContext(ctx,
@@ -111,7 +111,7 @@ func TestRefuseNewerSchema(t *testing.T) {
 	if _, err := s.DB().ExecContext(ctx, "PRAGMA user_version = 999"); err != nil {
 		t.Fatalf("bump user_version: %v", err)
 	}
-	s.Close()
+	_ = s.Close()
 
 	_, err = Open(ctx, Options{DSN: dsn})
 	if err == nil {
@@ -127,7 +127,7 @@ func TestForeignKeyCascade(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
-	defer s.Close()
+	defer func() { _ = s.Close() }()
 
 	planID := "01945000-0000-7000-8000-00000000aaaa"
 	_, err = s.DB().ExecContext(ctx,

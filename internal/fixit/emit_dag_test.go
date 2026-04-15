@@ -20,7 +20,7 @@ func TestEmitToDAGRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("plandag.Open: %v", err)
 	}
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 
 	proposal := PlanProposal{
 		Primary:          "green",

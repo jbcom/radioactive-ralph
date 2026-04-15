@@ -46,7 +46,7 @@ func SupervisorStartWatchdog(parentPID int, onParentDeath func()) error {
 
 	// EVFILT_PROC + NOTE_EXIT: fires once when parentPID exits.
 	changes := []syscall.Kevent_t{{
-		Ident:  uint64(parentPID),
+		Ident:  uint64(parentPID), //nolint:gosec // PID is non-negative
 		Filter: syscall.EVFILT_PROC,
 		Flags:  syscall.EV_ADD | syscall.EV_ENABLE | syscall.EV_ONESHOT,
 		Fflags: noteExit,

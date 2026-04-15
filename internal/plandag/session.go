@@ -10,6 +10,7 @@ import (
 // SessionMode identifies portable-stdio vs durable-HTTP modes.
 type SessionMode string
 
+// Session execution modes.
 const (
 	SessionModePortable SessionMode = "portable"
 	SessionModeDurable  SessionMode = "durable"
@@ -18,6 +19,7 @@ const (
 // SessionTransport identifies stdio / http / sse transports.
 type SessionTransport string
 
+// Session transport types.
 const (
 	SessionTransportStdio SessionTransport = "stdio"
 	SessionTransportHTTP  SessionTransport = "http"
@@ -26,12 +28,12 @@ const (
 
 // SessionOpts configures CreateSession.
 type SessionOpts struct {
-	ID            string // optional; caller may pass an existing UUID. Empty → auto.
-	Mode          SessionMode
-	Transport     SessionTransport
-	PID           int
-	PIDStartTime  string
-	Host          string
+	ID           string // optional; caller may pass an existing UUID. Empty → auto.
+	Mode         SessionMode
+	Transport    SessionTransport
+	PID          int
+	PIDStartTime string
+	Host         string
 }
 
 // CreateSession inserts a session row. Returns the session id.
@@ -86,10 +88,10 @@ func (s *Store) CloseSession(ctx context.Context, sessionID string) error {
 
 // SessionVariantOpts configures CreateSessionVariant.
 type SessionVariantOpts struct {
-	SessionID            string
-	VariantName          string
-	SubprocessPID        int
-	SubprocessStartTime  string
+	SessionID           string
+	VariantName         string
+	SubprocessPID       int
+	SubprocessStartTime string
 }
 
 // CreateSessionVariant registers a newly-spawned ralph subprocess

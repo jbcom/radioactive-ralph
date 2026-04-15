@@ -5,12 +5,14 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 )
 
 // PlanStatus enumerates the lifecycle states a plan can be in.
 type PlanStatus string
 
+// Plan lifecycle states.
 const (
 	PlanStatusDraft         PlanStatus = "draft"
 	PlanStatusActive        PlanStatus = "active"
@@ -23,18 +25,18 @@ const (
 
 // Plan is the durable row.
 type Plan struct {
-	ID              string
-	Slug            string
-	Title           string
-	RepoPath        string
-	RepoRemote      string
-	Status          PlanStatus
-	PrimaryVariant  string
-	Confidence      int
-	CreatedAt       time.Time
-	UpdatedAt       time.Time
-	LastSessionAt   sql.NullTime
-	TagsJSON        string // JSON array
+	ID             string
+	Slug           string
+	Title          string
+	RepoPath       string
+	RepoRemote     string
+	Status         PlanStatus
+	PrimaryVariant string
+	Confidence     int
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
+	LastSessionAt  sql.NullTime
+	TagsJSON       string // JSON array
 }
 
 // CreatePlanOpts configures plan creation. The caller supplies slug +
@@ -126,15 +128,14 @@ func (s *Store) ListPlans(ctx context.Context, statuses []PlanStatus) ([]Plan, e
 		statuses = []PlanStatus{PlanStatusActive, PlanStatusPaused}
 	}
 	args := make([]any, 0, len(statuses))
-	placeholders := ""
+	parts := make([]string, len(statuses))
 	for i, s := range statuses {
-		if i > 0 {
-			placeholders += ","
-		}
-		placeholders += "?"
+		parts[i] = "?"
 		args = append(args, string(s))
 	}
+	placeholders := strings.Join(parts, ",")
 
+	//nolint:gosec // G201: placeholders is only "?" chars; args bind via QueryContext
 	q := fmt.Sprintf(`
 		SELECT id, slug, title, COALESCE(repo_path,''), COALESCE(repo_remote,''),
 		       status, COALESCE(primary_variant,''), COALESCE(confidence, 0),
@@ -147,7 +148,7 @@ func (s *Store) ListPlans(ctx context.Context, statuses []PlanStatus) ([]Plan, e
 	if err != nil {
 		return nil, fmt.Errorf("plandag: list plans: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var out []Plan
 	for rows.Next() {

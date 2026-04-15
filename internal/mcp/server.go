@@ -99,10 +99,10 @@ type planShowArgs struct {
 }
 
 type planShowResult struct {
-	Plan        planListEntry `json:"plan"`
-	ReadyTasks  []taskBrief   `json:"ready_tasks"`
-	TotalTasks  int           `json:"total_tasks"`
-	DoneTasks   int           `json:"done_tasks"`
+	Plan       planListEntry `json:"plan"`
+	ReadyTasks []taskBrief   `json:"ready_tasks"`
+	TotalTasks int           `json:"total_tasks"`
+	DoneTasks  int           `json:"done_tasks"`
 }
 
 type taskBrief struct {
@@ -119,9 +119,9 @@ type planNextArgs struct {
 }
 
 type planClaimArgs struct {
-	PlanID            string `json:"plan_id"`
-	Variant           string `json:"variant"`
-	SessionVariantID  string `json:"session_variant_id"`
+	PlanID           string `json:"plan_id"`
+	Variant          string `json:"variant"`
+	SessionVariantID string `json:"session_variant_id"`
 }
 
 type planMarkDoneArgs struct {
@@ -308,11 +308,11 @@ type planMarkFailedResult struct {
 }
 
 func (s *Server) handlePlanMarkFailed(ctx context.Context, _ *mcpsdk.CallToolRequest, args planMarkFailedArgs) (*mcpsdk.CallToolResult, planMarkFailedResult, error) {
-	max := args.MaxRetries
-	if max == 0 {
-		max = 2
+	maxRetries := args.MaxRetries
+	if maxRetries == 0 {
+		maxRetries = 2
 	}
-	retried, err := s.opts.Store.MarkFailed(ctx, args.PlanID, args.TaskID, s.opts.SessionID, args.Reason, max)
+	retried, err := s.opts.Store.MarkFailed(ctx, args.PlanID, args.TaskID, s.opts.SessionID, args.Reason, maxRetries)
 	if err != nil {
 		return nil, planMarkFailedResult{}, err
 	}

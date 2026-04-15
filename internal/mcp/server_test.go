@@ -16,8 +16,8 @@ import (
 // plandag→server→client round trip works.
 func TestPlanListOverInMemoryTransport(t *testing.T) {
 	ctx := context.Background()
-	store := openTestStore(t, ctx)
-	defer store.Close()
+	store := openTestStore(ctx, t)
+	defer func() { _ = store.Close() }()
 
 	// Seed a plan so plan.list has something to return.
 	planID, err := store.CreatePlan(ctx, plandag.CreatePlanOpts{
@@ -56,14 +56,14 @@ func TestPlanListOverInMemoryTransport(t *testing.T) {
 	if err != nil {
 		t.Fatalf("server.Connect: %v", err)
 	}
-	defer serverSession.Close()
+	defer func() { _ = serverSession.Close() }()
 
 	client := mcpsdk.NewClient(&mcpsdk.Implementation{Name: "test-client", Version: "0"}, nil)
 	clientSession, err := client.Connect(ctx, t2, nil)
 	if err != nil {
 		t.Fatalf("client.Connect: %v", err)
 	}
-	defer clientSession.Close()
+	defer func() { _ = clientSession.Close() }()
 
 	// Call plan.list via the client.
 	res, err := clientSession.CallTool(ctx, &mcpsdk.CallToolParams{
@@ -102,7 +102,7 @@ func TestPlanListOverInMemoryTransport(t *testing.T) {
 }
 
 // openTestStore is the shared store-helper for MCP tests.
-func openTestStore(t *testing.T, ctx context.Context) *plandag.Store {
+func openTestStore(ctx context.Context, t *testing.T) *plandag.Store {
 	t.Helper()
 	dsn := "file:" + filepath.Join(t.TempDir(), "plans.db") +
 		"?_pragma=foreign_keys(1)&_pragma=journal_mode(WAL)"

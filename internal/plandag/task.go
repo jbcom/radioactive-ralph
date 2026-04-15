@@ -12,6 +12,7 @@ import (
 // TaskStatus enumerates valid task lifecycle states.
 type TaskStatus string
 
+// Task lifecycle states.
 const (
 	TaskStatusPending              TaskStatus = "pending"
 	TaskStatusReady                TaskStatus = "ready"
@@ -25,23 +26,23 @@ const (
 
 // Task is a DAG node.
 type Task struct {
-	ID                  string
-	PlanID              string
-	Description         string
-	Complexity          string
-	Effort              string
-	VariantHint         string
-	ContextBoundary     bool
-	AcceptanceJSON      string
-	Status              TaskStatus
-	AssignedVariant     string
-	ClaimedBySession    string
-	ClaimedByVariantID  string
-	RetryCount          int
-	ReclaimCount        int
-	ParentTaskID        string
-	CreatedAt           time.Time
-	UpdatedAt           time.Time
+	ID                 string
+	PlanID             string
+	Description        string
+	Complexity         string
+	Effort             string
+	VariantHint        string
+	ContextBoundary    bool
+	AcceptanceJSON     string
+	Status             TaskStatus
+	AssignedVariant    string
+	ClaimedBySession   string
+	ClaimedByVariantID string
+	RetryCount         int
+	ReclaimCount       int
+	ParentTaskID       string
+	CreatedAt          time.Time
+	UpdatedAt          time.Time
 }
 
 // CreateTaskOpts configures task creation.
@@ -131,12 +132,12 @@ func (s *Store) wouldCreateCycle(ctx context.Context, planID, task, dep string) 
 		for rows.Next() {
 			var n string
 			if err := rows.Scan(&n); err != nil {
-				rows.Close()
+				_ = rows.Close()
 				return false, err
 			}
 			next = append(next, n)
 		}
-		rows.Close()
+		_ = rows.Close()
 		for _, n := range next {
 			cyc, err := visit(n)
 			if err != nil {
@@ -177,7 +178,7 @@ func (s *Store) Ready(ctx context.Context, planID string) ([]Task, error) {
 	if err != nil {
 		return nil, fmt.Errorf("plandag: query ready: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var out []Task
 	for rows.Next() {

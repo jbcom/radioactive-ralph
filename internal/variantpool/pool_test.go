@@ -24,8 +24,8 @@ func TestSpawnAndKill(t *testing.T) {
 	// on lifeline EOF it exits 0.
 	ralphBin := buildFakeSupervisor(t)
 
-	store := openTempStore(t, ctx)
-	defer store.Close()
+	store := openTempStore(ctx, t)
+	defer func() { _ = store.Close() }()
 
 	sessID, err := store.CreateSession(ctx, plandag.SessionOpts{
 		Mode:         plandag.SessionModePortable,
@@ -97,13 +97,13 @@ func TestPoolCloseKillsAll(t *testing.T) {
 	ctx := context.Background()
 	ralphBin := buildFakeSupervisor(t)
 
-	store := openTempStore(t, ctx)
-	defer store.Close()
+	store := openTempStore(ctx, t)
+	defer func() { _ = store.Close() }()
 
 	sessID, err := store.CreateSession(ctx, plandag.SessionOpts{
-		Mode:      plandag.SessionModePortable,
-		Transport: plandag.SessionTransportStdio,
-		PID:       os.Getpid(),
+		Mode:         plandag.SessionModePortable,
+		Transport:    plandag.SessionTransportStdio,
+		PID:          os.Getpid(),
 		PIDStartTime: "test",
 	})
 	if err != nil {
@@ -156,7 +156,7 @@ func TestPoolCloseKillsAll(t *testing.T) {
 
 // openTempStore is a shared test helper that opens a plandag Store
 // against a tmpdir SQLite file.
-func openTempStore(t *testing.T, ctx context.Context) *plandag.Store {
+func openTempStore(ctx context.Context, t *testing.T) *plandag.Store {
 	t.Helper()
 	dsn := "file:" + filepath.Join(t.TempDir(), "plans.db") +
 		"?_pragma=foreign_keys(1)&_pragma=journal_mode(WAL)"

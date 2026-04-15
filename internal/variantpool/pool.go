@@ -62,8 +62,6 @@ func New(o Options) (*Pool, error) {
 	}, nil
 }
 
-// Close SIGTERMs every managed variant and waits up to
-// graceShutdown for each to exit, SIGKILLing stragglers.
 // Get returns the variant managed under id, or nil if the pool
 // doesn't know about it (e.g., it was killed or never spawned).
 // Read-only — callers should treat the return value as a snapshot
@@ -74,6 +72,8 @@ func (p *Pool) Get(id string) *Variant {
 	return p.variants[id]
 }
 
+// Close SIGTERMs every managed variant and waits up to graceShutdown
+// for each to exit, SIGKILLing stragglers.
 func (p *Pool) Close(ctx context.Context) error {
 	p.mu.Lock()
 	all := make([]*Variant, 0, len(p.variants))
@@ -317,10 +317,10 @@ func (v *Variant) finalize(ctx context.Context) error {
 
 // Status returns a snapshot of the subprocess state.
 type Status struct {
-	ID          string
-	Name        string
-	PID         int
-	Running     bool
+	ID      string
+	Name    string
+	PID     int
+	Running bool
 }
 
 // Status produces a lightweight read-only snapshot suitable for
@@ -343,4 +343,3 @@ func (v *Variant) Status() Status {
 		Running: running,
 	}
 }
-

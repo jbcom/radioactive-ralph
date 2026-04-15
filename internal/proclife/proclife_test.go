@@ -34,7 +34,7 @@ func TestAttachReturnsNilForUnstartedCmd(t *testing.T) {
 // no-op on POSIX (where it's genuinely nothing to do). On Windows
 // it would error because cmd.Process is nil; that's tested in the
 // windows-tagged test.
-func TestPostStartNoopOnPOSIX(t *testing.T) {
+func TestPostStartNoopOnPOSIX(_ *testing.T) {
 	// This test only runs on POSIX — on Windows the file will
 	// compile and run but PostStart expects cmd.Process to exist.
 	cmd := exec.Command("/bin/true")

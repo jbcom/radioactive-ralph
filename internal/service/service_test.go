@@ -277,7 +277,7 @@ func TestSystemdEnvOrderIsStable(t *testing.T) {
 	p, _ := variant.Lookup("green")
 	extras := map[string]string{"B": "2", "A": "1", "C": "3"}
 
-	var paths []string
+	paths := make([]string, 0, 2)
 	for range 2 {
 		home := t.TempDir()
 		out, err := Install(InstallOptions{

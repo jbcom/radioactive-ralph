@@ -35,7 +35,7 @@ func (c *ServeCmd) Run(rc *runContext) error {
 	if err != nil {
 		return fmt.Errorf("open plan store: %w", err)
 	}
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 
 	sessionID, err := store.CreateSession(ctx, plandag.SessionOpts{
 		Mode:         plandag.SessionModePortable,

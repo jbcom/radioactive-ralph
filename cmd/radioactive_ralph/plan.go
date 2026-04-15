@@ -40,7 +40,7 @@ func (c *PlanLsCmd) Run(rc *runContext) error {
 	if err != nil {
 		return err
 	}
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 
 	var statuses []plandag.PlanStatus
 	if c.All {
@@ -77,7 +77,7 @@ func (c *PlanShowCmd) Run(rc *runContext) error {
 	if err != nil {
 		return err
 	}
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 
 	plan, err := resolvePlan(rc.ctx, store, c.IDOrSlug)
 	if err != nil {
@@ -108,7 +108,7 @@ func (c *PlanNextCmd) Run(rc *runContext) error {
 	if err != nil {
 		return err
 	}
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 
 	plan, err := resolvePlan(rc.ctx, store, c.IDOrSlug)
 	if err != nil {
@@ -149,13 +149,13 @@ type PlanImportCmd struct {
 
 // importFile is the on-disk shape of plan import JSON.
 type importFile struct {
-	Slug            string              `json:"slug"`
-	Title           string              `json:"title"`
-	PrimaryVariant  string              `json:"primary_variant"`
-	Confidence      int                 `json:"confidence"`
-	Intent          string              `json:"intent,omitempty"`
-	Tasks           []importTask        `json:"tasks"`
-	ParallelismSets [][]string          `json:"parallelism_sets,omitempty"`
+	Slug            string       `json:"slug"`
+	Title           string       `json:"title"`
+	PrimaryVariant  string       `json:"primary_variant"`
+	Confidence      int          `json:"confidence"`
+	Intent          string       `json:"intent,omitempty"`
+	Tasks           []importTask `json:"tasks"`
+	ParallelismSets [][]string   `json:"parallelism_sets,omitempty"`
 }
 
 type importTask struct {
@@ -186,7 +186,7 @@ func (c *PlanImportCmd) Run(rc *runContext) error {
 	if err != nil {
 		return err
 	}
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 
 	// Try to resolve repo path from cwd for indexing.
 	repoPath, _ := os.Getwd()
@@ -247,7 +247,7 @@ func (c *PlanMarkDoneCmd) Run(rc *runContext) error {
 	if err != nil {
 		return err
 	}
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 
 	plan, err := resolvePlan(rc.ctx, store, c.PlanIDOrSlug)
 	if err != nil {
@@ -355,4 +355,3 @@ func trunc(s string, n int) string {
 	}
 	return s[:n-1] + "…"
 }
-

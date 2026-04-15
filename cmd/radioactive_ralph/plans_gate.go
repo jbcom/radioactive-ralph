@@ -19,7 +19,7 @@ func requireActivePlan(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("plans-first discipline: %w", err)
 	}
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 
 	plans, err := store.ListPlans(ctx, []plandag.PlanStatus{plandag.PlanStatusActive})
 	if err != nil {
