@@ -9,6 +9,16 @@ status: current
 All notable changes to this project will be documented in this file.
 Format: [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/), [Semantic Versioning](https://semver.org/).
 
+## [0.6.0](https://github.com/jbcom/radioactive-ralph/compare/v0.5.1...v0.6.0) (2026-04-15)
+
+
+### Features
+
+* M2 + M3 — Go rewrite, plandag, MCP, Starlight docs, packaging ([#32](https://github.com/jbcom/radioactive-ralph/issues/32)) ([4ed2819](https://github.com/jbcom/radioactive-ralph/commit/4ed28196b671e3fa092e0a3126185b6e02baedd5))
+* **m2:** doctor + voice layers ([#30](https://github.com/jbcom/radioactive-ralph/issues/30)) ([5989700](https://github.com/jbcom/radioactive-ralph/commit/5989700012eea04cb3fc1fea7ed88aa90aa25d9c))
+* **m2:** foundation — Go rewrite Python→reference + xdg/config/inventory/db layers ([#27](https://github.com/jbcom/radioactive-ralph/issues/27)) ([325f095](https://github.com/jbcom/radioactive-ralph/commit/325f095be532aa96c7d0bab72ac4be17321b9d5b))
+* **m2:** multiplexer + ipc layers ([#29](https://github.com/jbcom/radioactive-ralph/issues/29)) ([51d90a7](https://github.com/jbcom/radioactive-ralph/commit/51d90a7beb65b32dd5add7d9fc1adefab5443bc6))
+
 ## [Unreleased]
 
 ### Added — M2 rewrite (PR #31)
