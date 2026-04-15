@@ -22,25 +22,19 @@ jobs:
           go-version-file: go.mod
       - uses: sigstore/cosign-installer@d58896d6a1865668819e1d91763c7751a165e159 # v3.9.1
 
-      # Pre-flight: fail fast with a readable error if a required secret
-      # is unset, rather than waiting for GoReleaser to get a cryptic
-      # "token invalid" response mid-release. GitHub Actions masks any
-      # secret value in logs automatically, and this step only checks
-      # presence via `[[ -z ]]` without echoing the value.
-      - name: Verify release secrets are set
+      # Pre-flight: fail fast with a readable error if CI_GITHUB_TOKEN
+      # isn't set. This PAT needs contents:write on this repo plus
+      # jbcom/pkgs (brew formula + scoop bucket + chocolatey nupkg all
+      # land in the same monorepo).
+      - name: Verify release secret is set
         env:
-          BREW_TOKEN_SET: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN != '' }}
-          SCOOP_TOKEN_SET: ${{ secrets.SCOOP_BUCKET_GITHUB_TOKEN != '' }}
+          CI_TOKEN_SET: ${{ secrets.CI_GITHUB_TOKEN != '' }}
         run: |
-          if [[ "$BREW_TOKEN_SET" != "true" ]]; then
-            echo "::error::HOMEBREW_TAP_GITHUB_TOKEN secret is not configured"
+          if [[ "$CI_TOKEN_SET" != "true" ]]; then
+            echo "::error::CI_GITHUB_TOKEN secret is not configured"
             exit 1
           fi
-          if [[ "$SCOOP_TOKEN_SET" != "true" ]]; then
-            echo "::error::SCOOP_BUCKET_GITHUB_TOKEN secret is not configured"
-            exit 1
-          fi
-          echo "Release secrets verified."
+          echo "Release secret verified."
 
       - uses: goreleaser/goreleaser-action@9ed2f89a662bf1735a48bc8557fd212fa902bebf # v6.4.0
         with:
@@ -48,6 +42,5 @@ jobs:
           version: "~> v2"
           args: release --clean
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
-          SCOOP_BUCKET_GITHUB_TOKEN: ${{ secrets.SCOOP_BUCKET_GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.CI_GITHUB_TOKEN }}
+          JBCOM_PKGS_GITHUB_TOKEN: ${{ secrets.CI_GITHUB_TOKEN }}
