@@ -3,7 +3,7 @@
 
 version: 2
 
-project_name: ralph
+project_name: radioactive_ralph
 
 before:
   hooks:
@@ -11,9 +11,9 @@ before:
     - go mod download
 
 builds:
-  - id: ralph
-    main: ./cmd/ralph
-    binary: ralph
+  - id: radioactive_ralph
+    main: ./cmd/radioactive_ralph
+    binary: radioactive_ralph
     env:
       - CGO_ENABLED=0
     goos:
@@ -36,9 +36,9 @@ builds:
 
 archives:
   - id: default
-    ids: [ralph]
+    ids: [radioactive_ralph]
     name_template: >-
-      ralph_{{ .Version }}_
+      radioactive_ralph_{{ .Version }}_
       {{- if eq .Os "darwin" }}darwin_{{ .Arch }}
       {{- else if eq .Os "linux" }}linux_{{ .Arch }}
       {{- else if eq .Os "windows" }}windows_{{ .Arch }}
@@ -81,14 +81,17 @@ changelog:
       - Merge pull request
       - Merge branch
 
+# Single cross-packager repo at jbcom/pkgs holds Formula/, bucket/,
+# choco/, nix/, etc. Brew convention requires a `homebrew-*` repo for
+# the `brew tap jbcom/tap` shorthand — we publish there as a mirror.
 brews:
-  - name: ralph
+  - name: radioactive-ralph
     ids: [default]
     repository:
       owner: jbcom
-      name: homebrew-tap
+      name: pkgs
       branch: main
-      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+      token: "{{ .Env.JBCOM_PKGS_GITHUB_TOKEN }}"
     directory: Formula
     homepage: https://github.com/jbcom/radioactive-ralph
     description: Autonomous continuous development orchestrator for Claude Code
@@ -97,25 +100,69 @@ brews:
       name: jbcom-bot
       email: noreply@jonbogaty.com
     test: |
-      system "#{bin}/ralph", "--version"
+      system "#{bin}/radioactive_ralph", "--version"
     install: |
-      bin.install "ralph"
+      bin.install "radioactive_ralph"
     # Service block is intentionally omitted for now.
-    # `ralph service install --variant <name>` handles per-variant
+    # `radioactive_ralph service install --variant <name>` handles per-variant
     # service registration at runtime, since only three of the ten
     # variants are service-appropriate and they take different flags.
 
-scoops:
-  - name: ralph
+  # Brew-tap-convention mirror so `brew tap jbcom/tap` shorthand works.
+  - name: radioactive-ralph
     ids: [default]
     repository:
       owner: jbcom
-      name: scoop-bucket
+      name: homebrew-tap
       branch: main
-      token: "{{ .Env.SCOOP_BUCKET_GITHUB_TOKEN }}"
+      token: "{{ .Env.JBCOM_HOMEBREW_TAP_GITHUB_TOKEN }}"
+    directory: Formula
     homepage: https://github.com/jbcom/radioactive-ralph
     description: Autonomous continuous development orchestrator for Claude Code
     license: MIT
+    commit_author:
+      name: jbcom-bot
+      email: noreply@jonbogaty.com
+    test: |
+      system "#{bin}/radioactive_ralph", "--version"
+    install: |
+      bin.install "radioactive_ralph"
+
+scoops:
+  - name: radioactive-ralph
+    ids: [default]
+    repository:
+      owner: jbcom
+      name: pkgs
+      branch: main
+      token: "{{ .Env.JBCOM_PKGS_GITHUB_TOKEN }}"
+    directory: bucket
+    homepage: https://github.com/jbcom/radioactive-ralph
+    description: Autonomous continuous development orchestrator for Claude Code
+    license: MIT
+
+chocolateys:
+  - name: radioactive-ralph
+    ids: [default]
+    owners: jbcom
+    title: Radioactive Ralph
+    authors: Jon B <jon@jonbogaty.com>
+    project_url: https://github.com/jbcom/radioactive-ralph
+    license_url: https://github.com/jbcom/radioactive-ralph/blob/main/LICENSE
+    project_source_url: https://github.com/jbcom/radioactive-ralph
+    package_source_url: https://github.com/jbcom/pkgs
+    docs_url: https://github.com/jbcom/radioactive-ralph#readme
+    bug_tracker_url: https://github.com/jbcom/radioactive-ralph/issues
+    summary: Autonomous continuous development orchestrator for Claude Code
+    description: |
+      Radioactive Ralph is a per-repo meta-orchestrator that keeps a
+      fleet of Claude subprocesses alive, focused, and productive
+      across days of autonomous development work.
+    tags: "claude ai orchestrator automation cli"
+    release_notes: "https://github.com/jbcom/radioactive-ralph/releases/tag/v{{ .Version }}"
+    api_key: "{{ .Env.CHOCOLATEY_API_KEY }}"
+    source_repo: "https://push.chocolatey.org/"
+    skip_publish: false
 
 release:
   github:
@@ -130,13 +177,18 @@ release:
     Homebrew (macOS / Linux / WSL2+Linuxbrew):
     ```
     brew tap jbcom/tap
-    brew install ralph
+    brew install radioactive-ralph
     ```
 
     Scoop (Windows):
     ```
-    scoop bucket add jbcom https://github.com/jbcom/scoop-bucket
-    scoop install ralph
+    scoop bucket add jbcom https://github.com/jbcom/pkgs
+    scoop install radioactive-ralph
+    ```
+
+    Chocolatey (Windows):
+    ```
+    choco install radioactive-ralph
     ```
 
     curl | sh:

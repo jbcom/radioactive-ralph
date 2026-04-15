@@ -25,6 +25,46 @@ See [README.md](./README.md) for the full character background.
 
 ---
 
+## Running this skill
+
+This skill drives `world-breaker-ralph` via the `radioactive_ralph` MCP server.
+The server is registered as an MCP endpoint Claude Code reads on startup
+(see `.claude/settings.json` in the operator's repo or globally).
+
+When the operator invokes `/world-breaker-ralph`, walk through these steps:
+
+```bash
+# 1. Verify the binary is installed (the MCP server runs under it).
+if ! command -v radioactive_ralph >/dev/null 2>&1; then
+  cat <<'EOS'
+radioactive_ralph is not installed on PATH. Install via:
+
+  brew tap jbcom/tap && brew install radioactive-ralph    # macOS / Linux
+  scoop bucket add jbcom https://github.com/jbcom/pkgs && scoop install radioactive-ralph    # Windows
+  choco install radioactive-ralph                              # Windows (chocolatey)
+EOS
+  exit 1
+fi
+
+# 2. Verify the repo is initialized. Idempotent — also seeds an active
+#    plan in plandag so the plans-first gate passes.
+radioactive_ralph init --yes
+```
+
+Then call the MCP tools (the outer Claude invokes these through the
+registered `radioactive_ralph` MCP server — no shell-out from the skill):
+
+1. `plan.list` to discover the active plan id (or pick by slug)
+2. `plan.next` with `variant: "world-breaker"` to see what's ready
+3. `variant.spawn` with `variant_name: "world-breaker"` to launch a subprocess
+4. `plan.claim` to atomically check out a task for the new variant
+5. Iterate: read variant output, call `variant.say` to feed it
+   guidance, watch the plan DAG advance via `plan.show`
+6. `variant.kill` when the plan is exhausted or operator stops the run
+
+The MCP server keeps the plandag DB warm across calls, owns the variant
+pool, writes heartbeat rows, and reaps dead subprocesses on the next
+invocation.
 ## ⚠️ WORLD-BREAKER-RALPH. READ THIS FIRST.
 
 This is not a daily driver. This is not for "I have a lot to do." This is for when something broke badly enough that the normal pace is unacceptable and cost is not a factor.

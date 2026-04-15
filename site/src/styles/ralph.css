@@ -1,0 +1,79 @@
+/* radioactive-ralph — Starlight theme overrides.
+ * Carries over the Fuzzy Bubbles / Schoolbell / magenta personality
+ * from the prior Sphinx+Shibuya iteration. */
+
+@import "@fontsource/fuzzy-bubbles/700.css";
+@import "@fontsource/schoolbell/400.css";
+
+:root {
+  /* Magenta accent reused from the Sphinx era. */
+  --sl-color-accent-low: #4a0040;
+  --sl-color-accent: #ff00ff;
+  --sl-color-accent-high: #ffb3ff;
+
+  /* Heading font — playful, reads "radioactive" */
+  --sl-font-system: "Schoolbell", cursive, ui-sans-serif, system-ui,
+    -apple-system, "Segoe UI", Roboto, sans-serif;
+  --sl-font-system-mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo,
+    Consolas, monospace;
+}
+
+/* Headings use Fuzzy Bubbles for that Ralph-mascot energy. Body stays
+ * on Schoolbell via --sl-font-system. */
+h1,
+h2,
+h3,
+h4,
+h5,
+h6,
+.site-title,
+.hero h1 {
+  font-family: "Fuzzy Bubbles", cursive !important;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+/* Logo lockup — slightly warmer than Starlight's default. */
+.site-title {
+  color: var(--sl-color-text-accent);
+}
+
+/* Announcement banner — magenta to match brand. */
+.announce {
+  background: linear-gradient(90deg, #4a0040, #ff00ff, #4a0040);
+  color: #fff;
+  font-family: "Fuzzy Bubbles", cursive;
+}
+
+/* Hero: extra vertical breathing room + mascot glow */
+.hero .hero-image img {
+  filter: drop-shadow(0 0 1.5rem rgba(255, 0, 255, 0.3));
+  max-width: 260px;
+}
+
+/* Code blocks keep monospace (Starlight default); just warm the bg
+ * slightly in dark mode so it matches the playful aesthetic. */
+[data-theme="dark"] :not(pre) > code {
+  background: #2a0033;
+  color: #ffb3ff;
+}
+
+/* Sidebar highlighted item gets the magenta accent. */
+.sidebar a[aria-current="page"] {
+  color: var(--sl-color-accent-high);
+  font-weight: 700;
+}
+
+/* Links in body text */
+.sl-markdown-content a:not(.not-content a) {
+  color: var(--sl-color-accent-high);
+  text-decoration-color: color-mix(
+    in srgb,
+    var(--sl-color-accent-high) 40%,
+    transparent
+  );
+}
+
+.sl-markdown-content a:hover {
+  text-decoration-color: var(--sl-color-accent);
+}

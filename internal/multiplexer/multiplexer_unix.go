@@ -47,7 +47,7 @@ func (d *Detacher) SpawnDetached(req SpawnRequest) (Spawned, error) {
 // spawnTmux runs `tmux new-session -d -s <name>` with the target command.
 // tmux reads its own config, so there's nothing we need to do about
 // stdin/stdout — tmux captures them into the session. We additionally
-// set `pipe-pane` to tee output to the log file so `ralph attach`-via-log
+// set `pipe-pane` to tee output to the log file so `radioactive_ralph attach`-via-log
 // works without having to re-attach to the tmux session.
 func (d *Detacher) spawnTmux(req SpawnRequest) (Spawned, error) {
 	// Build: tmux new-session -d -s <session> <cmd> <args...>
@@ -62,7 +62,7 @@ func (d *Detacher) spawnTmux(req SpawnRequest) (Spawned, error) {
 		return Spawned{}, fmt.Errorf("multiplexer: tmux new-session: %w", err)
 	}
 
-	// pipe-pane the output to our log for `ralph attach` fallback reads.
+	// pipe-pane the output to our log for `radioactive_ralph attach` fallback reads.
 	// The tmux pipe-pane argument is shell-interpreted by tmux's own
 	// default-shell, so shell-quote the path (defence in depth — the
 	// path comes from xdg.Paths which is already controlled, but a

@@ -89,7 +89,7 @@ func Resolve(repoPath string) (Paths, error) {
 
 	// EvalSymlinks is best-effort — if the path doesn't exist yet we still
 	// want to produce a stable hash rather than fail. This matters during
-	// `ralph init` where the workspace dir hasn't been created yet.
+	// `radioactive_ralph init` where the workspace dir hasn't been created yet.
 	if evaluated, err := filepath.EvalSymlinks(abs); err == nil {
 		abs = evaluated
 	}
@@ -119,8 +119,18 @@ func repoHash(absPath string) string {
 	return hex.EncodeToString(sum[:])[:RepoHashLen]
 }
 
-// stateRoot returns the absolute path to the Ralph state root for this
-// machine and user, respecting overrides.
+// StateRoot returns the absolute path to the Ralph state root for this
+// machine and user, respecting overrides. Honors the $RALPH_STATE_DIR
+// override for tests.
+//
+// Exported so packages outside the xdg package (the plan subcommand,
+// the MCP server bootstrap, etc.) can land the plandag SQLite file
+// and other global artifacts under the same root as per-repo
+// workspaces.
+func StateRoot() (string, error) {
+	return stateRoot()
+}
+
 func stateRoot() (string, error) {
 	if override := os.Getenv("RALPH_STATE_DIR"); override != "" {
 		return filepath.Clean(override), nil
@@ -154,7 +164,7 @@ func stateRoot() (string, error) {
 
 // Ensure creates the workspace subdirectories on disk with 0o700 mode.
 //
-// Called by `ralph init` after the pre-flight wizard. Idempotent — safe to
+// Called by `radioactive_ralph init` after the pre-flight wizard. Idempotent — safe to
 // run multiple times. Does NOT create mirror.git or state.db; those are
 // the responsibility of the workspace manager and the db package.
 func (p Paths) Ensure() error {
