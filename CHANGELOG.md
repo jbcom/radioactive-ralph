@@ -9,6 +9,14 @@ status: current
 All notable changes to this project will be documented in this file.
 Format: [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/), [Semantic Versioning](https://semver.org/).
 
+## [0.6.1](https://github.com/jbcom/radioactive-ralph/compare/v0.6.0...v0.6.1) (2026-04-15)
+
+
+### Bug Fixes
+
+* **ci:** use GitHub native auto-merge for bots ([#35](https://github.com/jbcom/radioactive-ralph/issues/35)) ([2722c20](https://github.com/jbcom/radioactive-ralph/commit/2722c20fa703ff38c6630f1f0da1af31fdbd758f))
+* **release:** collapse to jbcom/pkgs + single CI_GITHUB_TOKEN ([#33](https://github.com/jbcom/radioactive-ralph/issues/33)) ([a086067](https://github.com/jbcom/radioactive-ralph/commit/a086067ced6145ad0aecbe6f39fdd8d0b590f8fd))
+
 ## [0.6.0](https://github.com/jbcom/radioactive-ralph/compare/v0.5.1...v0.6.0) (2026-04-15)
 
 
