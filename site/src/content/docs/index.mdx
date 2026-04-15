@@ -1,0 +1,80 @@
+---
+title: radioactive-ralph
+description: Autonomous continuous development orchestrator for Claude Code.
+template: splash
+hero:
+  title: radioactive-ralph
+  tagline: |
+    A per-repo orchestrator that keeps a fleet of Claude subprocesses
+    alive, focused, and productive across days of autonomous
+    development work.
+  image:
+    file: ../../assets/ralph-mascot.png
+  actions:
+    - text: Get Started
+      link: /radioactive-ralph/getting-started/
+      variant: primary
+    - text: GitHub
+      link: https://github.com/jbcom/radioactive-ralph
+      variant: secondary
+---
+
+import { Card, CardGrid } from "@astrojs/starlight/components";
+
+## What Ralph does
+
+<CardGrid>
+  <Card title="Runs Claude for days" icon="rocket">
+    One binary, one per-repo daemon, many subprocesses. Survives
+    compactions, OOMs, and operator terminal closes.
+  </Card>
+  <Card title="Ten personalities" icon="star">
+    Green smashes, red triages, fixit plans, professor reflects,
+    savage burns budget. Pick your variant or let fixit recommend.
+  </Card>
+  <Card title="Plan-DAG backed" icon="document">
+    Plans live in SQLite — a deliberate state machine, not a
+    markdown TODO list. Auto-backed up. Git-diffable dumps.
+  </Card>
+  <Card title="MCP-native" icon="setting">
+    Portable stdio mode or durable HTTP daemon. Outer Claude
+    orchestrates ralphs via MCP tools.
+  </Card>
+</CardGrid>
+
+## Install
+
+One package, three packagers:
+
+```bash
+# macOS / Linux / WSL2+Linuxbrew
+brew tap jbcom/tap
+brew install radioactive-ralph
+
+# Windows — Scoop
+scoop bucket add jbcom https://github.com/jbcom/pkgs
+scoop install radioactive-ralph
+
+# Windows — Chocolatey
+choco install radioactive-ralph
+```
+
+See the full [jbcom/pkgs package index](https://jonbogaty.com/pkgs/) for
+version and architecture detail.
+
+## Find your way
+
+<CardGrid>
+  <Card title="Getting Started" icon="rocket">
+    [Install, initialize a repo, run your first variant.](/radioactive-ralph/getting-started/)
+  </Card>
+  <Card title="Variants" icon="puzzle">
+    [The ten Ralph personalities and when to use each.](/radioactive-ralph/variants/)
+  </Card>
+  <Card title="Guides" icon="open-book">
+    [Deeper dives: launch, demo walkthrough, design rationale.](/radioactive-ralph/guides/)
+  </Card>
+  <Card title="Reference" icon="list-format">
+    [Architecture, testing, current state.](/radioactive-ralph/reference/)
+  </Card>
+</CardGrid>

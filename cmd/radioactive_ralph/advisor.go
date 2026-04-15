@@ -10,8 +10,8 @@ import (
 )
 
 // runAdvisor is the fixit-only code path. It drives the fixit
-// six-stage pipeline (docs/design/fixit-plan-pipeline.md) and emits
-// a plan file the plans-first discipline can accept.
+// six-stage pipeline (see jonbogaty.com/radioactive-ralph/design/)
+// and emits a plan file the plans-first discipline can accept.
 //
 // plansOK reports whether a valid plans/index.md already existed.
 // Both --advise (forced advisor) and the "plans missing" fallback

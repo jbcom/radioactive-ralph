@@ -1,0 +1,26 @@
+{
+  "name": "@jbcom/radioactive-ralph-site",
+  "type": "module",
+  "version": "0.0.1",
+  "description": "Documentation site for radioactive-ralph — autonomous Claude Code orchestrator",
+  "scripts": {
+    "dev": "astro dev",
+    "start": "astro dev",
+    "build": "astro build",
+    "preview": "astro preview",
+    "astro": "astro",
+    "generate-api": "bash ../scripts/generate-api-docs.sh"
+  },
+  "dependencies": {
+    "@astrojs/starlight": "^0.38.3",
+    "@fontsource/fuzzy-bubbles": "^5.2.5",
+    "@fontsource/schoolbell": "^5.2.5",
+    "astro": "^6.0.1",
+    "sharp": "^0.34.2"
+  },
+  "engines": {
+    "node": ">=24",
+    "pnpm": ">=10"
+  },
+  "packageManager": "pnpm@10.33.0"
+}

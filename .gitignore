@@ -44,3 +44,13 @@ pytest-results-*.xml
 
 # Claude Code task-batch runtime state (scratch per-session)
 .claude/state/
+
+# Astro / site build artifacts
+site/dist/
+site/node_modules/
+site/.astro/
+site/pnpm-debug.log*
+
+# Leftover binary from ad-hoc builds
+/ralph
+

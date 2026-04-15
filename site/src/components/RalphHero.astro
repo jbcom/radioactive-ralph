@@ -1,0 +1,148 @@
+---
+import { Image } from "astro:assets";
+import type { Props } from "@astrojs/starlight/props";
+import ralphMascot from "../assets/ralph-mascot.png";
+
+const props = Astro.props as Partial<Props>;
+const hero = props.entry?.data?.hero;
+
+// Starlight invokes Hero on error pages (404) where `entry` is
+// undefined. In that case there's nothing to render — Starlight will
+// still render its own default content around us.
+if (!hero) {
+  return new Response(null);
+}
+
+const title = hero.title ?? props.entry?.data?.title ?? "radioactive-ralph";
+const tagline =
+  hero.tagline ??
+  "Autonomous continuous development orchestrator for Claude Code.";
+---
+
+<div class="ralph-hero">
+  <div class="ralph-hero-text">
+    <h1 class="ralph-hero-title">{title}</h1>
+    <p class="ralph-hero-tagline">{tagline}</p>
+    {
+      hero?.actions && hero.actions.length > 0 && (
+        <div class="ralph-hero-actions">
+          {hero.actions.map((action) => (
+            <a
+              class={`ralph-hero-action ${action.variant ?? "primary"}`}
+              href={action.link}
+            >
+              {action.text}
+            </a>
+          ))}
+        </div>
+      )
+    }
+  </div>
+  <div class="ralph-hero-mascot">
+    <Image
+      src={ralphMascot}
+      alt="Radioactive Ralph mascot"
+      loading="eager"
+      width={320}
+      height={320}
+    />
+  </div>
+</div>
+
+<style>
+  .ralph-hero {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 2rem;
+    align-items: center;
+    padding: 2rem 0 3rem;
+  }
+
+  .ralph-hero-title {
+    font-family: "Fuzzy Bubbles", cursive;
+    font-size: clamp(2.5rem, 6vw, 4rem);
+    line-height: 1.05;
+    margin: 0 0 0.75rem;
+    background: linear-gradient(90deg, #ff00ff, #ffb3ff);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+
+  .ralph-hero-tagline {
+    font-family: "Schoolbell", cursive;
+    font-size: 1.375rem;
+    line-height: 1.5;
+    max-width: 34rem;
+    margin: 0 0 1.5rem;
+    color: var(--sl-color-text-accent);
+  }
+
+  .ralph-hero-actions {
+    display: flex;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+  }
+
+  .ralph-hero-action {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.625rem 1.25rem;
+    border-radius: 0.5rem;
+    font-family: "Fuzzy Bubbles", cursive;
+    font-weight: 700;
+    text-decoration: none;
+    transition:
+      transform 0.1s,
+      box-shadow 0.1s;
+  }
+
+  .ralph-hero-action:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(255, 0, 255, 0.2);
+  }
+
+  .ralph-hero-action.primary {
+    background: #ff00ff;
+    color: #fff;
+  }
+
+  .ralph-hero-action.secondary {
+    background: transparent;
+    border: 2px solid #ff00ff;
+    color: var(--sl-color-text-accent);
+  }
+
+  .ralph-hero-action.minimal {
+    color: var(--sl-color-text-accent);
+  }
+
+  .ralph-hero-mascot {
+    filter: drop-shadow(0 0 2rem rgba(255, 0, 255, 0.4));
+  }
+
+  .ralph-hero-mascot :global(img) {
+    max-width: 280px;
+    height: auto;
+  }
+
+  @media (max-width: 50rem) {
+    .ralph-hero {
+      grid-template-columns: 1fr;
+      gap: 1rem;
+      text-align: center;
+    }
+
+    .ralph-hero-mascot {
+      grid-row: 1;
+    }
+
+    .ralph-hero-mascot :global(img) {
+      max-width: 180px;
+    }
+
+    .ralph-hero-actions {
+      justify-content: center;
+    }
+  }
+</style>
