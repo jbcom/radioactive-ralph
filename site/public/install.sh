@@ -73,6 +73,19 @@ pick_install_dir() {
 
 INSTALL_DIR=$(pick_install_dir)
 
+checksum_check() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum -c -
+    return
+  fi
+  if command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 -c -
+    return
+  fi
+  echo "install.sh: no SHA-256 checksum tool found (need sha256sum or shasum)" >&2
+  exit 1
+}
+
 # --- version resolution -----------------------------------------------------
 
 resolve_version() {
@@ -109,12 +122,18 @@ curl -sSL -o "$TMP/checksums.txt" "$CHECKSUMS_URL" || {
   echo "install.sh: checksum download failed: $CHECKSUMS_URL" >&2; exit 1
 }
 
-( cd "$TMP" && grep "  $ARCHIVE\$" checksums.txt | sha256sum -c - ) || {
+( cd "$TMP" && grep "  $ARCHIVE\$" checksums.txt | checksum_check ) || {
   echo "install.sh: checksum verification failed" >&2; exit 1
 }
 
 echo "Extracting to $INSTALL_DIR..."
 tar -xzf "$TMP/$ARCHIVE" -C "$TMP"
+if [ ! -s "$TMP/$BIN" ]; then
+  echo "install.sh: binary not found in archive" >&2; exit 1
+fi
+if command -v file >/dev/null 2>&1 && ! file "$TMP/$BIN" 2>/dev/null | grep -Eq 'executable|Mach-O|ELF'; then
+  echo "install.sh: warning: extracted file does not look like a native executable" >&2
+fi
 install -m 0755 "$TMP/$BIN" "$INSTALL_DIR/$BIN"
 
 echo

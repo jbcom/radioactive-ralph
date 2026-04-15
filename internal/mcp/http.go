@@ -34,6 +34,7 @@ func (s *Server) ServeHTTP(ctx context.Context, addr string) error {
 	if err != nil {
 		return fmt.Errorf("mcp: listen %s: %w", addr, err)
 	}
+	defer func() { _ = lis.Close() }()
 
 	errCh := make(chan error, 1)
 	go func() {
@@ -44,8 +45,10 @@ func (s *Server) ServeHTTP(ctx context.Context, addr string) error {
 	case <-ctx.Done():
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		_ = srv.Shutdown(shutdownCtx)
-		return ctx.Err()
+		if err := srv.Shutdown(shutdownCtx); err != nil {
+			return fmt.Errorf("mcp: http shutdown: %w", err)
+		}
+		return nil
 	case err := <-errCh:
 		if errors.Is(err, http.ErrServerClosed) {
 			return nil

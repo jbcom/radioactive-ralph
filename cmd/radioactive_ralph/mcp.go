@@ -2,8 +2,10 @@ package main
 
 import (
 	"fmt"
+	"net/url"
 	"os"
 	"os/exec"
+	"strings"
 )
 
 // MCPCmd groups MCP server client-registration helpers. These shell
@@ -100,18 +102,18 @@ func (c *MCPStatusCmd) Run(_ *runContext) error {
 // --http bind-address flag on `serve`. Minimal parsing — we only use
 // it in a print statement, so best-effort is fine.
 func addrFromURL(u string) string {
-	// Strip scheme.
-	for _, p := range []string{"http://", "https://"} {
-		if len(u) > len(p) && u[:len(p)] == p {
-			u = u[len(p):]
+	if parsed, err := url.Parse(u); err == nil && parsed.Host != "" {
+		return parsed.Host
+	}
+
+	for _, prefix := range []string{"http://", "https://"} {
+		if trimmed, ok := strings.CutPrefix(u, prefix); ok {
+			u = trimmed
 			break
 		}
 	}
-	// Strip path.
-	for i := 0; i < len(u); i++ {
-		if u[i] == '/' {
-			return u[:i]
-		}
+	if host, _, ok := strings.Cut(u, "/"); ok {
+		return host
 	}
 	return u
 }

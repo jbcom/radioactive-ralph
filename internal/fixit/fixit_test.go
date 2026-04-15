@@ -129,6 +129,18 @@ func TestExploreReportsRepoShape(t *testing.T) {
 	}
 }
 
+func TestReadFrontmatterPreservesTimestampDates(t *testing.T) {
+	repo := t.TempDir()
+	path := filepath.Join(repo, "README.md")
+	if err := os.WriteFile(path, []byte("---\nupdated: 2026-04-14\nstatus: current\n---\n\n# Test\n"), 0o644); err != nil {
+		t.Fatalf("write README.md: %v", err)
+	}
+	fm := readFrontmatter(path)
+	if got := fm["updated"]; got != "2026-04-14" {
+		t.Fatalf("updated = %q, want 2026-04-14", got)
+	}
+}
+
 // ─── Stage 3: Score ──────────────────────────────────────────────────
 
 func TestScoreNoGovernancePicksGrey(t *testing.T) {

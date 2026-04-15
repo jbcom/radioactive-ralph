@@ -59,6 +59,7 @@ type InitCmd struct {
 	SkipMCP      bool   `help:"Skip the 'claude mcp add' registration step. Default is to register."`
 	MCPTransport string `help:"Transport for the MCP registration: stdio or http." default:"stdio" enum:"stdio,http"`
 	MCPScope     string `help:"Scope for the MCP registration: local, user, or project." default:"user" enum:"local,user,project"`
+	MCPHTTPAddr  string `help:"For --mcp-transport=http, the URL Claude should connect to." default:"http://localhost:7777/mcp"`
 }
 
 // Run executes the init subcommand.
@@ -126,7 +127,7 @@ func (c *InitCmd) Run(rc *runContext) error {
 			Name:      "radioactive-ralph",
 			Scope:     c.MCPScope,
 			Transport: c.MCPTransport,
-			HTTPAddr:  "http://localhost:7777/mcp",
+			HTTPAddr:  c.MCPHTTPAddr,
 		}
 		if err := reg.Run(rc); err != nil {
 			fmt.Fprintf(os.Stderr,

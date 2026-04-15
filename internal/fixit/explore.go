@@ -187,6 +187,8 @@ func readFrontmatter(path string) map[string]string {
 		switch t := v.(type) {
 		case string:
 			out[k] = t
+		case time.Time:
+			out[k] = t.UTC().Format("2006-01-02")
 		case fmt.Stringer:
 			out[k] = t.String()
 		default:
