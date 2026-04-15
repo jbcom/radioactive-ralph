@@ -41,3 +41,6 @@ pytest-results-*.xml
 
 # Generic logs
 *.log
+
+# Claude Code task-batch runtime state (scratch per-session)
+.claude/state/

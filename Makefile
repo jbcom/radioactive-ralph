@@ -12,8 +12,8 @@ LDFLAGS := -s -w \
 help: ## Show available targets
 	@awk 'BEGIN {FS = ":.*##"; printf "\nUsage:\n  make \033[36m<target>\033[0m\n\nTargets:\n"} /^[a-zA-Z_-]+:.*?##/ { printf "  \033[36m%-22s\033[0m %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
 
-build: ## Build the ralph binary into ./dist/
-	go build -ldflags "$(LDFLAGS)" -o dist/ralph ./cmd/ralph
+build: ## Build the radioactive_ralph binary into ./dist/
+	go build -ldflags "$(LDFLAGS)" -o dist/radioactive_ralph ./cmd/radioactive_ralph
 
 test: ## Run go test with race + coverage
 	go test -race -coverprofile=coverage.out -covermode=atomic ./...

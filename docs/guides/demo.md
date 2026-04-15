@@ -11,7 +11,7 @@ The demo asset is intentionally treated like a release asset, not an embedded br
 
 ## What the tape should show
 
-1. `ralph status`
+1. `radioactive_ralph status`
 2. `ralph discover`
 3. `ralph pr list`
 4. `ralph install-skill`

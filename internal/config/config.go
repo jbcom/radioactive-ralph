@@ -9,8 +9,10 @@
 //     belong in git: multiplexer preference, log verbosity, etc.
 //
 // The config package only parses and validates. Applying variant defaults
-// and safety floors happens via Resolve() once a VariantProfile is
-// available; the profile itself is defined in the variant package.
+// and safety floors happens at supervisor boot time in cmd/radioactive_ralph/run.go
+// (M2 shape) and will move into a dedicated Resolve() entry point once
+// the knob-override matrix grows enough per-variant overrides to
+// warrant the abstraction (M3).
 package config
 
 import (
@@ -40,7 +42,7 @@ const (
 )
 
 // File represents the shape of config.toml. Every section is optional so
-// that a fresh `ralph init` can emit minimal files and iterate.
+// that a fresh `radioactive_ralph init` can emit minimal files and iterate.
 type File struct {
 	Capabilities Capabilities           `toml:"capabilities"`
 	Daemon       Daemon                 `toml:"daemon"`
@@ -91,6 +93,15 @@ type VariantFile struct {
 	DebuggingBias  string   `toml:"debugging_bias"`
 	SpendCapUSD    *float64 `toml:"spend_cap_usd"`
 	CycleLimit     *int     `toml:"cycle_limit"`
+
+	// Fixit-specific advisor knobs. Only meaningful in
+	// [variants.fixit]. CLI flags take precedence; these are the
+	// defaults when no flag is passed.
+	MaxRefinementIterations *int   `toml:"max_refinement_iterations"`
+	MinConfidenceThreshold  *int   `toml:"min_confidence_threshold"`
+	PlanModel               string `toml:"plan_model"`
+	PlanEffort              string `toml:"plan_effort"`
+
 	// Extra is a catch-all for forward-compat; unknown keys at decode time
 	// are tolerated (extra=allow equivalent), but callers that want to
 	// warn on unknown fields can read Unknown after Load.
@@ -107,12 +118,12 @@ type Local struct {
 var (
 	// ErrMissingConfig is returned when the caller expects a config file
 	// to exist but it doesn't. Use IsMissingConfig to check.
-	ErrMissingConfig = errors.New("config: .radioactive-ralph/config.toml not found; run `ralph init` first")
+	ErrMissingConfig = errors.New("config: .radioactive-ralph/config.toml not found; run `radioactive_ralph init` first")
 
 	// ErrMissingLocal is returned when the caller expects a local.toml
 	// and it doesn't exist (typical case: teammate cloned the repo and
-	// hasn't run `ralph init --local-only` yet).
-	ErrMissingLocal = errors.New("config: .radioactive-ralph/local.toml not found; run `ralph init --local-only` to create it")
+	// hasn't run `radioactive_ralph init --local-only` yet).
+	ErrMissingLocal = errors.New("config: .radioactive-ralph/local.toml not found; run `radioactive_ralph init --local-only` to create it")
 )
 
 // IsMissingConfig reports whether err indicates a missing config.toml.

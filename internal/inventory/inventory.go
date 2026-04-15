@@ -4,9 +4,9 @@
 //
 // Discovery is pure shell / filesystem work. No Claude is involved — we
 // don't prompt any session to self-describe. This package runs during
-// `ralph init` so the operator can pick preferences for ambiguous
+// `radioactive_ralph init` so the operator can pick preferences for ambiguous
 // categories (multiple review skills, for instance) and is re-run at
-// `ralph run` start so the supervisor can filter variant biases against
+// `radioactive_ralph run` start so the supervisor can filter variant biases against
 // what's actually installed at runtime.
 //
 // Discovery sources, in order:
@@ -39,7 +39,7 @@ import (
 // Inventory is the JSON-serialisable discovery snapshot. It's the single
 // source of truth for "what capabilities does this operator have?" and is
 // consumed by the init wizard, the supervisor's prompt renderer, and
-// `ralph doctor`.
+// `radioactive_ralph doctor`.
 type Inventory struct {
 	GeneratedAt   time.Time   `json:"generated_at"`
 	ClaudeVersion string      `json:"claude_version,omitempty"`

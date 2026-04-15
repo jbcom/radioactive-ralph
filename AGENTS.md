@@ -13,11 +13,11 @@ Two deployment modes, same core:
 
 1. **Claude Code plugin** — a family of 10 Ralph variants (`/green-ralph`,
    `/grey-ralph`, `/red-ralph`, `/blue-ralph`, `/professor-ralph`,
-   `/savage-ralph`, `/immortal-ralph`, `/joe-fixit-ralph`, `/old-man-ralph`,
+   `/savage-ralph`, `/immortal-ralph`, `/fixit-ralph`, `/old-man-ralph`,
    `/world-breaker-ralph`) installed via `claude plugin install
    radioactive-ralph`. Each variant has its own model tiering, parallelism,
    tool allowlist, and safety gate. See `skills/README.md` for the full index.
-2. **External Python daemon** — `ralph run` spins up an async orchestrator that
+2. **External Python daemon** — `radioactive_ralph run` spins up an async orchestrator that
    survives context resets, process restarts, and rate limits. It spawns
    `claude` CLI subprocesses per work item with `--dangerously-skip-permissions`
    and `--print`. Each subprocess is a stateless agent; the daemon holds all

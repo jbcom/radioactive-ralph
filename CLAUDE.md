@@ -22,7 +22,7 @@ cmd/ralph/                         # kong CLI entry point
 internal/xdg/                      # state dir + repo-hash helpers
 internal/config/                   # kong args + TOML loader + Resolve() with safety floors
 internal/inventory/                # shell-based skill/MCP/plugin discovery
-internal/variant/                  # VariantProfile + skill biases (M3 fills)
+internal/variant/                  # Profile + skill biases (M3 fills)
 internal/workspace/                # mirror + worktree + LFS (four orthogonal knobs)
 internal/db/                       # SQLite + sqlite-vec event log, WAL
 internal/ipc/                      # Unix socket server + client
@@ -30,7 +30,7 @@ internal/multiplexer/              # tmux / screen / syscall.Setsid fallback
 internal/session/                  # ClaudeSession wrapping `claude -p --input-format stream-json`
 internal/supervisor/               # per-variant event loop
 internal/service/                  # launchd / systemd-user / brew-services integration
-internal/initcmd/                  # `ralph init` capability-matching wizard
+internal/initcmd/                  # `radioactive_ralph init` capability-matching wizard
 internal/doctor/                   # environment health checks
 internal/voice/                    # Ralph personality templates
 
@@ -109,7 +109,7 @@ ralph service install --variant X       # emit launchd/systemd unit
   the operator has installed.
 - **Capability inventory drives bias injection** — variant profiles
   declare preferred skill categories (review, security review, docs
-  query). The operator picks preferences during `ralph init`. The
+  query). The operator picks preferences during `radioactive_ralph init`. The
   supervisor injects bias snippets into each managed session's system
   prompt based on actual installed inventory.
 - **Safety floors are non-negotiable** — destructive variants'

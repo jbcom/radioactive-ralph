@@ -11,8 +11,49 @@ Format: [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/), [Semanti
 
 ## [Unreleased]
 
+### Added — M2 rewrite (PR #31)
+
+- **`internal/variant`** — all ten `Profile` definitions (blue, grey, green,
+  red, professor, fixit, immortal, savage, old-man, world-breaker) with
+  safety-floor enforcement. New `ShellExplicitlyTrusted` field catches the
+  shared+Bash defense-in-depth hole Amazon Q flagged: Bash can run
+  `git commit` and arbitrary subprocesses, so shared-isolation variants
+  must explicitly opt into it.
+- **`internal/workspace`** — mirror clone with `--reference`, worktree pool
+  with monotonic branch naming, LFS per-mode config, hook copy preserving
+  executable bit. Four orthogonal knobs (isolation/object_store/sync/LFS).
+- **`internal/session`** — ClaudeSession wrapping `claude -p
+  --input-format stream-json`. Session-ID pinning, sentinel re-prompt on
+  resume, PromptRenderer combining variant biases with inventory-selected
+  skills. Three test tiers: fake-claude unit tests, cassette-replay
+  (deterministic VCR, no auth), gated live tests.
+- **`internal/session/cassette`** — subprocess-level VCR. Recorder wraps
+  a real claude subprocess and tees stdin+stdout to a JSON cassette;
+  replayer binary replays the cassette in CI without credentials.
+- **`internal/service`** — launchd + systemd-user unit installers with
+  safety gates. Refuses `RefuseServiceContext` variants; requires explicit
+  `GateConfirmed` for gated variants.
+- **`internal/supervisor`** — PID flock, event replay, IPC dispatch,
+  graceful shutdown. Integrates db + ipc + workspace.
+- **`internal/initcmd`** — `radioactive_ralph init` capability wizard. Scaffolds
+  `.radioactive-ralph/{config,local,plans/index.md}`, idempotent
+  `.gitignore` updates, `--refresh` preserves operator choices.
+- **`cmd/ralph`** — full Kong CLI (init/run/status/attach/stop/doctor/
+  service + hidden `_supervisor`) with signal handling, plans-first
+  discipline enforcement, and claude-binary pre-check.
+- **`tests/integration`** — always-on end-to-end CLI harness plus gated
+  live tests (`CLAUDE_AUTHENTICATED=1`).
+
 ### Changed
 
+- `joe-fixit-ralph` renamed to `fixit-ralph` across code, skills, docs,
+  and marketplace. Fixit is now the sole variant permitted to recommend
+  peers via advisor mode; every other variant refuses to run without a
+  valid `.radioactive-ralph/plans/index.md`.
+- Task-batch PreCompact hook redirected from `$REPO/.claude/state/` to
+  `$XDG_STATE_HOME/claude-code/task-batch` (Linux) or
+  `~/Library/Application Support/claude-code/task-batch` (macOS) to
+  respect the project rule that state lives outside the repo.
 - **Architectural pivot** — the daemon is being rewritten into a per-repo
   meta-orchestrator that owns managed `claude -p` subprocesses via stream-json
   stdin/stdout. Rationale and full plan in
@@ -43,7 +84,7 @@ Format: [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/), [Semanti
   previous implementation called `claude --message --yes`, which is not a
   real Claude CLI flag. Replacement lands in M2 (stream-json subprocess
   control).
-- `ralph run` CLI subcommand exits 2 with the rewrite pointer.
+- `radioactive_ralph run` CLI subcommand exits 2 with the rewrite pointer.
 
 ### Fixed
 
@@ -115,7 +156,7 @@ Format: [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/), [Semanti
 - `AgentRunner` — spawns claude CLI subprocesses with model selection
 - `State` — durable JSON persistence with dedup and pruning
 - `AutoloopConfig` — TOML-based config with sensible defaults
-- Click CLI: `ralph run`, `ralph status`, `ralph discover`, `ralph pr list/merge`, `ralph stop`
+- Click CLI: `radioactive_ralph run`, `radioactive_ralph status`, `ralph discover`, `ralph pr list/merge`, `radioactive_ralph stop`
 - `uvx radioactive-ralph` support for zero-install execution
 - Sphinx documentation with RTD theme, published to GitHub Pages
 - CI/CD: GitHub Actions with OIDC PyPI publishing and Sphinx Pages deploy

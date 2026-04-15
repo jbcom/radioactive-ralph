@@ -40,9 +40,9 @@ ralph run
 
 | Command | What it does |
 |---|---|
-| `ralph run` | Start the persistent orchestrator loop |
+| `radioactive_ralph run` | Start the persistent orchestrator loop |
 | `ralph dashboard` | Open the live Rich dashboard |
-| `ralph status` | Show current state and recent Ralph events |
+| `radioactive_ralph status` | Show current state and recent Ralph events |
 | `ralph discover` | Show the current queue of discovered work |
 | `ralph pr list` | List and classify pull requests |
 | `ralph install-skill --all` | Install every Ralph variant locally |

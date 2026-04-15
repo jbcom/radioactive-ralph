@@ -1,5 +1,5 @@
 // Package multiplexer detaches the Ralph supervisor from the calling
-// shell so `ralph run --detach` returns control to the operator while
+// shell so `radioactive_ralph run --detach` returns control to the operator while
 // the supervisor keeps running.
 //
 // Three backends are probed in order, from strongest to weakest:
@@ -13,7 +13,7 @@
 //  3. setsid + double-fork — pure-stdlib fallback via syscalls. Runs the
 //     supervisor as an orphaned process inherited by init (pid 1) with
 //     stdin/stdout/stderr redirected to a log file. No re-attach is
-//     possible in this mode — operators use `ralph attach` (Unix socket)
+//     possible in this mode — operators use `radioactive_ralph attach` (Unix socket)
 //     or tail the log directly.
 //
 // Service-installed variants (brew services, launchd, systemd --user)
@@ -40,7 +40,7 @@ const (
 	// BackendScreen uses `screen -dmS` for detach with later re-attach.
 	BackendScreen
 	// BackendSetsid uses syscall.Setsid + double-fork for pure-POSIX detach
-	// with no re-attach UI (operator uses `ralph attach` or tails the log).
+	// with no re-attach UI (operator uses `radioactive_ralph attach` or tails the log).
 	BackendSetsid
 )
 
@@ -90,7 +90,7 @@ func WithGetenv(fn func(string) string) DetectOption {
 
 // WithPreferredBackend forces a specific backend if available; Detect
 // will return ErrNoBackend if the preferred one probes as missing.
-// Used by `ralph run --multiplexer X` CLI flag and by init wizard
+// Used by `radioactive_ralph run --multiplexer X` CLI flag and by init wizard
 // when the operator has explicitly chosen a backend.
 func WithPreferredBackend(b Backend) DetectOption {
 	return func(d *Detacher) { d.preferredBackend = b }
@@ -153,8 +153,8 @@ func (d *Detacher) Backend() Backend { return d.backend }
 // SpawnRequest describes a process the supervisor wants spawned detached.
 // All file paths must be absolute; SpawnDetached does no path resolution.
 type SpawnRequest struct {
-	// Name is the command to exec. Usually the absolute path to ralph itself,
-	// e.g. "/usr/local/bin/ralph".
+	// Name is the command to exec. Usually the absolute path to
+	// radioactive_ralph itself, e.g. "/usr/local/bin/radioactive_ralph".
 	Name string
 
 	// Args are passed to Name. Typically something like
@@ -165,12 +165,12 @@ type SpawnRequest struct {
 	// session name, or a tag written into the log file header for setsid
 	// mode). Should be unique per per-variant supervisor on this host;
 	// the supervisor package generates it as
-	// `ralph-<variant>-<repohash[:8]>`.
+	// `radioactive_ralph-<variant>-<repohash[:8]>`.
 	SessionName string
 
 	// LogPath receives stdout + stderr of the spawned supervisor (setsid
 	// mode uses it as the primary record; tmux/screen sessions also
-	// `pipe-pane` / `logfile` to it for `ralph attach` fallback tailing).
+	// `pipe-pane` / `logfile` to it for `radioactive_ralph attach` fallback tailing).
 	LogPath string
 
 	// Env is passed through to the detached process. Nil means inherit
@@ -194,7 +194,7 @@ type Spawned struct {
 	// Descriptor names how to re-reach the detached process. For tmux:
 	// the session name passed to `tmux attach -t <name>`. For screen:
 	// the session name passed to `screen -r <name>`. For setsid: the
-	// empty string (no re-attach available; use `ralph attach` socket).
+	// empty string (no re-attach available; use `radioactive_ralph attach` socket).
 	Descriptor string
 
 	// PID is the process ID of the detached supervisor if the backend

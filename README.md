@@ -27,8 +27,8 @@ Status: **M1 merged** (marketplace hygiene, broken implementations stubbed, docs
 | Mode | What you get | Best for |
 |---|---|---|
 | Claude Code plugin (skills) | Ten Ralph variants — each a slash command that launches the daemon in the background and returns control to the outer session | In-session invocation, the skill handles pre-flight checks and hand-off |
-| `ralph` binary (CLI) | `ralph init` then `ralph run --variant X` — runs the orchestrator directly outside any Claude session | Long-running orchestration, multi-day autonomous work on a codebase |
-| System service | `ralph service install --variant green` — launchd on macOS, systemd --user on Linux, brew-services wrapped either way | Always-on autonomous operation for green, immortal, or blue variants |
+| `ralph` binary (CLI) | `radioactive_ralph init` then `radioactive_ralph run --variant X` — runs the orchestrator directly outside any Claude session | Long-running orchestration, multi-day autonomous work on a codebase |
+| System service | `radioactive_ralph service install --variant green` — launchd on macOS, systemd --user on Linux, brew-services wrapped either way | Always-on autonomous operation for green, immortal, or blue variants |
 
 ## Meet the Ralphs
 
@@ -39,7 +39,7 @@ Status: **M1 merged** (marketplace hygiene, broken implementations stubbed, docs
 | [`/red-ralph`](https://jonbogaty.com/radioactive-ralph/variants/red-ralph/) | CI and PR fire drills | Something is on fire and you want one clean report | — |
 | [`/blue-ralph`](https://jonbogaty.com/radioactive-ralph/variants/blue-ralph/) | Read-only review | You want diagnosis without touching the code | — |
 | [`/professor-ralph`](https://jonbogaty.com/radioactive-ralph/variants/professor-ralph/) | Plan → execute → reflect | Strategy matters more than speed | — |
-| [`/joe-fixit-ralph`](https://jonbogaty.com/radioactive-ralph/variants/joe-fixit-ralph/) | ROI-scored bursts | You want small, budget-conscious, reviewable work | — |
+| [`/fixit-ralph`](https://jonbogaty.com/radioactive-ralph/variants/fixit-ralph/) | ROI-scored bursts | You want small, budget-conscious, reviewable work | — |
 | [`/immortal-ralph`](https://jonbogaty.com/radioactive-ralph/variants/immortal-ralph/) | Recovery-first autonomy | You need it to survive the night | — |
 | [`/savage-ralph`](https://jonbogaty.com/radioactive-ralph/variants/savage-ralph/) | Maximum throughput | Budget is not the constraint | `--confirm-burn-budget` |
 | [`/old-man-ralph`](https://jonbogaty.com/radioactive-ralph/variants/old-man-ralph/) | Imposed target state | Negotiation is over | `--confirm-no-mercy` |

@@ -1,12 +1,12 @@
 // Package ipc is radioactive-ralph's supervisor-client IPC layer.
 //
 // The supervisor listens on a Unix domain socket under its workspace's
-// sessions/ directory. `ralph status`, `ralph attach`, `ralph enqueue`,
-// `ralph stop`, and `ralph reload-config` connect to the same socket
+// sessions/ directory. `radioactive_ralph status`, `radioactive_ralph attach`, `radioactive_ralph enqueue`,
+// `radioactive_ralph stop`, and `radioactive_ralph reload-config` connect to the same socket
 // and exchange newline-delimited JSON messages.
 //
 // Heartbeat liveness is signalled via the supervisor touching an
-// `.alive` file every few seconds. `ralph status` checks the file's
+// `.alive` file every few seconds. `radioactive_ralph status` checks the file's
 // mtime before even attempting a socket connect — if the supervisor
 // crashed and left a stale socket, we want to surface the dead-daemon
 // state cleanly rather than hang on a connection attempt.

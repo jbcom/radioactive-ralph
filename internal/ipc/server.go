@@ -311,7 +311,7 @@ func errString(err error) string {
 }
 
 // SocketAlive reports whether the heartbeat file at path was touched
-// within maxAge. Clients (`ralph status`) call this before attempting
+// within maxAge. Clients (`radioactive_ralph status`) call this before attempting
 // a socket connection so they can distinguish "supervisor dead"
 // from "supervisor slow to respond."
 func SocketAlive(heartbeatPath string, maxAge time.Duration) bool {

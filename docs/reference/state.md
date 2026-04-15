@@ -27,8 +27,8 @@ four-milestone plan.
   `NotImplementedError` with pointers to the PRD. The inner helpers
   (`_merge_ready`, `_review_pending`, `_should_discover`) are preserved
   as reusable building blocks for M2.
-- CLI surface pruned — `ralph status` + `ralph doctor` implemented;
-  `ralph run` is a stub that exits 2 with the PRD pointer.
+- CLI surface pruned — `radioactive_ralph status` + `radioactive_ralph doctor` implemented;
+  `radioactive_ralph run` is a stub that exits 2 with the PRD pointer.
 - Two broken tests fixed — `test_cli.py::test_main_verbose` had an empty
   `pass` body; `test_orchestrator.py::test_step_spawns_agents` passed
   `repo_name` to a Pydantic model where it's a computed property.
@@ -54,17 +54,17 @@ four-milestone plan.
 
 ### M2 — daemon skeleton + per-repo config + XDG workspace + session control
 
-- `ralph init` wizard creating `.radioactive-ralph/`
+- `radioactive_ralph init` wizard creating `.radioactive-ralph/`
 - `WorkspaceManager` dispatching across four isolation modes
 - SQLite + sqlite-vec event log with WAL
-- Unix socket IPC for `ralph status / attach / enqueue / stop`
+- Unix socket IPC for `radioactive_ralph status / attach / enqueue / stop`
 - `ClaudeSession` wrapping `claude -p --input-format stream-json`
 - Multiplexer abstraction (tmux → screen → setsid fallback)
 - `Orchestrator` rewrite as a per-repo supervisor
 
 ### M3 — ten variants + pre-flight + voice
 
-- `VariantProfile` dataclass; ten variant files (≤300 LOC each)
+- `Profile` dataclass; ten variant files (≤300 LOC each)
 - Pre-flight wizard with shared question registry (CLI + skill)
 - Voice template library per variant
 - Safety floors with two-step override for destructive variants
@@ -76,13 +76,13 @@ four-milestone plan.
 - Integration test scenarios (grey-ralph end-to-end; session death
   recovery; pre-flight refusal; multiplexer fallback; LFS detection;
   hook preservation; shared-object corruption recovery)
-- `ralph doctor` rewrite with concrete remediation output
+- `radioactive_ralph doctor` rewrite with concrete remediation output
 - Demo GIF recording the full flow
 - Release 1.0.0 to PyPI
 
 ## Known issues (during rewrite)
 
-- `ralph run` is stubbed (exits 2). Real daemon lands in M2.
+- `radioactive_ralph run` is stubbed (exits 2). Real daemon lands in M2.
 - Ten variants are still SKILL.md files; behavior is not yet in Python.
 - Mirror-based workspace architecture is documented but not implemented.
 - No `.radioactive-ralph/` directory is created anywhere yet.

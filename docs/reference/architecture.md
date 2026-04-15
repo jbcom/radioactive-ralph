@@ -23,8 +23,8 @@ channel is the `--input-format stream-json` stdio protocol in headless
 
 | Mode | How you launch | What happens |
 |------|----------------|--------------|
-| CLI direct | `ralph run --variant X` | Terminal runs the pre-flight wizard, launches the supervisor in a detached multiplexer, returns control |
-| In-session skill | `/green-ralph` inside a Claude session | Skill runs a Ralphspeak pre-flight wizard, shells out to `ralph run --detach`, reports back *"Ralph is playing with his friends"* |
+| CLI direct | `radioactive_ralph run --variant X` | Terminal runs the pre-flight wizard, launches the supervisor in a detached multiplexer, returns control |
+| In-session skill | `/green-ralph` inside a Claude session | Skill runs a Ralphspeak pre-flight wizard, shells out to `radioactive_ralph run --detach`, reports back *"Ralph is playing with his friends"* |
 
 Both modes end up running the same supervisor process with the same variant
 profile. The only difference is who asks the pre-flight questions and in
@@ -41,7 +41,7 @@ Every repo that uses Ralph has `.radioactive-ralph/` alongside `.git/`:
 └── local.toml           # gitignored: operator-local overrides (multiplexer pref, etc.)
 ```
 
-`ralph init` creates this tree and appends `.radioactive-ralph/local.toml` to
+`radioactive_ralph init` creates this tree and appends `.radioactive-ralph/local.toml` to
 the repo's root `.gitignore`. Missing `config.toml` = refuse to run with an
 in-voice nudge.
 
@@ -80,7 +80,7 @@ Every variant declares defaults for four dimensions; each can be overridden in
 
 See the [variants index](../variants/index.md) for the current variant list.
 In M3 this is replaced by an auto-generated `variants-matrix.md` sourced
-directly from the `VariantProfile` dataclasses.
+directly from the `Profile` dataclasses.
 
 ## Supervisor lifecycle
 
@@ -99,8 +99,8 @@ directly from the `VariantProfile` dataclasses.
    resilience), act on results (commit, open PR, enqueue follow-up). On
    subprocess exit, classify and either resume (`claude -p --resume <uuid>`)
    or finalize.
-5. **IPC** — Unix socket serves `ralph status`, `ralph attach`, `ralph enqueue`,
-   `ralph stop` commands from sibling processes.
+5. **IPC** — Unix socket serves `radioactive_ralph status`, `radioactive_ralph attach`, `ralph enqueue`,
+   `radioactive_ralph stop` commands from sibling processes.
 6. **Termination** — per variant policy. Drain events, close socket, remove
    PID, clean worktrees per variant rule, exit.
 
@@ -153,7 +153,7 @@ it in the CLI or through a skill — the registry is shared.
   mirror, retry; destructive variants default to `full` object store.
 - **Multiplexer macOS quirks** — tmux strongly recommended; stdlib setsid
   fallback rather than relying on `python-daemon`.
-- **Scope creep** — public API = CLI + `VariantProfile` extension point only.
+- **Scope creep** — public API = CLI + `Profile` extension point only.
 
 See the [PRD](../plans/2026-04-14-radioactive-ralph-rewrite.prq.md) for the
 full risk register.
