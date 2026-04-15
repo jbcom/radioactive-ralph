@@ -82,8 +82,8 @@ changelog:
       - Merge branch
 
 # Single cross-packager repo at jbcom/pkgs holds Formula/, bucket/,
-# choco/, nix/, etc. Brew convention requires a `homebrew-*` repo for
-# the `brew tap jbcom/tap` shorthand — we publish there as a mirror.
+# choco/, nix/, etc. Users tap with `brew tap jbcom/pkgs` — no separate
+# homebrew-* mirror needed.
 brews:
   - name: radioactive-ralph
     ids: [default]
@@ -107,26 +107,6 @@ brews:
     # `radioactive_ralph service install --variant <name>` handles per-variant
     # service registration at runtime, since only three of the ten
     # variants are service-appropriate and they take different flags.
-
-  # Brew-tap-convention mirror so `brew tap jbcom/tap` shorthand works.
-  - name: radioactive-ralph
-    ids: [default]
-    repository:
-      owner: jbcom
-      name: homebrew-tap
-      branch: main
-      token: "{{ .Env.JBCOM_HOMEBREW_TAP_GITHUB_TOKEN }}"
-    directory: Formula
-    homepage: https://github.com/jbcom/radioactive-ralph
-    description: Autonomous continuous development orchestrator for Claude Code
-    license: MIT
-    commit_author:
-      name: jbcom-bot
-      email: noreply@jonbogaty.com
-    test: |
-      system "#{bin}/radioactive_ralph", "--version"
-    install: |
-      bin.install "radioactive_ralph"
 
 scoops:
   - name: radioactive-ralph

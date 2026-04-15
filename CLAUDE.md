@@ -127,8 +127,9 @@ for generated API reference. See `docs/` for the current state.
 
 ## Release
 
-No code signing in initial releases. Homebrew tap at
-`jbcom/homebrew-tap`. Install script at
+No code signing in initial releases. Single cross-packager monorepo at
+`jbcom/pkgs` holds Formula/, bucket/, choco/, etc. — users tap with
+`brew tap jbcom/pkgs`. Install script at
 `jonbogaty.com/radioactive-ralph/install.sh`. Windows via Scoop/WinGet
 for the binary; the supervisor runs only in POSIX environments so
 Windows users use WSL2+Linuxbrew for the full experience.

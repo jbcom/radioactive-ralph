@@ -23,8 +23,9 @@ jobs:
       - uses: sigstore/cosign-installer@d58896d6a1865668819e1d91763c7751a165e159 # v3.9.1
 
       # Pre-flight: fail fast with a readable error if CI_GITHUB_TOKEN
-      # isn't set. This PAT needs contents:write on the release repo
-      # plus the Homebrew tap and Scoop bucket repos.
+      # isn't set. This PAT needs contents:write on this repo plus
+      # jbcom/pkgs (brew formula + scoop bucket + chocolatey nupkg all
+      # land in the same monorepo).
       - name: Verify release secret is set
         env:
           CI_TOKEN_SET: ${{ secrets.CI_GITHUB_TOKEN != '' }}
@@ -42,5 +43,4 @@ jobs:
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.CI_GITHUB_TOKEN }}
-          HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.CI_GITHUB_TOKEN }}
-          SCOOP_BUCKET_GITHUB_TOKEN: ${{ secrets.CI_GITHUB_TOKEN }}
+          JBCOM_PKGS_GITHUB_TOKEN: ${{ secrets.CI_GITHUB_TOKEN }}
