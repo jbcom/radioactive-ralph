@@ -17,9 +17,12 @@ import (
 // take this path — the pipeline handles both.
 func (c *RunCmd) runAdvisor(ctx context.Context, repo string, plansOK bool) error {
 	opts := fixit.RunOptions{
-		RepoRoot:       repo,
-		Topic:          c.Topic,
-		NonInteractive: !interactiveTerminal(),
+		RepoRoot:                repo,
+		Topic:                   c.Topic,
+		Description:             c.Description,
+		NonInteractive:          !interactiveTerminal(),
+		MaxRefinementIterations: c.MaxIterations,
+		MinConfidenceThreshold:  c.MinConfidence,
 	}
 
 	result, err := fixit.RunPipeline(ctx, opts)

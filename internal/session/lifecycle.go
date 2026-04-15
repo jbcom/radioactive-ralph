@@ -83,10 +83,15 @@ func (s *Session) signalIdle() {
 
 // buildArgs assembles the argv for `claude -p`.
 func buildArgs(opts Options) []string {
+	// `--output-format=stream-json` requires `--verbose` per the
+	// Claude Code CLI (as of 2.1.x). Omitting it yields:
+	//   "Error: When using --print, --output-format=stream-json
+	//    requires --verbose"
 	args := []string{
 		"-p",
 		"--input-format", "stream-json",
 		"--output-format", "stream-json",
+		"--verbose",
 	}
 	if opts.ResumeMode {
 		args = append(args, "--resume", opts.SessionID)

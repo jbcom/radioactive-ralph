@@ -22,7 +22,13 @@ type RunCmd struct {
 	// Fixit-only flags.
 	Advise      bool   `help:"(fixit only) Run in advisor mode: scan the codebase + description and write a variant recommendation to .radioactive-ralph/plans/<topic>-advisor.md, then exit. Auto-enabled when plans/index.md is missing or malformed."`
 	Topic       string `help:"(fixit --advise only) Slug used for the output filename (plans/<topic>-advisor.md). Defaults to 'general'."`
+	Description string `help:"(fixit --advise only) Free-form operator goal. Overrides TOPIC.md. Passed verbatim to the Claude subprocess."`
 	AutoHandoff bool   `help:"(fixit --advise only) When the recommendation has no tradeoffs, spawn the recommended variant as a follow-up run automatically."`
+
+	// Advisor refinement thresholds. Operators can also set these in
+	// .radioactive-ralph/config.toml under [variants.fixit].
+	MaxIterations int `help:"(fixit --advise only) Max refinement passes. Default 3."`
+	MinConfidence int `help:"(fixit --advise only) Confidence threshold for accepting a proposal without refinement. Default 70."`
 }
 
 // Run launches the supervisor for the named variant.

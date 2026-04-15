@@ -50,7 +50,7 @@ git:
   default_branch: {{.RC.DefaultBranch}}
   on_default_branch: {{.RC.OnDefaultBranch}}
   recent_commits:
-{{- range .RC.Commits | until 10}}
+{{- range until .RC.Commits 10}}
     - {sha: {{.SHA}}, subject: "{{.Subject}}", date: {{.DateISO}}}
 {{- end}}
 

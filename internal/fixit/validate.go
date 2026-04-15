@@ -46,14 +46,18 @@ func Validate(p PlanProposal, rc RepoContext, intent IntentSpec) ValidationResul
 	}
 
 	// Rule: acceptance criteria contain measurable verbs only.
-	allowed := regexp.MustCompile(`(?i)\b(passes|exists|matches|returns|equal|≥|≤|>=|<=|=|<|>|merge|merged|merges|resolved|closed|green|0 error|no error|100%|\d+%|fail)`)
+	// Two regexes — Go's \b is ASCII-only so non-ASCII comparison
+	// operators (≥ ≤) need a separate literal matcher.
+	allowedWord := regexp.MustCompile(
+		`(?i)\b(passes|exists|matches|returns|equal|equals|merge|merged|merges|resolved|closed|green|fail|fails|contains|satisfies|no error|no errors|0 error|0 errors|count)\b`)
+	allowedSymbol := regexp.MustCompile(`(≥|≤|>=|<=|100%|\d+%|\d+ files?|\d+ lines?|\d+ errors?)`)
 	banned := regexp.MustCompile(`(?i)\b(improves?|considers?|addresses?|helps?|better|nicer)\b`)
 	for _, crit := range p.AcceptanceCriteria {
 		if banned.MatchString(crit) {
 			failures = append(failures, fmt.Sprintf(
 				"acceptance criterion uses banned vague verb: %q", crit))
 		}
-		if !allowed.MatchString(crit) {
+		if !allowedWord.MatchString(crit) && !allowedSymbol.MatchString(crit) {
 			failures = append(failures, fmt.Sprintf(
 				"acceptance criterion has no measurable verb: %q", crit))
 		}
@@ -63,9 +67,18 @@ func Validate(p PlanProposal, rc RepoContext, intent IntentSpec) ValidationResul
 			"need at least 3 acceptance criteria, got %d", len(p.AcceptanceCriteria)))
 	}
 
-	// Rule: tasks that reference paths must reference real files.
+	// Rule: tasks that reference paths must reference real files —
+	// UNLESS the task is explicitly a creation task (verb "Create",
+	// "Scaffold", "Add", etc.) in which case the file not existing is
+	// the point.
 	pathRe := regexp.MustCompile(`([\w./-]+\.[a-z]{1,5})`)
+	creationVerb := regexp.MustCompile(`(?i)^(create|scaffold|add|generate|write|introduce|produce|emit|seed|draft|bootstrap|initialize|register)\b`)
 	for _, task := range p.Tasks {
+		// Skip creation tasks entirely — by definition the file
+		// doesn't exist yet.
+		if creationVerb.MatchString(strings.TrimSpace(task.Title)) {
+			continue
+		}
 		for _, match := range pathRe.FindAllString(task.Title, -1) {
 			// Skip things like v1.2.3 and obvious non-paths.
 			if !strings.ContainsAny(match, "/.") || strings.HasPrefix(match, "v") {

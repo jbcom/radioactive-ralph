@@ -23,6 +23,20 @@ type RunOptions struct {
 	// subprocess. When true, the pipeline returns after Stage 3 with
 	// a zero PlanProposal.
 	SkipAnalysis bool
+
+	// MaxRefinementIterations caps how many rounds of Claude
+	// refinement Stage 4 will do before giving up. Default 3.
+	// Configurable via CLI flag or config.toml [variants.fixit]
+	// max_refinement_iterations.
+	MaxRefinementIterations int
+
+	// MinConfidenceThreshold is the confidence floor a proposal must
+	// meet before we stop refining. Validate.MinConfidence is the
+	// lower absolute floor below which validation fails; this
+	// threshold is the refinement-loop bar. Default 70.
+	// Configurable via CLI flag or config.toml [variants.fixit]
+	// min_confidence_threshold.
+	MinConfidenceThreshold int
 }
 
 // RunPipeline orchestrates Stages 1-6 and returns what was emitted.
@@ -66,29 +80,50 @@ func RunPipeline(ctx context.Context, opts RunOptions) (EmittedPlan, error) {
 		return Emit(plansDir, intent.Topic, p, validation, status, intent, rc)
 	}
 
-	// Stage 4
-	proposal, err := Analyze(ctx, AnalyzeOptions{
-		Intent:     intent,
-		RC:         rc,
-		Scores:     scores,
-		ClaudeBin:  opts.ClaudeBin,
-		WorkingDir: opts.RepoRoot,
+	// Stage 4 + Stage 5 run as a refinement loop: Analyze→Validate,
+	// feed failures back into Analyze, repeat until passing or capped.
+	refined, err := Refine(ctx, rc, intent, RefineOptions{
+		AnalyzeOpts: AnalyzeOptions{
+			Intent:     intent,
+			RC:         rc,
+			Scores:     scores,
+			ClaudeBin:  opts.ClaudeBin,
+			WorkingDir: opts.RepoRoot,
+		},
+		MaxIterations:          opts.MaxRefinementIterations,
+		MinConfidenceThreshold: opts.MinConfidenceThreshold,
 	})
 	if err != nil {
 		return EmitFallback(plansDir, intent.Topic,
-			"Stage 4 Claude analysis failed: "+err.Error(), "",
+			"Stage 4 refinement loop failed: "+err.Error(), "",
 			intent, rc)
 	}
 
-	// Stage 5
-	validation := Validate(proposal, rc, intent)
-	status := StatusCurrent
-	if !validation.Passed {
-		status = StatusProvisional
+	// Status: current iff the loop accepted; provisional otherwise
+	// (we still emit the best attempt so the operator can see it).
+	status := StatusProvisional
+	if refined.AcceptedAt > 0 {
+		status = StatusCurrent
 	}
 
-	// Stage 6
-	return Emit(plansDir, intent.Topic, proposal, validation, status, intent, rc)
+	// Emit with the final proposal + its final validation.
+	emitted, err := Emit(plansDir, intent.Topic, refined.FinalProposal,
+		refined.FinalValidation, status, intent, rc)
+	if err != nil {
+		return EmittedPlan{}, err
+	}
+
+	// Annotate the emitted plan with the refinement history so the
+	// operator can see how many passes it took and what each pass
+	// fixed. The annotation is appended to the file — Stage 6's
+	// emitter writes a canonical report body; refinement history is
+	// additional diagnostic information.
+	if err := appendRefinementHistory(emitted.Path, refined); err != nil {
+		// Non-fatal; log via the returned EmittedPlan rather than
+		// blocking successful emission.
+		_ = err
+	}
+	return emitted, nil
 }
 
 // topDeterministicPick returns a PlanProposal built from the
