@@ -45,7 +45,8 @@ When something is on fire. CI failing. PR blocked on review feedback. You don't 
 ### Quick start
 
 ```bash
-ralph install-skill --variant red-ralph
+claude plugin marketplace add github:jbcom/radioactive-ralph
+claude plugin install radioactive_ralph@jbcom-plugins
 # Then in Claude Code:
 /red-ralph
 # Or scoped:

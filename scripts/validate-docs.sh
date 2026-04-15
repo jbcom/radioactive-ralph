@@ -10,24 +10,39 @@ fail() {
   exit 1
 }
 
-if rg -n 'site/src/content/docs' README.md CLAUDE.md docs .github; then
+if rg -n 'site/src/content/docs' README.md CLAUDE.md AGENTS.md docs .github site/README.md; then
   fail "found stale references to site/src/content/docs"
 fi
 
-if rg -n 'autoapi/' docs README.md CLAUDE.md .github reference; then
+if rg -n 'autoapi/' docs README.md CLAUDE.md AGENTS.md .github; then
   fail "found stale references to autoapi output"
+fi
+
+if rg -n 'install-skill' README.md CLAUDE.md AGENTS.md docs/variants skills/README.md skills/*/README.md .claude-plugin site/README.md; then
+  fail "found stale install-skill references"
 fi
 
 for pattern in \
   'uvx radioactive-ralph' \
   'pip install radioactive-ralph' \
+  'claude plugin install ralph@jbcom-plugins' \
   'ralph dashboard' \
   'ralph discover' \
   'ralph pr list' \
   'hatch '
 do
-  if rg -n "$pattern" docs README.md CLAUDE.md STANDARDS.md; then
+  if rg -n "$pattern" docs/getting-started docs/guides docs/reference docs/design docs/variants skills/README.md skills/*/README.md README.md CLAUDE.md AGENTS.md STANDARDS.md assets/ASSETS.md .claude-plugin site/README.md; then
     fail "found stale docs pattern: $pattern"
+  fi
+done
+
+for pattern in \
+  'ralph run --detach' \
+  'cmd/ralph/' \
+  'ralph enqueue'
+do
+  if rg -n "$pattern" docs/getting-started docs/guides docs/reference docs/design docs/variants skills/README.md skills/*/README.md README.md AGENTS.md assets/ASSETS.md site/README.md; then
+    fail "found stale live-docs pattern: $pattern"
   fi
 done
 

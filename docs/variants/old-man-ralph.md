@@ -59,7 +59,8 @@ When you have a clear, exact target state and you want it imposed, not negotiate
 ### Quick start
 
 ```bash
-ralph install-skill --variant old-man-ralph
+claude plugin marketplace add github:jbcom/radioactive-ralph
+claude plugin install radioactive_ralph@jbcom-plugins
 /old-man-ralph --confirm-no-mercy
 ```
 

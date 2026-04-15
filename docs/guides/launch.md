@@ -24,6 +24,7 @@ Everything needed before the LinkedIn / Hacker News drop.
 - [ ] `brew install radioactive-ralph` tested from a clean machine
 
 ### Demo verification
+- [ ] `/fixit-ralph` turns a plain-English ask into `.radioactive-ralph/plans/<topic>-advisor.md`
 - [ ] `/green-ralph` runs end-to-end in single-cycle mode
 - [ ] `/red-ralph` handles a known CI failure cleanly
 - [ ] `/fixit-ralph --cycles 1` prints the bill

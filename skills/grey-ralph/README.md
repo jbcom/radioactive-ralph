@@ -46,7 +46,8 @@ When you have a repo that needs its governance files sorted out and you don't wa
 ### Quick start
 
 ```bash
-ralph install-skill --variant grey-ralph
+claude plugin marketplace add github:jbcom/radioactive-ralph
+claude plugin install radioactive_ralph@jbcom-plugins
 # Then in Claude Code:
 /grey-ralph
 # Or scoped:

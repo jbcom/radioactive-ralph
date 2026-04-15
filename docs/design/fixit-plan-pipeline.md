@@ -307,9 +307,10 @@ The first real validation of this pipeline is having Fixit answer:
 - Recommend `professor-ralph` (plan→execute→reflect) as primary,
   not `grey` (mechanical) and not `green` (free-for-all).
 - List concrete acceptance criteria (e.g. "tests/integration/ session-
-  pool-spawn test passes", "ralph run --detach actually backgrounds
+  pool-spawn test passes", "radioactive_ralph run --variant green
+  actually backgrounds
   via tmux", "advisor stage 4 calls real claude subprocess").
-- Reference real files (cmd/ralph/run.go, internal/supervisor/).
+- Reference real files (cmd/radioactive_ralph/run.go, internal/supervisor/).
 
 If the pipeline produces that plan, M3 unblocks itself: every
 remaining task gets executed by a Ralph variant against this repo.
@@ -324,4 +325,4 @@ remaining task gets executed by a Ralph variant against this repo.
 - `internal/fixit/emit.go` — Stage 6 plan-file writer
 - `internal/fixit/prompts/advisor.tmpl` — Stage 4 prompt template
 - `internal/fixit/prompts/schema.ts` — output schema (referenced by template)
-- `cmd/ralph/advisor.go` — wiring, replaces the current state-driven stub
+- `cmd/radioactive_ralph/advisor.go` — wiring, replaces the current state-driven stub

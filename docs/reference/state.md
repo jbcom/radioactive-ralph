@@ -1,6 +1,6 @@
 ---
 title: State
-lastUpdated: 2026-04-14
+lastUpdated: 2026-04-15
 ---
 
 # State — radioactive-ralph
@@ -14,7 +14,7 @@ four-milestone plan.
 ### M1 (this branch): marketplace + hygiene
 
 - `.claude-plugin/marketplace.json` — marketplace renamed to `jbcom-plugins`,
-  plugin renamed to `ralph`, `strict: false`, skills listed explicitly.
+  plugin named `radioactive_ralph`, `strict: false`, skills listed explicitly.
   Validates under `claude plugin validate .`.
 - README install + command documentation corrected — no more claims of
   commands that don't exist, no more `claude --print` fiction.

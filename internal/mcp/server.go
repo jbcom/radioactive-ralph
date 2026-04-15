@@ -57,7 +57,7 @@ func New(o Options) (*Server, error) {
 	}
 	if o.ServerInfo == nil {
 		o.ServerInfo = &mcpsdk.Implementation{
-			Name:    "radioactive-ralph",
+			Name:    "radioactive_ralph",
 			Version: "dev",
 		}
 	}

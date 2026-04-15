@@ -53,7 +53,8 @@ When normal pace is unacceptable and budget is not the constraint. For clearing 
 ### Quick start
 
 ```bash
-ralph install-skill --variant savage-ralph
+claude plugin marketplace add github:jbcom/radioactive-ralph
+claude plugin install radioactive_ralph@jbcom-plugins
 /savage-ralph --confirm-burn-budget
 ```
 

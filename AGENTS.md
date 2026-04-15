@@ -1,6 +1,6 @@
 ---
 title: AGENTS.md — radioactive-ralph
-updated: 2026-04-10
+updated: 2026-04-15
 status: current
 domain: technical
 ---
@@ -9,66 +9,87 @@ domain: technical
 
 ## Architecture
 
-Two deployment modes, same core:
+radioactive-ralph currently ships as a **Go binary** with two practical entry
+paths:
 
-1. **Claude Code plugin** — a family of 10 Ralph variants (`/green-ralph`,
-   `/grey-ralph`, `/red-ralph`, `/blue-ralph`, `/professor-ralph`,
-   `/savage-ralph`, `/immortal-ralph`, `/fixit-ralph`, `/old-man-ralph`,
-   `/world-breaker-ralph`) installed via `claude plugin install
-   radioactive-ralph`. Each variant has its own model tiering, parallelism,
-   tool allowlist, and safety gate. See `skills/README.md` for the full index.
-2. **External Python daemon** — `radioactive_ralph run` spins up an async orchestrator that
-   survives context resets, process restarts, and rate limits. It spawns
-   `claude` CLI subprocesses per work item with `--dangerously-skip-permissions`
-   and `--print`. Each subprocess is a stateless agent; the daemon holds all
-   state in `~/.radioactive-ralph/state.json`. Config is pydantic-settings
-   layered over TOML + env vars + CLI overrides.
+1. **`radioactive_ralph` CLI** — the repo-scoped supervisor, MCP server, plan
+   tooling, doctor checks, and service installation surface all live under
+   `cmd/radioactive_ralph/`.
+2. **Claude Code skills / plugin packaging** — the slash-command variants in
+   `skills/` and `.claude-plugin/` are the interactive front door, but they
+   target the same current Go-era Ralph surface rather than the archived Python
+   implementation.
 
-Both modes share the same work-discovery, PR-classification, and forge-interaction
-code, plus the same Ralph Wiggum personality module (`ralph_says.py`).
+The old Python daemon is preserved under `reference/` as historical context.
+Treat it as archive material, not the live implementation.
 
 ## State
 
-State file: `~/.radioactive-ralph/state.json` (default) or path from config.
-Schema: `OrchestratorState` in `models.py`.
-Never store state in `.claude/` directories — they trigger security firewalls.
+radioactive-ralph has two state layers:
 
-## Work priority
+- **Repo-visible config and planning files**
+  - `.radioactive-ralph/config.toml`
+  - `.radioactive-ralph/local.toml`
+  - `.radioactive-ralph/plans/index.md`
+  - `.radioactive-ralph/plans/*-advisor.md`
+- **Machine-local runtime state**
+  - `$RALPH_STATE_DIR` if set
+  - otherwise the XDG/App Support root resolved by `internal/xdg`
+  - contains the per-repo workspace, `state.db`, sockets, logs, and the
+    durable plan DAG SQLite store
 
-| Priority | Enum value | Examples |
-|----------|-----------|---------|
-| 1 — CI_FAILURE | Highest | Fix broken CI |
-| 2 — PR_FIXES | | Address review feedback |
-| 3 — DOC_SWEEP | | Create missing CLAUDE.md etc. |
-| 4 — MISSING_FILES | | Missing CHANGELOG, STANDARDS |
-| 5 — STATE_NEXT | | Items from docs/STATE.md ## Next |
-| 6 — DESIGN_FEATURE | | Items from docs/DESIGN.md ## Features |
-| 7 — POLISH | Lowest | Code quality, refactors |
+Never store runtime state under `.claude/`.
 
-## Model selection
+## Current Command Surface
 
-| Task | Model |
-|------|-------|
-| DOC_SWEEP, MISSING_FILES | `claude-haiku-4-5-20251001` |
-| Feature work, bug fixes, PR review | `claude-sonnet-4-6` |
-| DESIGN_FEATURE, security, architecture | `claude-opus-4-6` |
+The live CLI is:
 
-## Testing patterns
+- `radioactive_ralph init`
+- `radioactive_ralph run --variant <name>`
+- `radioactive_ralph status --variant <name>`
+- `radioactive_ralph attach --variant <name>`
+- `radioactive_ralph stop --variant <name>`
+- `radioactive_ralph doctor`
+- `radioactive_ralph service <install|uninstall|list|status>`
+- `radioactive_ralph plan <ls|show|next|import|mark-done>`
+- `radioactive_ralph serve --mcp`
+- `radioactive_ralph mcp <register|unregister|status>`
 
-- Use `pytest-mock` (`mocker` fixture) — never `unittest.mock`
-- Mark async tests with `@pytest.mark.asyncio`
-- `tmp_path` for filesystem tests, `tmp_repo` fixture for repo simulation
-- Run: `hatch run test`
+If documentation mentions the old discover / PR-list / dashboard command family
+or Python-era daemon commands, treat it as stale unless it is clearly marked as
+archive material.
 
-## Adding a new command
+## Fixit Ralph
 
-1. Add a Click command to `cli.py`
-2. Add the underlying logic to the appropriate module
-3. Add a test in `tests/`
-4. Update `docs/STATE.md`
+`fixit-ralph` is the only Ralph variant that can bridge a user-directed ask
+into the live plan system. It is the plan/advisor specialist:
 
-## PR workflow
+- when plans are missing or malformed, `fixit-ralph --advise` inspects the
+  repo, interprets the operator prompt, and writes a repo-visible advisor report
+- when executable tasks need to exist in the durable store, fixit is the
+  variant that understands how to translate that intent into the live SQLite
+  plan DAG workflow
+- every other variant depends on that plans-first discipline and should defer to
+  fixit when no valid initialized plan context exists
 
-- Work on branches, open PRs, merge via GitHub
-- All PRs need tests and passing CI before merge
-- Use squash merge
+## Testing Patterns
+
+- Use `go test ./...` for the main test pass.
+- Use `make test`, `make lint`, and `make vuln` for the standard repo targets.
+- Use `python3 -m tox -e docs` for docs validation + Sphinx build.
+- Run `bash scripts/generate-api-docs.sh` when exported Go API surface changes.
+
+## Adding A Command
+
+1. Add the command struct under `cmd/radioactive_ralph/`.
+2. Implement the backing logic in the relevant `internal/` package.
+3. Add or extend tests under `internal/` or `tests/integration/`.
+4. Update the live docs in `docs/` and regenerate API reference if exported
+   surface changed.
+
+## PR Workflow
+
+- Work on branches and merge through GitHub PRs.
+- Prefer squash merges.
+- Keep `main` tracking `origin/main` exactly; delete merged topic branches.
+- Resolve review threads and keep CI green before merge.

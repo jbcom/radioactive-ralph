@@ -149,8 +149,8 @@ MCPCmd groups MCP server client\-registration helpers. These shell out to \`clau
 
 ```go
 type MCPCmd struct {
-    Register   MCPRegisterCmd   `cmd:"" help:"Register this ralph as an MCP server with Claude Code."`
-    Unregister MCPUnregisterCmd `cmd:"" help:"Remove ralph's MCP server registration."`
+    Register   MCPRegisterCmd   `cmd:"" help:"Register radioactive_ralph as an MCP server with Claude Code."`
+    Unregister MCPUnregisterCmd `cmd:"" help:"Remove radioactive_ralph's MCP server registration."`
     Status     MCPStatusCmd     `cmd:"" help:"Show the registered MCP server entry, if any."`
 }
 ```
@@ -162,7 +162,7 @@ MCPRegisterCmd is \`radioactive\_ralph mcp register\`. It invokes \`claude mcp a
 
 ```go
 type MCPRegisterCmd struct {
-    Name      string `help:"Registration name." default:"radioactive-ralph"`
+    Name      string `help:"Registration name." default:"radioactive_ralph"`
     Scope     string `help:"Config scope: local, user, project." default:"user" enum:"local,user,project"`
     Transport string `help:"Transport: stdio (default) or http." default:"stdio" enum:"stdio,http"`
     HTTPAddr  string `help:"For --transport=http, the URL Claude should connect to." default:"http://localhost:7777/mcp"`
@@ -186,7 +186,7 @@ MCPStatusCmd is \`radioactive\_ralph mcp status\`. Shells out to \`claude mcp ge
 
 ```go
 type MCPStatusCmd struct {
-    Name string `help:"Registration name." default:"radioactive-ralph"`
+    Name string `help:"Registration name." default:"radioactive_ralph"`
 }
 ```
 
@@ -206,7 +206,7 @@ MCPUnregisterCmd is \`radioactive\_ralph mcp unregister\`.
 
 ```go
 type MCPUnregisterCmd struct {
-    Name  string `help:"Registration name." default:"radioactive-ralph"`
+    Name  string `help:"Registration name." default:"radioactive_ralph"`
     Scope string `help:"Config scope: local, user, project." default:"user" enum:"local,user,project"`
 }
 ```
@@ -432,7 +432,7 @@ ServiceInstallCmd wires the service.Install filesystem operation.
 type ServiceInstallCmd struct {
     Variant               string   `help:"Variant to install." required:""`
     RepoRoot              string   `help:"Repo root. Defaults to cwd." type:"path"`
-    RalphBin              string   `help:"Absolute path to ralph binary. Defaults to the currently-running executable."`
+    RalphBin              string   `help:"Absolute path to the radioactive_ralph binary. Defaults to the currently-running executable." name:"radioactive_ralph-bin"`
     ConfirmBurnBudget     bool     `help:"Confirmation gate for savage." name:"confirm-burn-budget"`
     ConfirmNoMercy        bool     `help:"Confirmation gate for old-man." name:"confirm-no-mercy"`
     ConfirmBurnEverything bool     `help:"Confirmation gate for world-breaker." name:"confirm-burn-everything"`

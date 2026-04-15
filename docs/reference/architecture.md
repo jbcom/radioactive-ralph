@@ -1,6 +1,6 @@
 ---
 title: Architecture
-lastUpdated: 2026-04-14
+lastUpdated: 2026-04-15
 ---
 
 # Architecture — radioactive-ralph
@@ -22,7 +22,7 @@ channel is the `--input-format stream-json` stdio protocol in headless
 | Mode | How you launch | What happens |
 |------|----------------|--------------|
 | CLI direct | `radioactive_ralph run --variant X` | Terminal runs the pre-flight wizard, launches the supervisor in a detached multiplexer, returns control |
-| In-session skill | `/green-ralph` inside a Claude session | Skill runs a Ralphspeak pre-flight wizard, shells out to `radioactive_ralph run --detach`, reports back *"Ralph is playing with his friends"* |
+| In-session skill | `/fixit-ralph` inside a Claude session | Skill interprets the operator's free-form ask, writes an advisor plan when context is missing, and hands off to the same supervisor + plan tooling the CLI uses |
 
 Both modes end up running the same supervisor process with the same variant
 profile. The only difference is who asks the pre-flight questions and in
@@ -97,8 +97,9 @@ directly from the `Profile` dataclasses.
    resilience), act on results (commit, open PR, enqueue follow-up). On
    subprocess exit, classify and either resume (`claude -p --resume <uuid>`)
    or finalize.
-5. **IPC** — Unix socket serves `radioactive_ralph status`, `radioactive_ralph attach`, `ralph enqueue`,
-   `radioactive_ralph stop` commands from sibling processes.
+5. **IPC** — Unix socket serves `radioactive_ralph status`,
+   `radioactive_ralph attach`, and `radioactive_ralph stop` commands
+   from sibling processes.
 6. **Termination** — per variant policy. Drain events, close socket, remove
    PID, clean worktrees per variant rule, exit.
 

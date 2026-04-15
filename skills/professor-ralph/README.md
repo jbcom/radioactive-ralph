@@ -49,7 +49,8 @@ When you want the orchestrator to understand the codebase before it acts. When y
 ### Quick start
 
 ```bash
-ralph install-skill --variant professor-ralph
+claude plugin marketplace add github:jbcom/radioactive-ralph
+claude plugin install radioactive_ralph@jbcom-plugins
 # Then in Claude Code:
 /professor-ralph
 # Or planning only:

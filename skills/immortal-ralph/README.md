@@ -49,7 +49,8 @@ When you want the loop running overnight or over a weekend and need it to surviv
 ### Quick start
 
 ```bash
-ralph install-skill --variant immortal-ralph
+claude plugin marketplace add github:jbcom/radioactive-ralph
+claude plugin install radioactive_ralph@jbcom-plugins
 # Then in Claude Code:
 /immortal-ralph
 ```

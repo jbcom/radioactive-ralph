@@ -1,7 +1,7 @@
 package variant
 
 // fixitProfile — Fixit Ralph. Advisor + ROI-scored N-cycle worker.
-// Spec: skills/fixit-ralph/SKILL.md (renamed from joe-fixit-ralph 2026-04-14).
+// Spec: skills/fixit-ralph/SKILL.md.
 //
 // Fixit is the ONLY variant permitted to recommend peer variants.
 // Modes are auto-detected at runtime by the supervisor based on plans

@@ -37,7 +37,7 @@ type cli struct {
 	Service ServiceCmd `cmd:"" help:"Install/uninstall/list OS service units."`
 	Plan    PlanCmd    `cmd:"" help:"Query + manage plans in the plan DAG."`
 	Serve   ServeCmd   `cmd:"" help:"Run an MCP server exposing the plan + variant tool surface."`
-	MCP     MCPCmd     `cmd:"" help:"Register/unregister this ralph as an MCP server with Claude Code."`
+	MCP     MCPCmd     `cmd:"" help:"Register/unregister radioactive_ralph as an MCP server with Claude Code."`
 
 	// Supervisor is the hidden entry invoked by launchd/systemd/service
 	// wrappers. Human operators never call it directly.

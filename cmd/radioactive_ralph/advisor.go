@@ -57,7 +57,7 @@ func (c *RunCmd) runAdvisor(ctx context.Context, repo string, plansOK bool) erro
 		return fmt.Errorf("fixit pipeline: %w", err)
 	}
 
-	fmt.Printf("ralph: fixit advisor wrote %s (status=%s, confidence=%d)\n",
+	fmt.Printf("radioactive_ralph: fixit advisor wrote %s (status=%s, confidence=%d)\n",
 		result.Path, result.Status, result.Proposal.Confidence)
 	if result.Proposal.Primary != "" {
 		fmt.Printf("  primary recommendation: %s-ralph\n", result.Proposal.Primary)
@@ -77,11 +77,11 @@ func (c *RunCmd) runAdvisor(ctx context.Context, repo string, plansOK bool) erro
 	if c.AutoHandoff {
 		switch {
 		case result.Status != fixit.StatusCurrent:
-			fmt.Println("ralph: --auto-handoff skipped — plan status is not `current`")
+			fmt.Println("radioactive_ralph: --auto-handoff skipped — plan status is not `current`")
 		case result.Proposal.Alternate != "":
-			fmt.Println("ralph: --auto-handoff skipped — recommendation has tradeoffs")
+			fmt.Println("radioactive_ralph: --auto-handoff skipped — recommendation has tradeoffs")
 		default:
-			fmt.Printf("ralph: --auto-handoff → follow-up command:\n  ralph run --variant %s --foreground\n",
+			fmt.Printf("radioactive_ralph: --auto-handoff → follow-up command:\n  radioactive_ralph run --variant %s --foreground\n",
 				result.Proposal.Primary)
 		}
 	}
@@ -91,7 +91,7 @@ func (c *RunCmd) runAdvisor(ctx context.Context, repo string, plansOK bool) erro
 	}
 
 	if !plansOK {
-		fmt.Println("ralph: plans/index.md was missing or malformed; advisor ran as the plans-first fallback.")
+		fmt.Println("radioactive_ralph: plans/index.md was missing or malformed; advisor ran as the plans-first fallback.")
 	}
 	return nil
 }

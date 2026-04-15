@@ -53,7 +53,8 @@ A critical incident. A major architecture decision to propagate everywhere. A la
 ### Quick start
 
 ```bash
-ralph install-skill --variant world-breaker-ralph
+claude plugin marketplace add github:jbcom/radioactive-ralph
+claude plugin install radioactive_ralph@jbcom-plugins
 # Then in Claude Code:
 /world-breaker-ralph --confirm-burn-everything
 ```

@@ -11,7 +11,7 @@
 
 ## Character notes
 
-There is no canonical Blue Ralph the way there's a Joe Fixit or a Professor Ralph. What exists is a single remarkable event: the Uni-Power — the Enigma Force, a cosmic entity that roams Springfield occasionally choosing a host during a crisis — chose Ralph during a very bad field trip to the museum. For that brief window, the Blue Ralph possessed cosmic awareness, the ability to float, and a Ralph's baseline power amplified by something bigger than Springfield itself.
+There is no canonical Blue Ralph the way there's a Fixit Ralph or a Professor Ralph. What exists is a single remarkable event: the Uni-Power — the Enigma Force, a cosmic entity that roams Springfield occasionally choosing a host during a crisis — chose Ralph during a very bad field trip to the museum. For that brief window, the Blue Ralph possessed cosmic awareness, the ability to float, and a Ralph's baseline power amplified by something bigger than Springfield itself.
 
 And what did he do with it? He kept his promise. The one Miss Hoover made him repeat at every field trip. *"I will look with my eyes and not my hands."* He is, in that moment, possibly the most powerful Ralph that has ever existed — and he did not touch a single painting. Not one. The tour guide almost cried.
 
@@ -48,7 +48,8 @@ When you want a comprehensive review pass across your repos before you act. When
 ### Quick start
 
 ```bash
-ralph install-skill --variant blue-ralph
+claude plugin marketplace add github:jbcom/radioactive-ralph
+claude plugin install radioactive_ralph@jbcom-plugins
 # Then in Claude Code:
 /blue-ralph
 ```

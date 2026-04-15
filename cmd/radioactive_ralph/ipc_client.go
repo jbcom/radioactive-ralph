@@ -32,7 +32,7 @@ func socketPath(repoRoot string, v variant.Name) (socket, heartbeat string, err 
 // "supervisor alive" from "stale socket from a crashed supervisor".
 func ensureAlive(socket, heartbeat string) error {
 	if _, err := os.Stat(socket); errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("no supervisor socket at %s (is ralph running?)", socket)
+		return fmt.Errorf("no supervisor socket at %s (is radioactive_ralph running?)", socket)
 	}
 	if !ipc.SocketAlive(heartbeat, 2*time.Minute) {
 		return fmt.Errorf(

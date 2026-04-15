@@ -119,7 +119,7 @@ func (c *RunCmd) Run(rc *runContext) error {
 		return fmt.Errorf("supervisor.New: %w", err)
 	}
 
-	fmt.Printf("ralph: supervisor starting for variant %s in %s\n", p.Name, repo)
+	fmt.Printf("radioactive_ralph: supervisor starting for variant %s in %s\n", p.Name, repo)
 	return sup.Run(rc.ctx)
 }
 

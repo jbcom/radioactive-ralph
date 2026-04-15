@@ -75,7 +75,7 @@ func (c *InitCmd) Run(rc *runContext) error {
 
 	inv, errs := inventory.Discover(inventory.Options{})
 	if len(errs) > 0 {
-		fmt.Fprintf(os.Stderr, "ralph init: %d inventory warning(s):\n", len(errs))
+		fmt.Fprintf(os.Stderr, "radioactive_ralph init: %d inventory warning(s):\n", len(errs))
 		for _, err := range errs {
 			fmt.Fprintf(os.Stderr, "  - %v\n", err)
 		}
@@ -110,7 +110,7 @@ func (c *InitCmd) Run(rc *runContext) error {
 	// to populate real tasks against it.
 	if err := seedBootstrapPlan(rc.ctx, repo); err != nil {
 		// Non-fatal — fixit will create the real plan on first run.
-		fmt.Fprintf(os.Stderr, "ralph init: bootstrap plan seed warning: %v\n", err)
+		fmt.Fprintf(os.Stderr, "radioactive_ralph init: bootstrap plan seed warning: %v\n", err)
 	}
 
 	fmt.Printf("wrote %s\n", res.ConfigPath)
@@ -119,19 +119,19 @@ func (c *InitCmd) Run(rc *runContext) error {
 	fmt.Printf("updated %s\n", res.GitIgnore)
 
 	// MCP registration — on by default. The fresh-Claude-instance flow
-	// depends on this: `brew install radioactive_ralph && ralph init`
+	// depends on this: `brew install radioactive-ralph && radioactive_ralph init`
 	// should be enough for the next `claude` session to see plan.* and
 	// variant.* tools. If claude isn't on PATH, we warn and continue.
 	if !c.SkipMCP {
 		reg := &MCPRegisterCmd{
-			Name:      "radioactive-ralph",
+			Name:      "radioactive_ralph",
 			Scope:     c.MCPScope,
 			Transport: c.MCPTransport,
 			HTTPAddr:  c.MCPHTTPAddr,
 		}
 		if err := reg.Run(rc); err != nil {
 			fmt.Fprintf(os.Stderr,
-				"ralph init: MCP registration warning: %v\n"+
+				"radioactive_ralph init: MCP registration warning: %v\n"+
 					"  (run `radioactive_ralph mcp register` later, or re-run init with --skip-mcp)\n",
 				err)
 		}

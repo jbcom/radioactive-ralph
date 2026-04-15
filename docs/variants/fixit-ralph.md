@@ -1,21 +1,21 @@
 ---
 title: fixit-ralph
-lastUpdated: 2026-04-14
+lastUpdated: 2026-04-15
 ---
 
 
 > *"Look, I'm not doing this for the good of humanity. I'm doing this because Moe said I could have a Squishee if I fixed the thing."*
-> — Joe Fixit Ralph, billing by the Squishee
+> — Fixit Ralph, billing by the Squishee
 
 **Inspired by Joe Fixit, the grey enforcer persona from Peter David's late-1980s Hulk run in Las Vegas.**
 
 | At a glance | Lore / bio |
 |---|---|
-| **Mode:** ROI-scored burst work<br>**Scope:** one repo<br>**Tiering:** haiku/sonnet, opus only when invited<br>**Best when:** you want tight scope and a bill at the end | Tiny noir fixer Ralph is in it for the Squishee, which makes him excellent at choosing only the work that pays for itself. |
+| **Mode:** advisor + ROI-scored burst work<br>**Scope:** one repo<br>**Tiering:** haiku/sonnet, opus only when invited<br>**Best when:** you need a free-form ask turned into initialized plan context, or you want tight scope and a bill at the end | Tiny noir fixer Ralph is in it for the Squishee, which makes him excellent at choosing only the work that pays for itself. |
 
 ## Character notes
 
-Joe Fixit is what happens when Ralph's self-loathing curdles into ambition. The grey form — originally suppressed by sunlight, which is why he operated at night, specifically after his bedtime, which meant a lot of sneaking — emerged as a separate personality that wanted none of regular Ralph's heroics and all of the Ralph power applied to a comfortable, profitable life, which for a seven-year-old mostly means Squishees and the good kind of bouncy ball from the vending machine.
+Fixit Ralph borrows the Joe Fixit archetype: Ralph's self-loathing curdled into ambition. The grey form — originally suppressed by sunlight, which is why he operated at night, specifically after his bedtime, which meant a lot of sneaking — emerged as a separate personality that wanted none of regular Ralph's heroics and all of the Ralph power applied to a comfortable, profitable life, which for a seven-year-old mostly means Squishees and the good kind of bouncy ball from the vending machine.
 
 He took a job as muscle for Moe Szyslak at Moe's Tavern. Tiny trenchcoat, tiny hat, big attitude. He dealt with problems efficiently and without sentiment — the man behind the bar had a problem, the problem went away, Joe got his Squishee and a handful of pretzels. He was not the strongest Ralph — the grey form caps well below the green — but he was cunning in a way the green form isn't, and he understood leverage. *"I know where Barney keeps his keys"* goes a long way. He did exactly what was needed, collected whatever he was owed, and didn't stick around to explain himself. He had to be home before his daddy the policeman got off shift.
 
@@ -27,16 +27,19 @@ He is Ralph's id in a tiny suit — selfish, pleasure-seeking, morally flexible,
 
 ## What Ralph Wiggum would say
 
-*"The Joe Fixit one wears a hat. My daddy wears a hat sometimes when it's sunny but the Joe Fixit Ralph works at night so I don't know why he wears a hat at night. Maybe he just likes hats. I have a hat with a dinosaur on it. I wore it to school but Nelson said it was baby stuff so now I only wear it at home. The Joe Fixit Ralph would probably say something mean to Nelson. That would be okay. Nelson deserves it sometimes. Not all the time. But sometimes."*
+*"The Fixit one wears a hat. My daddy wears a hat sometimes when it's sunny but Fixit Ralph works at night so I don't know why he wears a hat at night. Maybe he just likes hats. I have a hat with a dinosaur on it. I wore it to school but Nelson said it was baby stuff so now I only wear it at home. Fixit Ralph would probably say something mean to Nelson. That would be okay. Nelson deserves it sometimes. Not all the time. But sometimes."*
 
 ---
 
 ## The Skill
 
-**`/joe-fixit-ralph`** — N-limited cycles. Single repo. ROI-scored task selection. Budget reporting.
+**`/fixit-ralph`** — the one Ralph every other variant defers to when no valid plan/init context exists. Advisor first, ROI banger second.
 
 ### What it does
 
+- When `.radioactive-ralph/` or valid initialized plan context is missing, switches into advisor mode and interprets the operator's prompt into plan-facing next steps
+- Writes `.radioactive-ralph/plans/<topic>-advisor.md` so there is a durable repo-visible artifact for the recommendation
+- Acts as the bridge from a human-directed "go do this" request into the initialized SQLite-backed plan workflow every other variant expects
 - Runs exactly **N cycles** (default: 3) then stops with a full summary report
 - Single repo (current directory or `--repo`)
 - Scores every discovered work item by impact/effort ratio — picks the highest-ROI task per cycle
@@ -46,15 +49,16 @@ He is Ralph's id in a tiny suit — selfish, pleasure-seeking, morally flexible,
 
 ### When to use it
 
-When you want exactly N focused improvements with a clear report of what you got for it. Budget-conscious sessions. When you want small, reviewable PRs rather than sweeping changes. When you have 20 minutes and want to know exactly what happened and what it cost you in Squishees.
+When you don't yet have a valid initialized plan and need one Ralph to make sense of the ask. When you want exactly N focused improvements with a clear report of what you got for it. Budget-conscious sessions. When you want small, reviewable PRs rather than sweeping changes. When you have 20 minutes and want to know exactly what happened and what it cost you in Squishees.
 
 ### Quick start
 
 ```bash
-ralph install-skill --variant joe-fixit-ralph
-/joe-fixit-ralph
+claude plugin marketplace add github:jbcom/radioactive-ralph
+claude plugin install radioactive_ralph@jbcom-plugins
+/fixit-ralph
 # Or with explicit cycle count:
-/joe-fixit-ralph --cycles 5
+/fixit-ralph --cycles 5
 ```
 
 ### Arguments

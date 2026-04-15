@@ -38,7 +38,7 @@ if ! command -v radioactive_ralph >/dev/null 2>&1; then
   cat <<'EOS'
 radioactive_ralph is not installed on PATH. Install via:
 
-  brew tap jbcom/tap && brew install radioactive-ralph    # macOS / Linux
+  brew tap jbcom/pkgs && brew install radioactive-ralph    # macOS / Linux
   scoop bucket add jbcom https://github.com/jbcom/pkgs && scoop install radioactive-ralph    # Windows
   choco install radioactive-ralph                              # Windows (chocolatey)
 EOS

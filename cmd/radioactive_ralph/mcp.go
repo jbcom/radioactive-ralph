@@ -14,15 +14,15 @@ import (
 // using it means we stay correct when Claude changes its on-disk
 // format.
 type MCPCmd struct {
-	Register   MCPRegisterCmd   `cmd:"" help:"Register this ralph as an MCP server with Claude Code."`
-	Unregister MCPUnregisterCmd `cmd:"" help:"Remove ralph's MCP server registration."`
+	Register   MCPRegisterCmd   `cmd:"" help:"Register radioactive_ralph as an MCP server with Claude Code."`
+	Unregister MCPUnregisterCmd `cmd:"" help:"Remove radioactive_ralph's MCP server registration."`
 	Status     MCPStatusCmd     `cmd:"" help:"Show the registered MCP server entry, if any."`
 }
 
 // MCPRegisterCmd is `radioactive_ralph mcp register`. It invokes
 // `claude mcp add` with args shaped for the chosen transport.
 type MCPRegisterCmd struct {
-	Name      string `help:"Registration name." default:"radioactive-ralph"`
+	Name      string `help:"Registration name." default:"radioactive_ralph"`
 	Scope     string `help:"Config scope: local, user, project." default:"user" enum:"local,user,project"`
 	Transport string `help:"Transport: stdio (default) or http." default:"stdio" enum:"stdio,http"`
 	HTTPAddr  string `help:"For --transport=http, the URL Claude should connect to." default:"http://localhost:7777/mcp"`
@@ -69,7 +69,7 @@ func (c *MCPRegisterCmd) Run(_ *runContext) error {
 
 // MCPUnregisterCmd is `radioactive_ralph mcp unregister`.
 type MCPUnregisterCmd struct {
-	Name  string `help:"Registration name." default:"radioactive-ralph"`
+	Name  string `help:"Registration name." default:"radioactive_ralph"`
 	Scope string `help:"Config scope: local, user, project." default:"user" enum:"local,user,project"`
 }
 
@@ -87,7 +87,7 @@ func (c *MCPUnregisterCmd) Run(_ *runContext) error {
 // MCPStatusCmd is `radioactive_ralph mcp status`. Shells out to
 // `claude mcp get <name>`; exit code 0 = registered, non-zero = not.
 type MCPStatusCmd struct {
-	Name string `help:"Registration name." default:"radioactive-ralph"`
+	Name string `help:"Registration name." default:"radioactive_ralph"`
 }
 
 // Run shells out to `claude mcp get`.
