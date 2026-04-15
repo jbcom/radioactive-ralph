@@ -38,7 +38,7 @@ Binary assets (PNG, GIF, SVG) are produced by the scripts in `scripts/` or by ha
 - Left third: the `ralph-mascot.png` (bleed off the bottom slightly for energy)
 - Middle: large title `radioactive-ralph` in the project's green (`#22c55e` / Rich `bright_green` equivalent)
 - Subtitle directly below: `autonomous continuous development orchestrator for Claude Code`
-- Right third: a 2×5 grid of the ten variant icons (see §4) in their variant colors, labeled with the short name (`green`, `grey`, `red`, `blue`, `professor`, `savage`, `immortal`, `joe-fixit`, `old-man`, `world-breaker`)
+- Right third: a 2×5 grid of the ten variant icons (see §4) in their variant colors, labeled with the short name (`green`, `grey`, `red`, `blue`, `professor`, `savage`, `immortal`, `fixit`, `old-man`, `world-breaker`)
 - Bottom-right corner tagline in small type: *"Ralph has many forms."*
 - Dark background (`#0a0a0a`) so the green and the mascot pop
 
@@ -95,7 +95,7 @@ Binary assets (PNG, GIF, SVG) are produced by the scripts in `scripts/` or by ha
 | `professor-ralph.svg` | PROFESSOR | `magenta` | `bright_magenta` | `yellow` | Mortarboard + tiny scroll |
 | `savage-ralph.svg` | SAVAGE | `bright_green` | `green` | `red` | Eyes glowing, mouth open (mindless) |
 | `immortal-ralph.svg` | IMMORTAL | `dark_green` | `green4` | `red3` | Phoenix wings behind silhouette |
-| `joe-fixit-ralph.svg` | JOE_FIXIT | `grey62` | `grey82` | `yellow3` | Fedora + cigar (noir fixer) |
+| `fixit-ralph.svg` | JOE_FIXIT | `grey62` | `grey82` | `yellow3` | Fedora + cigar (noir fixer) |
 | `old-man-ralph.svg` | OLD_MAN | `dark_red` | `red3` | `bright_red` | Iron crown (the Maestro) |
 | `world-breaker-ralph.svg` | WORLD_BREAKER | `bright_red` | `red` | `bright_white` | Cracked-earth base under silhouette |
 

@@ -320,7 +320,7 @@ flags > env vars (`RALPH_*`) > `config.toml` per-variant > `config.toml`
 | red | mirror-pool | 8 | reference | on-demand | — |
 | green | mirror-pool | 6 | reference | on-demand | — |
 | professor | mirror-pool | 4 | reference | on-demand | — |
-| joe-fixit | mirror-single | 1 | reference | pointers-only | — |
+| fixit | mirror-single | 1 | reference | pointers-only | — |
 | immortal | mirror-pool | 3 | full | pointers-only | — |
 | savage | mirror-pool | 10 | reference | on-demand | `--confirm-burn-budget` |
 | old-man | mirror-single | 1 | **full (floor)** | on-demand | `--confirm-no-mercy` |
@@ -489,7 +489,7 @@ Three variants are eligible to run as persistent system services:
 | blue (with `--daemon`) | ✅ PR observer | `KeepAlive=true` |
 | grey | ⏰ timer, not daemon | weekly `StartCalendarInterval` / systemd `.timer` |
 | professor | ⏰ timer, not daemon | daily `.timer` |
-| red, joe-fixit | ❌ on-demand only | (value in operator reading the output) |
+| red, fixit | ❌ on-demand only | (value in operator reading the output) |
 | savage, old-man, world-breaker | ❌ refuse service context | fresh confirmation gate required |
 
 The CLI exposes `ralph service install --variant X` that emits the

@@ -1,6 +1,6 @@
 ---
 title: Variants
-updated: 2026-04-10
+updated: 2026-04-14
 status: current
 domain: product
 ---
@@ -16,7 +16,7 @@ radioactive-ralph ships as a family of ten Claude Code skills. Each one is a sep
 | [`red-ralph`](./red-ralph.md) | Single-pass incident response | CI or PR blockers are on fire | — |
 | [`blue-ralph`](./blue-ralph.md) | Read-only review | You want diagnosis without modification | — |
 | [`professor-ralph`](./professor-ralph.md) | Plan, execute, reflect | Strategy matters more than speed | — |
-| [`joe-fixit-ralph`](./joe-fixit-ralph.md) | ROI-scored bursts | You want fixed effort and small reviewable PRs | — |
+| [`fixit-ralph`](./fixit-ralph.md) | Advisor + ROI-scored bursts | You need a variant recommendation OR fixed-effort small PRs | — |
 | [`immortal-ralph`](./immortal-ralph.md) | Recovery-first autonomy | You want it to survive the night | — |
 | [`savage-ralph`](./savage-ralph.md) | Throughput at any cost | Budget is not the constraint | `--confirm-burn-budget` |
 | [`old-man-ralph`](./old-man-ralph.md) | Imposed target state | Negotiation is over | `--confirm-no-mercy` |
@@ -30,7 +30,7 @@ grey-ralph
 red-ralph
 blue-ralph
 professor-ralph
-joe-fixit-ralph
+fixit-ralph
 immortal-ralph
 savage-ralph
 old-man-ralph

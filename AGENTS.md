@@ -13,7 +13,7 @@ Two deployment modes, same core:
 
 1. **Claude Code plugin** — a family of 10 Ralph variants (`/green-ralph`,
    `/grey-ralph`, `/red-ralph`, `/blue-ralph`, `/professor-ralph`,
-   `/savage-ralph`, `/immortal-ralph`, `/joe-fixit-ralph`, `/old-man-ralph`,
+   `/savage-ralph`, `/immortal-ralph`, `/fixit-ralph`, `/old-man-ralph`,
    `/world-breaker-ralph`) installed via `claude plugin install
    radioactive-ralph`. Each variant has its own model tiering, parallelism,
    tool allowlist, and safety gate. See `skills/README.md` for the full index.

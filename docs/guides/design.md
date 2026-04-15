@@ -134,7 +134,7 @@ Ten variants, each a distinct operating mode:
 - **red** — Incident response. 8-worktree fan-out, single cycle.
 - **blue** — Read-only observer. No writes, shared-repo isolation.
 - **professor** — Plan → execute → reflect. Opus plans, sonnet executes.
-- **joe-fixit** — ROI-scored N-cycle bursts. Small PRs, bounded diffs.
+- **fixit** — ROI-scored N-cycle bursts. Small PRs, bounded diffs.
 - **immortal** — Multi-day resilient loop. Sonnet only, journaled state.
 - **savage** — Max throughput. 10-worktree parallel, +1 tier, zero sleep. Gated.
 - **old-man** — Forceful imposition. Force-resets, history rewrites. Hard-gated.

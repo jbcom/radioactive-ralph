@@ -28,7 +28,7 @@ Everything needed before the LinkedIn / Hacker News drop.
 ### Demo verification
 - [ ] `/green-ralph` runs end-to-end in single-cycle mode
 - [ ] `/red-ralph` handles a known CI failure cleanly
-- [ ] `/joe-fixit-ralph --cycles 1` prints the bill
+- [ ] `/fixit-ralph --cycles 1` prints the bill
 - [ ] `ralph status`, `ralph discover`, and `ralph pr list` return promptly on empty state
 
 ## Social links

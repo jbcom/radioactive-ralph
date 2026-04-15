@@ -39,7 +39,7 @@ Status: **M1 merged** (marketplace hygiene, broken implementations stubbed, docs
 | [`/red-ralph`](https://jonbogaty.com/radioactive-ralph/variants/red-ralph/) | CI and PR fire drills | Something is on fire and you want one clean report | — |
 | [`/blue-ralph`](https://jonbogaty.com/radioactive-ralph/variants/blue-ralph/) | Read-only review | You want diagnosis without touching the code | — |
 | [`/professor-ralph`](https://jonbogaty.com/radioactive-ralph/variants/professor-ralph/) | Plan → execute → reflect | Strategy matters more than speed | — |
-| [`/joe-fixit-ralph`](https://jonbogaty.com/radioactive-ralph/variants/joe-fixit-ralph/) | ROI-scored bursts | You want small, budget-conscious, reviewable work | — |
+| [`/fixit-ralph`](https://jonbogaty.com/radioactive-ralph/variants/fixit-ralph/) | ROI-scored bursts | You want small, budget-conscious, reviewable work | — |
 | [`/immortal-ralph`](https://jonbogaty.com/radioactive-ralph/variants/immortal-ralph/) | Recovery-first autonomy | You need it to survive the night | — |
 | [`/savage-ralph`](https://jonbogaty.com/radioactive-ralph/variants/savage-ralph/) | Maximum throughput | Budget is not the constraint | `--confirm-burn-budget` |
 | [`/old-man-ralph`](https://jonbogaty.com/radioactive-ralph/variants/old-man-ralph/) | Imposed target state | Negotiation is over | `--confirm-no-mercy` |
