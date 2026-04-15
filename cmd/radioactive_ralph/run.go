@@ -77,7 +77,7 @@ func (c *RunCmd) Run(rc *runContext) error {
 	var plansOK bool
 	if p.Name == variant.Fixit {
 		plansOK = requireActivePlan(rc.ctx, repo) == nil
-		if p.SafetyFloors.RequireSpendCap && !(c.Advise || !plansOK) {
+		if p.SafetyFloors.RequireSpendCap && !c.Advise && plansOK {
 			if spendCap := c.resolveSpendCapUSD(fromConfig); spendCap <= 0 {
 				return fmt.Errorf("variant %q requires --spend-cap-usd or [variants.%s] spend_cap_usd", p.Name, p.Name)
 			}
@@ -85,11 +85,9 @@ func (c *RunCmd) Run(rc *runContext) error {
 		if c.Advise || !plansOK {
 			return c.runAdvisor(rc.ctx, repo, plansOK)
 		}
-	} else {
-		if p.SafetyFloors.RequireSpendCap {
-			if spendCap := c.resolveSpendCapUSD(fromConfig); spendCap <= 0 {
-				return fmt.Errorf("variant %q requires --spend-cap-usd or [variants.%s] spend_cap_usd", p.Name, p.Name)
-			}
+	} else if p.SafetyFloors.RequireSpendCap {
+		if spendCap := c.resolveSpendCapUSD(fromConfig); spendCap <= 0 {
+			return fmt.Errorf("variant %q requires --spend-cap-usd or [variants.%s] spend_cap_usd", p.Name, p.Name)
 		}
 	}
 	if p.Name != variant.Fixit {

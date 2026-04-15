@@ -25,9 +25,8 @@ func worldBreakerProfile() Profile {
 		ToolAllowlist: []string{
 			ToolAgent, ToolBash, ToolEdit, ToolGlob,
 			ToolGrep, ToolRead, ToolWrite,
-			// World-breaker explicitly gets the Task* tools per its
-				// The variant docs allow Task* tools so world-breaker can manage TodoWrite-style
-			// fan-out internally.
+			// World-breaker explicitly gets the Task* tools because the
+			// variant docs allow TodoWrite-style fan-out inside the run.
 			ToolTaskCreate, ToolTaskUpdate, ToolTaskList,
 		},
 		Termination:      TerminationInfinite,
