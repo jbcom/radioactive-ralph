@@ -25,6 +25,35 @@ See [README.md](./README.md) for the full character background.
 
 ---
 
+## Running this skill
+
+When the operator invokes `/world-breaker-ralph` in Claude Code, this skill hands off to
+the `ralph` binary via Bash so the daemon runs outside the current session
+and the outer Claude remains responsive:
+
+```bash
+# 1. Verify the ralph binary is installed.
+if ! command -v ralph >/dev/null 2>&1; then
+  cat <<'EOS'
+ralph is not installed on PATH. Install via one of:
+
+  brew tap jbcom/tap && brew install ralph        # macOS, Linuxbrew
+  curl -sSL https://jonbogaty.com/radioactive-ralph/install.sh | sh
+EOS
+  exit 1
+fi
+
+# 2. Ensure the repo is initialized. ralph init --yes is idempotent and
+#    scaffolds .radioactive-ralph/{config,local,plans/index.md}.
+ralph init --yes
+
+# 3. Launch the supervisor. Foreground mode so the operator sees progress inside this session.
+ralph run --variant world-breaker --foreground --confirm-burn-everything
+```
+
+If the operator wants to stop the supervisor later, they run
+`ralph stop --variant world-breaker`. For live status, `ralph status --variant world-breaker`.
+
 ## ⚠️ WORLD-BREAKER-RALPH. READ THIS FIRST.
 
 This is not a daily driver. This is not for "I have a lot to do." This is for when something broke badly enough that the normal pace is unacceptable and cost is not a factor.

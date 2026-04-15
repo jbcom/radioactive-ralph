@@ -24,6 +24,35 @@ Reach for `green-ralph` when:
 - You don't want to think about model selection, parallelism, or priority tiers — just let it rip.
 - You're stepping away and want continuous progress until you come back.
 
+## Running this skill
+
+When the operator invokes `/green-ralph` in Claude Code, this skill hands off to
+the `ralph` binary via Bash so the daemon runs outside the current session
+and the outer Claude remains responsive:
+
+```bash
+# 1. Verify the ralph binary is installed.
+if ! command -v ralph >/dev/null 2>&1; then
+  cat <<'EOS'
+ralph is not installed on PATH. Install via one of:
+
+  brew tap jbcom/tap && brew install ralph        # macOS, Linuxbrew
+  curl -sSL https://jonbogaty.com/radioactive-ralph/install.sh | sh
+EOS
+  exit 1
+fi
+
+# 2. Ensure the repo is initialized. ralph init --yes is idempotent and
+#    scaffolds .radioactive-ralph/{config,local,plans/index.md}.
+ralph init --yes
+
+# 3. Launch the supervisor. Detached mode so this long-running variant keeps running after the skill returns.
+ralph run --variant green --detach
+```
+
+If the operator wants to stop the supervisor later, they run
+`ralph stop --variant green`. For live status, `ralph status --variant green`.
+
 ## Behavioral Constraints
 
 **DOES:**

@@ -18,18 +18,22 @@ type RunCmd struct {
 	Detach     bool   `help:"Spawn the supervisor in a multiplexer pane and return immediately."`
 	Foreground bool   `help:"Run in the foreground — invoked by launchd/systemd service units."`
 	RepoRoot   string `help:"Repo root. Defaults to cwd." type:"path"`
+
+	// Fixit-only flags.
+	Advise      bool   `help:"(fixit only) Run in advisor mode: scan the codebase + description and write a variant recommendation to .radioactive-ralph/plans/<topic>-advisor.md, then exit. Auto-enabled when plans/index.md is missing or malformed."`
+	Topic       string `help:"(fixit --advise only) Slug used for the output filename (plans/<topic>-advisor.md). Defaults to 'general'."`
+	AutoHandoff bool   `help:"(fixit --advise only) When the recommendation has no tradeoffs, spawn the recommended variant as a follow-up run automatically."`
 }
 
 // Run launches the supervisor for the named variant.
 //
-// M2 behavior (this pass):
+// M2 behavior:
 //   - --foreground: directly runs supervisor.Run in the current process.
-//     This is the path invoked by launchd/systemd service units.
-//   - neither flag: same as --foreground for now; multiplexer detach is
-//     deferred to a follow-up that wires internal/multiplexer
-//     end-to-end with supervisor exec.
-//   - --detach: rejected with a clear "not yet" message rather than
-//     silently acting like --foreground.
+//   - --detach: rejected (multiplexer detach lands alongside M3 session pool).
+//   - variant=fixit + (--advise OR plans missing): write an advisor
+//     report and exit. Actual LLM-backed recommendation logic lives in
+//     M3; M2 ships the CLI surface + stub-report plumbing so the
+//     plans-first discipline has somewhere to land.
 func (c *RunCmd) Run(rc *runContext) error {
 	if c.Detach {
 		return fmt.Errorf("--detach is deferred to a follow-up PR; use --foreground for now or run via tmux/screen yourself")
@@ -54,11 +58,24 @@ func (c *RunCmd) Run(rc *runContext) error {
 		return fmt.Errorf("variant %q refuses to run under launchd/systemd", p.Name)
 	}
 
-	// Gate 2: plans-first discipline — non-fixit variants require plans/index.md.
-	if p.Name != variant.Fixit {
-		if err := requirePlansIndex(repo); err != nil {
-			return err
+	// Fixit branch: either --advise explicitly OR plans aren't set up
+	// yet. Either way, run the advisor and exit before the supervisor
+	// spawn path.
+	if p.Name == variant.Fixit {
+		plansOK := requirePlansIndex(repo) == nil
+		if c.Advise || !plansOK {
+			return c.runAdvisor(repo, plansOK)
 		}
+	} else if err := requirePlansIndex(repo); err != nil {
+		// Every non-fixit variant refuses without valid plans.
+		return err
+	}
+
+	// Advise/topic/auto-handoff are fixit-only — reject if set on
+	// other variants so the operator can't typo themselves into a
+	// silent no-op.
+	if p.Name != variant.Fixit && (c.Advise || c.Topic != "" || c.AutoHandoff) {
+		return fmt.Errorf("--advise / --topic / --auto-handoff are only valid with --variant fixit")
 	}
 
 	// Resolve workspace knobs. Config loads if present; otherwise we
