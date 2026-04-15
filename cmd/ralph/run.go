@@ -64,7 +64,7 @@ func (c *RunCmd) Run(rc *runContext) error {
 	if p.Name == variant.Fixit {
 		plansOK := requirePlansIndex(repo) == nil
 		if c.Advise || !plansOK {
-			return c.runAdvisor(repo, plansOK)
+			return c.runAdvisor(rc.ctx, repo, plansOK)
 		}
 	} else if err := requirePlansIndex(repo); err != nil {
 		// Every non-fixit variant refuses without valid plans.
