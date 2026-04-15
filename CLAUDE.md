@@ -121,9 +121,9 @@ ralph service install --variant X       # emit launchd/systemd unit
 ## Docs
 
 Published at <https://jonbogaty.com/radioactive-ralph/> via GitHub
-Pages. During the Python era the docs were Sphinx + AutoAPI; during
-the Go rewrite they're being migrated to hand-written markdown + doc2go
-for generated API reference. See `docs/` for the current state.
+Pages. The canonical docs now live at repo-root in `docs/` and build
+with Sphinx + Shibuya. Generated API reference comes from `gomarkdoc`
+into `docs/api/`; there is no AutoAPI path in the live site.
 
 ## Release
 
