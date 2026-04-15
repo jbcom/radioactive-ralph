@@ -10,15 +10,35 @@ fail() {
   exit 1
 }
 
-if rg -n -- 'site/src/content/docs' README.md CLAUDE.md AGENTS.md docs .github site/README.md; then
+search() {
+  local pattern="$1"
+  shift
+  if command -v rg >/dev/null 2>&1; then
+    rg -n -- "$pattern" "$@"
+  else
+    grep -R -n -E --binary-files=without-match --exclude-dir=.git --exclude-dir=_build -- "$pattern" "$@"
+  fi
+}
+
+search_o() {
+  local pattern="$1"
+  shift
+  if command -v rg >/dev/null 2>&1; then
+    rg -n -o -- "$pattern" "$@"
+  else
+    grep -R -n -o -E --binary-files=without-match --exclude-dir=.git --exclude-dir=_build -- "$pattern" "$@"
+  fi
+}
+
+if search 'site/src/content/docs' README.md CLAUDE.md AGENTS.md docs .github site/README.md; then
   fail "found stale references to site/src/content/docs"
 fi
 
-if rg -n -- 'autoapi/' docs README.md CLAUDE.md AGENTS.md .github; then
+if search 'autoapi/' docs README.md CLAUDE.md AGENTS.md .github; then
   fail "found stale references to autoapi output"
 fi
 
-if rg -n -- 'install-skill' README.md CLAUDE.md AGENTS.md docs site/README.md; then
+if search 'install-skill' README.md CLAUDE.md AGENTS.md docs site/README.md; then
   fail "found stale install-skill references"
 fi
 
@@ -42,7 +62,7 @@ for pattern in \
   'ralph pr list' \
   'hatch '
 do
-  if rg -n -- "$pattern" docs/getting-started docs/guides docs/reference docs/design docs/variants README.md CLAUDE.md AGENTS.md STANDARDS.md assets/ASSETS.md site/README.md; then
+  if search "$pattern" docs/getting-started docs/guides docs/reference docs/design docs/variants README.md CLAUDE.md AGENTS.md STANDARDS.md assets/ASSETS.md site/README.md; then
     fail "found stale docs pattern: $pattern"
   fi
 done
@@ -54,7 +74,7 @@ for pattern in \
   '--transport http' \
   'serve --mcp --http'
 do
-  if rg -n -- "$pattern" docs/getting-started docs/guides docs/reference docs/design docs/variants README.md AGENTS.md assets/ASSETS.md site/README.md; then
+  if search "$pattern" docs/getting-started docs/guides docs/reference docs/design docs/variants README.md AGENTS.md assets/ASSETS.md site/README.md; then
     fail "found stale live-docs pattern: $pattern"
   fi
 done
@@ -62,7 +82,7 @@ done
 refs="$(mktemp)"
 trap 'rm -f "$refs"' EXIT
 
-rg -n -o -- 'docs/plans/[A-Za-z0-9._/-]+\.md' README.md CLAUDE.md CHANGELOG.md reference docs \
+search_o 'docs/plans/[A-Za-z0-9._/-]+\.md' README.md CLAUDE.md CHANGELOG.md reference docs \
   | cut -d: -f3- | sort -u > "$refs"
 
 while IFS= read -r rel; do
