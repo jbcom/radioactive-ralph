@@ -26,6 +26,7 @@ Both transports expose the same tool surface — server.go owns the tool registr
 - [type Server](<#Server>)
   - [func New\(o Options\) \(\*Server, error\)](<#New>)
   - [func \(s \*Server\) MCPServer\(\) \*mcpsdk.Server](<#Server.MCPServer>)
+  - [func \(s \*Server\) ServeHTTP\(ctx context.Context, addr string\) error](<#Server.ServeHTTP>)
   - [func \(s \*Server\) ServeStdio\(ctx context.Context\) error](<#Server.ServeStdio>)
 
 
@@ -80,6 +81,17 @@ func (s *Server) MCPServer() *mcpsdk.Server
 ```
 
 MCPServer returns the underlying SDK server. Useful for tests that drive the server via in\-memory transports.
+
+<a name="Server.ServeHTTP"></a>
+### func \(\*Server\) [ServeHTTP](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/mcp/http.go#L21>)
+
+```go
+func (s *Server) ServeHTTP(ctx context.Context, addr string) error
+```
+
+ServeHTTP runs the MCP server over streamable HTTP. Blocks until ctx is canceled or the listener errors.
+
+Used by the durable mode service \(\`radioactive\_ralph serve \-\-mcp \-\-http :port\`\), typically managed by launchd/systemd. One process hosts a single shared session — every client that connects pipes JSON\-RPC over the same stream.
 
 <a name="Server.ServeStdio"></a>
 ### func \(\*Server\) [ServeStdio](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/mcp/stdio.go#L15>)

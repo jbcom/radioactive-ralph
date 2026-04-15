@@ -448,7 +448,7 @@ type RepoContext struct {
 ```
 
 <a name="Explore"></a>
-### func [Explore](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/fixit/explore.go#L20>)
+### func [Explore](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/fixit/explore.go#L22>)
 
 ```go
 func Explore(ctx context.Context, repoRoot string) (RepoContext, error)

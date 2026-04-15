@@ -24,6 +24,13 @@ Ralph is a per\-repo meta\-orchestrator that keeps a fleet of Claude subprocesse
   - [func \(c \*DoctorCmd\) Run\(rc \*runContext\) error](<#DoctorCmd.Run>)
 - [type InitCmd](<#InitCmd>)
   - [func \(c \*InitCmd\) Run\(rc \*runContext\) error](<#InitCmd.Run>)
+- [type MCPCmd](<#MCPCmd>)
+- [type MCPRegisterCmd](<#MCPRegisterCmd>)
+  - [func \(c \*MCPRegisterCmd\) Run\(\_ \*runContext\) error](<#MCPRegisterCmd.Run>)
+- [type MCPStatusCmd](<#MCPStatusCmd>)
+  - [func \(c \*MCPStatusCmd\) Run\(\_ \*runContext\) error](<#MCPStatusCmd.Run>)
+- [type MCPUnregisterCmd](<#MCPUnregisterCmd>)
+  - [func \(c \*MCPUnregisterCmd\) Run\(\_ \*runContext\) error](<#MCPUnregisterCmd.Run>)
 - [type PlanCmd](<#PlanCmd>)
 - [type PlanImportCmd](<#PlanImportCmd>)
   - [func \(c \*PlanImportCmd\) Run\(rc \*runContext\) error](<#PlanImportCmd.Run>)
@@ -109,27 +116,109 @@ func (c *DoctorCmd) Run(rc *runContext) error
 Run prints the doctor report.
 
 <a name="InitCmd"></a>
-## type [InitCmd](<https://github.com/jbcom/radioactive-ralph/blob/main/cmd/radioactive_ralph/init.go#L54-L59>)
+## type [InitCmd](<https://github.com/jbcom/radioactive-ralph/blob/main/cmd/radioactive_ralph/init.go#L54-L63>)
 
 InitCmd is \`radioactive\_ralph init\`.
 
 ```go
 type InitCmd struct {
-    RepoRoot string `help:"Repo root to initialize. Defaults to cwd." type:"path" default:""`
-    Force    bool   `help:"Overwrite existing config.toml."`
-    Refresh  bool   `help:"Re-discover capabilities while preserving existing operator choices."`
-    Yes      bool   `help:"Skip interactive prompts; auto-select first candidate for multi-candidate categories."`
+    RepoRoot     string `help:"Repo root to initialize. Defaults to cwd." type:"path" default:""`
+    Force        bool   `help:"Overwrite existing config.toml."`
+    Refresh      bool   `help:"Re-discover capabilities while preserving existing operator choices."`
+    Yes          bool   `help:"Skip interactive prompts; auto-select first candidate for multi-candidate categories."`
+    SkipMCP      bool   `help:"Skip the 'claude mcp add' registration step. Default is to register."`
+    MCPTransport string `help:"Transport for the MCP registration: stdio or http." default:"stdio" enum:"stdio,http"`
+    MCPScope     string `help:"Scope for the MCP registration: local, user, or project." default:"user" enum:"local,user,project"`
+    MCPHTTPAddr  string `help:"For --mcp-transport=http, the URL Claude should connect to." default:"http://localhost:7777/mcp"`
 }
 ```
 
 <a name="InitCmd.Run"></a>
-### func \(\*InitCmd\) [Run](<https://github.com/jbcom/radioactive-ralph/blob/main/cmd/radioactive_ralph/init.go#L62>)
+### func \(\*InitCmd\) [Run](<https://github.com/jbcom/radioactive-ralph/blob/main/cmd/radioactive_ralph/init.go#L66>)
 
 ```go
 func (c *InitCmd) Run(rc *runContext) error
 ```
 
 Run executes the init subcommand.
+
+<a name="MCPCmd"></a>
+## type [MCPCmd](<https://github.com/jbcom/radioactive-ralph/blob/main/cmd/radioactive_ralph/mcp.go#L16-L20>)
+
+MCPCmd groups MCP server client\-registration helpers. These shell out to \`claude mcp add/remove/get\` rather than editing Claude Code's config files directly — the CLI is the supported interface, and using it means we stay correct when Claude changes its on\-disk format.
+
+```go
+type MCPCmd struct {
+    Register   MCPRegisterCmd   `cmd:"" help:"Register this ralph as an MCP server with Claude Code."`
+    Unregister MCPUnregisterCmd `cmd:"" help:"Remove ralph's MCP server registration."`
+    Status     MCPStatusCmd     `cmd:"" help:"Show the registered MCP server entry, if any."`
+}
+```
+
+<a name="MCPRegisterCmd"></a>
+## type [MCPRegisterCmd](<https://github.com/jbcom/radioactive-ralph/blob/main/cmd/radioactive_ralph/mcp.go#L24-L30>)
+
+MCPRegisterCmd is \`radioactive\_ralph mcp register\`. It invokes \`claude mcp add\` with args shaped for the chosen transport.
+
+```go
+type MCPRegisterCmd struct {
+    Name      string `help:"Registration name." default:"radioactive-ralph"`
+    Scope     string `help:"Config scope: local, user, project." default:"user" enum:"local,user,project"`
+    Transport string `help:"Transport: stdio (default) or http." default:"stdio" enum:"stdio,http"`
+    HTTPAddr  string `help:"For --transport=http, the URL Claude should connect to." default:"http://localhost:7777/mcp"`
+    Bin       string `help:"Path to radioactive_ralph binary. Defaults to argv[0]."`
+}
+```
+
+<a name="MCPRegisterCmd.Run"></a>
+### func \(\*MCPRegisterCmd\) [Run](<https://github.com/jbcom/radioactive-ralph/blob/main/cmd/radioactive_ralph/mcp.go#L33>)
+
+```go
+func (c *MCPRegisterCmd) Run(_ *runContext) error
+```
+
+Run shells out to \`claude mcp add\`.
+
+<a name="MCPStatusCmd"></a>
+## type [MCPStatusCmd](<https://github.com/jbcom/radioactive-ralph/blob/main/cmd/radioactive_ralph/mcp.go#L89-L91>)
+
+MCPStatusCmd is \`radioactive\_ralph mcp status\`. Shells out to \`claude mcp get \<name\>\`; exit code 0 = registered, non\-zero = not.
+
+```go
+type MCPStatusCmd struct {
+    Name string `help:"Registration name." default:"radioactive-ralph"`
+}
+```
+
+<a name="MCPStatusCmd.Run"></a>
+### func \(\*MCPStatusCmd\) [Run](<https://github.com/jbcom/radioactive-ralph/blob/main/cmd/radioactive_ralph/mcp.go#L94>)
+
+```go
+func (c *MCPStatusCmd) Run(_ *runContext) error
+```
+
+Run shells out to \`claude mcp get\`.
+
+<a name="MCPUnregisterCmd"></a>
+## type [MCPUnregisterCmd](<https://github.com/jbcom/radioactive-ralph/blob/main/cmd/radioactive_ralph/mcp.go#L71-L74>)
+
+MCPUnregisterCmd is \`radioactive\_ralph mcp unregister\`.
+
+```go
+type MCPUnregisterCmd struct {
+    Name  string `help:"Registration name." default:"radioactive-ralph"`
+    Scope string `help:"Config scope: local, user, project." default:"user" enum:"local,user,project"`
+}
+```
+
+<a name="MCPUnregisterCmd.Run"></a>
+### func \(\*MCPUnregisterCmd\) [Run](<https://github.com/jbcom/radioactive-ralph/blob/main/cmd/radioactive_ralph/mcp.go#L77>)
+
+```go
+func (c *MCPUnregisterCmd) Run(_ *runContext) error
+```
+
+Run shells out to \`claude mcp remove\`.
 
 <a name="PlanCmd"></a>
 ## type [PlanCmd](<https://github.com/jbcom/radioactive-ralph/blob/main/cmd/radioactive_ralph/plan.go#L19-L31>)

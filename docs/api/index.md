@@ -37,6 +37,7 @@ internal/multiplexer
 internal/plandag
 internal/plandag/schema
 internal/proclife
+internal/rlog
 internal/service
 internal/session
 internal/session/cassette
