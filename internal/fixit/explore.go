@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"os/exec"
@@ -12,6 +13,7 @@ import (
 	"time"
 
 	"github.com/jbcom/radioactive-ralph/internal/inventory"
+	"gopkg.in/yaml.v3"
 )
 
 // Explore runs Stage 2 — deterministic repo exploration. Every field
@@ -158,9 +160,9 @@ func scanDocs(repoRoot string) (present []DocFile, stale []string, missing []str
 }
 
 // readFrontmatter parses a YAML frontmatter block (--- … ---) into a
-// flat map. Only top-level scalar key:value pairs are extracted; nested
-// structures are ignored. Good enough for the fields we care about
-// (title, updated, status, domain).
+// flat map via gopkg.in/yaml.v3. Non-scalar values (lists, nested maps)
+// are rendered as their YAML string form so callers can still
+// case-match on them.
 func readFrontmatter(path string) map[string]string {
 	out := map[string]string{}
 	raw, err := os.ReadFile(path) //nolint:gosec // explored-path
@@ -176,19 +178,22 @@ func readFrontmatter(path string) map[string]string {
 		return out
 	}
 	block := text[3 : 3+end]
-	for _, line := range strings.Split(block, "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
+
+	raw2 := map[string]any{}
+	if err := yaml.Unmarshal([]byte(block), &raw2); err != nil {
+		return out
+	}
+	for k, v := range raw2 {
+		switch t := v.(type) {
+		case string:
+			out[k] = t
+		case time.Time:
+			out[k] = t.UTC().Format("2006-01-02")
+		case fmt.Stringer:
+			out[k] = t.String()
+		default:
+			out[k] = fmt.Sprintf("%v", v)
 		}
-		idx := strings.Index(line, ":")
-		if idx < 0 {
-			continue
-		}
-		key := strings.TrimSpace(line[:idx])
-		val := strings.TrimSpace(line[idx+1:])
-		val = strings.Trim(val, `"'`)
-		out[key] = val
 	}
 	return out
 }

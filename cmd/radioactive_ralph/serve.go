@@ -25,9 +25,6 @@ func (c *ServeCmd) Run(rc *runContext) error {
 	if !c.MCP {
 		return fmt.Errorf("--mcp is required (no other protocols supported)")
 	}
-	if c.HTTP != "" {
-		return fmt.Errorf("--http transport is not yet wired; use stdio for now")
-	}
 
 	ctx := rc.ctx
 
@@ -71,6 +68,12 @@ func (c *ServeCmd) Run(rc *runContext) error {
 		return fmt.Errorf("mcp.New: %w", err)
 	}
 
+	if c.HTTP != "" {
+		if err := server.ServeHTTP(ctx, c.HTTP); err != nil {
+			return fmt.Errorf("serve http: %w", err)
+		}
+		return nil
+	}
 	if err := server.ServeStdio(ctx); err != nil {
 		return fmt.Errorf("serve stdio: %w", err)
 	}

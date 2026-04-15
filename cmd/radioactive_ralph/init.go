@@ -52,10 +52,14 @@ func seedBootstrapPlan(ctx context.Context, repo string) error {
 
 // InitCmd is `radioactive_ralph init`.
 type InitCmd struct {
-	RepoRoot string `help:"Repo root to initialize. Defaults to cwd." type:"path" default:""`
-	Force    bool   `help:"Overwrite existing config.toml."`
-	Refresh  bool   `help:"Re-discover capabilities while preserving existing operator choices."`
-	Yes      bool   `help:"Skip interactive prompts; auto-select first candidate for multi-candidate categories."`
+	RepoRoot     string `help:"Repo root to initialize. Defaults to cwd." type:"path" default:""`
+	Force        bool   `help:"Overwrite existing config.toml."`
+	Refresh      bool   `help:"Re-discover capabilities while preserving existing operator choices."`
+	Yes          bool   `help:"Skip interactive prompts; auto-select first candidate for multi-candidate categories."`
+	SkipMCP      bool   `help:"Skip the 'claude mcp add' registration step. Default is to register."`
+	MCPTransport string `help:"Transport for the MCP registration: stdio or http." default:"stdio" enum:"stdio,http"`
+	MCPScope     string `help:"Scope for the MCP registration: local, user, or project." default:"user" enum:"local,user,project"`
+	MCPHTTPAddr  string `help:"For --mcp-transport=http, the URL Claude should connect to." default:"http://localhost:7777/mcp"`
 }
 
 // Run executes the init subcommand.
@@ -113,6 +117,25 @@ func (c *InitCmd) Run(rc *runContext) error {
 	fmt.Printf("wrote %s (gitignored)\n", res.LocalPath)
 	fmt.Printf("scaffolded %s/index.md\n", res.PlansPath)
 	fmt.Printf("updated %s\n", res.GitIgnore)
+
+	// MCP registration — on by default. The fresh-Claude-instance flow
+	// depends on this: `brew install radioactive_ralph && ralph init`
+	// should be enough for the next `claude` session to see plan.* and
+	// variant.* tools. If claude isn't on PATH, we warn and continue.
+	if !c.SkipMCP {
+		reg := &MCPRegisterCmd{
+			Name:      "radioactive-ralph",
+			Scope:     c.MCPScope,
+			Transport: c.MCPTransport,
+			HTTPAddr:  c.MCPHTTPAddr,
+		}
+		if err := reg.Run(rc); err != nil {
+			fmt.Fprintf(os.Stderr,
+				"ralph init: MCP registration warning: %v\n"+
+					"  (run `radioactive_ralph mcp register` later, or re-run init with --skip-mcp)\n",
+				err)
+		}
+	}
 	if len(res.Choices) > 0 {
 		fmt.Println("\nResolved bias preferences:")
 		for cat, skill := range res.Choices {
