@@ -24,10 +24,15 @@ func blueProfile() Profile {
 		ToolAllowlist: []string{
 			ToolAgent, ToolBash, ToolRead, ToolGlob, ToolGrep,
 		},
-		Termination:        TerminationSinglePass, // default single-pass; --loop optional at CLI layer
-		ObjectStoreDefault: "",                    // N/A for shared isolation
-		SyncSourceDefault:  "",                    // N/A for shared isolation
-		LFSModeDefault:     LFSOnDemand,           // reads may need LFS content
+		// Blue needs Bash for `gh pr review --comment` and other
+		// read-focused gh commands. SKILL.md constrains Bash to that
+		// scope; we opt in explicitly rather than permit shared+Bash
+		// silently.
+		ShellExplicitlyTrusted: true,
+		Termination:            TerminationSinglePass, // default single-pass; --loop optional at CLI layer
+		ObjectStoreDefault:     "",                    // N/A for shared isolation
+		SyncSourceDefault:      "",                    // N/A for shared isolation
+		LFSModeDefault:         LFSOnDemand,           // reads may need LFS content
 		SkillBiases: map[BiasCategory]BiasSnippet{
 			BiasReview:         "Invoke /{skill} as the review engine for every PR diff and governance scan.",
 			BiasSecurityReview: "When the diff touches auth, secrets, or IAM, add a second pass with /{skill}.",

@@ -9,8 +9,10 @@
 //     belong in git: multiplexer preference, log verbosity, etc.
 //
 // The config package only parses and validates. Applying variant defaults
-// and safety floors happens via Resolve() once a variant.Profile is
-// available; the profile itself is defined in the variant package.
+// and safety floors happens at supervisor boot time in cmd/ralph/run.go
+// (M2 shape) and will move into a dedicated Resolve() entry point once
+// the knob-override matrix grows enough per-variant overrides to
+// warrant the abstraction (M3).
 package config
 
 import (

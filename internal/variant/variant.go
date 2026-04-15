@@ -12,16 +12,22 @@
 // skills/<name>-ralph/SKILL.md.
 package variant
 
-import (
-	"errors"
-	"fmt"
-	"strings"
-	"sync"
-)
+// (Methods live in profile.go; registry + built-in wiring live in
+// registry.go so this file stays under 300 LOC and focuses on the
+// canonical type system.)
 
-// Name is the canonical variant identifier. Matches strings used in
-// skills/<name>-ralph/SKILL.md frontmatter, CLI --variant flag, and
-// voice.Variant.
+// Name is the canonical variant identifier used internally in this
+// package (e.g. "blue", "fixit"). This is the operator-facing CLI
+// --variant value and the key used by voice.Variant.
+//
+// Note that the corresponding skill directory on disk has a "-ralph"
+// suffix (e.g. skills/blue-ralph/, skills/fixit-ralph/) and the
+// SKILL.md frontmatter `name` field includes that suffix too
+// ("blue-ralph", "fixit-ralph"). The two naming conventions are
+// deliberate: the code uses the shorter form because every identifier
+// in this package is already variant-scoped, while the skill files
+// use the longer form because they live in the broader Claude Code
+// skills/ directory alongside non-ralph skills and need the context.
 type Name string
 
 // The ten variants. Ordered from safest to most destructive, loosely
@@ -214,157 +220,14 @@ type Profile struct {
 	LFSModeDefault       LFSMode
 	SafetyFloors         SafetyFloors
 	SkillBiases          map[BiasCategory]BiasSnippet
-}
 
-// WritesAllowed reports whether the variant's tool allowlist permits
-// Edit or Write. Shared-isolation variants must return false.
-func (p Profile) WritesAllowed() bool {
-	for _, t := range p.ToolAllowlist {
-		if t == ToolEdit || t == ToolWrite {
-			return true
-		}
-	}
-	return false
-}
-
-// HasGate reports whether the variant requires a confirmation flag.
-func (p Profile) HasGate() bool {
-	return p.ConfirmationGate != ""
-}
-
-// Validate ensures the profile is internally consistent. Called by
-// Register so new or edited variants fail fast with actionable errors.
-func (p Profile) Validate() error {
-	if p.Name == "" {
-		return errors.New("variant: Name required")
-	}
-	if p.Isolation == "" {
-		return fmt.Errorf("variant %q: Isolation required", p.Name)
-	}
-	// Shared-isolation implies no writes — enforced here.
-	if p.Isolation == IsolationShared && p.WritesAllowed() {
-		return fmt.Errorf("variant %q: shared isolation forbids Edit/Write tools", p.Name)
-	}
-	// Mirror-pool needs >0 parallel worktrees.
-	if p.Isolation == IsolationMirrorPool && p.MaxParallelWorktrees <= 0 {
-		return fmt.Errorf("variant %q: mirror-pool requires MaxParallelWorktrees > 0", p.Name)
-	}
-	// Mirror-single is strict: exactly 1 worktree.
-	if p.Isolation == IsolationMirrorSingle && p.MaxParallelWorktrees != 1 {
-		return fmt.Errorf("variant %q: mirror-single requires MaxParallelWorktrees = 1 (got %d)",
-			p.Name, p.MaxParallelWorktrees)
-	}
-	// N-cycles requires a positive limit.
-	if p.Termination == TerminationNCycles && p.CycleLimit <= 0 {
-		return fmt.Errorf("variant %q: n-cycles termination requires CycleLimit > 0", p.Name)
-	}
-	// Destructive variants must pin object_store = full.
-	if p.SafetyFloors.ObjectStore != "" && p.ObjectStoreDefault != p.SafetyFloors.ObjectStore {
-		return fmt.Errorf("variant %q: ObjectStoreDefault must match SafetyFloors.ObjectStore", p.Name)
-	}
-	return nil
-}
-
-// ModelForStage returns the model configured for the given stage, or
-// the model for StageExecute if no specific stage is set. Returns
-// ModelSonnet as the last-ditch default.
-func (p Profile) ModelForStage(s Stage) Model {
-	if m, ok := p.Models[s]; ok {
-		return m
-	}
-	if m, ok := p.Models[StageExecute]; ok {
-		return m
-	}
-	return ModelSonnet
-}
-
-// Registry -----------------------------------------------------------
-
-var (
-	regMu    sync.RWMutex
-	registry = make(map[Name]Profile)
-)
-
-// Register adds profile to the global registry after validation.
-// Intended to be called from variant package init functions.
-// Returns an error rather than panicking so tests can exercise
-// invalid profiles.
-func Register(p Profile) error {
-	if err := p.Validate(); err != nil {
-		return err
-	}
-	regMu.Lock()
-	defer regMu.Unlock()
-	registry[p.Name] = p
-	return nil
-}
-
-// MustRegister panics on validation failure. Used by built-in variant
-// init functions where a validation error is a programmer bug.
-func MustRegister(p Profile) {
-	if err := Register(p); err != nil {
-		panic(fmt.Sprintf("variant.MustRegister(%s): %v", p.Name, err))
-	}
-}
-
-// Lookup returns the profile for name (case-insensitive match).
-// Returns ErrNotFound if name isn't registered.
-func Lookup(name string) (Profile, error) {
-	regMu.RLock()
-	defer regMu.RUnlock()
-	norm := Name(strings.ToLower(strings.TrimSpace(name)))
-	if p, ok := registry[norm]; ok {
-		return p, nil
-	}
-	return Profile{}, fmt.Errorf("%w: %q", ErrNotFound, name)
-}
-
-// All returns every registered profile, sorted by Name.
-func All() []Profile {
-	regMu.RLock()
-	defer regMu.RUnlock()
-	out := make([]Profile, 0, len(registry))
-	for _, p := range registry {
-		out = append(out, p)
-	}
-	for i := 1; i < len(out); i++ {
-		for j := i; j > 0 && out[j-1].Name > out[j].Name; j-- {
-			out[j-1], out[j] = out[j], out[j-1]
-		}
-	}
-	return out
-}
-
-// ErrNotFound indicates a Lookup for an unregistered variant.
-var ErrNotFound = errors.New("variant: not found")
-
-// ResetRegistryForTesting clears the registry and re-registers the
-// built-in variants. Tests that mutate the registry call this from a
-// t.Cleanup to avoid bleeding state between tests.
-func ResetRegistryForTesting() {
-	regMu.Lock()
-	registry = make(map[Name]Profile)
-	regMu.Unlock()
-	// Re-register outside the lock — Register takes its own write lock,
-	// and sync.RWMutex is not re-entrant.
-	registerBuiltins()
-}
-
-func init() {
-	registerBuiltins()
-}
-
-// registerBuiltins registers all ten variants. Each profile is defined
-// in its own file (blue.go, grey.go, ...).
-func registerBuiltins() {
-	MustRegister(blueProfile())
-	MustRegister(greyProfile())
-	MustRegister(greenProfile())
-	MustRegister(redProfile())
-	MustRegister(professorProfile())
-	MustRegister(fixitProfile())
-	MustRegister(immortalProfile())
-	MustRegister(savageProfile())
-	MustRegister(oldManProfile())
-	MustRegister(worldBreakerProfile())
+	// ShellExplicitlyTrusted lets a shared-isolation variant include
+	// Bash in its allowlist despite the structural "shared = read-only"
+	// invariant. Bash is strictly more powerful than Edit+Write (it can
+	// commit, rm, network-exec), so permitting it under shared
+	// isolation is an explicit trust decision the profile declaration
+	// must own. Blue sets it to true because its SKILL.md restricts
+	// Bash to `gh pr review --comment` / read-only gh queries; other
+	// shared variants must follow the same discipline or refuse Bash.
+	ShellExplicitlyTrusted bool
 }
