@@ -1,7 +1,7 @@
 package variant
 
 // greyProfile — Original dumb grey Ralph. Single-pass mechanical hygiene.
-// Spec: skills/grey-ralph/SKILL.md.
+// Spec: docs/variants/grey-ralph.md.
 //
 // One repo (cwd), haiku for every task, one sweep one PR, no loop.
 // Uses mirror-single isolation to avoid contaminating the operator's

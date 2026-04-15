@@ -11,7 +11,7 @@ import (
 )
 
 // resolveChoices walks each BiasCategory and picks the operator's
-// preferred skill.
+// preferred helper.
 func resolveChoices(inv inventory.Inventory, resolver Resolver, prior config.File) (
 	map[variant.BiasCategory]string, []string, error,
 ) {
@@ -67,7 +67,7 @@ func resolveChoices(inv inventory.Inventory, resolver Resolver, prior config.Fil
 	return choices, disabled, nil
 }
 
-// candidatesFor finds skills whose FullName mentions the category
+// candidatesFor finds helpers whose FullName mentions the category
 // name. Matches variant/prompt.go's inferSkill heuristic so init and
 // runtime agree.
 func candidatesFor(cat variant.BiasCategory, inv inventory.Inventory) []string {

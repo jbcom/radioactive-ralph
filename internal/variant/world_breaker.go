@@ -1,7 +1,7 @@
 package variant
 
 // worldBreakerProfile — World-Breaker Ralph. All-opus, all-repos, no sleep.
-// Spec: skills/world-breaker-ralph/SKILL.md.
+// Spec: docs/variants/world-breaker-ralph.md.
 //
 // 10 parallel agents, EVERY agent opus (including PR review and merge
 // decisions), zero sleep, discovers repos beyond config.toml. Hard gate
@@ -25,9 +25,8 @@ func worldBreakerProfile() Profile {
 		ToolAllowlist: []string{
 			ToolAgent, ToolBash, ToolEdit, ToolGlob,
 			ToolGrep, ToolRead, ToolWrite,
-			// World-breaker explicitly gets the Task* tools per its
-			// SKILL.md allowed-tools list — it manages TodoWrite-style
-			// fan-out internally.
+			// World-breaker explicitly gets the Task* tools because the
+			// variant docs allow TodoWrite-style fan-out inside the run.
 			ToolTaskCreate, ToolTaskUpdate, ToolTaskList,
 		},
 		Termination:      TerminationInfinite,

@@ -87,6 +87,36 @@ func shortTempDir(t *testing.T) string {
 	return d
 }
 
+func seedActivePlan(t *testing.T, bin, repo string, env []string) {
+	t.Helper()
+	planPath := filepath.Join(repo, "plan-bootstrap.json")
+	body := `{
+  "slug": "itest",
+  "title": "integration test plan",
+  "primary_variant": "blue",
+  "confidence": 100,
+  "tasks": [
+    {
+      "id": "inspect-state",
+      "description": "Inspect supervisor state",
+      "complexity": "S",
+      "effort": "S",
+      "variant_hint": "blue"
+    }
+  ]
+}`
+	if err := os.WriteFile(planPath, []byte(body), 0o644); err != nil {
+		t.Fatalf("write bootstrap plan: %v", err)
+	}
+
+	cmd := exec.Command(bin, "plan", "import", planPath)
+	cmd.Dir = repo
+	cmd.Env = env
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("plan import: %v\n%s", err, out)
+	}
+}
+
 // ── Always-on: init round-trip -----------------------------------
 
 func TestRalphInitCreatesScaffold(t *testing.T) {
@@ -125,15 +155,15 @@ func TestRalphRunStatusStopRoundTrip(t *testing.T) {
 		"RALPH_SERVICE_CONTEXT=", // clear any inherited flag
 	)
 
-	// Bootstrap: init. The init command now also seeds a placeholder
-	// active plan in plandag so non-fixit variants pass the
-	// plans-first gate immediately.
+	// Bootstrap: init, then seed a real active plan via plan import so
+	// the repo satisfies the plans-first gate honestly.
 	initCmd := exec.Command(bin, "init", "--yes", "--skip-mcp")
 	initCmd.Dir = repo
 	initCmd.Env = env
 	if out, err := initCmd.CombinedOutput(); err != nil {
 		t.Fatalf("init: %v\n%s", err, out)
 	}
+	seedActivePlan(t, bin, repo, env)
 
 	// Start the supervisor in the background.
 	runCmd := exec.Command(bin, "run", "--variant", "blue", "--foreground")
@@ -204,7 +234,7 @@ func TestRalphRunRefusesWithoutPlansIndex(t *testing.T) {
 	repo := newGitRepo(t)
 	stateDir := shortTempDir(t)
 
-	// Deliberately skip `radioactive_ralph init` so no plans/index.md exists.
+	// Deliberately skip `radioactive_ralph init` so no active plan exists.
 	// Non-fixit variants must refuse to run.
 	cmd := exec.Command(bin, "run", "--variant", "blue", "--foreground")
 	cmd.Dir = repo

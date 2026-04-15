@@ -4,18 +4,19 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
+	"strings"
 
 	"github.com/jbcom/radioactive-ralph/internal/config"
 	"github.com/jbcom/radioactive-ralph/internal/fixit"
+	"github.com/jbcom/radioactive-ralph/internal/plandag"
 )
 
 // runAdvisor is the fixit-only code path. It drives the fixit
 // six-stage pipeline (see jonbogaty.com/radioactive-ralph/design/)
-// and emits a plan file the plans-first discipline can accept.
-//
-// plansOK reports whether a valid plans/index.md already existed.
-// Both --advise (forced advisor) and the "plans missing" fallback
-// take this path — the pipeline handles both.
+// and emits both a repo-visible advisor report and a durable DAG plan.
+// When a plan with the same slug already exists for this repo, the
+// markdown report is refreshed and the DAG is left untouched.
 func (c *RunCmd) runAdvisor(ctx context.Context, repo string, plansOK bool) error {
 	// Pull defaults from config.toml [variants.fixit] when CLI flags
 	// aren't set. Precedence: CLI > config.toml > built-in defaults.
@@ -57,7 +58,7 @@ func (c *RunCmd) runAdvisor(ctx context.Context, repo string, plansOK bool) erro
 		return fmt.Errorf("fixit pipeline: %w", err)
 	}
 
-	fmt.Printf("ralph: fixit advisor wrote %s (status=%s, confidence=%d)\n",
+	fmt.Printf("radioactive_ralph: fixit advisor wrote %s (status=%s, confidence=%d)\n",
 		result.Path, result.Status, result.Proposal.Confidence)
 	if result.Proposal.Primary != "" {
 		fmt.Printf("  primary recommendation: %s-ralph\n", result.Proposal.Primary)
@@ -70,19 +71,34 @@ func (c *RunCmd) runAdvisor(ctx context.Context, repo string, plansOK bool) erro
 		fmt.Printf("  validation: %d rule(s) failed (status=%s)\n",
 			len(result.Validation.Failures), result.Status)
 	}
+	if result.Status != fixit.StatusFallback {
+		dagResult, err := syncAdvisorPlanToDAG(ctx, repo, result)
+		if err != nil {
+			return err
+		}
+		if dagResult.planID != "" {
+			fmt.Printf("  durable plan: %s (status=%s)\n", dagResult.planID, dagResult.status)
+		} else {
+			fmt.Printf("  durable plan: unchanged (%s)\n", dagResult.note)
+		}
+	}
 
 	// Auto-handoff: only when status=current AND no alternate
-	// (unambiguous). The spawn path itself lands with M3 session
-	// pool; for now we print the command the operator should run.
+	// (unambiguous).
 	if c.AutoHandoff {
 		switch {
 		case result.Status != fixit.StatusCurrent:
-			fmt.Println("ralph: --auto-handoff skipped — plan status is not `current`")
+			fmt.Println("radioactive_ralph: --auto-handoff skipped — plan status is not `current`")
 		case result.Proposal.Alternate != "":
-			fmt.Println("ralph: --auto-handoff skipped — recommendation has tradeoffs")
+			fmt.Println("radioactive_ralph: --auto-handoff skipped — recommendation has tradeoffs")
 		default:
-			fmt.Printf("ralph: --auto-handoff → follow-up command:\n  ralph run --variant %s --foreground\n",
+			fmt.Printf("radioactive_ralph: --auto-handoff → starting %s-ralph\n",
 				result.Proposal.Primary)
+			return (&RunCmd{
+				Variant:    result.Proposal.Primary,
+				Foreground: true,
+				RepoRoot:   repo,
+			}).Run(&runContext{ctx: ctx})
 		}
 	}
 
@@ -91,9 +107,70 @@ func (c *RunCmd) runAdvisor(ctx context.Context, repo string, plansOK bool) erro
 	}
 
 	if !plansOK {
-		fmt.Println("ralph: plans/index.md was missing or malformed; advisor ran as the plans-first fallback.")
+		fmt.Println("radioactive_ralph: no active plan existed for this repo; fixit ran as the plans-first fallback.")
 	}
 	return nil
+}
+
+type dagSyncResult struct {
+	planID string
+	status plandag.PlanStatus
+	note   string
+}
+
+func syncAdvisorPlanToDAG(ctx context.Context, repo string, result fixit.EmittedPlan) (dagSyncResult, error) {
+	store, err := openPlanStore(ctx)
+	if err != nil {
+		return dagSyncResult{}, fmt.Errorf("open plan store: %w", err)
+	}
+	defer func() { _ = store.Close() }()
+
+	topic := strings.TrimSuffix(filepath.Base(result.Path), "-advisor.md")
+	plans, err := store.ListPlans(ctx, []plandag.PlanStatus{
+		plandag.PlanStatusDraft,
+		plandag.PlanStatusActive,
+		plandag.PlanStatusPaused,
+		plandag.PlanStatusDone,
+		plandag.PlanStatusFailedPartial,
+		plandag.PlanStatusArchived,
+		plandag.PlanStatusAbandoned,
+	})
+	if err != nil {
+		return dagSyncResult{}, fmt.Errorf("list plans: %w", err)
+	}
+	for _, plan := range plans {
+		if plan.RepoPath == repo && plan.Slug == topic {
+			return dagSyncResult{note: "slug already exists for this repo"}, nil
+		}
+	}
+
+	emitted, err := fixit.EmitToDAG(ctx, fixit.EmitToDAGOpts{
+		Store:      store,
+		Topic:      topic,
+		Proposal:   result.Proposal,
+		Validation: result.Validation,
+		Status:     result.Status,
+		Intent:     result.Intent,
+		RC:         result.RepoContext,
+	})
+	if err != nil {
+		return dagSyncResult{}, fmt.Errorf("sync advisor DAG: %w", err)
+	}
+	return dagSyncResult{
+		planID: emitted.PlanID,
+		status: mapFixitStatusToPlanStatus(result.Status),
+	}, nil
+}
+
+func mapFixitStatusToPlanStatus(status fixit.PlanStatus) plandag.PlanStatus {
+	switch status {
+	case fixit.StatusCurrent:
+		return plandag.PlanStatusActive
+	case fixit.StatusProvisional:
+		return plandag.PlanStatusDraft
+	default:
+		return plandag.PlanStatusDraft
+	}
 }
 
 // interactiveTerminal reports whether stdin is a terminal (TTY). Used

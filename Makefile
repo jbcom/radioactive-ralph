@@ -1,4 +1,4 @@
-.PHONY: help build test lint vuln clean install-tools release-snapshot
+.PHONY: help build test lint vuln clean install-tools release-snapshot docs-api docs-build docs-check
 
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 COMMIT  ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo none)
@@ -31,6 +31,14 @@ install-tools: ## Install dev tools (golangci-lint, govulncheck, goreleaser)
 
 release-snapshot: ## GoReleaser dry-run into ./dist/
 	goreleaser release --snapshot --clean
+
+docs-api: ## Regenerate Go API docs into ./docs/api
+	bash scripts/generate-api-docs.sh
+
+docs-build: ## Build the Sphinx docs site into ./docs/_build/html
+	python3 -m tox -e docs
+
+docs-check: docs-build ## Validate docs references and build the Sphinx site
 
 clean: ## Remove build artifacts
 	rm -rf dist/ coverage.out

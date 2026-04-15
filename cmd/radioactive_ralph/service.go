@@ -22,7 +22,7 @@ type ServiceCmd struct {
 type ServiceInstallCmd struct {
 	Variant               string   `help:"Variant to install." required:""`
 	RepoRoot              string   `help:"Repo root. Defaults to cwd." type:"path"`
-	RalphBin              string   `help:"Absolute path to ralph binary. Defaults to the currently-running executable."`
+	RalphBin              string   `help:"Absolute path to the radioactive_ralph binary. Defaults to the currently-running executable." name:"radioactive_ralph-bin"`
 	ConfirmBurnBudget     bool     `help:"Confirmation gate for savage." name:"confirm-burn-budget"`
 	ConfirmNoMercy        bool     `help:"Confirmation gate for old-man." name:"confirm-no-mercy"`
 	ConfirmBurnEverything bool     `help:"Confirmation gate for world-breaker." name:"confirm-burn-everything"`

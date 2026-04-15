@@ -56,16 +56,16 @@ Binary assets (PNG, GIF, SVG) are produced by the scripts in `scripts/` or by ha
 
 **Shot list (what the viewer must see, in order):**
 1. Empty terminal, prompt visible
-2. `radioactive_ralph status` — shows cycle count, active runs, recent Ralph events (from `_RECENT_EVENTS`)
-3. Pause 1s
-4. `ralph discover` — shows discovered work items colored per priority tier, with Ralph narration
-5. Pause 1s
-6. `ralph pr list` — shows the classified PR list across configured repos
-7. Pause 1s
-8. One Ralph Wiggum quote visible throughout (the narration is the joke)
-9. Final frame lingers ~2s on a fully populated status output so the GIF's last frame reads as a poster
+2. `radioactive_ralph doctor` — quick environment pass with no Python-era output
+3. `radioactive_ralph init --yes --skip-mcp` — repo bootstrap and plan scaffolding
+4. `radioactive_ralph plan ls` — confirms the live plan store exists
+5. In a second pane or prepared fixture, a running supervisor for one variant
+6. `radioactive_ralph status --variant green` — shows live supervisor state
+7. `radioactive_ralph attach --variant green` — brief event stream / narration beat
+8. One Ralph Wiggum quote visible throughout (the narration is still the joke)
+9. Final frame lingers ~2s on a clean, populated status or attach view so the last frame reads as a poster
 
-**How to produce it:** Use [vhs](https://github.com/charmbracelet/vhs) with the tape file at `scripts/demo.tape`. That file is the source of truth — any visual changes to the GIF should flow through the tape, not through recording freehand. Run `scripts/record-demo.sh` and it will detect vhs, asciinema+agg, or print instructions.
+**How to produce it:** Use [vhs](https://github.com/charmbracelet/vhs) with the tape file at `scripts/demo.tape`, but update that tape first so it reflects the current Go CLI rather than the archived discovery / PR-list flow. Any visual changes to the GIF should flow through the tape, not through recording freehand. Run `scripts/record-demo.sh` and it will detect vhs, asciinema+agg, or print instructions.
 
 **Dimensions:** 1200×720 window size set by the tape. Target output ~1–3 MB GIF (if larger, re-encode with `gifsicle -O3`).
 
@@ -95,7 +95,7 @@ Binary assets (PNG, GIF, SVG) are produced by the scripts in `scripts/` or by ha
 | `professor-ralph.svg` | PROFESSOR | `magenta` | `bright_magenta` | `yellow` | Mortarboard + tiny scroll |
 | `savage-ralph.svg` | SAVAGE | `bright_green` | `green` | `red` | Eyes glowing, mouth open (mindless) |
 | `immortal-ralph.svg` | IMMORTAL | `dark_green` | `green4` | `red3` | Phoenix wings behind silhouette |
-| `fixit-ralph.svg` | JOE_FIXIT | `grey62` | `grey82` | `yellow3` | Fedora + cigar (noir fixer) |
+| `fixit-ralph.svg` | FIXIT | `grey62` | `grey82` | `yellow3` | Fedora + cigar (noir fixer) |
 | `old-man-ralph.svg` | OLD_MAN | `dark_red` | `red3` | `bright_red` | Iron crown (the Maestro) |
 | `world-breaker-ralph.svg` | WORLD_BREAKER | `bright_red` | `red` | `bright_white` | Cracked-earth base under silhouette |
 
@@ -110,7 +110,7 @@ Binary assets (PNG, GIF, SVG) are produced by the scripts in `scripts/` or by ha
 **What it is:** A single SVG that replaces the ASCII diagram in `docs/reference/architecture.md` for places where SVG renders better (GitHub Pages, blog posts, the social preview if we want a variant).
 
 **What it shows:**
-- `ralph` daemon (the two-layer process) on the left
+- `radioactive_ralph` supervisor process on the left
 - Arrow pointing right to `claude` CLI subprocesses (stacked, showing up to N parallel)
 - Each Claude subprocess arrow-pointing to a repo
 - Each repo arrow-pointing back to `gh` / GitHub (PRs)

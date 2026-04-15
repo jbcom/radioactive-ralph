@@ -2,14 +2,14 @@
 //
 // Each variant is a distinct operating mode with its own parallelism,
 // model tiering, commit cadence, termination policy, tool allowlist,
-// safety floors, and skill-bias preferences. The Profile struct
+// safety floors, and capability-bias preferences. The Profile struct
 // is the canonical source of truth the supervisor reads to decide
 // how to spawn and manage Claude subprocesses.
 //
 // Each profile is registered from its own file (blue.go, grey.go, ...)
 // so any operator can read the full definition of a single variant
-// without wading through the others. Every profile is faithful to
-// skills/<name>-ralph/SKILL.md.
+// without wading through the others. The operator-facing narrative
+// lives in docs/variants/.
 package variant
 
 // (Methods live in profile.go; registry + built-in wiring live in
@@ -20,14 +20,9 @@ package variant
 // package (e.g. "blue", "fixit"). This is the operator-facing CLI
 // --variant value and the key used by voice.Variant.
 //
-// Note that the corresponding skill directory on disk has a "-ralph"
-// suffix (e.g. skills/blue-ralph/, skills/fixit-ralph/) and the
-// SKILL.md frontmatter `name` field includes that suffix too
-// ("blue-ralph", "fixit-ralph"). The two naming conventions are
-// deliberate: the code uses the shorter form because every identifier
-// in this package is already variant-scoped, while the skill files
-// use the longer form because they live in the broader Claude Code
-// skills/ directory alongside non-ralph skills and need the context.
+// Docs and CLI use the longer "-ralph" display form in prose
+// ("blue-ralph", "fixit-ralph"), but the code keeps the shorter form
+// because every identifier in this package is already variant-scoped.
 type Name string
 
 // The ten variants. Ordered from safest to most destructive, loosely
@@ -145,7 +140,7 @@ const (
 	TerminationInfinite   TerminationPolicy = "infinite"    // runs until operator stops
 )
 
-// BiasCategory identifies a skill bias slot declared by the variant.
+// BiasCategory identifies a helper-capability bias slot declared by the variant.
 // Matches the keys the operator configures in [capabilities] in
 // .radioactive-ralph/config.toml.
 type BiasCategory string
@@ -161,9 +156,9 @@ const (
 )
 
 // BiasSnippet is the system-prompt injection used when a bias slot has
-// a matching skill in the inventory.
+// a matching helper in the inventory.
 //
-// Placeholder: {skill} expands to the chosen skill's full name.
+// Placeholder: {skill} expands to the chosen helper's full name.
 type BiasSnippet string
 
 // Tool names that appear in allow/deny lists. Mirrors Claude Code's
@@ -226,8 +221,8 @@ type Profile struct {
 	// invariant. Bash is strictly more powerful than Edit+Write (it can
 	// commit, rm, network-exec), so permitting it under shared
 	// isolation is an explicit trust decision the profile declaration
-	// must own. Blue sets it to true because its SKILL.md restricts
-	// Bash to `gh pr review --comment` / read-only gh queries; other
+	// must own. Blue sets it to true because its runtime posture restricts
+	// Bash to read-focused queries; other
 	// shared variants must follow the same discipline or refuse Bash.
 	ShellExplicitlyTrusted bool
 }

@@ -49,7 +49,7 @@ type File struct {
 	Variants     map[string]VariantFile `toml:"variants"`
 }
 
-// Capabilities declares the operator's preferred skill per bias category.
+// Capabilities declares the operator's preferred helper per bias category.
 // A zero-valued string means "no preference / don't bias". The keys match
 // the BiasCategory constants defined in the variant package (M3).
 type Capabilities struct {
@@ -59,9 +59,9 @@ type Capabilities struct {
 	Brainstorm     string `toml:"brainstorm"`
 	Debugging      string `toml:"debugging"`
 
-	// DisabledBiases lists skills the operator explicitly never wants
+	// DisabledBiases lists helpers the operator explicitly never wants
 	// Ralph to bias toward, even when they're present in the inventory.
-	// This is how operators opt out of a specific review skill in favor
+	// This is how operators opt out of a specific review helper in favor
 	// of another.
 	DisabledBiases []string `toml:"disabled_biases"`
 }

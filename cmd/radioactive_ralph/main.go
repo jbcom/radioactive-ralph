@@ -1,9 +1,10 @@
 // Command radioactive_ralph is the radioactive-ralph CLI entry point.
 //
-// Ralph is a per-repo meta-orchestrator that keeps a fleet of Claude
-// subprocesses alive, focused, and productive across days of autonomous
-// development work. See https://github.com/jbcom/radioactive-ralph for
-// the full rationale and architecture plan.
+// Ralph is a per-repo orchestration binary with multiple built-in
+// personas. Today the runtime targets the claude CLI, but the long-term
+// contract is provider-oriented rather than Claude-plugin-oriented.
+// See https://github.com/jbcom/radioactive-ralph for the full rationale
+// and architecture plan.
 package main
 
 import (
@@ -37,7 +38,7 @@ type cli struct {
 	Service ServiceCmd `cmd:"" help:"Install/uninstall/list OS service units."`
 	Plan    PlanCmd    `cmd:"" help:"Query + manage plans in the plan DAG."`
 	Serve   ServeCmd   `cmd:"" help:"Run an MCP server exposing the plan + variant tool surface."`
-	MCP     MCPCmd     `cmd:"" help:"Register/unregister this ralph as an MCP server with Claude Code."`
+	MCP     MCPCmd     `cmd:"" help:"Register/unregister radioactive_ralph as an MCP server with Claude Code."`
 
 	// Supervisor is the hidden entry invoked by launchd/systemd/service
 	// wrappers. Human operators never call it directly.
@@ -54,7 +55,7 @@ func mainCode() int {
 	var c cli
 	kctx := kong.Parse(&c,
 		kong.Name("radioactive_ralph"),
-		kong.Description("Autonomous continuous development orchestrator for Claude Code."),
+		kong.Description("Autonomous development orchestrator with built-in Ralph personas."),
 		kong.Vars{"version": fmt.Sprintf("%s (%s, built %s)", Version, Commit, Date)},
 		kong.UsageOnError(),
 	)

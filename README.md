@@ -1,11 +1,11 @@
 <h1 align="center">radioactive-ralph</h1>
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/jbcom/radioactive-ralph/main/assets/brand/ralph-mascot.png" alt="Autonomous continuous development orchestrator for Claude Code." width="400"/>
+  <img src="https://raw.githubusercontent.com/jbcom/radioactive-ralph/main/assets/brand/ralph-mascot.png" alt="Radioactive Ralph mascot" width="400"/>
 </p>
 
 <p align="center">
-  <em>Autonomous continuous development orchestrator for Claude Code.</em>
+  <em>A helpful little guy with a lot of personalities.</em>
 </p>
 
 <p align="center">
@@ -14,95 +14,137 @@
   <a href="./LICENSE"><img src="https://img.shields.io/badge/license-MIT-green" alt="MIT License"/></a>
 </p>
 
-radioactive-ralph drives Claude Code across a portfolio of git repos — continuously, with a sense of humor, and with enough structure to keep the funny little guy from burning the school down.
+radioactive-ralph is a binary-first orchestration tool for repo-local AI work.
+It ships one executable, one durable plan store, and ten built-in Ralph
+personas that change how the little guy thinks, behaves, and spends effort.
 
-## Under active rewrite
+## Current direction
 
-radioactive-ralph is mid-architectural-pivot. The project started as a Python package; it is being rewritten as a Go binary. See the [PRD](docs/plans/2026-04-14-radioactive-ralph-rewrite.prq.md) for the four-milestone plan. The old Python tree is preserved in [`reference/`](reference/) until the Go rewrite ships v1.0.0.
+This branch pivots the product away from Claude marketplace/plugin packaging and
+toward a single install story:
 
-Status: **M1 merged** (marketplace hygiene, broken implementations stubbed, docs aligned to target architecture). **M2 in progress** (Go skeleton, capability-matching init wizard, SQLite event log, Unix socket IPC, stream-json session control, mirror-based worktree orchestration, brew/launchd/systemd service integration).
+- install the `radioactive_ralph` binary
+- run `radioactive_ralph init` in a repo
+- let `init` register stdio MCP with Claude Code
+- use the binary as the source of truth for variants, prompts, and runtime state
 
-## What it is
+Current implementation is still Claude-CLI-backed, but the product contract is
+now provider-oriented rather than plugin-oriented. The long-term goal is a
+declarative provider layer where a repo can bind any supported agent CLI through
+config, as long as the necessary prompt, model, effort, and structured-output
+bindings are defined.
 
-| Mode | What you get | Best for |
+## What Ralph is
+
+| Surface | What it does | Status |
 |---|---|---|
-| Claude Code plugin (skills) | Ten Ralph variants — each a slash command that launches the daemon in the background and returns control to the outer session | In-session invocation, the skill handles pre-flight checks and hand-off |
-| `ralph` binary (CLI) | `radioactive_ralph init` then `radioactive_ralph run --variant X` — runs the orchestrator directly outside any Claude session | Long-running orchestration, multi-day autonomous work on a codebase |
-| System service | `radioactive_ralph service install --variant green` — launchd on macOS, systemd --user on Linux, brew-services wrapped either way | Always-on autonomous operation for green, immortal, or blue variants |
+| `radioactive_ralph` binary | Repo init, plan tooling, MCP serving, supervisor launch, doctor checks | Live |
+| Claude Code MCP integration | Lets Claude talk to the binary over stdio MCP | Live |
+| Built-in Ralph personas | Green, grey, red, blue, professor, fixit, immortal, savage, old-man, world-breaker | Live as in-code profiles |
+| Provider abstraction | Declarative bindings for non-Claude agent CLIs | Target direction |
 
 ## Meet the Ralphs
 
 | Variant | Specialty | Use it when | Gate |
 |---|---|---|---|
-| [`/green-ralph`](https://jonbogaty.com/radioactive-ralph/variants/green-ralph/) | The classic loop | You want the default full-power orchestrator | — |
-| [`/grey-ralph`](https://jonbogaty.com/radioactive-ralph/variants/grey-ralph/) | Cheap mechanical cleanup | You need governance docs and boring hygiene fast | — |
-| [`/red-ralph`](https://jonbogaty.com/radioactive-ralph/variants/red-ralph/) | CI and PR fire drills | Something is on fire and you want one clean report | — |
-| [`/blue-ralph`](https://jonbogaty.com/radioactive-ralph/variants/blue-ralph/) | Read-only review | You want diagnosis without touching the code | — |
-| [`/professor-ralph`](https://jonbogaty.com/radioactive-ralph/variants/professor-ralph/) | Plan → execute → reflect | Strategy matters more than speed | — |
-| [`/fixit-ralph`](https://jonbogaty.com/radioactive-ralph/variants/fixit-ralph/) | ROI-scored bursts | You want small, budget-conscious, reviewable work | — |
-| [`/immortal-ralph`](https://jonbogaty.com/radioactive-ralph/variants/immortal-ralph/) | Recovery-first autonomy | You need it to survive the night | — |
-| [`/savage-ralph`](https://jonbogaty.com/radioactive-ralph/variants/savage-ralph/) | Maximum throughput | Budget is not the constraint | `--confirm-burn-budget` |
-| [`/old-man-ralph`](https://jonbogaty.com/radioactive-ralph/variants/old-man-ralph/) | Imposed target state | Negotiation is over | `--confirm-no-mercy` |
-| [`/world-breaker-ralph`](https://jonbogaty.com/radioactive-ralph/variants/world-breaker-ralph/) | Every agent on opus | The problem is genuinely catastrophic | `--confirm-burn-everything` |
+| [`green-ralph`](https://jonbogaty.com/radioactive-ralph/variants/green-ralph/) | The classic loop | You want the default full-power orchestrator | — |
+| [`grey-ralph`](https://jonbogaty.com/radioactive-ralph/variants/grey-ralph/) | Cheap mechanical cleanup | You need governance docs and boring hygiene fast | — |
+| [`red-ralph`](https://jonbogaty.com/radioactive-ralph/variants/red-ralph/) | CI and PR fire drills | Something is on fire and you want one clean report | — |
+| [`blue-ralph`](https://jonbogaty.com/radioactive-ralph/variants/blue-ralph/) | Read-only review | You want diagnosis without touching the code | — |
+| [`professor-ralph`](https://jonbogaty.com/radioactive-ralph/variants/professor-ralph/) | Plan → execute → reflect | Strategy matters more than speed | — |
+| [`fixit-ralph`](https://jonbogaty.com/radioactive-ralph/variants/fixit-ralph/) | Advisor + ROI-scored bursts | You need a free-form ask translated into a real durable plan | — |
+| [`immortal-ralph`](https://jonbogaty.com/radioactive-ralph/variants/immortal-ralph/) | Recovery-first autonomy | You need it to survive the night | — |
+| [`savage-ralph`](https://jonbogaty.com/radioactive-ralph/variants/savage-ralph/) | Maximum throughput | Budget is not the constraint | `--confirm-burn-budget` |
+| [`old-man-ralph`](https://jonbogaty.com/radioactive-ralph/variants/old-man-ralph/) | Imposed target state | Negotiation is over | `--confirm-no-mercy` |
+| [`world-breaker-ralph`](https://jonbogaty.com/radioactive-ralph/variants/world-breaker-ralph/) | Every agent on opus | The problem is genuinely catastrophic | `--confirm-burn-everything` |
 
-See the full [variants index](https://jonbogaty.com/radioactive-ralph/variants/) for bios, arguments, and safety profiles.
+See the full [variants index](https://jonbogaty.com/radioactive-ralph/variants/).
 
-## Install (once M2 ships)
-
-Three paths, all shipping from one GoReleaser release:
+## Install
 
 ```bash
-# Homebrew (macOS, Linux via Linuxbrew, WSL2+Linuxbrew on Windows)
-brew tap jbcom/tap
-brew install ralph
+# Homebrew (macOS / Linuxbrew / WSL2 + Linuxbrew)
+brew tap jbcom/pkgs
+brew install radioactive-ralph
 
-# curl | sh (any POSIX environment)
+# Windows Scoop
+scoop bucket add jbcom https://github.com/jbcom/pkgs
+scoop install radioactive-ralph
+
+# Windows Chocolatey
+choco install radioactive-ralph
+
+# curl | sh (POSIX)
 curl -sSL https://jonbogaty.com/radioactive-ralph/install.sh | sh
-
-# Claude Code plugin skill (bootstraps the binary on first run)
-claude plugin marketplace add jbcom/radioactive-ralph
-claude plugin install ralph@jbcom-plugins
 ```
 
-For Windows natively (no WSL), `scoop install ralph` or `winget install jbcom.ralph` install the binary, but the supervisor itself runs only in POSIX environments; on Windows you'll use Ralph via WSL2.
-
-## Commands (target CLI surface, post-M2)
+## Start a repo
 
 ```bash
-ralph init                               # per-repo capability-matching wizard
-ralph run --variant X [--detach]         # launch supervisor
-ralph status [--variant X | --all]       # query via Unix socket
-ralph attach --variant X                 # stream events
-ralph stop [--variant X]                 # graceful shutdown
-ralph doctor                             # environment health check
-ralph service install --variant X        # emit launchd/systemd unit
-ralph service list                       # show registered services
+radioactive_ralph init
+radioactive_ralph run --variant fixit --advise \
+  --topic stabilize-docs \
+  --description "stabilize docs and line up the next implementation pass"
+radioactive_ralph plan ls
+radioactive_ralph run --variant green --foreground
 ```
 
-## Docs and design system
+`init` registers `radioactive_ralph` with Claude Code as a stdio MCP server
+unless you pass `--skip-mcp`. `fixit --advise` now writes the repo-visible
+advisor report and seeds the first durable DAG plan for that topic when no plan
+with the same slug already exists for this repo.
+
+## Current CLI surface
+
+```bash
+radioactive_ralph init
+radioactive_ralph run --variant <name>
+radioactive_ralph status --variant <name>
+radioactive_ralph attach --variant <name>
+radioactive_ralph stop --variant <name>
+radioactive_ralph doctor
+radioactive_ralph service install --variant <name>
+radioactive_ralph service list
+radioactive_ralph plan ls
+radioactive_ralph plan show <id-or-slug>
+radioactive_ralph plan next <id-or-slug>
+radioactive_ralph plan import <path>
+radioactive_ralph plan mark-done <id-or-slug> <task-id>
+radioactive_ralph serve --mcp
+radioactive_ralph mcp register
+```
+
+## Current provider reality
+
+Today the runtime still shells out to `claude`, so these are the live operator
+requirements:
+
+- `claude` CLI installed and authenticated
+- `gh` CLI installed and authenticated for GitHub workflows
+- `git` available locally
+
+The docs in [`docs/`](docs/) now describe Claude Code as one client of the
+binary, not the identity of the product.
+
+## Docs
 
 - [Getting started](https://jonbogaty.com/radioactive-ralph/getting-started/)
-- [Ralph variants](https://jonbogaty.com/radioactive-ralph/variants/)
+- [Variants](https://jonbogaty.com/radioactive-ralph/variants/)
 - [Architecture reference](https://jonbogaty.com/radioactive-ralph/reference/architecture/)
-- [Launch guide](https://jonbogaty.com/radioactive-ralph/guides/launch/)
-
-## Requirements
-
-- `claude` CLI installed and authenticated (`claude login`)
-- `gh` CLI installed and authenticated (`gh auth login`)
-- `git` ≥ 2.5 (for worktrees)
-- `tmux` strongly recommended (the supervisor falls through to `screen` or `setsid` if not)
+- [Claude MCP integration](https://jonbogaty.com/radioactive-ralph/guides/transports/)
 
 ## Contributing
 
-See [AGENTS.md](./AGENTS.md), [STANDARDS.md](./STANDARDS.md), and [CONTRIBUTING guidance in the docs](https://jonbogaty.com/radioactive-ralph/reference/testing/).
+See [AGENTS.md](/Users/jbogaty/src/jbcom/radioactive-ralph/AGENTS.md),
+[STANDARDS.md](/Users/jbogaty/src/jbcom/radioactive-ralph/STANDARDS.md), and
+[docs/reference/testing.md](/Users/jbogaty/src/jbcom/radioactive-ralph/docs/reference/testing.md).
 
 ```bash
 git clone git@github.com:jbcom/radioactive-ralph.git
 cd radioactive-ralph
-make test          # go test ./...
-make lint          # golangci-lint run
-make build         # build ralph binary into ./dist/
+make test
+make lint
+make build
 ```
 
 ## License

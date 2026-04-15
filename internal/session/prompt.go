@@ -13,7 +13,7 @@ import (
 // category. Typically sourced from config.toml's [capabilities]
 // section plus per-variant overrides.
 //
-// Skill is the full skill name (e.g. "coderabbit:review"). Empty means
+// Skill is the full helper name (e.g. "coderabbit:review"). Empty means
 // "no preference, use variant default if inventory has it".
 //
 // Disabled means "skip this bias entirely regardless of inventory".
@@ -48,7 +48,7 @@ type PromptOptions struct {
 //     b. Else if OperatorChoices has Skill!="" AND inventory has it,
 //     render the snippet with {skill} expanded.
 //     c. Else if variant snippet contains {skill} and inventory has
-//     ANY skill matching the category name, pick the first
+//     ANY helper matching the category name, pick the first
 //     alphabetically for determinism.
 //     d. Else skip.
 //
@@ -101,11 +101,11 @@ func sortedBiasCategories(m map[variant.BiasCategory]variant.BiasSnippet) []vari
 	return out
 }
 
-// inferSkill tries to pick a sensible skill for a bias category when
+// inferSkill tries to pick a sensible helper for a bias category when
 // the operator hasn't declared one. Heuristic:
 //
-//   - Look for a skill whose FullName contains the category name
-//     (e.g. BiasReview → any skill with "review" in the name).
+//   - Look for a helper whose FullName contains the category name
+//     (e.g. BiasReview → any helper with "review" in the name).
 //   - Returns the alphabetically-first match for determinism.
 //   - Returns "" if nothing qualifies — the bias silently drops.
 func inferSkill(cat variant.BiasCategory, inv inventory.Inventory) string {

@@ -1,7 +1,7 @@
 package variant
 
 // blueProfile — Blue Ralph (Captain Universe fusion). Read-only observer.
-// Spec: skills/blue-ralph/SKILL.md.
+// Spec: docs/variants/blue-ralph.md.
 //
 // Structurally incapable of modifying repos: Edit and Write are
 // excluded from the tool allowlist. Shared isolation is therefore
@@ -25,7 +25,7 @@ func blueProfile() Profile {
 			ToolAgent, ToolBash, ToolRead, ToolGlob, ToolGrep,
 		},
 		// Blue needs Bash for `gh pr review --comment` and other
-		// read-focused gh commands. SKILL.md constrains Bash to that
+		// read-focused gh commands. The variant docs constrain Bash to that
 		// scope; we opt in explicitly rather than permit shared+Bash
 		// silently.
 		ShellExplicitlyTrusted: true,

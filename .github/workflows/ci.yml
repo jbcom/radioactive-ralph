@@ -63,16 +63,20 @@ jobs:
           go install golang.org/x/vuln/cmd/govulncheck@latest
           govulncheck ./...
 
-  marketplace-validate:
-    name: Marketplace validate
+  docs:
+    name: Docs
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-      - name: Setup Node
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
         with:
-          node-version: '22'
-      - name: Install Claude Code CLI
-        run: npm install -g @anthropic-ai/claude-code@latest
-      - name: Validate marketplace manifest
-        run: claude plugin validate .
+          go-version-file: go.mod
+      - uses: actions/setup-python@42375524e23c412d93fb67b49958b491fce71c38 # v5.6.0
+        with:
+          python-version: '3.12'
+      - name: Install gomarkdoc
+        run: go install github.com/princjef/gomarkdoc/cmd/gomarkdoc@latest
+      - name: Install tox
+        run: python -m pip install --upgrade pip tox
+      - name: Build docs
+        run: tox -e docs

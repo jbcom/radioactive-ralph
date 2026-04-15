@@ -58,9 +58,10 @@ type GHIssue struct {
 	Labels      []string
 }
 
-// InventorySnapshot is a flattened view of the capability inventory
-// (skills, MCPs, agents). The full inventory.Inventory has more
-// detail but the advisor only needs counts + names.
+// InventorySnapshot is a flattened view of the operator capability
+// inventory (helper integrations, MCPs, agents). The full
+// inventory.Inventory has more detail but the advisor only needs
+// names and high-level availability.
 type InventorySnapshot struct {
 	Skills []string // FullName form, e.g. "coderabbit:review"
 	MCPs   []string
@@ -145,7 +146,7 @@ type PlanStatus string
 
 const (
 	// StatusCurrent means the plan passed every validation rule and
-	// other variants will accept it as a valid plans/index.md target.
+	// other variants will accept it as a valid durable plan.
 	StatusCurrent PlanStatus = "current"
 
 	// StatusProvisional means at least one validation rule failed but
@@ -160,8 +161,10 @@ const (
 
 // EmittedPlan describes what Stage 6 wrote.
 type EmittedPlan struct {
-	Path       string
-	Status     PlanStatus
-	Proposal   PlanProposal // zero-valued when Status=fallback
-	Validation ValidationResult
+	Path        string
+	Status      PlanStatus
+	Proposal    PlanProposal // zero-valued when Status=fallback
+	Validation  ValidationResult
+	Intent      IntentSpec
+	RepoContext RepoContext
 }

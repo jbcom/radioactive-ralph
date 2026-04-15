@@ -32,7 +32,7 @@ func socketPath(repoRoot string, v variant.Name) (socket, heartbeat string, err 
 // "supervisor alive" from "stale socket from a crashed supervisor".
 func ensureAlive(socket, heartbeat string) error {
 	if _, err := os.Stat(socket); errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("no supervisor socket at %s (is ralph running?)", socket)
+		return fmt.Errorf("no supervisor socket at %s (is radioactive_ralph running?)", socket)
 	}
 	if !ipc.SocketAlive(heartbeat, 2*time.Minute) {
 		return fmt.Errorf(
@@ -70,8 +70,20 @@ func roundTrip(ctx context.Context, socket string, req ipc.Request) (ipc.Respons
 
 // resolveRepoRoot returns the operator's repo — defaulting to cwd.
 func resolveRepoRoot(override string) (string, error) {
-	if override != "" {
-		return override, nil
+	repo := override
+	if repo == "" {
+		cwd, err := os.Getwd()
+		if err != nil {
+			return "", err
+		}
+		repo = cwd
 	}
-	return os.Getwd()
+	abs, err := filepath.Abs(repo)
+	if err != nil {
+		return "", fmt.Errorf("resolve repo root %q: %w", repo, err)
+	}
+	if evaluated, err := filepath.EvalSymlinks(abs); err == nil {
+		abs = evaluated
+	}
+	return abs, nil
 }

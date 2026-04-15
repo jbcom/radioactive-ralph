@@ -1,7 +1,7 @@
 package variant
 
 // greenProfile — Classic green Ralph. The default workhorse.
-// Spec: skills/green-ralph/SKILL.md.
+// Spec: docs/variants/green-ralph.md.
 //
 // Infinite loop, all repos in config.toml, up to 6 parallel subagents,
 // model tiering (haiku → sonnet → opus) per task class, 60s sleep

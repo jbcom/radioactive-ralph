@@ -29,10 +29,12 @@ func Emit(plansDir, topic string, proposal PlanProposal,
 		return EmittedPlan{}, fmt.Errorf("write advisor report: %w", err)
 	}
 	return EmittedPlan{
-		Path:       path,
-		Status:     status,
-		Proposal:   proposal,
-		Validation: validation,
+		Path:        path,
+		Status:      status,
+		Proposal:    proposal,
+		Validation:  validation,
+		Intent:      intent,
+		RepoContext: rc,
 	}, nil
 }
 

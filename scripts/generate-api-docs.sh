@@ -1,15 +1,12 @@
 #!/usr/bin/env bash
-# Generate Go API reference markdown via gomarkdoc and drop it into
-# the Starlight content collection where Starlight's autogenerate:
-# directory: 'api' picks it up.
-#
-# Runs on every site build (pre-build step) and manually on demand.
+# Generate Go API reference markdown via gomarkdoc into docs/api for
+# the repo-root Sphinx site.
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-OUT_DIR="$REPO_ROOT/site/src/content/docs/api"
+OUT_DIR="$REPO_ROOT/docs/api"
 
 # Ensure gomarkdoc is available. Users get a clean install hint
 # rather than a cryptic command-not-found failure.
@@ -46,11 +43,9 @@ gomarkdoc \
     exit 1
   }
 
-# Flatten: gomarkdoc emits cmd/radioactive_ralph/main.md inside a
-# nested directory tree. Starlight's autogenerate works on any depth
-# so we leave the tree intact — but we need to add frontmatter to
-# each generated file because gomarkdoc emits raw markdown without
-# it and Starlight needs a title.
+# gomarkdoc emits raw markdown. Prepend a simple title frontmatter so
+# MyST/Sphinx gets a stable page title even when the generated H1 is
+# package-only.
 find "$OUT_DIR" -name "*.md" | while read -r file; do
   # Pull the package name from the first H1 (e.g., "# variant").
   pkg_name=$(awk '/^# /{print $2; exit}' "$file")
@@ -65,8 +60,6 @@ find "$OUT_DIR" -name "*.md" | while read -r file; do
       echo "---"
       echo "title: ${go_path}"
       echo "description: Go API reference for the ${pkg_name} package."
-      echo "sidebar:"
-      echo "  label: ${pkg_name}"
       echo "---"
       echo ""
       cat "$file"
@@ -75,19 +68,22 @@ find "$OUT_DIR" -name "*.md" | while read -r file; do
   fi
 done
 
-# Emit an index so Starlight's sidebar autogenerate has a landing.
+toc_entries=$(
+  find "$OUT_DIR" -name "*.md" ! -name "index.md" -print \
+    | sed "s#^$OUT_DIR/##" \
+    | sed 's#\.md$##' \
+    | sort
+)
+
 cat > "$OUT_DIR/index.md" <<'MDEOF'
 ---
 title: Go API reference
 description: Auto-generated Go package documentation.
-sidebar:
-  label: Overview
-  order: 0
 ---
 
 This section is **generated** from Go doc comments via
 [gomarkdoc](https://github.com/princjef/gomarkdoc). Do not edit
-files under `site/src/content/docs/api/` directly — changes will be
+files under `docs/api/` directly. Changes will be
 overwritten on the next build.
 
 To improve this reference, edit the doc comments in the corresponding
@@ -103,6 +99,18 @@ The reference mirrors the Go source tree:
 
 Each package page lists constants, variables, functions, types, and
 their public methods with signatures and associated doc comments.
+
+```{toctree}
+:hidden:
+MDEOF
+
+while IFS= read -r entry; do
+  [[ -z "$entry" ]] && continue
+  printf '%s\n' "$entry" >> "$OUT_DIR/index.md"
+done <<< "$toc_entries"
+
+cat >> "$OUT_DIR/index.md" <<'MDEOF'
+```
 MDEOF
 
 count=$(find "$OUT_DIR" -name "*.md" | wc -l | tr -d ' ')

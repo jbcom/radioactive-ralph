@@ -2,10 +2,8 @@ package main
 
 import (
 	"fmt"
-	"net/url"
 	"os"
 	"os/exec"
-	"strings"
 )
 
 // MCPCmd groups MCP server client-registration helpers. These shell
@@ -14,19 +12,17 @@ import (
 // using it means we stay correct when Claude changes its on-disk
 // format.
 type MCPCmd struct {
-	Register   MCPRegisterCmd   `cmd:"" help:"Register this ralph as an MCP server with Claude Code."`
-	Unregister MCPUnregisterCmd `cmd:"" help:"Remove ralph's MCP server registration."`
+	Register   MCPRegisterCmd   `cmd:"" help:"Register radioactive_ralph as an MCP server with Claude Code."`
+	Unregister MCPUnregisterCmd `cmd:"" help:"Remove radioactive_ralph's MCP server registration."`
 	Status     MCPStatusCmd     `cmd:"" help:"Show the registered MCP server entry, if any."`
 }
 
-// MCPRegisterCmd is `radioactive_ralph mcp register`. It invokes
-// `claude mcp add` with args shaped for the chosen transport.
+// MCPRegisterCmd is `radioactive_ralph mcp register`. It wires the
+// current binary into Claude Code as a stdio MCP server.
 type MCPRegisterCmd struct {
-	Name      string `help:"Registration name." default:"radioactive-ralph"`
-	Scope     string `help:"Config scope: local, user, project." default:"user" enum:"local,user,project"`
-	Transport string `help:"Transport: stdio (default) or http." default:"stdio" enum:"stdio,http"`
-	HTTPAddr  string `help:"For --transport=http, the URL Claude should connect to." default:"http://localhost:7777/mcp"`
-	Bin       string `help:"Path to radioactive_ralph binary. Defaults to argv[0]."`
+	Name  string `help:"Registration name." default:"radioactive_ralph"`
+	Scope string `help:"Config scope: local, user, project." default:"user" enum:"local,user,project"`
+	Bin   string `help:"Path to radioactive_ralph binary. Defaults to argv[0]."`
 }
 
 // Run shells out to `claude mcp add`.
@@ -40,17 +36,9 @@ func (c *MCPRegisterCmd) Run(_ *runContext) error {
 		bin = self
 	}
 
-	args := []string{"mcp", "add", "--scope", c.Scope}
-
-	switch c.Transport {
-	case "stdio":
-		// `claude mcp add <name> -- <cmd> <args>...`
-		args = append(args, c.Name, "--", bin, "serve", "--mcp")
-	case "http":
-		// `claude mcp add --transport http <name> <url>`
-		args = append(args, "--transport", "http", c.Name, c.HTTPAddr)
-	default:
-		return fmt.Errorf("unknown transport %q", c.Transport)
+	args := []string{
+		"mcp", "add", "--scope", c.Scope,
+		c.Name, "--", bin, "serve", "--mcp",
 	}
 
 	cmd := exec.Command("claude", args...) //nolint:gosec // args are operator-chosen + validated by enum tags
@@ -59,17 +47,13 @@ func (c *MCPRegisterCmd) Run(_ *runContext) error {
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("claude mcp add: %w", err)
 	}
-	fmt.Printf("Registered MCP server %q (%s) at %s scope.\n", c.Name, c.Transport, c.Scope)
-	if c.Transport == "http" {
-		fmt.Printf("Start the server with: radioactive_ralph serve --mcp --http %s\n",
-			addrFromURL(c.HTTPAddr))
-	}
+	fmt.Printf("Registered MCP server %q (stdio) at %s scope.\n", c.Name, c.Scope)
 	return nil
 }
 
 // MCPUnregisterCmd is `radioactive_ralph mcp unregister`.
 type MCPUnregisterCmd struct {
-	Name  string `help:"Registration name." default:"radioactive-ralph"`
+	Name  string `help:"Registration name." default:"radioactive_ralph"`
 	Scope string `help:"Config scope: local, user, project." default:"user" enum:"local,user,project"`
 }
 
@@ -87,7 +71,7 @@ func (c *MCPUnregisterCmd) Run(_ *runContext) error {
 // MCPStatusCmd is `radioactive_ralph mcp status`. Shells out to
 // `claude mcp get <name>`; exit code 0 = registered, non-zero = not.
 type MCPStatusCmd struct {
-	Name string `help:"Registration name." default:"radioactive-ralph"`
+	Name string `help:"Registration name." default:"radioactive_ralph"`
 }
 
 // Run shells out to `claude mcp get`.
@@ -96,24 +80,4 @@ func (c *MCPStatusCmd) Run(_ *runContext) error {
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	return cmd.Run()
-}
-
-// addrFromURL turns "http://host:port/path" into "host:port" for the
-// --http bind-address flag on `serve`. Minimal parsing — we only use
-// it in a print statement, so best-effort is fine.
-func addrFromURL(u string) string {
-	if parsed, err := url.Parse(u); err == nil && parsed.Host != "" {
-		return parsed.Host
-	}
-
-	for _, prefix := range []string{"http://", "https://"} {
-		if trimmed, ok := strings.CutPrefix(u, prefix); ok {
-			u = trimmed
-			break
-		}
-	}
-	if host, _, ok := strings.Cut(u, "/"); ok {
-		return host
-	}
-	return u
 }
