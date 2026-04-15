@@ -49,7 +49,7 @@ func Validate(p PlanProposal, rc RepoContext, intent IntentSpec) ValidationResul
 	// Two regexes — Go's \b is ASCII-only so non-ASCII comparison
 	// operators (≥ ≤) need a separate literal matcher.
 	allowedWord := regexp.MustCompile(
-		`(?i)\b(passes|exists|matches|returns|equal|equals|merge|merged|merges|resolved|closed|green|fail|fails|contains|satisfies|no error|no errors|0 error|0 errors|count)\b`)
+		`(?i)\b(passes|exists|matches|matching|returns|returned|equal|equals|merge|merged|merges|resolved|closed|green|fail|fails|contain|contains|satisfies|no error|no errors|0 error|0 errors|count|zero)\b`)
 	allowedSymbol := regexp.MustCompile(`(≥|≤|>=|<=|100%|\d+%|\d+ files?|\d+ lines?|\d+ errors?)`)
 	banned := regexp.MustCompile(`(?i)\b(improves?|considers?|addresses?|helps?|better|nicer)\b`)
 	for _, crit := range p.AcceptanceCriteria {

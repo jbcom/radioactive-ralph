@@ -27,8 +27,10 @@ type RunCmd struct {
 
 	// Advisor refinement thresholds. Operators can also set these in
 	// .radioactive-ralph/config.toml under [variants.fixit].
-	MaxIterations int `help:"(fixit --advise only) Max refinement passes. Default 3."`
-	MinConfidence int `help:"(fixit --advise only) Confidence threshold for accepting a proposal without refinement. Default 70."`
+	MaxIterations int    `help:"(fixit --advise only) Max refinement passes. Default 3."`
+	MinConfidence int    `help:"(fixit --advise only) Confidence threshold for accepting a proposal without refinement. Default 70."`
+	PlanModel     string `help:"(fixit --advise only) Claude model tier for planning. Default opus."`
+	PlanEffort    string `help:"(fixit --advise only) Reasoning-effort level for planning (low/medium/high/max). Default high."`
 }
 
 // Run launches the supervisor for the named variant.

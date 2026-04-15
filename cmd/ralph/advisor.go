@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/jbcom/radioactive-ralph/internal/config"
 	"github.com/jbcom/radioactive-ralph/internal/fixit"
 )
 
@@ -16,13 +17,39 @@ import (
 // Both --advise (forced advisor) and the "plans missing" fallback
 // take this path — the pipeline handles both.
 func (c *RunCmd) runAdvisor(ctx context.Context, repo string, plansOK bool) error {
+	// Pull defaults from config.toml [variants.fixit] when CLI flags
+	// aren't set. Precedence: CLI > config.toml > built-in defaults.
+	var fromConfig config.VariantFile
+	if cfg, err := config.Load(repo); err == nil && cfg.Variants != nil {
+		fromConfig = cfg.Variants["fixit"]
+	}
+
+	maxIter := c.MaxIterations
+	if maxIter == 0 && fromConfig.MaxRefinementIterations != nil {
+		maxIter = *fromConfig.MaxRefinementIterations
+	}
+	minConf := c.MinConfidence
+	if minConf == 0 && fromConfig.MinConfidenceThreshold != nil {
+		minConf = *fromConfig.MinConfidenceThreshold
+	}
+	planModel := c.PlanModel
+	if planModel == "" {
+		planModel = fromConfig.PlanModel
+	}
+	planEffort := c.PlanEffort
+	if planEffort == "" {
+		planEffort = fromConfig.PlanEffort
+	}
+
 	opts := fixit.RunOptions{
 		RepoRoot:                repo,
 		Topic:                   c.Topic,
 		Description:             c.Description,
 		NonInteractive:          !interactiveTerminal(),
-		MaxRefinementIterations: c.MaxIterations,
-		MinConfidenceThreshold:  c.MinConfidence,
+		MaxRefinementIterations: maxIter,
+		MinConfidenceThreshold:  minConf,
+		PlanModel:               planModel,
+		PlanEffort:              planEffort,
 	}
 
 	result, err := fixit.RunPipeline(ctx, opts)

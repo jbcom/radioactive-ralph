@@ -31,9 +31,19 @@ type AnalyzeOptions struct {
 	// repo root from RC.GitRoot.
 	WorkingDir string
 
-	// Timeout caps the total Claude analysis time. Default 90s — the
-	// prompt is structured + token-cheap so a real subprocess returns
-	// fast; the cap exists to protect against runaway turns.
+	// Model pins the tier for the planning subprocess. Empty defaults
+	// to "opus" — the advisor runs infrequently (once per plan), so
+	// the cost is bounded and the quality delta is meaningful.
+	Model string
+
+	// Effort pins the reasoning-effort level. Empty defaults to "high"
+	// so opus scales up on genuinely hard repos without burning tokens
+	// on simple ones.
+	Effort string
+
+	// Timeout caps the total Claude analysis time. Default 180s —
+	// opus with auto-effort can take longer than the old sonnet/medium
+	// defaults, so the cap is lifted from 90s accordingly.
 	Timeout time.Duration
 }
 
@@ -46,10 +56,20 @@ type AnalyzeOptions struct {
 // appended so the model can self-correct. Second failure bubbles up.
 func Analyze(ctx context.Context, opts AnalyzeOptions) (PlanProposal, error) {
 	if opts.Timeout <= 0 {
-		opts.Timeout = 90 * time.Second
+		opts.Timeout = 180 * time.Second
 	}
 	if opts.WorkingDir == "" {
 		opts.WorkingDir = opts.RC.GitRoot
+	}
+	if opts.Model == "" {
+		opts.Model = "opus"
+	}
+	if opts.Effort == "" {
+		// `claude -p` accepts only low|medium|high|max (as of 2.1.108).
+		// Default to high for opus so the planning subprocess reasons
+		// deeply without operator tuning. Operators who want cheaper
+		// runs pass --plan-effort medium or override in config.toml.
+		opts.Effort = "high"
 	}
 
 	prompt, err := renderAdvisorPrompt(opts.Intent, opts.RC, opts.Scores)
@@ -121,7 +141,8 @@ func callClaude(ctx context.Context, opts AnalyzeOptions, prompt string) (string
 		ClaudeBin:    opts.ClaudeBin,
 		WorkingDir:   opts.WorkingDir,
 		SystemPrompt: prompt,
-		Model:        "sonnet",
+		Model:        opts.Model,
+		Effort:       opts.Effort,
 		// No tools — the advisor must produce text only.
 		AllowedTools: []string{},
 	})

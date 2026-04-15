@@ -90,6 +90,13 @@ type Options struct {
 	// means "let claude choose" which in practice is sonnet.
 	Model string
 
+	// Effort pins the reasoning-effort level — "low", "medium",
+	// "high", or "max" (as accepted by `claude --effort`). Empty
+	// means "claude decides" which for sonnet is medium. Fixit's
+	// advisor subprocess defaults to "high" so opus reasons deeply
+	// during planning.
+	Effort string
+
 	// AllowedTools are passed to --allowed-tools. Supervisor builds
 	// this from the variant profile's ToolAllowlist.
 	AllowedTools []string

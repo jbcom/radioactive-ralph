@@ -93,6 +93,15 @@ type VariantFile struct {
 	DebuggingBias  string   `toml:"debugging_bias"`
 	SpendCapUSD    *float64 `toml:"spend_cap_usd"`
 	CycleLimit     *int     `toml:"cycle_limit"`
+
+	// Fixit-specific advisor knobs. Only meaningful in
+	// [variants.fixit]. CLI flags take precedence; these are the
+	// defaults when no flag is passed.
+	MaxRefinementIterations *int   `toml:"max_refinement_iterations"`
+	MinConfidenceThreshold  *int   `toml:"min_confidence_threshold"`
+	PlanModel               string `toml:"plan_model"`
+	PlanEffort              string `toml:"plan_effort"`
+
 	// Extra is a catch-all for forward-compat; unknown keys at decode time
 	// are tolerated (extra=allow equivalent), but callers that want to
 	// warn on unknown fields can read Unknown after Load.

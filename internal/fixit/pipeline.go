@@ -37,6 +37,18 @@ type RunOptions struct {
 	// Configurable via CLI flag or config.toml [variants.fixit]
 	// min_confidence_threshold.
 	MinConfidenceThreshold int
+
+	// PlanModel pins the Claude model tier for Stage 4 planning.
+	// Empty defaults to "opus" — planning benefits from the most
+	// capable tier and the advisor runs infrequently. Configurable
+	// via CLI (--plan-model) or config.toml [variants.fixit]
+	// plan_model.
+	PlanModel string
+
+	// PlanEffort pins the reasoning-effort level for Stage 4.
+	// Empty defaults to "high". Configurable via CLI (--plan-effort)
+	// or config.toml [variants.fixit] plan_effort.
+	PlanEffort string
 }
 
 // RunPipeline orchestrates Stages 1-6 and returns what was emitted.
@@ -89,6 +101,8 @@ func RunPipeline(ctx context.Context, opts RunOptions) (EmittedPlan, error) {
 			Scores:     scores,
 			ClaudeBin:  opts.ClaudeBin,
 			WorkingDir: opts.RepoRoot,
+			Model:      opts.PlanModel,
+			Effort:     opts.PlanEffort,
 		},
 		MaxIterations:          opts.MaxRefinementIterations,
 		MinConfidenceThreshold: opts.MinConfidenceThreshold,

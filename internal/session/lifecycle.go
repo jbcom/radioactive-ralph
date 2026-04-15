@@ -104,6 +104,9 @@ func buildArgs(opts Options) []string {
 	if opts.Model != "" {
 		args = append(args, "--model", opts.Model)
 	}
+	if opts.Effort != "" {
+		args = append(args, "--effort", opts.Effort)
+	}
 	for _, t := range opts.AllowedTools {
 		args = append(args, "--allowed-tools", t)
 	}
