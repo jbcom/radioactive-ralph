@@ -93,7 +93,7 @@ func TestRalphInitCreatesScaffold(t *testing.T) {
 	bin := buildRalph(t)
 	repo := newGitRepo(t)
 
-	cmd := exec.Command(bin, "init", "--yes")
+	cmd := exec.Command(bin, "init", "--yes", "--skip-mcp")
 	cmd.Dir = repo
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("ralph init: %v\n%s", err, out)
@@ -128,7 +128,7 @@ func TestRalphRunStatusStopRoundTrip(t *testing.T) {
 	// Bootstrap: init. The init command now also seeds a placeholder
 	// active plan in plandag so non-fixit variants pass the
 	// plans-first gate immediately.
-	initCmd := exec.Command(bin, "init", "--yes")
+	initCmd := exec.Command(bin, "init", "--yes", "--skip-mcp")
 	initCmd.Dir = repo
 	initCmd.Env = env
 	if out, err := initCmd.CombinedOutput(); err != nil {
