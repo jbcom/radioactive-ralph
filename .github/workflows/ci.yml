@@ -244,7 +244,16 @@ jobs:
             throw "repo service never became ready"
           }
           & $env:RALPH_BIN stop --repo-root $repo | Out-Null
-          Wait-Process -Id $proc.Id -Timeout 30
+          # Wait-Process throws if the process has already exited — that's
+          # the happy path here, not a failure. Poll HasExited instead so a
+          # fast shutdown doesn't race the waiter.
+          $deadline = (Get-Date).AddSeconds(30)
+          while (-not $proc.HasExited -and (Get-Date) -lt $deadline) {
+            Start-Sleep -Milliseconds 200
+          }
+          if (-not $proc.HasExited) {
+            throw "repo service did not exit within 30s of stop"
+          }
           $statusExit = Invoke-QuietNative -FilePath $env:RALPH_BIN -ArgumentList @("status", "--repo-root", $repo)
           if ($statusExit -eq 0) { throw "expected status to fail after stop" }
       - name: Upload coverage
