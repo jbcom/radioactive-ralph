@@ -38,6 +38,8 @@ part of the shipped runtime anymore.
 
 The remaining work is polish rather than missing architecture:
 
+- a written launch/backlog plan now lives in
+  [plans/2026-04-16-v1-remaining-work.prd.md](../plans/2026-04-16-v1-remaining-work.prd.md)
 - richer TUI navigation, filtering, and prompt-entry ergonomics
 - broader native-host smoke testing, especially on real Windows machines
 - continued copy cleanup in archival and lore-heavy pages that intentionally
