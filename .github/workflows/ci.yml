@@ -168,6 +168,21 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
+          function Invoke-QuietNative {
+            param(
+              [Parameter(Mandatory = $true)][string]$FilePath,
+              [Parameter(Mandatory = $true)][string[]]$ArgumentList
+            )
+            $token = [guid]::NewGuid().ToString()
+            $stdout = Join-Path $env:RUNNER_TEMP "$token.stdout.log"
+            $stderr = Join-Path $env:RUNNER_TEMP "$token.stderr.log"
+            try {
+              $proc = Start-Process -FilePath $FilePath -ArgumentList $ArgumentList -RedirectStandardOutput $stdout -RedirectStandardError $stderr -PassThru -Wait -NoNewWindow
+              return $proc.ExitCode
+            } finally {
+              Remove-Item $stdout, $stderr -ErrorAction SilentlyContinue
+            }
+          }
           $tmp = Join-Path $env:RUNNER_TEMP "ralph-smoke"
           $repo = Join-Path $tmp "repo"
           New-Item -ItemType Directory -Force -Path $repo | Out-Null
@@ -178,8 +193,8 @@ jobs:
           Push-Location $repo
           try {
             & $env:RALPH_BIN plan ls | Out-Null
-            & $env:RALPH_BIN status --repo-root $repo *> $null
-            if ($LASTEXITCODE -eq 0) { throw "expected status to fail before the repo service is running" }
+            $statusExit = Invoke-QuietNative -FilePath $env:RALPH_BIN -ArgumentList @("status", "--repo-root", $repo)
+            if ($statusExit -eq 0) { throw "expected status to fail before the repo service is running" }
           } finally {
             Pop-Location
           }
@@ -187,6 +202,21 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
+          function Invoke-QuietNative {
+            param(
+              [Parameter(Mandatory = $true)][string]$FilePath,
+              [Parameter(Mandatory = $true)][string[]]$ArgumentList
+            )
+            $token = [guid]::NewGuid().ToString()
+            $stdout = Join-Path $env:RUNNER_TEMP "$token.stdout.log"
+            $stderr = Join-Path $env:RUNNER_TEMP "$token.stderr.log"
+            try {
+              $proc = Start-Process -FilePath $FilePath -ArgumentList $ArgumentList -RedirectStandardOutput $stdout -RedirectStandardError $stderr -PassThru -Wait -NoNewWindow
+              return $proc.ExitCode
+            } finally {
+              Remove-Item $stdout, $stderr -ErrorAction SilentlyContinue
+            }
+          }
           $tmp = Join-Path $env:RUNNER_TEMP "ralph-live"
           $repo = Join-Path $tmp "repo"
           $state = Join-Path $tmp "state"
@@ -215,8 +245,8 @@ jobs:
           }
           & $env:RALPH_BIN stop --repo-root $repo | Out-Null
           Wait-Process -Id $proc.Id -Timeout 30
-          & $env:RALPH_BIN status --repo-root $repo *> $null
-          if ($LASTEXITCODE -eq 0) { throw "expected status to fail after stop" }
+          $statusExit = Invoke-QuietNative -FilePath $env:RALPH_BIN -ArgumentList @("status", "--repo-root", $repo)
+          if ($statusExit -eq 0) { throw "expected status to fail after stop" }
       - name: Upload coverage
         if: matrix.os == 'ubuntu-latest'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
