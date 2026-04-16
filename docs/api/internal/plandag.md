@@ -67,7 +67,9 @@ The schema is embedded under schema/\*.sql and applied in lexical order by Migra
   - [func \(s \*Store\) RequeueTaskWithPayload\(ctx context.Context, planID, taskID, sessionID string, payload TaskEventPayload, variantHint string, requireApproval bool\) error](<#Store.RequeueTaskWithPayload>)
   - [func \(s \*Store\) SetPlanStatus\(ctx context.Context, id string, status PlanStatus\) error](<#Store.SetPlanStatus>)
   - [func \(s \*Store\) SetSessionVariantTask\(ctx context.Context, sessionVariantID, planID, taskID string\) error](<#Store.SetSessionVariantTask>)
+  - [func \(s \*Store\) TaskDeps\(ctx context.Context, planID, taskID string\) \(TaskDepsResult, error\)](<#Store.TaskDeps>)
 - [type Task](<#Task>)
+- [type TaskDepsResult](<#TaskDepsResult>)
 - [type TaskEvent](<#TaskEvent>)
 - [type TaskEventPayload](<#TaskEventPayload>)
   - [func ParseTaskPayload\(raw string\) \(TaskEventPayload, error\)](<#ParseTaskPayload>)
@@ -637,6 +639,15 @@ func (s *Store) SetSessionVariantTask(ctx context.Context, sessionVariantID, pla
 
 SetSessionVariantTask updates the currently assigned plan/task for one session\_variant row and refreshes its heartbeat.
 
+<a name="Store.TaskDeps"></a>
+### func \(\*Store\) [TaskDeps](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plandag/task_deps.go#L19>)
+
+```go
+func (s *Store) TaskDeps(ctx context.Context, planID, taskID string) (TaskDepsResult, error)
+```
+
+TaskDeps returns the up\-and\-down neighborhood for \(planID, taskID\) in a single round trip. Used by the TUI task\-detail view.
+
 <a name="Task"></a>
 ## type [Task](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plandag/task.go#L30-L48>)
 
@@ -661,6 +672,18 @@ type Task struct {
     ParentTaskID       string
     CreatedAt          time.Time
     UpdatedAt          time.Time
+}
+```
+
+<a name="TaskDepsResult"></a>
+## type [TaskDepsResult](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plandag/task_deps.go#L12-L15>)
+
+TaskDepsResult captures both directions of a task's DAG edges: the tasks this one depends on, and the tasks that depend on this one. Each side is returned as a list of task IDs in ascending lexical order so TUI drilldowns render deterministically.
+
+```go
+type TaskDepsResult struct {
+    DependsOn  []string // tasks this task waits for
+    DependedBy []string // tasks that wait for this task
 }
 ```
 

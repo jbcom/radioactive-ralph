@@ -1,11 +1,17 @@
 ---
-title: Launch
-lastUpdated: 2026-04-15
+title: Launch (marketing)
+lastUpdated: 2026-04-16
 ---
 
 # Launch Plan — radioactive-ralph
 
-Everything needed before the LinkedIn / Hacker News drop.
+Everything needed before the LinkedIn / Hacker News drop. This is the
+**marketing** side of a launch — visual assets, demo, social links.
+
+- Release-engineering checklist (tag, package, smoke, rollback):
+  [`launch/release-checklist`](../launch/release-checklist.md)
+- Operator runbooks (install, auth, service, approvals, troubleshooting):
+  [`runbooks/`](../runbooks/index.md)
 
 ## Checklist
 
