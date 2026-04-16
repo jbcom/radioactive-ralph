@@ -51,6 +51,8 @@ lastUpdated: 2026-04-15
 
 getting-started/index
 guides/index
+runbooks/index
+launch/index
 variants/index
 reference/index
 api/index
