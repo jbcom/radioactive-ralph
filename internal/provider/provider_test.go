@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -34,6 +35,9 @@ func TestNewRunnerSupportsBuiltins(t *testing.T) {
 }
 
 func TestCodexRunnerWritesStructuredOutput(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell-script fake CLI is Unix-only")
+	}
 	bin := writeFakeCLI(t, "fake-codex.sh", `#!/bin/sh
 out=""
 while [ "$#" -gt 0 ]; do
@@ -72,6 +76,9 @@ printf '%s' '{"outcome":"done","summary":"codex ok","evidence":["used codex"]}' 
 }
 
 func TestGeminiRunnerReturnsStdout(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell-script fake CLI is Unix-only")
+	}
 	bin := writeFakeCLI(t, "fake-gemini.sh", `#!/bin/sh
 printf '%s' '{"outcome":"blocked","summary":"need more context","evidence":[],"reason":"missing release notes","needs_context":["release-notes"]}'
 `)
@@ -94,6 +101,9 @@ printf '%s' '{"outcome":"blocked","summary":"need more context","evidence":[],"r
 }
 
 func TestClaudeRunnerConsumesStreamJSON(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell-script fake CLI is Unix-only")
+	}
 	bin := writeFakeCLI(t, "fake-claude.sh", `#!/bin/sh
 sid=""
 while [ "$#" -gt 0 ]; do

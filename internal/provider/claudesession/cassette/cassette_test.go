@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -19,7 +20,11 @@ import (
 func buildBin(t *testing.T, pkg string) string {
 	t.Helper()
 	dir := t.TempDir()
-	bin := filepath.Join(dir, filepath.Base(pkg))
+	name := filepath.Base(pkg)
+	if runtime.GOOS == "windows" {
+		name += ".exe"
+	}
+	bin := filepath.Join(dir, name)
 	cmd := exec.Command("go", "build", "-o", bin, pkg)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("build %s: %v\n%s", pkg, err, out)

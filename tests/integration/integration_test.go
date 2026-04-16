@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -20,7 +21,11 @@ import (
 func buildRalph(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
-	bin := filepath.Join(dir, "radioactive_ralph")
+	name := "radioactive_ralph"
+	if runtime.GOOS == "windows" {
+		name += ".exe"
+	}
+	bin := filepath.Join(dir, name)
 	cmd := exec.Command("go", "build", "-o", bin,
 		"github.com/jbcom/radioactive-ralph/cmd/radioactive_ralph")
 	cmd.Dir = projectRoot(t)
@@ -79,7 +84,11 @@ func mustGit(t *testing.T, cwd string, args ...string) {
 // 104-byte Unix socket limit.
 func shortTempDir(t *testing.T) string {
 	t.Helper()
-	d, err := os.MkdirTemp("/tmp", "itest-")
+	base := os.TempDir()
+	if runtime.GOOS == "darwin" {
+		base = "/tmp"
+	}
+	d, err := os.MkdirTemp(base, "itest-")
 	if err != nil {
 		t.Fatalf("MkdirTemp: %v", err)
 	}

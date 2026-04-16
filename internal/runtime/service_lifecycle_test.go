@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"runtime"
 	"testing"
 	"time"
 
@@ -111,7 +112,11 @@ func assertAttachStreamsServiceStart(endpoint string) error {
 
 func shortStateRoot(t *testing.T) string {
 	t.Helper()
-	dir, err := os.MkdirTemp("/tmp", "ralph-state-*")
+	base := os.TempDir()
+	if runtime.GOOS == "darwin" {
+		base = "/tmp"
+	}
+	dir, err := os.MkdirTemp(base, "ralph-state-*")
 	if err != nil {
 		t.Fatalf("MkdirTemp: %v", err)
 	}

@@ -11,6 +11,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -100,7 +101,11 @@ func (f *fakeHandler) HandleAttach(ctx context.Context, emit func(json.RawMessag
 // /var/folders/... can exceed that, so we use /tmp/ipc-<suffix> instead.
 func shortTempDir(t *testing.T) string {
 	t.Helper()
-	dir, err := os.MkdirTemp("/tmp", "ipct-*")
+	base := os.TempDir()
+	if runtime.GOOS == "darwin" {
+		base = "/tmp"
+	}
+	dir, err := os.MkdirTemp(base, "ipct-*")
 	if err != nil {
 		t.Fatalf("mkdir tmp: %v", err)
 	}

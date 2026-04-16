@@ -3,6 +3,7 @@ package ipc
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"path"
 	"path/filepath"
 	"runtime"
 )
@@ -14,12 +15,12 @@ func ServiceEndpoint(sessionsDir string) (endpoint, heartbeat string) {
 }
 
 func serviceEndpointForGOOS(goos, sessionsDir string) (endpoint, heartbeat string) {
-	heartbeat = filepath.Join(sessionsDir, "service.alive")
 	if goos == "windows" {
+		heartbeat = filepath.Join(sessionsDir, "service.alive")
 		sum := sha256.Sum256([]byte(sessionsDir))
 		token := hex.EncodeToString(sum[:])[:12]
 		return `\\.\pipe\radioactive_ralph-` + token + `-service`, heartbeat
 	}
-	endpoint = filepath.Join(sessionsDir, "service.sock")
+	endpoint = path.Join(sessionsDir, "service.sock")
 	return endpoint, endpoint + ".alive"
 }

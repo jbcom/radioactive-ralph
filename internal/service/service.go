@@ -17,6 +17,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -73,10 +74,10 @@ func UnitName(b Backend, repoPath string) string {
 func UnitPath(b Backend, home, repoPath string) string {
 	switch b {
 	case BackendLaunchd:
-		return filepath.Join(home, "Library", "LaunchAgents",
+		return path.Join(home, "Library", "LaunchAgents",
 			UnitName(b, repoPath)+".plist")
 	case BackendSystemdUser:
-		return filepath.Join(home, ".config", "systemd", "user",
+		return path.Join(home, ".config", "systemd", "user",
 			UnitName(b, repoPath)+".service")
 	case BackendWindowsSCM:
 		return filepath.Join(home, "AppData", "Local", "radioactive-ralph",

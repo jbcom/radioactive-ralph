@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -16,7 +17,11 @@ import (
 func buildFakeClaude(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
-	bin := filepath.Join(dir, "fake-claude")
+	name := "fake-claude"
+	if runtime.GOOS == "windows" {
+		name += ".exe"
+	}
+	bin := filepath.Join(dir, name)
 	cmd := exec.Command("go", "build", "-o", bin,
 		"github.com/jbcom/radioactive-ralph/internal/provider/claudesession/internal/fakeclaude")
 	if out, err := cmd.CombinedOutput(); err != nil {
