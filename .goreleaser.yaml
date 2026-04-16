@@ -82,8 +82,9 @@ changelog:
       - Merge branch
 
 # Single cross-packager repo at jbcom/pkgs holds Formula/, bucket/,
-# choco/, nix/, etc. Users tap with `brew tap jbcom/pkgs` — no separate
-# homebrew-* mirror needed.
+# choco/, nix/, etc. Users tap with
+# `brew tap jbcom/pkgs https://github.com/jbcom/pkgs` (the explicit URL
+# form is required because the repo isn't named homebrew-pkgs).
 brews:
   - name: radioactive-ralph
     ids: [default]
@@ -169,7 +170,7 @@ release:
 
     Homebrew (macOS / Linux / Linuxbrew):
     ```
-    brew tap jbcom/pkgs
+    brew tap jbcom/pkgs https://github.com/jbcom/pkgs
     brew install radioactive-ralph
     ```
 
