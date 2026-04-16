@@ -10,7 +10,6 @@ import (
 	"log/slog"
 	"net"
 	"os"
-	"path/filepath"
 	"runtime"
 	"strings"
 	"sync"
@@ -427,8 +426,7 @@ func TestServiceEndpointWindows(t *testing.T) {
 func TestStopIsIdempotent(t *testing.T) {
 	h := &fakeHandler{}
 	dir := shortTempDir(t)
-	socketPath := filepath.Join(dir, "s.sock")
-	heartbeat := filepath.Join(dir, "s.alive")
+	socketPath, heartbeat := ServiceEndpoint(dir)
 	srv, err := NewServer(ServerOptions{
 		SocketPath:    socketPath,
 		HeartbeatPath: heartbeat,

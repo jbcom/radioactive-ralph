@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/jbcom/radioactive-ralph/internal/ipc"
@@ -27,7 +28,7 @@ func socketPath(repoRoot string) (socket, heartbeat string, err error) {
 // "service alive" from "stale socket from a crashed runtime".
 func ensureAlive(socket, heartbeat string) error {
 	if _, err := os.Stat(socket); errors.Is(err, os.ErrNotExist) {
-		if len(socket) >= 9 && socket[:9] == `\\.\pipe\` {
+		if strings.HasPrefix(socket, `\\.\pipe\`) {
 			if !ipc.SocketAlive(heartbeat, 2*time.Minute) {
 				return fmt.Errorf("no repo service heartbeat at %s (is `radioactive_ralph service start` running?)", heartbeat)
 			}

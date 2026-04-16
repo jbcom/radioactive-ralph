@@ -60,7 +60,7 @@ var ErrUnsupportedBackend = errors.New("service: unsupported platform")
 ```
 
 <a name="Install"></a>
-## func [Install](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/service/service.go#L121>)
+## func [Install](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/service/service.go#L122>)
 
 ```go
 func Install(opts InstallOptions) (path string, err error)
@@ -69,7 +69,7 @@ func Install(opts InstallOptions) (path string, err error)
 Install writes or registers the platform service definition for the given repo. On launchd/systemd this means writing the unit file; on Windows it also registers the SCM entry.
 
 <a name="IsServiceContext"></a>
-## func [IsServiceContext](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/service/service.go#L206>)
+## func [IsServiceContext](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/service/service.go#L207>)
 
 ```go
 func IsServiceContext() bool
@@ -87,7 +87,7 @@ func MarshalWindowsServiceConfig(opts InstallOptions) ([]byte, error)
 MarshalWindowsServiceConfig renders the Windows service config in the exact JSON form written to disk for the native service host.
 
 <a name="Uninstall"></a>
-## func [Uninstall](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/service/service.go#L174>)
+## func [Uninstall](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/service/service.go#L175>)
 
 ```go
 func Uninstall(opts InstallOptions) error
@@ -96,7 +96,7 @@ func Uninstall(opts InstallOptions) error
 Uninstall removes the unit file. Returns nil if already absent.
 
 <a name="UnitName"></a>
-## func [UnitName](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/service/service.go#L59>)
+## func [UnitName](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/service/service.go#L60>)
 
 ```go
 func UnitName(b Backend, repoPath string) string
@@ -105,7 +105,7 @@ func UnitName(b Backend, repoPath string) string
 UnitName returns the canonical service definition name for a repo. launchd: "jbcom.radioactive\-ralph.\<slug\>.\<hash\>" systemd: "radioactive\_ralph\-\<slug\>\-\<hash\>" windows\-scm: "radioactive\_ralph\-\<slug\>\-\<hash\>"
 
 <a name="UnitPath"></a>
-## func [UnitPath](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/service/service.go#L73>)
+## func [UnitPath](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/service/service.go#L74>)
 
 ```go
 func UnitPath(b Backend, home, repoPath string) string
@@ -123,7 +123,7 @@ func WindowsServiceArgs(repoPath, serviceName, configPath string) []string
 WindowsServiceArgs returns the radioactive\_ralph argv used by the native Windows SCM service entry.
 
 <a name="Backend"></a>
-## type [Backend](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/service/service.go#L27>)
+## type [Backend](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/service/service.go#L28>)
 
 Backend identifies which platform mechanism is in use.
 
@@ -148,7 +148,7 @@ const (
 ```
 
 <a name="DetectBackend"></a>
-### func [DetectBackend](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/service/service.go#L42>)
+### func [DetectBackend](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/service/service.go#L43>)
 
 ```go
 func DetectBackend() Backend
@@ -157,7 +157,7 @@ func DetectBackend() Backend
 DetectBackend returns the appropriate backend for the current OS.
 
 <a name="InstallOptions"></a>
-## type [InstallOptions](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/service/service.go#L90-L105>)
+## type [InstallOptions](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/service/service.go#L91-L106>)
 
 InstallOptions configures an install.
 

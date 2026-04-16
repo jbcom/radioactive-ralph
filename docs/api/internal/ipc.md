@@ -104,7 +104,7 @@ func NewServer(opts ServerOptions) (*Server, error)
 NewServer constructs a Server. It does NOT bind the socket — call Start to begin accepting connections.
 
 <a name="ServiceEndpoint"></a>
-## func [ServiceEndpoint](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/paths.go#L12>)
+## func [ServiceEndpoint](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/paths.go#L13>)
 
 ```go
 func ServiceEndpoint(sessionsDir string) (endpoint, heartbeat string)
