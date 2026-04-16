@@ -103,6 +103,7 @@ type taskSummary struct {
 	Status           plandag.TaskStatus
 	LatestEventType  string
 	LatestPayload    plandag.TaskEventPayload
+	AcceptanceJSON   string
 }
 
 type queueSnapshot struct {
@@ -138,6 +139,7 @@ type tuiModel struct {
 	selectedPlanID string
 	inputMode      inputMode
 	input          string
+	showHelp       bool
 }
 
 func newTUIModel(repo, socket, heartbeat string, serviceStarted bool, serviceLog string) *tuiModel {
@@ -275,6 +277,9 @@ func (m *tuiModel) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.input = ""
 		}
 		return m, nil
+	case "?":
+		m.showHelp = !m.showHelp
+		return m, nil
 	}
 	return m, nil
 }
@@ -366,7 +371,47 @@ func (m *tuiModel) View() string {
 		b.WriteString(m.input)
 		b.WriteString("\n\n")
 	}
-	b.WriteString(muted.Render("keys: tab switch • ↑/↓ move • r refresh • s stop • S start • a approve • R requeue • t retry • h handoff • d done • f fail • q quit"))
+	if m.showHelp {
+		b.WriteString(renderHelpOverlay(label, muted))
+	} else {
+		b.WriteString(muted.Render("keys: tab/←→ switch • ↑↓ move • r refresh • s stop • S start • a approve • R requeue • t retry • h handoff • d done • f fail • ? help • q quit"))
+	}
+	return b.String()
+}
+
+// renderHelpOverlay is the verbose help panel toggled with `?`. It
+// groups shortcuts by category so operators can discover actions
+// without reading source.
+func renderHelpOverlay(label, muted lipgloss.Style) string {
+	var b strings.Builder
+	b.WriteString(label.Render("Keyboard shortcuts"))
+	b.WriteString("\n\n")
+	b.WriteString(label.Render("Navigation"))
+	b.WriteString("\n")
+	b.WriteString("  tab / →             next tab\n")
+	b.WriteString("  shift+tab / ←       previous tab\n")
+	b.WriteString("  j / ↓               cursor down\n")
+	b.WriteString("  k / ↑               cursor up\n")
+	b.WriteString("  enter               select plan (on Plans tab)\n\n")
+	b.WriteString(label.Render("Service"))
+	b.WriteString("\n")
+	b.WriteString("  r                   refresh status now\n")
+	b.WriteString("  s                   stop the repo service\n")
+	b.WriteString("  S                   start the repo service\n\n")
+	b.WriteString(label.Render("Task actions"))
+	b.WriteString("\n")
+	b.WriteString("  a                   approve (Approvals tab only)\n")
+	b.WriteString("  R                   requeue\n")
+	b.WriteString("  t                   retry\n")
+	b.WriteString("  h                   handoff (prompts for variant[:reason])\n")
+	b.WriteString("  d                   mark done\n")
+	b.WriteString("  f                   mark failed\n\n")
+	b.WriteString(label.Render("Misc"))
+	b.WriteString("\n")
+	b.WriteString("  ?                   toggle this overlay\n")
+	b.WriteString("  q / ctrl+c          quit\n")
+	b.WriteString("\n")
+	b.WriteString(muted.Render("press ? again to close"))
 	return b.String()
 }
 
@@ -655,7 +700,30 @@ func renderTaskDetail(task taskSummary, muted lipgloss.Style) string {
 		b.WriteString(muted.Render("claimed_by_session=" + task.ClaimedBySession))
 		b.WriteString("\n")
 	}
+	if accept := formatAcceptance(task.AcceptanceJSON); accept != "" {
+		b.WriteString("acceptance:\n")
+		b.WriteString(accept)
+	}
 	return strings.TrimRight(b.String(), "\n")
+}
+
+// formatAcceptance renders a task's acceptance_json as a compact
+// bullet list if it parses, or returns the raw string if it doesn't.
+// Empty input → empty output.
+func formatAcceptance(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+	var items []string
+	if err := json.Unmarshal([]byte(raw), &items); err == nil && len(items) > 0 {
+		var b strings.Builder
+		for _, item := range items {
+			fmt.Fprintf(&b, "  - %s\n", item)
+		}
+		return b.String()
+	}
+	return "  " + raw + "\n"
 }
 
 func renderLimitedTasks(tasks []taskSummary, label string, muted lipgloss.Style) string {
@@ -864,6 +932,7 @@ func toTaskSummary(item plandag.RepoTaskSummary) taskSummary {
 		Status:           item.Task.Status,
 		LatestEventType:  item.LatestEventType,
 		LatestPayload:    parseTaskPayload(item.LatestPayloadJSON),
+		AcceptanceJSON:   item.Task.AcceptanceJSON,
 	}
 }
 
