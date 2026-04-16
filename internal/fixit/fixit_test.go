@@ -55,12 +55,12 @@ func TestCaptureIntentReadsTopicMD(t *testing.T) {
 
 func TestSanitizeTopic(t *testing.T) {
 	cases := map[string]string{
-		"":                       "general",
-		"runtime stabilization":  "runtime-stabilization",
-		"Runtime-Stabilization":  "runtime-stabilization",
-		"weird!!@chars":          "weird-chars",
-		"---":                    "general",
-		"plan_a":                 "plan_a",
+		"":                      "general",
+		"runtime stabilization": "runtime-stabilization",
+		"Runtime-Stabilization": "runtime-stabilization",
+		"weird!!@chars":         "weird-chars",
+		"---":                   "general",
+		"plan_a":                "plan_a",
 	}
 	for in, want := range cases {
 		got := sanitizeTopic(in)

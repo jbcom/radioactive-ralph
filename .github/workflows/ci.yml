@@ -31,15 +31,20 @@ jobs:
         run: npm install -g @anthropic-ai/claude-code@latest
       - name: go mod download
         run: go mod download
-      - name: go test
+      - name: go test (Unix)
+        if: runner.os != 'Windows'
         run: go test -race -coverprofile=coverage.out -covermode=atomic ./...
+      - name: go test (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: go test -race ./...
       - name: Build CLI (Unix)
         if: runner.os != 'Windows'
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p .tmp
-          bin="./.tmp/radioactive_ralph"
+          bin="$(pwd)/.tmp/radioactive_ralph"
           go build -o "$bin" ./cmd/radioactive_ralph
           echo "RALPH_BIN=$bin" >> "$GITHUB_ENV"
       - name: Native CLI smoke (Unix)
@@ -141,7 +146,7 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path .tmp | Out-Null
-          $bin = ".\\.tmp\\radioactive_ralph.exe"
+          $bin = Join-Path (Get-Location) ".tmp\\radioactive_ralph.exe"
           go build -o $bin ./cmd/radioactive_ralph
           "RALPH_BIN=$bin" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
       - name: Native CLI smoke (Windows)
