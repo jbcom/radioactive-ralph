@@ -1,6 +1,8 @@
 name: CI
 
 on:
+  push:
+    branches: [main]
   pull_request:
     types: [opened, synchronize, reopened]
 
@@ -14,7 +16,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
       - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
@@ -29,14 +31,289 @@ jobs:
         run: npm install -g @anthropic-ai/claude-code@latest
       - name: go mod download
         run: go mod download
-      - name: go test
+      - name: go test (Unix)
+        if: runner.os != 'Windows'
         run: go test -race -coverprofile=coverage.out -covermode=atomic ./...
+      - name: go test (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: go test ./...
+      - name: Build CLI (Unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .tmp
+          bin="$(pwd)/.tmp/radioactive_ralph"
+          go build -o "$bin" ./cmd/radioactive_ralph
+          echo "RALPH_BIN=$bin" >> "$GITHUB_ENV"
+      - name: Native CLI smoke (Unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$RALPH_BIN" --help >/dev/null
+          "$RALPH_BIN" run --help >/dev/null
+          "$RALPH_BIN" service --help >/dev/null
+          "$RALPH_BIN" service install --help >/dev/null
+          "$RALPH_BIN" service status --help >/dev/null
+          "$RALPH_BIN" plan --help >/dev/null
+          "$RALPH_BIN" plan approvals --help >/dev/null
+          "$RALPH_BIN" plan blocked --help >/dev/null
+          "$RALPH_BIN" tui --help >/dev/null
+          "$RALPH_BIN" doctor >/dev/null
+          "$RALPH_BIN" service list >/dev/null
+      - name: Temp repo + service-definition smoke (Unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          tmpdir="$(mktemp -d)"
+          repo="$tmpdir/repo"
+          home="$tmpdir/home"
+          mkdir -p "$repo" "$home"
+          HOME="$home" "$RALPH_BIN" init --repo-root "$repo" --yes >/dev/null
+          test -f "$repo/.radioactive-ralph/config.toml"
+          test -f "$repo/.radioactive-ralph/local.toml"
+          test -f "$repo/.radioactive-ralph/plans/index.md"
+          (
+            cd "$repo"
+            HOME="$home" "$RALPH_BIN" plan ls >/dev/null
+          )
+          if HOME="$home" "$RALPH_BIN" status --repo-root "$repo" >/dev/null 2>&1; then
+            echo "expected status to fail before the repo service is running" >&2
+            exit 1
+          fi
+          HOME="$home" "$RALPH_BIN" service install --repo-root "$repo" --radioactive_ralph-bin "$RALPH_BIN" >/dev/null
+          HOME="$home" "$RALPH_BIN" service list >/dev/null
+          HOME="$home" "$RALPH_BIN" service uninstall --repo-root "$repo" >/dev/null
+      - name: Live repo-service IPC smoke (Unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          tmpdir="$(mktemp -d /tmp/ralph-live-XXXXXX)"
+          repo="$tmpdir/repo"
+          home="$tmpdir/home"
+          state="$tmpdir/state"
+          log="$tmpdir/service.log"
+          mkdir -p "$repo" "$home" "$state"
+          HOME="$home" RALPH_STATE_DIR="$state" "$RALPH_BIN" init --repo-root "$repo" --yes >/dev/null
+          HOME="$home" RALPH_STATE_DIR="$state" "$RALPH_BIN" service start --repo-root "$repo" >"$log" 2>&1 &
+          svc_pid=$!
+          cleanup() {
+            if kill -0 "$svc_pid" >/dev/null 2>&1; then
+              kill "$svc_pid" >/dev/null 2>&1 || true
+              wait "$svc_pid" || true
+            fi
+          }
+          trap cleanup EXIT
+          ready=0
+          for _ in $(seq 1 30); do
+            if HOME="$home" RALPH_STATE_DIR="$state" "$RALPH_BIN" status --repo-root "$repo" --json >"$tmpdir/status.json" 2>/dev/null; then
+              ready=1
+              break
+            fi
+            sleep 1
+          done
+          if [[ "$ready" -ne 1 ]]; then
+            cat "$log" >&2 || true
+            echo "repo service never became ready" >&2
+            exit 1
+          fi
+          grep -q '"repo_path"' "$tmpdir/status.json"
+          HOME="$home" RALPH_STATE_DIR="$state" "$RALPH_BIN" stop --repo-root "$repo" >/dev/null
+          stopped=0
+          for _ in $(seq 1 30); do
+            if ! kill -0 "$svc_pid" >/dev/null 2>&1; then
+              stopped=1
+              break
+            fi
+            sleep 1
+          done
+          if [[ "$stopped" -ne 1 ]]; then
+            cat "$log" >&2 || true
+            echo "repo service never stopped" >&2
+            exit 1
+          fi
+          trap - EXIT
+          if HOME="$home" RALPH_STATE_DIR="$state" "$RALPH_BIN" status --repo-root "$repo" >/dev/null 2>&1; then
+            echo "expected status to fail after stop" >&2
+            exit 1
+          fi
+      - name: Build CLI (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path .tmp | Out-Null
+          $bin = Join-Path (Get-Location) ".tmp\\radioactive_ralph.exe"
+          go build -o $bin ./cmd/radioactive_ralph
+          "RALPH_BIN=$bin" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+      - name: Native CLI smoke (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          & $env:RALPH_BIN --help | Out-Null
+          & $env:RALPH_BIN run --help | Out-Null
+          & $env:RALPH_BIN service --help | Out-Null
+          & $env:RALPH_BIN service install --help | Out-Null
+          & $env:RALPH_BIN service status --help | Out-Null
+          & $env:RALPH_BIN plan --help | Out-Null
+          & $env:RALPH_BIN plan approvals --help | Out-Null
+          & $env:RALPH_BIN plan blocked --help | Out-Null
+          & $env:RALPH_BIN tui --help | Out-Null
+          & $env:RALPH_BIN doctor | Out-Null
+          & $env:RALPH_BIN service list | Out-Null
+      - name: Temp repo smoke (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          function Invoke-QuietNative {
+            param(
+              [Parameter(Mandatory = $true)][string]$FilePath,
+              [Parameter(Mandatory = $true)][string[]]$ArgumentList
+            )
+            $token = [guid]::NewGuid().ToString()
+            $stdout = Join-Path $env:RUNNER_TEMP "$token.stdout.log"
+            $stderr = Join-Path $env:RUNNER_TEMP "$token.stderr.log"
+            try {
+              $proc = Start-Process -FilePath $FilePath -ArgumentList $ArgumentList -RedirectStandardOutput $stdout -RedirectStandardError $stderr -PassThru -Wait -NoNewWindow
+              return $proc.ExitCode
+            } finally {
+              Remove-Item $stdout, $stderr -ErrorAction SilentlyContinue
+            }
+          }
+          $tmp = Join-Path $env:RUNNER_TEMP "ralph-smoke"
+          $repo = Join-Path $tmp "repo"
+          New-Item -ItemType Directory -Force -Path $repo | Out-Null
+          & $env:RALPH_BIN init --repo-root $repo --yes | Out-Null
+          if (-not (Test-Path (Join-Path $repo ".radioactive-ralph\\config.toml"))) { throw "missing config.toml" }
+          if (-not (Test-Path (Join-Path $repo ".radioactive-ralph\\local.toml"))) { throw "missing local.toml" }
+          if (-not (Test-Path (Join-Path $repo ".radioactive-ralph\\plans\\index.md"))) { throw "missing plans/index.md" }
+          Push-Location $repo
+          try {
+            & $env:RALPH_BIN plan ls | Out-Null
+            $statusExit = Invoke-QuietNative -FilePath $env:RALPH_BIN -ArgumentList @("status", "--repo-root", $repo)
+            if ($statusExit -eq 0) { throw "expected status to fail before the repo service is running" }
+          } finally {
+            Pop-Location
+          }
+      - name: Live repo-service IPC smoke (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          function Invoke-QuietNative {
+            param(
+              [Parameter(Mandatory = $true)][string]$FilePath,
+              [Parameter(Mandatory = $true)][string[]]$ArgumentList
+            )
+            $token = [guid]::NewGuid().ToString()
+            $stdout = Join-Path $env:RUNNER_TEMP "$token.stdout.log"
+            $stderr = Join-Path $env:RUNNER_TEMP "$token.stderr.log"
+            try {
+              $proc = Start-Process -FilePath $FilePath -ArgumentList $ArgumentList -RedirectStandardOutput $stdout -RedirectStandardError $stderr -PassThru -Wait -NoNewWindow
+              return $proc.ExitCode
+            } finally {
+              Remove-Item $stdout, $stderr -ErrorAction SilentlyContinue
+            }
+          }
+          $tmp = Join-Path $env:RUNNER_TEMP "ralph-live"
+          $repo = Join-Path $tmp "repo"
+          $state = Join-Path $tmp "state"
+          $stdout = Join-Path $tmp "service.stdout.log"
+          $stderr = Join-Path $tmp "service.stderr.log"
+          New-Item -ItemType Directory -Force -Path $repo, $state | Out-Null
+          $env:RALPH_STATE_DIR = $state
+          & $env:RALPH_BIN init --repo-root $repo --yes | Out-Null
+          $proc = Start-Process -FilePath $env:RALPH_BIN -ArgumentList @("service", "start", "--repo-root", $repo) -RedirectStandardOutput $stdout -RedirectStandardError $stderr -PassThru
+          $ready = $false
+          for ($i = 0; $i -lt 30; $i++) {
+            try {
+              $status = & $env:RALPH_BIN status --repo-root $repo --json 2>$null | ConvertFrom-Json
+              if ($status.repo_path) {
+                $ready = $true
+                break
+              }
+            } catch {
+            }
+            Start-Sleep -Seconds 1
+          }
+          if (-not $ready) {
+            if (Test-Path $stdout) { Get-Content $stdout }
+            if (Test-Path $stderr) { Get-Content $stderr }
+            throw "repo service never became ready"
+          }
+          & $env:RALPH_BIN stop --repo-root $repo | Out-Null
+          # Wait-Process throws if the process has already exited — that's
+          # the happy path here, not a failure. Poll HasExited instead so a
+          # fast shutdown doesn't race the waiter.
+          $deadline = (Get-Date).AddSeconds(30)
+          while (-not $proc.HasExited -and (Get-Date) -lt $deadline) {
+            Start-Sleep -Milliseconds 200
+          }
+          if (-not $proc.HasExited) {
+            throw "repo service did not exit within 30s of stop"
+          }
+          $statusExit = Invoke-QuietNative -FilePath $env:RALPH_BIN -ArgumentList @("status", "--repo-root", $repo)
+          if ($statusExit -eq 0) { throw "expected status to fail after stop" }
       - name: Upload coverage
         if: matrix.os == 'ubuntu-latest'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: coverage
           path: coverage.out
+
+  build-targets:
+    name: Build (${{ matrix.goos }}/${{ matrix.goarch }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+          - goos: linux
+            goarch: arm64
+          - goos: darwin
+            goarch: amd64
+          - goos: darwin
+            goarch: arm64
+          - goos: windows
+            goarch: amd64
+          - goos: windows
+            goarch: arm64
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: go mod download
+        run: go mod download
+      - name: Cross-build module
+        env:
+          CGO_ENABLED: '0'
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: go build ./...
+      - name: Cross-build platform-sensitive test binaries
+        shell: bash
+        env:
+          CGO_ENABLED: '0'
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: |
+          set -euo pipefail
+          mkdir -p .tmp/testbins
+          for pkg in ./cmd/radioactive_ralph ./internal/ipc ./internal/runtime ./internal/service ./internal/provider/claudesession; do
+            name="$(echo "$pkg" | tr '/.' '__')"
+            out=".tmp/testbins/${name}"
+            if [[ "$GOOS" == "windows" ]]; then
+              out="${out}.exe"
+            fi
+            go test -c -o "$out" "$pkg"
+            rm -f "$out"
+          done
 
   lint:
     name: Lint
@@ -49,6 +326,19 @@ jobs:
       - uses: golangci/golangci-lint-action@1481404843c368bc19ca9406f87d6e0fc97bdcfd # v7.0.0
         with:
           version: latest
+
+  workflow-lint:
+    name: Workflow lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+        with:
+          go-version-file: go.mod
+      - name: Install actionlint
+        run: go install github.com/rhysd/actionlint/cmd/actionlint@latest
+      - name: Lint workflows
+        run: actionlint
 
   vuln:
     name: Vulnerability scan

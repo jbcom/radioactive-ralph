@@ -13,11 +13,11 @@ import "github.com/jbcom/radioactive-ralph/internal/db"
 
 Package db is radioactive\-ralph's per\-repo SQLite event log.
 
-Every interesting thing the supervisor does is recorded as an event here: session spawns, user messages injected into managed Claude subprocesses, stream\-json events received, session deaths, resumes, commits, PRs, errors. The database is an append\-only log the supervisor replays on startup to rebuild in\-memory state.
+Every interesting thing the repo service does is recorded as an event here: session spawns, user messages injected into managed provider subprocesses, stream\-json events received, session deaths, resumes, commits, PRs, errors. The database is an append\-only log the runtime replays on startup to rebuild in\-memory state.
 
-SQLite is opened with journal\_mode=WAL so the supervisor \(single writer\) and status/attach readers \(many readers\) can coexist without locking. foreign\_keys=ON for referential integrity on sessions\<\-\>spend. busy\_timeout=5000 so brief writer contention during reader checkpoint doesn't crash the supervisor.
+SQLite is opened with journal\_mode=WAL so the runtime \(single writer\) and status/attach readers \(many readers\) can coexist without locking. foreign\_keys=ON for referential integrity on sessions\<\-\>spend. busy\_timeout=5000 so brief writer contention during reader checkpoint doesn't crash the service.
 
-Dedup uses SQLite's built\-in FTS5 virtual table over task descriptions. Full semantic search \(sqlite\-vec\) was scoped out of M2 because it requires an embeddings pipeline we don't want to own yet.
+Dedup uses SQLite's built\-in FTS5 virtual table over task descriptions. Full semantic search \(sqlite\-vec\) is intentionally out of scope for the current runtime because it requires an embeddings pipeline we do not want to own yet.
 
 ## Index
 
@@ -65,9 +65,9 @@ const DriverName = "sqlite"
 ```
 
 <a name="DB"></a>
-## type [DB](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/db/db.go#L43-L46>)
+## type [DB](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/db/db.go#L44-L47>)
 
-DB is the package's wrapper around \*sql.DB with the supervisor's helper methods attached. Construct via Open.
+DB is the package's wrapper around \*sql.DB with the runtime's helper methods attached. Construct via Open.
 
 ```go
 type DB struct {
@@ -76,7 +76,7 @@ type DB struct {
 ```
 
 <a name="Open"></a>
-### func [Open](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/db/db.go#L53>)
+### func [Open](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/db/db.go#L54>)
 
 ```go
 func Open(ctx context.Context, path string) (*DB, error)
@@ -87,7 +87,7 @@ Open opens the SQLite database at path \(creating it if absent\), applies pendin
 path is typically xdg.Paths.StateDB. An empty string opens an in\-memory database, which is what tests want.
 
 <a name="DB.AccumulateSpend"></a>
-### func \(\*DB\) [AccumulateSpend](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/db/db.go#L437>)
+### func \(\*DB\) [AccumulateSpend](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/db/db.go#L438>)
 
 ```go
 func (d *DB) AccumulateSpend(ctx context.Context, sessionUUID, model string, input, output, cached int64) error
@@ -96,7 +96,7 @@ func (d *DB) AccumulateSpend(ctx context.Context, sessionUUID, model string, inp
 AccumulateSpend upserts token counts for a \(session, model\) pair. Input/output/cached values are additive — each call adds to the existing totals.
 
 <a name="DB.ActiveSessions"></a>
-### func \(\*DB\) [ActiveSessions](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/db/db.go#L405>)
+### func \(\*DB\) [ActiveSessions](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/db/db.go#L406>)
 
 ```go
 func (d *DB) ActiveSessions(ctx context.Context) ([]Session, error)
@@ -105,7 +105,7 @@ func (d *DB) ActiveSessions(ctx context.Context) ([]Session, error)
 ActiveSessions returns sessions that haven't exited yet.
 
 <a name="DB.Append"></a>
-### func \(\*DB\) [Append](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/db/db.go#L129>)
+### func \(\*DB\) [Append](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/db/db.go#L130>)
 
 ```go
 func (d *DB) Append(ctx context.Context, e Event) (int64, error)
@@ -114,7 +114,7 @@ func (d *DB) Append(ctx context.Context, e Event) (int64, error)
 Append inserts an event. PayloadParsed is JSON\-encoded if non\-nil.
 
 <a name="DB.ClaimTask"></a>
-### func \(\*DB\) [ClaimTask](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/db/db.go#L270>)
+### func \(\*DB\) [ClaimTask](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/db/db.go#L271>)
 
 ```go
 func (d *DB) ClaimTask(ctx context.Context, taskID, worktreePath, sessionUUID string) error
@@ -123,7 +123,7 @@ func (d *DB) ClaimTask(ctx context.Context, taskID, worktreePath, sessionUUID st
 ClaimTask marks a queued task as running and sets the worktree \+ session.
 
 <a name="DB.Close"></a>
-### func \(\*DB\) [Close](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/db/db.go#L83>)
+### func \(\*DB\) [Close](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/db/db.go#L84>)
 
 ```go
 func (d *DB) Close() error
@@ -132,16 +132,16 @@ func (d *DB) Close() error
 Close releases the underlying connection pool.
 
 <a name="DB.Conn"></a>
-### func \(\*DB\) [Conn](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/db/db.go#L96>)
+### func \(\*DB\) [Conn](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/db/db.go#L97>)
 
 ```go
 func (d *DB) Conn() *sql.DB
 ```
 
-Conn returns the underlying \*sql.DB. Exposed for advanced callers \(integration tests that want to assert schema directly\); most supervisor code should use the typed methods on DB.
+Conn returns the underlying \*sql.DB. Exposed for advanced callers \(integration tests that want to assert schema directly\); most runtime code should use the typed methods on DB.
 
 <a name="DB.EnqueueTask"></a>
-### func \(\*DB\) [EnqueueTask](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/db/db.go#L232>)
+### func \(\*DB\) [EnqueueTask](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/db/db.go#L233>)
 
 ```go
 func (d *DB) EnqueueTask(ctx context.Context, id, description string, priority int) (string, bool, error)
@@ -150,7 +150,7 @@ func (d *DB) EnqueueTask(ctx context.Context, id, description string, priority i
 EnqueueTask inserts a new task and returns its ID. If a near\-duplicate description already exists with status in \(queued, running\), the existing task ID is returned and a new row is NOT inserted. Dedup uses FTS5's MATCH against the normalised description.
 
 <a name="DB.FinishTask"></a>
-### func \(\*DB\) [FinishTask](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/db/db.go#L292>)
+### func \(\*DB\) [FinishTask](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/db/db.go#L293>)
 
 ```go
 func (d *DB) FinishTask(ctx context.Context, taskID string, success bool) error
@@ -159,7 +159,7 @@ func (d *DB) FinishTask(ctx context.Context, taskID string, success bool) error
 FinishTask marks a task as done or failed.
 
 <a name="DB.InsertSession"></a>
-### func \(\*DB\) [InsertSession](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/db/db.go#L377>)
+### func \(\*DB\) [InsertSession](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/db/db.go#L378>)
 
 ```go
 func (d *DB) InsertSession(ctx context.Context, s Session) error
@@ -168,7 +168,7 @@ func (d *DB) InsertSession(ctx context.Context, s Session) error
 InsertSession records a newly\-spawned managed session.
 
 <a name="DB.ListTasks"></a>
-### func \(\*DB\) [ListTasks](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/db/db.go#L311>)
+### func \(\*DB\) [ListTasks](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/db/db.go#L312>)
 
 ```go
 func (d *DB) ListTasks(ctx context.Context, statuses ...string) ([]Task, error)
@@ -177,7 +177,7 @@ func (d *DB) ListTasks(ctx context.Context, statuses ...string) ([]Task, error)
 ListTasks returns tasks matching the given statuses, most recent first. Pass nil or empty statuses to return all statuses.
 
 <a name="DB.MarkSessionExited"></a>
-### func \(\*DB\) [MarkSessionExited](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/db/db.go#L390>)
+### func \(\*DB\) [MarkSessionExited](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/db/db.go#L391>)
 
 ```go
 func (d *DB) MarkSessionExited(ctx context.Context, uuid, reason string) error
@@ -186,7 +186,7 @@ func (d *DB) MarkSessionExited(ctx context.Context, uuid, reason string) error
 MarkSessionExited records why and when a session ended.
 
 <a name="DB.Path"></a>
-### func \(\*DB\) [Path](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/db/db.go#L89>)
+### func \(\*DB\) [Path](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/db/db.go#L90>)
 
 ```go
 func (d *DB) Path() string
@@ -195,7 +195,7 @@ func (d *DB) Path() string
 Path returns the on\-disk path of the database \(empty string for in\-memory\).
 
 <a name="DB.Replay"></a>
-### func \(\*DB\) [Replay](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/db/db.go#L161>)
+### func \(\*DB\) [Replay](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/db/db.go#L162>)
 
 ```go
 func (d *DB) Replay(ctx context.Context, afterID int64, fn func(Event) error) error
@@ -206,7 +206,7 @@ Replay iterates events in ID order \(which is also approximately timestamp order
 afterID lets the caller resume from a previous replay's last\-seen ID. Pass 0 to iterate from the beginning.
 
 <a name="DB.SpendBySession"></a>
-### func \(\*DB\) [SpendBySession](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/db/db.go#L464>)
+### func \(\*DB\) [SpendBySession](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/db/db.go#L465>)
 
 ```go
 func (d *DB) SpendBySession(ctx context.Context, sessionUUID string) ([]Spend, error)
@@ -215,9 +215,9 @@ func (d *DB) SpendBySession(ctx context.Context, sessionUUID string) ([]Spend, e
 SpendBySession returns all \(model, spend\) entries for one session.
 
 <a name="Event"></a>
-## type [Event](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/db/db.go#L118-L126>)
+## type [Event](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/db/db.go#L119-L127>)
 
-Event is the structured form of an entry in the events table. PayloadRaw holds the exact bytes received from stream\-json \(nil if the event originated inside the supervisor\).
+Event is the structured form of an entry in the events table. PayloadRaw holds the exact bytes received from stream\-json \(nil if the event originated inside the repo service\).
 
 ```go
 type Event struct {
@@ -232,7 +232,7 @@ type Event struct {
 ```
 
 <a name="Session"></a>
-## type [Session](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/db/db.go#L364-L374>)
+## type [Session](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/db/db.go#L365-L375>)
 
 Session is the row shape of the sessions table.
 
@@ -251,7 +251,7 @@ type Session struct {
 ```
 
 <a name="Spend"></a>
-## type [Spend](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/db/db.go#L455-L461>)
+## type [Spend](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/db/db.go#L456-L462>)
 
 Spend is the row shape of the spend table.
 
@@ -266,7 +266,7 @@ type Spend struct {
 ```
 
 <a name="Task"></a>
-## type [Task](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/db/db.go#L217-L226>)
+## type [Task](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/db/db.go#L218-L227>)
 
 Task is a queued unit of work.
 

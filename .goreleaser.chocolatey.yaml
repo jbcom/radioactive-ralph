@@ -70,12 +70,13 @@ chocolateys:
     package_source_url: https://github.com/jbcom/pkgs
     docs_url: https://github.com/jbcom/radioactive-ralph#readme
     bug_tracker_url: https://github.com/jbcom/radioactive-ralph/issues
-    summary: Autonomous continuous development orchestrator for Claude Code
+    summary: Binary-first repo runtime with many Ralph personalities
     description: |
-      Radioactive Ralph is a per-repo meta-orchestrator that keeps a
-      fleet of Claude subprocesses alive, focused, and productive
-      across days of autonomous development work.
-    tags: "claude ai orchestrator automation cli"
+      Radioactive Ralph is a binary-first repo runtime for AI-assisted
+      development. It keeps a durable SQLite plan DAG, runs a
+      repo-scoped service, and lets operators choose from ten built-in
+      Ralph personas.
+    tags: "ai runtime automation cli development"
     release_notes: "https://github.com/jbcom/radioactive-ralph/releases/tag/v{{ .Version }}"
     api_key: "{{ .Env.CHOCOLATEY_API_KEY }}"
     source_repo: "https://push.chocolatey.org/"

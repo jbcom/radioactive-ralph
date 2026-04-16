@@ -11,7 +11,7 @@ lastUpdated: 2026-04-10
 
 | At a glance | Lore / bio |
 |---|---|
-| **Mode:** strategic planner<br>**Scope:** all configured repos<br>**Tiering:** opus → sonnet → sonnet<br>**Best when:** thinking first matters more than moving first | Integrated Ralph brings kindness, cunning, and power into one backpack-sized strategist who finally reads the room before he breaks it. |
+| **Mode:** strategic planner<br>**Scope:** one repo service at a time<br>**Tiering:** opus → sonnet → sonnet<br>**Best when:** thinking first matters more than moving first | Integrated Ralph brings kindness, cunning, and power into one backpack-sized strategist who finally reads the room before he breaks it. |
 
 ## Character notes
 
@@ -54,14 +54,15 @@ When judgment matters more than speed.
 
 ```bash
 radioactive_ralph init
-radioactive_ralph run --variant professor --foreground
+radioactive_ralph run --variant fixit --advise --topic bootstrap
+radioactive_ralph service start
 ```
 
 ### Current runtime notes
 
-- The current CLI does not yet expose a separate professor-only `--plan-only`
-  flow.
-- Professor still exists as a real in-code persona and documentation target.
+- Professor is a durable-service persona, not an attached one-shot run.
+- Its planning phase is part of the variant's internal lifecycle rather than a
+  separate top-level `--plan-only` command.
 
 ### Arguments
 

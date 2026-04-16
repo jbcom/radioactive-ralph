@@ -4,12 +4,15 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 
 	"github.com/jbcom/radioactive-ralph/internal/config"
 	"github.com/jbcom/radioactive-ralph/internal/fixit"
 	"github.com/jbcom/radioactive-ralph/internal/plandag"
+	"github.com/jbcom/radioactive-ralph/internal/provider"
+	"github.com/jbcom/radioactive-ralph/internal/variant"
 )
 
 // runAdvisor is the fixit-only code path. It drives the fixit
@@ -41,12 +44,17 @@ func (c *RunCmd) runAdvisor(ctx context.Context, repo string, plansOK bool) erro
 	if planEffort == "" {
 		planEffort = fromConfig.PlanEffort
 	}
+	binding, err := resolveFixitPlanningBinding(repo, fromConfig)
+	if err != nil {
+		return err
+	}
 
 	opts := fixit.RunOptions{
 		RepoRoot:                repo,
 		Topic:                   c.Topic,
 		Description:             c.Description,
 		NonInteractive:          !interactiveTerminal(),
+		ProviderBinding:         binding,
 		MaxRefinementIterations: maxIter,
 		MinConfidenceThreshold:  minConf,
 		PlanModel:               planModel,
@@ -95,9 +103,8 @@ func (c *RunCmd) runAdvisor(ctx context.Context, repo string, plansOK bool) erro
 			fmt.Printf("radioactive_ralph: --auto-handoff → starting %s-ralph\n",
 				result.Proposal.Primary)
 			return (&RunCmd{
-				Variant:    result.Proposal.Primary,
-				Foreground: true,
-				RepoRoot:   repo,
+				Variant:  result.Proposal.Primary,
+				RepoRoot: repo,
 			}).Run(&runContext{ctx: ctx})
 		}
 	}
@@ -182,4 +189,30 @@ func interactiveTerminal() bool {
 		return false
 	}
 	return (fi.Mode() & os.ModeCharDevice) != 0
+}
+
+func resolveFixitPlanningBinding(repo string, fromConfig config.VariantFile) (provider.Binding, error) {
+	cfg, err := config.Load(repo)
+	if err != nil && !config.IsMissingConfig(err) {
+		return provider.Binding{}, fmt.Errorf("config.Load: %w", err)
+	}
+	local, err := config.LoadLocal(repo)
+	if err != nil && !config.IsMissingLocal(err) {
+		return provider.Binding{}, fmt.Errorf("config.LoadLocal: %w", err)
+	}
+	fixitProfile, err := variant.Lookup("fixit")
+	if err != nil {
+		return provider.Binding{}, err
+	}
+	binding, err := provider.ResolveBinding(cfg, local, fixitProfile, fromConfig)
+	if err != nil {
+		return provider.Binding{}, err
+	}
+	if binding.Config.Binary == "" {
+		return provider.Binding{}, fmt.Errorf("provider %q has no configured binary", binding.Name)
+	}
+	if _, err := exec.LookPath(binding.Config.Binary); err != nil {
+		return provider.Binding{}, fmt.Errorf("provider binary %q not on PATH", binding.Config.Binary)
+	}
+	return binding, nil
 }

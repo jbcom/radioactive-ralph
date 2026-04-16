@@ -1,18 +1,15 @@
 // Package config loads radioactive-ralph's per-repo TOML configuration and
-// produces a resolved view that the supervisor consumes.
+// produces a resolved view that the runtime consumes.
 //
 // Two files live under .radioactive-ralph/ in every repo that uses Ralph:
 //
-//   - config.toml (committed) — declared capability biases, per-variant
-//     overrides, and daemon-wide defaults.
+//   - config.toml (committed) — provider bindings, per-variant
+//     overrides, and service-wide defaults.
 //   - local.toml (gitignored) — operator-specific overrides that don't
-//     belong in git: multiplexer preference, log verbosity, etc.
+//     belong in git: local binary overrides, log verbosity, etc.
 //
 // The config package only parses and validates. Applying variant defaults
-// and safety floors happens at supervisor boot time in cmd/radioactive_ralph/run.go
-// (M2 shape) and will move into a dedicated Resolve() entry point once
-// the knob-override matrix grows enough per-variant overrides to
-// warrant the abstraction (M3).
+// and provider bindings happens at runtime boot.
 package config
 
 import (
@@ -44,55 +41,51 @@ const (
 // File represents the shape of config.toml. Every section is optional so
 // that a fresh `radioactive_ralph init` can emit minimal files and iterate.
 type File struct {
-	Capabilities Capabilities           `toml:"capabilities"`
-	Daemon       Daemon                 `toml:"daemon"`
-	Variants     map[string]VariantFile `toml:"variants"`
+	Service         Service                 `toml:"service"`
+	DefaultProvider string                  `toml:"default_provider"`
+	Providers       map[string]ProviderFile `toml:"providers"`
+	Variants        map[string]VariantFile  `toml:"variants"`
 }
 
-// Capabilities declares the operator's preferred helper per bias category.
-// A zero-valued string means "no preference / don't bias". The keys match
-// the BiasCategory constants defined in the variant package (M3).
-type Capabilities struct {
-	Review         string `toml:"review"`
-	SecurityReview string `toml:"security_review"`
-	DocsQuery      string `toml:"docs_query"`
-	Brainstorm     string `toml:"brainstorm"`
-	Debugging      string `toml:"debugging"`
-
-	// DisabledBiases lists helpers the operator explicitly never wants
-	// Ralph to bias toward, even when they're present in the inventory.
-	// This is how operators opt out of a specific review helper in favor
-	// of another.
-	DisabledBiases []string `toml:"disabled_biases"`
-}
-
-// Daemon holds repo-wide defaults. Individual variants override these in
+// Service holds repo-wide defaults. Individual variants override these in
 // their own [variants.<name>] section; safety floors still apply on top.
-type Daemon struct {
+type Service struct {
 	DefaultObjectStore      string `toml:"default_object_store"` // "reference" | "full"
 	DefaultLfsMode          string `toml:"default_lfs_mode"`     // "full" | "on-demand" | "pointers-only" | "excluded"
 	CopyHooks               *bool  `toml:"copy_hooks"`           // pointer so "unset" ≠ false
 	AllowConcurrentVariants *bool  `toml:"allow_concurrent_variants"`
-	MultiplexerPreference   string `toml:"multiplexer_preference"` // "tmux" | "screen" | "setsid"
-	LogLevel                string `toml:"log_level"`              // "debug" | "info" | "warn" | "error"
+	LogLevel                string `toml:"log_level"` // "debug" | "info" | "warn" | "error"
+}
+
+// ProviderFile declares how one named provider is invoked. The shape
+// is intentionally generic.
+type ProviderFile struct {
+	Type                  string   `toml:"type"`
+	Binary                string   `toml:"binary"`
+	Args                  []string `toml:"args"`
+	HaikuModel            string   `toml:"haiku_model"`
+	SonnetModel           string   `toml:"sonnet_model"`
+	OpusModel             string   `toml:"opus_model"`
+	LowEffort             string   `toml:"low_effort"`
+	MediumEffort          string   `toml:"medium_effort"`
+	HighEffort            string   `toml:"high_effort"`
+	MaxEffort             string   `toml:"max_effort"`
+	SupportsResume        *bool    `toml:"supports_resume"`
+	UseAppendSystemPrompt *bool    `toml:"use_append_system_prompt"`
 }
 
 // VariantFile is the per-variant overrides block inside config.toml.
 // Any field left zero-valued falls through to the variant profile's
-// hardcoded default, which falls through to Daemon, which falls through
+// hardcoded default, which falls through to Service, which falls through
 // to project defaults. Safety floors may override any of these.
 type VariantFile struct {
-	Isolation      string   `toml:"isolation"`
-	ObjectStore    string   `toml:"object_store"`
-	SyncSource     string   `toml:"sync_source"`
-	LfsMode        string   `toml:"lfs_mode"`
-	ReviewBias     string   `toml:"review_bias"`
-	SecurityBias   string   `toml:"security_review_bias"`
-	DocsQueryBias  string   `toml:"docs_query_bias"`
-	BrainstormBias string   `toml:"brainstorm_bias"`
-	DebuggingBias  string   `toml:"debugging_bias"`
-	SpendCapUSD    *float64 `toml:"spend_cap_usd"`
-	CycleLimit     *int     `toml:"cycle_limit"`
+	Isolation   string   `toml:"isolation"`
+	ObjectStore string   `toml:"object_store"`
+	SyncSource  string   `toml:"sync_source"`
+	LfsMode     string   `toml:"lfs_mode"`
+	Provider    string   `toml:"provider"`
+	SpendCapUSD *float64 `toml:"spend_cap_usd"`
+	CycleLimit  *int     `toml:"cycle_limit"`
 
 	// Fixit-specific advisor knobs. Only meaningful in
 	// [variants.fixit]. CLI flags take precedence; these are the
@@ -110,8 +103,8 @@ type VariantFile struct {
 // Local is the shape of local.toml (gitignored per-operator preferences).
 // Keeping it minimal on purpose — everything else belongs in config.toml.
 type Local struct {
-	MultiplexerPreference string `toml:"multiplexer_preference"`
-	LogLevel              string `toml:"log_level"`
+	LogLevel       string `toml:"log_level"`
+	ProviderBinary string `toml:"provider_binary"`
 }
 
 // Errors returned by the config package.
@@ -148,19 +141,38 @@ func Load(repoRoot string) (File, error) {
 	if err != nil {
 		return zero, fmt.Errorf("config: read %s: %w", path, err)
 	}
-	var f File
-	if _, err := toml.Decode(string(data), &f); err != nil {
+	var raw struct {
+		Service         Service                 `toml:"service"`
+		DefaultProvider string                  `toml:"default_provider"`
+		Providers       map[string]ProviderFile `toml:"providers"`
+		Variants        map[string]VariantFile  `toml:"variants"`
+	}
+	if _, err := toml.Decode(string(data), &raw); err != nil {
 		return zero, fmt.Errorf("config: parse %s: %w", path, err)
+	}
+	f := File{
+		Service:         raw.Service,
+		DefaultProvider: raw.DefaultProvider,
+		Providers:       raw.Providers,
+		Variants:        raw.Variants,
 	}
 	if f.Variants == nil {
 		f.Variants = make(map[string]VariantFile)
+	}
+	if f.Providers == nil {
+		f.Providers = make(map[string]ProviderFile)
+	}
+	if f.DefaultProvider == "" && len(f.Providers) == 1 {
+		for name := range f.Providers {
+			f.DefaultProvider = name
+		}
 	}
 	return f, nil
 }
 
 // LoadLocal parses the local.toml file under repoRoot/.radioactive-ralph/.
 // Returns ErrMissingLocal if absent; callers can decide whether to treat
-// that as fatal or fall through to Daemon defaults.
+// that as fatal or fall through to committed service defaults.
 func LoadLocal(repoRoot string) (Local, error) {
 	var zero Local
 	path := filepath.Join(repoRoot, Dir, LocalFile)
@@ -176,6 +188,59 @@ func LoadLocal(repoRoot string) (Local, error) {
 		return zero, fmt.Errorf("config: parse %s: %w", path, err)
 	}
 	return l, nil
+}
+
+// DefaultClaudeProvider returns the built-in provider binding that uses
+// the local `claude` CLI as the execution backend.
+func DefaultClaudeProvider() ProviderFile {
+	useAppend := true
+	supportsResume := true
+	return ProviderFile{
+		Type:                  "claude",
+		Binary:                "claude",
+		HaikuModel:            "haiku",
+		SonnetModel:           "sonnet",
+		OpusModel:             "opus",
+		LowEffort:             "low",
+		MediumEffort:          "medium",
+		HighEffort:            "high",
+		MaxEffort:             "max",
+		SupportsResume:        &supportsResume,
+		UseAppendSystemPrompt: &useAppend,
+	}
+}
+
+// DefaultCodexProvider returns the built-in provider binding that uses the
+// local `codex` CLI as the execution backend.
+func DefaultCodexProvider() ProviderFile {
+	supportsResume := false
+	return ProviderFile{
+		Type:           "codex",
+		Binary:         "codex",
+		HaikuModel:     "gpt-5.4-mini",
+		SonnetModel:    "gpt-5.4",
+		OpusModel:      "gpt-5.4",
+		LowEffort:      "low",
+		MediumEffort:   "medium",
+		HighEffort:     "high",
+		MaxEffort:      "high",
+		SupportsResume: &supportsResume,
+	}
+}
+
+// DefaultGeminiProvider returns the built-in provider binding that uses the
+// local `gemini` CLI as the execution backend.
+func DefaultGeminiProvider() ProviderFile {
+	supportsResume := false
+	return ProviderFile{
+		Type:           "gemini",
+		Binary:         "gemini",
+		LowEffort:      "low",
+		MediumEffort:   "medium",
+		HighEffort:     "high",
+		MaxEffort:      "high",
+		SupportsResume: &supportsResume,
+	}
 }
 
 // Path returns the absolute path to config.toml for repoRoot.

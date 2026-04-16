@@ -2,13 +2,16 @@ package ipc
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
 	"net"
 	"os"
-	"path/filepath"
+	"runtime"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -18,8 +21,9 @@ import (
 // dialRaw opens a raw Unix socket connection (for tests that exercise
 // the wire protocol directly rather than via Client).
 func dialRaw(socketPath string, timeout time.Duration) (net.Conn, error) {
-	d := net.Dialer{Timeout: timeout}
-	return d.Dial("unix", socketPath)
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	return dialEndpoint(ctx, socketPath, timeout)
 }
 
 // fakeHandler is a test double implementing Handler with recorded
@@ -96,7 +100,11 @@ func (f *fakeHandler) HandleAttach(ctx context.Context, emit func(json.RawMessag
 // /var/folders/... can exceed that, so we use /tmp/ipc-<suffix> instead.
 func shortTempDir(t *testing.T) string {
 	t.Helper()
-	dir, err := os.MkdirTemp("/tmp", "ipct-*")
+	base := os.TempDir()
+	if runtime.GOOS == "darwin" {
+		base = "/tmp"
+	}
+	dir, err := os.MkdirTemp(base, "ipct-*")
 	if err != nil {
 		t.Fatalf("mkdir tmp: %v", err)
 	}
@@ -108,8 +116,7 @@ func shortTempDir(t *testing.T) string {
 func startServer(t *testing.T, h Handler) (socketPath, heartbeatPath string, cleanup func()) {
 	t.Helper()
 	dir := shortTempDir(t)
-	socketPath = filepath.Join(dir, "s.sock")
-	heartbeatPath = filepath.Join(dir, "s.alive")
+	socketPath, heartbeatPath = ServiceEndpoint(dir)
 
 	srv, err := NewServer(ServerOptions{
 		SocketPath:        socketPath,
@@ -152,11 +159,14 @@ func TestNewServerValidation(t *testing.T) {
 func TestRoundTripStatus(t *testing.T) {
 	h := &fakeHandler{
 		statusReply: StatusReply{
-			Variant:        "green",
-			PID:            12345,
-			ActiveSessions: 3,
-			QueuedTasks:    2,
-			RunningTasks:   1,
+			RepoPath:      "/tmp/repo",
+			PID:           12345,
+			ActiveWorkers: 3,
+			ReadyTasks:    2,
+			ApprovalTasks: 1,
+			RunningTasks:  1,
+			FailedTasks:   4,
+			ActivePlans:   1,
 		},
 	}
 	socketPath, _, cleanup := startServer(t, h)
@@ -172,7 +182,7 @@ func TestRoundTripStatus(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Status: %v", err)
 	}
-	if reply.Variant != "green" || reply.PID != 12345 {
+	if reply.RepoPath != "/tmp/repo" || reply.PID != 12345 {
 		t.Errorf("reply = %+v", reply)
 	}
 	if h.statusCount.Load() != 1 {
@@ -389,11 +399,34 @@ func TestSocketAliveStale(t *testing.T) {
 	}
 }
 
+func TestServiceEndpointUnix(t *testing.T) {
+	endpoint, heartbeat := serviceEndpointForGOOS("linux", "/tmp/ralph/sessions")
+	if endpoint != "/tmp/ralph/sessions/service.sock" {
+		t.Fatalf("endpoint = %q", endpoint)
+	}
+	if heartbeat != "/tmp/ralph/sessions/service.sock.alive" {
+		t.Fatalf("heartbeat = %q", heartbeat)
+	}
+}
+
+func TestServiceEndpointWindows(t *testing.T) {
+	sessionsDir := `C:\Users\me\AppData\Local\radioactive-ralph\sessions`
+	endpoint, heartbeat := serviceEndpointForGOOS("windows", sessionsDir)
+	sum := sha256.Sum256([]byte(sessionsDir))
+	token := hex.EncodeToString(sum[:])[:12]
+	wantEndpoint := `\\.\pipe\radioactive_ralph-` + token + `-service`
+	if endpoint != wantEndpoint {
+		t.Fatalf("endpoint = %q, want %q", endpoint, wantEndpoint)
+	}
+	if !strings.HasSuffix(strings.ReplaceAll(heartbeat, `\`, `/`), "radioactive-ralph/sessions/service.alive") {
+		t.Fatalf("heartbeat = %q", heartbeat)
+	}
+}
+
 func TestStopIsIdempotent(t *testing.T) {
 	h := &fakeHandler{}
 	dir := shortTempDir(t)
-	socketPath := filepath.Join(dir, "s.sock")
-	heartbeat := filepath.Join(dir, "s.alive")
+	socketPath, heartbeat := ServiceEndpoint(dir)
 	srv, err := NewServer(ServerOptions{
 		SocketPath:    socketPath,
 		HeartbeatPath: heartbeat,

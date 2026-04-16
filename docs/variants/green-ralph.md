@@ -11,7 +11,7 @@ lastUpdated: 2026-04-10
 
 | At a glance | Lore / bio |
 |---|---|
-| **Mode:** flagship loop<br>**Scope:** all configured repos<br>**Tiering:** haiku → sonnet → opus<br>**Best when:** you want the standard radioactive-ralph experience | The original little catastrophe: all hurt feelings, infinite ceiling, and just enough Wiggle Puppy heartbreak to power the whole project. |
+| **Mode:** flagship loop<br>**Scope:** one repo service at a time<br>**Tiering:** haiku → sonnet → opus (provider-mapped)<br>**Best when:** you want the standard radioactive-ralph experience | The original little catastrophe: all hurt feelings, infinite ceiling, and just enough Wiggle Puppy heartbreak to power the whole project. |
 
 ## Character notes
 
@@ -41,7 +41,7 @@ the default helpful little guy: broad, strong, and willing to keep going.
 - Declares the broadest general-purpose posture in the persona registry
 - Profile defaults to mirror-pool isolation with up to 6 worktrees
 - Represents the default "Ralph, please help" temperament
-- Aims to be the standard long-running workhorse once the supervisor matures
+- Is the standard long-running workhorse for the durable repo service
 
 ### When to use it
 
@@ -51,19 +51,19 @@ When you want the default personality and do not have a more specialized need.
 
 ```bash
 radioactive_ralph init
-radioactive_ralph run --variant green --foreground
+radioactive_ralph run --variant fixit --advise --topic bootstrap
+radioactive_ralph service start
 ```
 
 ### Current runtime notes
 
-- Green is selected through the binary, not a marketplace skill.
-- The current provider implementation still uses the `claude` CLI underneath.
-- The deeper long-running orchestration behavior is partly persona contract and
-  partly ongoing supervisor work.
+- Green is selected through `radioactive_ralph run --variant green`.
+- Green can run through any configured provider binding; `claude`, `codex`, and `gemini` ship today.
+- Green is a durable-service persona, not an attached one-shot run.
 
 ### Arguments
 
 - No green-only flags today; choose it with `--variant green`.
-- Use the shared `run` flags such as `--foreground` and `--repo-root`.
+- Start the durable repo service when you want green to execute plan work.
 
 [← Back to variants index](https://jonbogaty.com/radioactive-ralph/variants/)

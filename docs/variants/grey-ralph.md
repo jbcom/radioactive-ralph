@@ -50,12 +50,12 @@ When the work is obvious, repetitive, and not worth a broader persona.
 
 ```bash
 radioactive_ralph init
-radioactive_ralph run --variant grey --foreground
+radioactive_ralph run --variant grey
 ```
 
 ### Current runtime notes
 
-- Grey is a binary persona, not a slash command.
+- Grey is selected through `radioactive_ralph run --variant grey`.
 - The current runtime does not expose grey-specific CLI flags; the specialization
   lives in the persona profile.
 

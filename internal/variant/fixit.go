@@ -4,7 +4,7 @@ package variant
 // Spec: docs/variants/fixit-ralph.md.
 //
 // Fixit is the ONLY variant permitted to recommend peer variants.
-// Modes are auto-detected at runtime by the supervisor based on plans
+// Modes are auto-detected at runtime by the repo service based on plans
 // setup state:
 //
 //   - Advisor mode (no valid plans dir, malformed index, or --advise):
@@ -17,13 +17,15 @@ package variant
 //     hammer on the top-ranked task per cycle, ≤5 files / ≤200 LOC
 //     PRs, N cycles then bill.
 //
-// Single repo per invocation. Sonnet default; haiku allowed in ROI
-// mode for purely mechanical work. No opus — "too expensive labor"
-// even in advisor mode.
+// Single repo per invocation. Sonnet is the default execution tier;
+// planning may scale up to opus when the operator or repo config asks
+// for it.
 func fixitProfile() Profile {
 	return Profile{
 		Name:                 Fixit,
 		Description:          "Hammer and clipboard. Recommends a variant if plans are missing; otherwise bangs out ROI-ranked PRs with a bill.",
+		AttachedAllowed:      true,
+		DurableAllowed:       true,
 		Isolation:            IsolationMirrorSingle,
 		MaxParallelWorktrees: 1,
 		Models: map[Stage]Model{
@@ -31,8 +33,10 @@ func fixitProfile() Profile {
 			StagePlan:    ModelSonnet,
 			StageExecute: ModelSonnet,
 			StageReview:  ModelSonnet,
-			// haiku spawned inside the session via Agent when ROI favors
-			// it. Supervisor default is sonnet for both modes.
+			// Haiku may still be selected by provider/task policy for
+			// narrowly mechanical work, but the runtime defaults fixit
+			// execution to sonnet and lets the advisor path choose its
+			// own planning tier.
 		},
 		ToolAllowlist: []string{
 			ToolAgent, ToolBash, ToolEdit, ToolGlob,
@@ -43,16 +47,15 @@ func fixitProfile() Profile {
 		SafetyFloors: SafetyFloors{
 			// RequireSpendCap applies only in ROI mode. Advisor mode is
 			// a single bounded pass and shouldn't need a cap — the
-			// supervisor enforces this distinction at mode-entry time.
+			// runtime enforces this distinction at mode-entry time.
 			RequireSpendCap: true,
 		},
 		ObjectStoreDefault: ObjectStoreReference,
 		SyncSourceDefault:  SyncSourceBoth,
 		LFSModeDefault:     LFSPointersOnly,
-		SkillBiases: map[BiasCategory]BiasSnippet{
-			BiasBrainstorm: "Advisor mode: use /{skill} to stress-test variant recommendations before writing the plan file.",
-			BiasReview:     "ROI mode: validate every PR through /{skill} to enforce the ≤5-file / ≤200-LOC discipline.",
-			BiasDocsQuery:  "Query /{skill} when the plan mentions a library you don't have cached context for.",
+		PromptDirectives: []string{
+			"Prefer the smallest high-ROI step that materially improves plan state or task throughput.",
+			"Advisor mode should clarify direction; execution mode should stay narrowly scoped and measurable.",
 		},
 	}
 }

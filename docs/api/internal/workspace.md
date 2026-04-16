@@ -11,7 +11,7 @@ description: Go API reference for the workspace package.
 import "github.com/jbcom/radioactive-ralph/internal/workspace"
 ```
 
-Package workspace manages the on\-disk git workspace a variant runs in.
+Package workspace manages the on\-disk git workspace the repo service uses to execute one variant task at a time.
 
 Four orthogonal knobs, resolved from variant profile \+ config.toml overrides with safety\-floor precedence:
 
@@ -29,7 +29,7 @@ Dispatch:
 - mirror\-single → git clone \-\-mirror into MirrorGit, one worktree
 - mirror\-pool → mirror \+ up to MaxParallelWorktrees worktrees
 
-Zero git work happens in the package outside of clone, fetch, repack, and worktree add/remove. Commits, PRs, merges, and history rewrites are operator\-skill work that lives inside the worktree Claude session.
+Zero git work happens in the package outside of clone, fetch, repack, and worktree add/remove. Commits, PRs, merges, and history rewrites happen inside the worktree provider session, not in the workspace manager itself.
 
 ## Index
 
@@ -69,9 +69,9 @@ func HasLFS(repoPath string) (bool, error)
 HasLFS reports whether repoPath has \`.gitattributes\` entries that reference git\-lfs filters. Used by pre\-flight to decide whether LFS knob choices matter at all.
 
 <a name="Manager"></a>
-## type [Manager](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/workspace/workspace.go#L37-L62>)
+## type [Manager](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/workspace/workspace.go#L40-L65>)
 
-Manager coordinates the per\-variant on\-disk workspace.
+Manager coordinates the on\-disk workspace strategy for one variant profile within a repo\-service run.
 
 ```go
 type Manager struct {
@@ -100,7 +100,7 @@ type Manager struct {
 ```
 
 <a name="New"></a>
-### func [New](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/workspace/workspace.go#L67-L70>)
+### func [New](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/workspace/workspace.go#L70-L73>)
 
 ```go
 func New(repoPath string, p variant.Profile, isolation variant.IsolationMode, objectStore variant.ObjectStoreMode, syncSource variant.SyncSource, lfs variant.LFSMode) (*Manager, error)
@@ -120,7 +120,7 @@ AcquireWorktree creates a new worktree for an available slot and returns it. Ret
 Branch is named \`ralph/\<variant\>/\<slot\>\-\<gen\>\` where gen is a monotonic counter so recycled slots never collide with stale worktree admin data in git.
 
 <a name="Manager.Fetch"></a>
-### func \(\*Manager\) [Fetch](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/workspace/workspace.go#L223>)
+### func \(\*Manager\) [Fetch](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/workspace/workspace.go#L226>)
 
 ```go
 func (m *Manager) Fetch(ctx context.Context) error
@@ -129,7 +129,7 @@ func (m *Manager) Fetch(ctx context.Context) error
 Fetch refreshes the mirror from its configured remotes. Two\-remote variants \(sync\_source=both\) fetch from local first \(fast, shared objects\), then from origin to pick up anything merged remotely.
 
 <a name="Manager.Init"></a>
-### func \(\*Manager\) [Init](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/workspace/workspace.go#L104>)
+### func \(\*Manager\) [Init](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/workspace/workspace.go#L107>)
 
 ```go
 func (m *Manager) Init(ctx context.Context) error
@@ -159,7 +159,7 @@ Pool returns the current list of live worktrees. Callers should not mutate the s
 func (m *Manager) Reconcile(ctx context.Context) error
 ```
 
-Reconcile walks \`git worktree list\` and removes any registered worktrees whose disk paths have disappeared \(likely from an ungraceful prior shutdown\). Called at supervisor boot after replaying the event log.
+Reconcile walks \`git worktree list\` and removes any registered worktrees whose disk paths have disappeared \(likely from an ungraceful prior shutdown\). Called at runtime boot after replaying the event log.
 
 <a name="Manager.ReleaseWorktree"></a>
 ### func \(\*Manager\) [ReleaseWorktree](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/workspace/worktree.go#L118>)

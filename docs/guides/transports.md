@@ -1,64 +1,58 @@
 ---
-title: Claude MCP integration
-description: How Claude Code talks to radioactive_ralph today.
+title: Runtime surfaces
+description: How the repo service, attached run, and TUI fit together.
 ---
 
-# Claude MCP integration
+# Runtime surfaces
 
-Claude Code currently integrates with radioactive-ralph through **stdio MCP**.
-That is the active, supported contract.
+radioactive-ralph has three operator-facing runtime surfaces.
 
-## Why stdio
-
-The repo previously drifted into supporting both stdio and HTTP in the docs and
-in the CLI surface. That created unnecessary ambiguity:
-
-- Who owns runtime state?
-- Is the product the binary or the HTTP server?
-- Are Claude plugin add-ons the real entry point or not?
-
-The answer now is simpler:
-
-- the **binary** is the product
-- Claude is a **client**
-- stdio MCP is the **integration path**
-
-## What `init` does
-
-By default, `radioactive_ralph init` runs:
+## Durable repo service
 
 ```bash
-claude mcp add --scope user radioactive_ralph -- radioactive_ralph serve --mcp
+radioactive_ralph service start
 ```
 
-That means the next Claude session can spawn the binary as an MCP server and
-use its plan/runtime tools directly.
+This is the main runtime. It owns:
 
-## Manual registration
+- the durable SQLite plan DAG session
+- task claiming and progression
+- worktrees and mirrors
+- provider subprocess execution
+- the local control plane used by the CLI and TUI
 
-If you skipped registration during init, run:
+Use this mode when you want the full system, including long-running variants.
+
+## Attached bounded run
 
 ```bash
-radioactive_ralph mcp register
+radioactive_ralph run --variant blue
 ```
 
-Use `--scope local`, `--scope user`, or `--scope project` depending on whether
-the registration should be repo-local, personal, or checked into the repo via
-`.mcp.json`.
+This mode is for bounded variants only. It uses the same underlying runtime
+engine, but it stays attached to the current terminal and exits when the
+eligible work is done.
 
-## What Claude should think of Ralph as
+If a durable repo service is already running, attached `run` refuses to start a
+competing runtime.
 
-Not a plugin bundle. Not an HTTP service. Not a second product.
+## TUI cockpit
 
-Claude should treat `radioactive_ralph` as:
+```bash
+radioactive_ralph tui
+```
 
-- a repo-local planning and orchestration binary
-- a set of structured MCP tools backed by that binary
-- a helpful little guy with many built-in personalities
+The TUI is a socket-backed cockpit. It attaches to the repo service when it is
+already running, or launches it if it is absent. It shows repo status,
+plan/task queues, blocked work, running workers/providers, recent event flow,
+and direct operator actions.
 
-## Current limitation
+## Why the model changed
 
-The runtime is still Claude-CLI-backed under the hood. Provider-agnostic
-bindings are the next design phase, but the Claude integration model should
-already look like what future providers will use: one binary, one structured
-tool surface, one source of truth.
+The old product shape tried to make multiple things primary at once. The live
+contract is cleaner:
+
+- the binary is the product
+- the repo service is the runtime
+- the TUI and CLI are clients of that runtime
+- providers are backends, not the boundary of the system

@@ -1,15 +1,16 @@
 // Package voice renders Ralph's personality for each variant.
 //
-// Every user-facing emission from the supervisor — pre-flight questions,
+// Every user-facing emission from the repo service — pre-flight questions,
 // startup banners, status lines, attach-stream event renderings,
 // shutdown messages, spend-cap notifications — gets voiced through
 // this package. The same fact emits different copy per variant so the
 // operator experiences the distinct personalities documented in
 // docs/variants/.
 //
-// M2 ships the skeleton (registry, lookup, fallbacks). M3 fills in
-// the full template libraries for all ten variants. For M2 we include
-// green (the classic) and blue (the observer) as proofs-of-concept.
+// Today the package ships a complete fallback library plus custom
+// templates for green (the classic) and blue (the observer). Variants
+// without bespoke voice copy currently fall back to the generic event
+// templates.
 //
 // Design: templates are plain Go string/template-literal pairs rather
 // than text/template. We deliberately don't use text/template — the
@@ -24,8 +25,9 @@ import (
 	"sync"
 )
 
-// Variant is an identifier matching the variant profile. M3 makes this
-// a proper enum in the variant package; M2 uses lower-case strings.
+// Variant is an identifier matching the variant profile. It stays in
+// this package so voice rendering can remain decoupled from the
+// variant package's runtime profile types.
 type Variant string
 
 // Canonical variant names. Kept in sync with the variant registry and
@@ -46,7 +48,7 @@ const (
 // Event is the kind-of-emission key. Small, documented set.
 type Event string
 
-// Canonical events the supervisor voices. Adding new events requires
+// Canonical events the runtime voices. Adding new events requires
 // adding templates (or accepting fallbacks) for every variant you care
 // about.
 const (

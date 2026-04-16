@@ -10,6 +10,8 @@ func redProfile() Profile {
 	return Profile{
 		Name:                 Red,
 		Description:          "Principal precision. One cycle, triage CI/PR fires, report, exit.",
+		AttachedAllowed:      true,
+		DurableAllowed:       true,
 		Isolation:            IsolationMirrorPool,
 		MaxParallelWorktrees: 8,
 		Models: map[Stage]Model{
@@ -18,7 +20,7 @@ func redProfile() Profile {
 			// StageReflect = final battlefield-report generation.
 			StageReflect: ModelSonnet,
 			// Escalation to opus happens dynamically on STUCK — not a
-			// stage, it's a retry decision made by the supervisor.
+			// stage, it's a retry decision made by the runtime.
 		},
 		ToolAllowlist: []string{
 			ToolAgent, ToolBash, ToolEdit, ToolGlob,
@@ -28,10 +30,9 @@ func redProfile() Profile {
 		ObjectStoreDefault: ObjectStoreReference,
 		SyncSourceDefault:  SyncSourceBoth,
 		LFSModeDefault:     LFSOnDemand,
-		SkillBiases: map[BiasCategory]BiasSnippet{
-			BiasDebugging:      "Use /{skill} as the first step for every CI failure before editing code.",
-			BiasReview:         "Reviewer-requested changes: pass the PR diff through /{skill} to catch follow-ups.",
-			BiasSecurityReview: "If the failing check is a security scan, route the fix through /{skill}.",
+		PromptDirectives: []string{
+			"Start from the failing symptom and isolate the root cause before broad edits.",
+			"Keep triage focused on the active incident, failing check, or review-blocking regression.",
 		},
 	}
 }

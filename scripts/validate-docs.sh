@@ -5,6 +5,24 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
+LIVE_DOCS=(
+  README.md
+  CLAUDE.md
+  AGENTS.md
+  SECURITY.md
+  STANDARDS.md
+  .github/copilot-instructions.md
+  docs
+  assets/ASSETS.md
+  site/README.md
+)
+
+LIVE_RELEASE_FILES=(
+  .goreleaser.yaml
+  .goreleaser.chocolatey.yaml
+  site/public/install.sh
+)
+
 fail() {
   echo "docs validation: $*" >&2
   exit 1
@@ -30,21 +48,22 @@ search_o() {
   fi
 }
 
-if search 'site/src/content/docs' README.md CLAUDE.md AGENTS.md docs .github site/README.md; then
+if search 'site/src/content/docs' "${LIVE_DOCS[@]}" .github "${LIVE_RELEASE_FILES[@]}"; then
   fail "found stale references to site/src/content/docs"
 fi
 
-if search 'autoapi/' docs README.md CLAUDE.md AGENTS.md .github; then
+if search 'autoapi/' "${LIVE_DOCS[@]}" .github "${LIVE_RELEASE_FILES[@]}"; then
   fail "found stale references to autoapi output"
 fi
 
-if search 'install-skill' README.md CLAUDE.md AGENTS.md docs site/README.md; then
+if search 'install-skill' "${LIVE_DOCS[@]}" "${LIVE_RELEASE_FILES[@]}"; then
   fail "found stale install-skill references"
 fi
 
 for pattern in \
   'uvx radioactive-ralph' \
   'pip install radioactive-ralph' \
+  'radioactive_ralph --variant ' \
   'claude plugin install' \
   'claude plugin marketplace' \
   '/green-ralph([[:space:]`]|$)' \
@@ -62,7 +81,11 @@ for pattern in \
   'ralph pr list' \
   'hatch '
 do
-  if search "$pattern" docs/getting-started docs/guides docs/reference docs/design docs/variants README.md CLAUDE.md AGENTS.md STANDARDS.md assets/ASSETS.md site/README.md; then
+  if search "$pattern" \
+    docs/getting-started docs/guides docs/reference docs/design docs/variants \
+    README.md CLAUDE.md AGENTS.md SECURITY.md STANDARDS.md \
+    assets/ASSETS.md scripts/demo.tape scripts/record-demo.sh site/README.md \
+    "${LIVE_RELEASE_FILES[@]}"; then
     fail "found stale docs pattern: $pattern"
   fi
 done
@@ -72,9 +95,25 @@ for pattern in \
   'cmd/ralph/' \
   'ralph enqueue' \
   '--transport http' \
-  'serve --mcp --http'
+  'serve --mcp' \
+  'mcp register' \
+  '--skip-mcp' \
+  'stdio MCP' \
+  'Claude MCP' \
+  'status --variant' \
+  'attach --variant' \
+  'stop --variant' \
+  'service install --variant' \
+  'run --variant .+ --foreground' \
+  'internal/mcp' \
+  'internal/variantpool' \
+  'internal/supervisor' \
+  '_supervisor'
 do
-  if search "$pattern" docs/getting-started docs/guides docs/reference docs/design docs/variants README.md AGENTS.md assets/ASSETS.md site/README.md; then
+  if search "$pattern" \
+    docs/getting-started docs/guides docs/reference docs/design docs/variants \
+    README.md AGENTS.md SECURITY.md assets/ASSETS.md site/README.md \
+    "${LIVE_RELEASE_FILES[@]}"; then
     fail "found stale live-docs pattern: $pattern"
   fi
 done

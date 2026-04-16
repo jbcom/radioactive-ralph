@@ -12,7 +12,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jbcom/radioactive-ralph/internal/inventory"
 	"gopkg.in/yaml.v3"
 )
 
@@ -48,9 +47,6 @@ func Explore(ctx context.Context, repoRoot string) (RepoContext, error) {
 		rc.OpenIssues = ghIssues(ctx, repoRoot, "issue", "")
 		rc.AIWelcomeIssues = ghIssues(ctx, repoRoot, "issue", "ai-welcome")
 	}
-
-	// Inventory snapshot.
-	rc.Inventory = takeInventorySnapshot()
 
 	// Language mix.
 	rc.LangCounts = countLangs(repoRoot)
@@ -299,23 +295,6 @@ func ghIssues(ctx context.Context, cwd, kind, label string) []GHIssue {
 func strFrom(v any) string { s, _ := v.(string); return s }
 func boolFrom(v any) bool  { b, _ := v.(bool); return b }
 func intFrom(v any) int    { f, _ := v.(float64); return int(f) }
-
-// takeInventorySnapshot calls inventory.Discover and flattens the
-// result into the simpler InventorySnapshot shape Stage 4 needs.
-func takeInventorySnapshot() InventorySnapshot {
-	inv, _ := inventory.Discover(inventory.Options{})
-	snap := InventorySnapshot{}
-	for _, s := range inv.Skills {
-		snap.Skills = append(snap.Skills, s.FullName())
-	}
-	for _, m := range inv.MCPServers {
-		snap.MCPs = append(snap.MCPs, m.Name)
-	}
-	for _, a := range inv.Agents {
-		snap.Agents = append(snap.Agents, a.Name)
-	}
-	return snap
-}
 
 // countLangs walks the repo and counts files by extension. Skips
 // node_modules, vendor, .git, and the operator's reference/ tree.

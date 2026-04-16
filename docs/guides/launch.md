@@ -1,11 +1,17 @@
 ---
-title: Launch
-lastUpdated: 2026-04-15
+title: Launch (marketing)
+lastUpdated: 2026-04-16
 ---
 
 # Launch Plan — radioactive-ralph
 
-Everything needed before the LinkedIn / Hacker News drop.
+Everything needed before the LinkedIn / Hacker News drop. This is the
+**marketing** side of a launch — visual assets, demo, social links.
+
+- Release-engineering checklist (tag, package, smoke, rollback):
+  [`launch/release-checklist`](../launch/release-checklist.md)
+- Operator runbooks (install, auth, service, approvals, troubleshooting):
+  [`runbooks/`](../runbooks/index.md)
 
 ## Checklist
 
@@ -17,7 +23,7 @@ Everything needed before the LinkedIn / Hacker News drop.
 - [ ] Architecture diagram SVG (`assets/architecture.svg`)
 
 ### Documentation and packaging
-- [x] Root README stabilized for GitHub + PyPI rendering
+- [x] Root README stabilized for GitHub + package-manager install guidance
 - [x] Persona docs reworked with structured above-the-fold tables
 - [x] Docs IA reorganized around `getting-started`, `guides`, `variants`, and `reference`
 - [x] Docs publishing split from release automation
@@ -25,10 +31,10 @@ Everything needed before the LinkedIn / Hacker News drop.
 
 ### Demo verification
 - [ ] `radioactive_ralph run --variant fixit --advise` turns a plain-English ask into a durable plan plus `.radioactive-ralph/plans/<topic>-advisor.md`
-- [ ] `radioactive_ralph run --variant green --foreground` runs end-to-end in single-cycle mode
-- [ ] `radioactive_ralph run --variant red --foreground` handles a known CI failure cleanly
-- [ ] `radioactive_ralph run --variant fixit --foreground` respects the ROI budget settings
-- [ ] `radioactive_ralph status`, `radioactive_ralph plan ls`, and `radioactive_ralph mcp status` return promptly on empty state
+- [ ] `radioactive_ralph service start` launches the durable repo runtime cleanly
+- [ ] `radioactive_ralph run --variant red` handles a known CI failure cleanly
+- [ ] `radioactive_ralph run --variant fixit` respects the ROI budget settings
+- [ ] `radioactive_ralph status`, `radioactive_ralph plan ls`, and `radioactive_ralph tui` behave cleanly on empty state
 
 ## Social links
 

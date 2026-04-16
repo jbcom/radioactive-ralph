@@ -11,8 +11,8 @@ live store already.
 
 ```sh
 radioactive_ralph run --variant fixit --advise \
-  --topic m3-completion \
-  --description "Close the remaining M3 docs and supervisor gaps"
+  --topic runtime-stabilization \
+  --description "Close the remaining runtime, docs, and launch-readiness gaps"
 ```
 
 `--advise` puts fixit into advisor mode. It scans the repo, assesses
@@ -75,8 +75,8 @@ fixit can re-run the same topic after the repo changes:
 
 ```sh
 radioactive_ralph run --variant fixit --advise \
-  --topic m3-completion \
-  --description "Re-score the remaining M3 work after the Sphinx pivot"
+  --topic runtime-stabilization \
+  --description "Re-score the remaining runtime work after the latest docs and packaging pass"
 ```
 
 That re-runs the analysis and refinement loop and overwrites the

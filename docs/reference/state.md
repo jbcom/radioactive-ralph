@@ -3,64 +3,52 @@ title: State
 lastUpdated: 2026-04-15
 ---
 
-# State — radioactive-ralph
+# State
 
-This page tracks the live state of the rewrite after the binary-first pivot.
-
-## What changed in the contract
-
-The repo no longer treats the Claude marketplace/plugin path as the main
-identity of the product.
-
-The active contract is now:
-
-- `radioactive_ralph` binary first
-- Claude Code via stdio MCP
-- personas defined in code
-- provider abstraction as the target direction
+This page tracks the live state of the runtime after the repo-service pivot.
 
 ## What is live today
 
 - Go CLI under `cmd/radioactive_ralph/`
 - repo init and config scaffolding
 - durable SQLite-backed plan store
-- stdio MCP server via `radioactive_ralph serve --mcp`
-- MCP registration via `radioactive_ralph mcp register`
-- service installation commands
+- durable repo-scoped runtime under `radioactive_ralph service start`
+- attached bounded execution under `radioactive_ralph run --variant <name>`
+- socket-backed `status`, `attach`, `stop`, and `tui`
+- operator task controls via `plan tasks`, `plan approvals`, `plan blocked`, `plan approve`, `plan requeue`, `plan retry`, `plan handoff`, `plan fail`, and `plan history`
+- named provider bindings with a repo-level default provider
+- shipped provider runners for `claude`, `codex`, and `gemini`
+- native Windows durable-service support via SCM + named pipes
 - repo-root Sphinx docs
 - generated Go API reference under `docs/api/`
 
-## What is now explicitly deprecated
+## What changed
 
-- treating marketplace plugin skills as the main product story
-- treating HTTP MCP as a first-class integration path
-- describing the personas as external skill files first and code second
+The live contract no longer includes:
 
-Legacy plugin/skill material may still exist in the tree or in archive/history
-documents, but it is no longer the architectural center.
+- MCP serving
+- plugin packaging as a product surface
+- per-variant supervisors
+- detached multiplexer management
 
-## High-priority implementation gaps
+Those concepts may still appear in archived plan documents, but they are not
+part of the shipped runtime anymore.
 
-### Fixit rewrites are still append-only at the DAG layer
+## Remaining work
 
-Fixit now seeds the durable DAG on first creation for a topic slug, but reruns
-with the same slug refresh the human report and leave the existing DAG plan in
-place. Plan revision/replacement semantics are still missing.
+The remaining work is polish rather than missing architecture:
 
-### Provider abstraction is still design, not code
-
-The current runtime still shells out to `claude`. The broader provider-binding
-model is the next architecture phase, not a shipped feature.
-
-### Safety and gating are still incomplete
-
-Some variant gate and spend-cap behavior exists in profiles/docs but is not yet
-fully reflected in the runtime surface.
+- a written launch/backlog plan now lives in
+  [plans/2026-04-16-v1-remaining-work.prd.md](../plans/2026-04-16-v1-remaining-work.prd.md)
+- richer TUI navigation, filtering, and prompt-entry ergonomics
+- broader native-host smoke testing, especially on real Windows machines
+- continued copy cleanup in archival and lore-heavy pages that intentionally
+  preserve older design history
 
 ## What is intentionally true now
 
 - Ralph is one binary with many personalities.
-- Claude is a client of the binary, not the other way around.
-- Repo config should become the place where future provider bindings live.
-- The docs should describe the current product honestly and mark target-state
-  material as target-state.
+- The durable repo service is the main runtime.
+- Attached `run` exists for bounded variants only.
+- Fixit is the bridge from free-form human ask to durable plan context.
+- Providers are bindings, not the identity of the product.

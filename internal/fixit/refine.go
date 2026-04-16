@@ -38,7 +38,7 @@ type RefineIteration struct {
 // of:
 //   - Proposal validates AND confidence >= MinConfidenceThreshold
 //   - MaxIterations reached
-//   - Hard error (context cancel, claude spawn fail)
+//   - Hard error (context cancel, provider execution failure)
 //
 // The LLM sees each prior attempt's failures appended to the system
 // prompt, so it can deliberately address them rather than randomly
@@ -113,8 +113,8 @@ func Refine(ctx context.Context, rc RepoContext, intent IntentSpec, opts RefineO
 // into the Description so the prompt renderer naturally includes it
 // under "Operator intent" — no template changes required.
 //
-// The appended block tells Claude exactly what the prior pass got
-// wrong and what the threshold is. Claude's retry is deliberate:
+// The appended block tells the planning model exactly what the prior
+// pass got wrong and what the threshold is. The retry is deliberate:
 // address these specific failures, raise confidence.
 func withFeedback(base IntentSpec, prior PlanProposal, failures []string, iter int) IntentSpec {
 	out := base

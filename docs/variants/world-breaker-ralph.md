@@ -56,15 +56,13 @@ When the problem is bad enough that ordinary Ralphs feel irresponsible.
 
 ```bash
 radioactive_ralph init
-radioactive_ralph run --variant world-breaker \
-  --confirm-burn-everything \
-  --spend-cap-usd 100 \
-  --foreground
+radioactive_ralph run --variant fixit --advise --topic bootstrap
+radioactive_ralph service start
 ```
 
 ### Arguments
 
-- `--confirm-burn-everything` — required confirmation gate
-- `--spend-cap-usd <amount>` — required spend cap
+- World-breaker runs through the durable repo service.
+- `--confirm-burn-everything` and `--spend-cap-usd <amount>` remain required at execution time.
 
 [← Back to variants index](https://jonbogaty.com/radioactive-ralph/variants/)

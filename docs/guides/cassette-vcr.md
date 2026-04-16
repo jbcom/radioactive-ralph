@@ -1,15 +1,15 @@
 ---
 title: Cassette VCR — deterministic replay of Claude sessions
-description: How internal/session/cassette records + replays claude stream-json so tests run hermetically without API credentials.
+description: How internal/provider/claudesession/cassette records + replays claude stream-json so tests run hermetically without API credentials.
 ---
 
-The session wrapper (`internal/session`) talks to a `claude -p
+The session wrapper (`internal/provider/claudesession`) talks to a `claude -p
 --input-format stream-json` subprocess. Real subprocess interactions
 are non-deterministic — they need credentials, the API can time out,
 and responses vary between calls — which makes them unsuitable for
 CI.
 
-`internal/session/cassette` solves this with a VCR-style record/replay
+`internal/provider/claudesession/cassette` solves this with a VCR-style record/replay
 layer: capture a real session once, replay its I/O deterministically
 forever.
 
@@ -58,7 +58,7 @@ sess, _ := session.Spawn(session.Options{
 ## Replaying
 
 The replayer is a tiny standalone binary at
-`internal/session/cassette/replayer`. It reads the cassette and emits
+`internal/provider/claudesession/cassette/replayer`. It reads the cassette and emits
 the recorded stdout frames with their recorded timing. Point the
 session at it and it looks like real claude, minus the credentials:
 
@@ -88,7 +88,7 @@ code, not cassette data.
 Tests that use cassettes keep them alongside the test file:
 
 ```text
-internal/session/
+internal/provider/claudesession/
 ├── session.go
 ├── session_test.go
 └── testdata/

@@ -1,135 +1,89 @@
 ---
 title: CLAUDE.md — radioactive-ralph
-updated: 2026-04-14
-status: current
+lastUpdated: 2026-04-15
 ---
 
 # radioactive-ralph — Agent Entry Point
 
-Autonomous continuous development orchestrator. Per-repo Go binary that
-keeps Claude subprocesses alive, focused, and productive across days of
-work.
+radioactive-ralph is a repo-scoped runtime for AI-assisted software work.
 
-**Currently mid-architectural-rewrite, now pivoted to Go.** The old Python
-tree is at [`reference/`](reference/) and will be deleted at v1.0.0. See
-[`docs/plans/2026-04-14-radioactive-ralph-rewrite.prq.md`](docs/plans/2026-04-14-radioactive-ralph-rewrite.prq.md)
-for the four-milestone plan.
+## Core shape
 
-## Quick orientation (target Go tree — M2 in progress)
+- `radioactive_ralph service start` runs the durable repo service.
+- `radioactive_ralph run --variant <name>` runs one bounded variant attached to
+  the current terminal.
+- `radioactive_ralph tui` is the socket-backed cockpit.
+- Fixit Ralph is the only variant that should translate a free-form user ask
+  into durable plan state when no active plan exists.
+
+## Current tree
 
 ```text
-cmd/ralph/                         # kong CLI entry point
-internal/xdg/                      # state dir + repo-hash helpers
-internal/config/                   # kong args + TOML loader + Resolve() with safety floors
-internal/inventory/                # shell-based skill/MCP/plugin discovery
-internal/variant/                  # Profile + skill biases (M3 fills)
-internal/workspace/                # mirror + worktree + LFS (four orthogonal knobs)
-internal/db/                       # SQLite + sqlite-vec event log, WAL
-internal/ipc/                      # Unix socket server + client
-internal/multiplexer/              # tmux / screen / syscall.Setsid fallback
-internal/session/                  # ClaudeSession wrapping `claude -p --input-format stream-json`
-internal/supervisor/               # per-variant event loop
-internal/service/                  # launchd / systemd-user / brew-services integration
-internal/initcmd/                  # `radioactive_ralph init` capability-matching wizard
-internal/doctor/                   # environment health checks
-internal/voice/                    # Ralph personality templates
-
-reference/                         # old Python tree, deleted at v1.0.0
-skills/                            # 10 skill MD files (rewritten thin in M3)
-docs/                              # hand-written + doc2go-generated API reference
-.claude-plugin/marketplace.json    # unchanged from M1
-.goreleaser.yaml                   # brew + Scoop + WinGet + tarballs
+cmd/radioactive_ralph/           # CLI entry point and subcommands
+internal/config/                 # repo config + local overrides
+internal/db/                     # event log
+internal/doctor/                 # environment checks
+internal/fixit/                  # fixit planning pipeline
+internal/initcmd/                # repo bootstrap
+internal/ipc/                    # socket protocol and client/server
+internal/plandag/                # durable SQLite plan DAG
+internal/provider/               # provider binding abstraction
+internal/runtime/                # durable repo service
+internal/service/                # platform service integration
+internal/provider/claudesession/ # Claude-backed provider session runner
+internal/variant/                # Ralph persona profiles
+internal/voice/                  # Ralph flavor text
+internal/workspace/              # mirrors and worktrees
+internal/xdg/                    # machine-local state paths
+docs/                            # repo-root Sphinx docs
 ```
 
 ## Commands
 
 ```bash
-# Go development
 go test ./...
-go build -o dist/ralph ./cmd/ralph
 golangci-lint run
-govulncheck ./...
-make test          # same as `go test ./...`
-make lint          # golangci-lint run + govulncheck
-make build         # emits ./dist/ralph
+python3 -m tox -e docs
 
-# Release (GoReleaser)
-goreleaser release --snapshot --clean   # dry-run, emits ./dist/
-git tag v0.6.0 && git push --tags       # triggers real release via GHA
-
-# Runtime (post-M2)
-ralph init                              # per-repo setup wizard
-ralph run --variant X [--detach]        # launch supervisor
-ralph status [--variant X | --all]      # query Unix socket
-ralph attach --variant X                # stream events
-ralph stop [--variant X]                # graceful shutdown
-ralph doctor                            # environment health
-ralph service install --variant X       # emit launchd/systemd unit
+radioactive_ralph init
+radioactive_ralph run --variant <name>
+radioactive_ralph status
+radioactive_ralph attach
+radioactive_ralph stop
+radioactive_ralph tui
+radioactive_ralph service start
+radioactive_ralph service install
+radioactive_ralph service uninstall
+radioactive_ralph service list
+radioactive_ralph service status
+radioactive_ralph plan ls
+radioactive_ralph plan show <id-or-slug>
+radioactive_ralph plan next <id-or-slug>
+radioactive_ralph plan tasks <id-or-slug>
+radioactive_ralph plan approvals
+radioactive_ralph plan blocked
+radioactive_ralph plan approve <plan> <task>
+radioactive_ralph plan requeue <plan> <task>
+radioactive_ralph plan retry <plan> <task>
+radioactive_ralph plan handoff <plan> <task> <variant>
+radioactive_ralph plan fail <plan> <task>
+radioactive_ralph plan history <plan> <task>
+radioactive_ralph plan import <path>
+radioactive_ralph plan mark-done <plan> <task>
 ```
 
-## What radioactive-ralph is NOT
+## Rules
 
-- An MCP server acting as a live bridge between an outer Claude session
-  and the daemon. Confirmed impossible in Claude Code 2026 —
-  interactive sessions have no IPC channel for external user-message
-  injection.
-- A general-purpose task runner, tmux replacement, or SaaS orchestrator.
-- A replacement for human judgment on vision and direction.
-- A multi-operator coordination tool (one operator per daemon).
-- A non-git workspace tool.
-- A multi-LLM-provider framework (Anthropic only).
-- A code reviewer, PR classifier, work-discoverer, or forge API client.
-  Claude already does all of these inside worktree sessions when given
-  the right skills; the daemon does not duplicate them.
-
-## Critical rules
-
-- **Config lives in-repo**: `.radioactive-ralph/config.toml` (committed)
-  + `.radioactive-ralph/local.toml` (gitignored). Missing config =
-  refuse to run.
-- **State lives in XDG**: `$XDG_STATE_HOME/radioactive-ralph/<repo-hash>/`
-  on Linux/WSL; `~/Library/Application Support/radioactive-ralph/
-  <repo-hash>/` on macOS. Never in `.claude/`, never in the repo.
-- **SSH remotes only** — `git@github.com:`, never `https://`.
-- **Conventional commits** — `feat:`, `fix:`, `chore:`, `docs:`,
-  `refactor:`, etc.
-- **stream-json is the session protocol** — daemon spawns
-  `claude -p --input-format stream-json --output-format stream-json`
-  and pipes user messages to stdin. Never interactive mode for managed
-  sessions.
-- **Mirror-based workspaces** for `mirror-*` isolation variants —
-  worktrees are created off a `git clone --mirror` in XDG, not off the
-  operator's repo.
-- **No git ops in the daemon** except `git worktree add/remove` and
-  `git fetch` for mirror management. All other git work (commits, PRs,
-  merges, branch hygiene, history rewrites) happens inside worktree
-  Claude sessions.
-- **No forge API clients, no code review logic, no PR classifier** in
-  the daemon. Claude does these in the worktree using whatever skills
-  the operator has installed.
-- **Capability inventory drives bias injection** — variant profiles
-  declare preferred skill categories (review, security review, docs
-  query). The operator picks preferences during `radioactive_ralph init`. The
-  supervisor injects bias snippets into each managed session's system
-  prompt based on actual installed inventory.
-- **Safety floors are non-negotiable** — destructive variants'
-  `object_store = full` and confirmation gates cannot be weakened by
-  single-flag override.
-- **Go file size limit**: 300 lines per `.go` file (same global limit
-  as the Python 300-LOC rule).
+- Config lives in `.radioactive-ralph/`.
+- Durable runtime state lives under the XDG/App Support root, never under
+  `.claude/`.
+- Providers are bindings, not the identity of the product.
+- The shipped providers are `claude`, `codex`, and `gemini`; future providers
+  should fit the same prompt/model/effort/result contract.
+- Destructive variants still require explicit confirmation gates and spend-cap
+  enforcement where declared.
 
 ## Docs
 
-Published at <https://jonbogaty.com/radioactive-ralph/> via GitHub
-Pages. The canonical docs now live at repo-root in `docs/` and build
-with Sphinx + Shibuya. Generated API reference comes from `gomarkdoc`
-into `docs/api/`; there is no AutoAPI path in the live site.
-
-## Release
-
-No code signing in initial releases. Single cross-packager monorepo at
-`jbcom/pkgs` holds Formula/, bucket/, choco/, etc. — users tap with
-`brew tap jbcom/pkgs`. Install script at
-`jonbogaty.com/radioactive-ralph/install.sh`. Windows via Scoop/WinGet
-for the binary; the supervisor runs only in POSIX environments so
-Windows users use WSL2+Linuxbrew for the full experience.
+Published at <https://jonbogaty.com/radioactive-ralph/> from repo-root `docs/`.
+Generated API reference comes from `gomarkdoc` into `docs/api/`.

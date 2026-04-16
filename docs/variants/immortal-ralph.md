@@ -1,6 +1,6 @@
 ---
 title: immortal-ralph
-lastUpdated: 2026-04-10
+lastUpdated: 2026-04-15
 ---
 
 
@@ -11,7 +11,7 @@ lastUpdated: 2026-04-10
 
 | At a glance | Lore / bio |
 |---|---|
-| **Mode:** recovery-first loop<br>**Scope:** configured repos<br>**Tiering:** sonnet only<br>**Best when:** you need the orchestrator to survive anything and keep coming back | This is Ralph as a horror story: patient, cold, protective, and impossible to keep down once the closet door opens again. |
+| **Mode:** recovery-first loop<br>**Scope:** configured repos<br>**Tiering:** sonnet only<br>**Best when:** you need the runtime to survive anything and keep coming back | This is Ralph as a horror story: patient, cold, protective, and impossible to keep down once the closet door opens again. |
 
 ## Character notes
 
@@ -52,13 +52,14 @@ When you want the most stubborn Ralph.
 
 ```bash
 radioactive_ralph init
-radioactive_ralph run --variant immortal --foreground
+radioactive_ralph run --variant fixit --advise --topic bootstrap
+radioactive_ralph service start
 ```
 
 ### Current runtime notes
 
-- Immortal is selected through the shared binary surface.
-- The durability story is still a mix of live code and target-state supervisor work.
+- Immortal is selected through `radioactive_ralph run --variant immortal`.
+- Immortal requires the durable repo service.
 
 ### Arguments
 

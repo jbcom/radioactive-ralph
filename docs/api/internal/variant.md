@@ -13,7 +13,7 @@ import "github.com/jbcom/radioactive-ralph/internal/variant"
 
 Package variant defines the ten Ralph behavior profiles.
 
-Each variant is a distinct operating mode with its own parallelism, model tiering, commit cadence, termination policy, tool allowlist, safety floors, and capability\-bias preferences. The Profile struct is the canonical source of truth the supervisor reads to decide how to spawn and manage Claude subprocesses.
+Each variant is a distinct operating mode with its own parallelism, model tiering, commit cadence, termination policy, tool allowlist, safety floors, and capability\-bias preferences. The Profile struct is the canonical source of truth the runtime reads to decide how to spawn and manage provider subprocesses.
 
 Each profile is registered from its own file \(blue.go, grey.go, ...\) so any operator can read the full definition of a single variant without wading through the others. The operator\-facing narrative lives in docs/variants/.
 
@@ -24,8 +24,6 @@ Each profile is registered from its own file \(blue.go, grey.go, ...\) so any op
 - [func MustRegister\(p Profile\)](<#MustRegister>)
 - [func Register\(p Profile\) error](<#Register>)
 - [func ResetRegistryForTesting\(\)](<#ResetRegistryForTesting>)
-- [type BiasCategory](<#BiasCategory>)
-- [type BiasSnippet](<#BiasSnippet>)
 - [type IsolationMode](<#IsolationMode>)
 - [type LFSMode](<#LFSMode>)
 - [type Model](<#Model>)
@@ -47,7 +45,7 @@ Each profile is registered from its own file \(blue.go, grey.go, ...\) so any op
 
 ## Constants
 
-<a name="ToolAgent"></a>Tool names that appear in allow/deny lists. Mirrors Claude Code's built\-in tools.
+<a name="ToolAgent"></a>Tool names that appear in allow/deny lists. These are the runtime's canonical tool identifiers; provider adapters map them to whatever concrete backend surface they need.
 
 ```go
 const (
@@ -98,38 +96,6 @@ func ResetRegistryForTesting()
 ```
 
 ResetRegistryForTesting clears the registry and re\-registers the built\-in variants. Tests that mutate the registry call this from a t.Cleanup to avoid bleeding state between tests.
-
-<a name="BiasCategory"></a>
-## type [BiasCategory](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/variant/variant.go#L146>)
-
-BiasCategory identifies a helper\-capability bias slot declared by the variant. Matches the keys the operator configures in \[capabilities\] in .radioactive\-ralph/config.toml.
-
-```go
-type BiasCategory string
-```
-
-<a name="BiasReview"></a>Bias categories that a variant may declare snippets for. Each maps to a \[capabilities\] key in config.toml.
-
-```go
-const (
-    BiasReview         BiasCategory = "review"
-    BiasSecurityReview BiasCategory = "security_review"
-    BiasDocsQuery      BiasCategory = "docs_query"
-    BiasBrainstorm     BiasCategory = "brainstorm"
-    BiasDebugging      BiasCategory = "debugging"
-)
-```
-
-<a name="BiasSnippet"></a>
-## type [BiasSnippet](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/variant/variant.go#L162>)
-
-BiasSnippet is the system\-prompt injection used when a bias slot has a matching helper in the inventory.
-
-Placeholder: \{skill\} expands to the chosen helper's full name.
-
-```go
-type BiasSnippet string
-```
 
 <a name="IsolationMode"></a>
 ## type [IsolationMode](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/variant/variant.go#L46>)
@@ -189,9 +155,9 @@ const (
 ```
 
 <a name="Model"></a>
-## type [Model](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/variant/variant.go#L124>)
+## type [Model](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/variant/variant.go#L125>)
 
-Model identifies a specific Claude model tier.
+Model identifies the abstract model tier a variant asks the provider binding to resolve.
 
 ```go
 type Model string
@@ -260,7 +226,7 @@ const (
 ```
 
 <a name="Profile"></a>
-## type [Profile](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/variant/variant.go#L203-L228>)
+## type [Profile](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/variant/variant.go#L180-L207>)
 
 Profile is the canonical description of a variant.
 
@@ -268,10 +234,12 @@ Profile is the canonical description of a variant.
 type Profile struct {
     Name                 Name
     Description          string // one-liner shown in `radioactive_ralph --help` and `radioactive_ralph init`
+    AttachedAllowed      bool   // whether `radioactive_ralph run --variant X` may execute the variant directly
+    DurableAllowed       bool   // whether the repo-local durable service may schedule the variant
     Isolation            IsolationMode
     MaxParallelWorktrees int
     Models               map[Stage]Model // stage → model
-    ToolAllowlist        []string        // Claude Code tool names
+    ToolAllowlist        []string        // canonical runtime tool names
     Termination          TerminationPolicy
     CycleLimit           int    // meaningful only for NCycles
     ConfirmationGate     string // CLI flag like "--confirm-burn-budget"; empty = no gate
@@ -279,7 +247,7 @@ type Profile struct {
     SyncSourceDefault    SyncSource
     LFSModeDefault       LFSMode
     SafetyFloors         SafetyFloors
-    SkillBiases          map[BiasCategory]BiasSnippet
+    PromptDirectives     []string
 
     // ShellExplicitlyTrusted lets a shared-isolation variant include
     // Bash in its allowlist despite the structural "shared = read-only"
@@ -330,7 +298,7 @@ func (p Profile) HasGate() bool
 HasGate reports whether the variant requires a confirmation flag.
 
 <a name="Profile.ModelForStage"></a>
-### func \(Profile\) [ModelForStage](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/variant/profile.go#L84>)
+### func \(Profile\) [ModelForStage](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/variant/profile.go#L87>)
 
 ```go
 func (p Profile) ModelForStage(s Stage) Model
@@ -357,7 +325,7 @@ func (p Profile) WritesAllowed() bool
 WritesAllowed reports whether the variant's tool allowlist permits Edit or Write. Shared\-isolation variants must return false.
 
 <a name="SafetyFloors"></a>
-## type [SafetyFloors](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/variant/variant.go#L181-L200>)
+## type [SafetyFloors](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/variant/variant.go#L162-L177>)
 
 SafetyFloors pins specific fields that cannot be weakened by config.toml, env vars, or single\-flag CLI overrides.
 
@@ -373,10 +341,6 @@ type SafetyFloors struct {
     // FreshConfirmPerInvocation means the confirmation gate must be
     // passed on every single `radioactive_ralph run` — never cached in config.
     FreshConfirmPerInvocation bool
-
-    // RefuseServiceContext means the variant will not run when detected
-    // under launchd/systemd (savage, old-man, world-breaker).
-    RefuseServiceContext bool
 
     // RequireSpendCap means `radioactive_ralph run` fails without a cap value
     // either via --spend-cap-usd flag or [variants.X] spend_cap_usd.
@@ -429,7 +393,7 @@ const (
 ```
 
 <a name="TerminationPolicy"></a>
-## type [TerminationPolicy](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/variant/variant.go#L134>)
+## type [TerminationPolicy](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/variant/variant.go#L135>)
 
 TerminationPolicy classifies how a variant ends.
 

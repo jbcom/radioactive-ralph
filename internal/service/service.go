@@ -1,38 +1,27 @@
-// Package service manages per-user OS service units for radioactive-ralph.
+// Package service manages platform service definitions for the durable
+// repo-scoped radioactive_ralph runtime.
 //
 // Platform dispatch:
 //
-//   - macOS     → launchd user agent (~/Library/LaunchAgents/jbcom.radioactive-ralph.<variant>.plist)
-//   - Linux/WSL → systemd user unit (~/.config/systemd/user/radioactive_ralph-<variant>.service)
-//   - Homebrew  → brew-services wrapper (invokes the launchd/systemd path)
+//   - macOS     → launchd user agent
+//   - Linux/WSL → systemd user unit
+//   - Windows   → native Service Control Manager entry
 //
-// Gating:
-//
-//   - Variants with SafetyFloors.RefuseServiceContext = true refuse to
-//     install. Running savage/old-man/world-breaker under a service
-//     manager is operator malpractice (they burn money or force-push
-//     repos; neither should be on a cron).
-//   - Variants with a confirmation gate require the operator to have
-//     passed the gate flag to `radioactive_ralph service install` explicitly.
-//
-// Service-context detection at `radioactive_ralph run` time uses:
-//
-//   - LAUNCHED_BY=launchd     (our own plist sets this)
-//   - INVOCATION_ID set        (systemd user services set this)
-//   - RALPH_SERVICE_CONTEXT=1  (manual override for tests)
-//
-// Supervisor refuses to spawn a RefuseServiceContext variant when any
-// of those are set.
+// Service-context detection is used to distinguish durable service
+// launches from operator-attached `radioactive_ralph run` sessions.
 package service
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
 	"runtime"
-
-	"github.com/jbcom/radioactive-ralph/internal/variant"
+	"strings"
+	"unicode"
 )
 
 // Backend identifies which platform mechanism is in use.
@@ -43,6 +32,9 @@ const (
 	BackendLaunchd Backend = "launchd"
 	// BackendSystemdUser is Linux/WSL systemd user unit.
 	BackendSystemdUser Backend = "systemd-user"
+	// BackendWindowsSCM is a native Windows service managed by the Service
+	// Control Manager.
+	BackendWindowsSCM Backend = "windows-scm"
 	// BackendUnsupported is returned for platforms we don't manage.
 	BackendUnsupported Backend = "unsupported"
 )
@@ -54,35 +46,42 @@ func DetectBackend() Backend {
 		return BackendLaunchd
 	case "linux":
 		return BackendSystemdUser
+	case "windows":
+		return BackendWindowsSCM
 	default:
 		return BackendUnsupported
 	}
 }
 
-// UnitName returns the canonical service unit name for a variant.
-// launchd: "jbcom.radioactive-ralph.green"
-// systemd: "radioactive_ralph-green"
-func UnitName(b Backend, v variant.Name) string {
+// UnitName returns the canonical service definition name for a repo.
+// launchd:     "jbcom.radioactive-ralph.<slug>.<hash>"
+// systemd:     "radioactive_ralph-<slug>-<hash>"
+// windows-scm: "radioactive_ralph-<slug>-<hash>"
+func UnitName(b Backend, repoPath string) string {
+	slug, hash := repoToken(repoPath)
 	switch b {
 	case BackendLaunchd:
-		return "jbcom.radioactive-ralph." + string(v)
+		return "jbcom.radioactive-ralph." + slug + "." + hash
 	case BackendSystemdUser:
-		return "radioactive_ralph-" + string(v)
+		return "radioactive_ralph-" + slug + "-" + hash
 	default:
-		return "radioactive_ralph-" + string(v)
+		return "radioactive_ralph-" + slug + "-" + hash
 	}
 }
 
 // UnitPath returns the on-disk path where the unit file will be written.
 // Callers pass the operator's home dir (tests inject a tmpdir).
-func UnitPath(b Backend, home string, v variant.Name) string {
+func UnitPath(b Backend, home, repoPath string) string {
 	switch b {
 	case BackendLaunchd:
-		return filepath.Join(home, "Library", "LaunchAgents",
-			UnitName(b, v)+".plist")
+		return path.Join(home, "Library", "LaunchAgents",
+			UnitName(b, repoPath)+".plist")
 	case BackendSystemdUser:
-		return filepath.Join(home, ".config", "systemd", "user",
-			UnitName(b, v)+".service")
+		return path.Join(home, ".config", "systemd", "user",
+			UnitName(b, repoPath)+".service")
+	case BackendWindowsSCM:
+		return filepath.Join(home, "AppData", "Local", "radioactive-ralph",
+			"services", UnitName(b, repoPath)+".json")
 	default:
 		return ""
 	}
@@ -98,15 +97,9 @@ type InstallOptions struct {
 	// the unit should exec. Required.
 	RalphBin string
 	// RepoPath is the operator's repo — written into the unit as the
-	// working directory for the daemon.
+	// working directory for the durable runtime and used to derive the
+	// service unit name. Required.
 	RepoPath string
-	// Variant is the variant profile to install for. Required.
-	Variant variant.Profile
-	// GateConfirmed must be true when Variant has a ConfirmationGate.
-	// Enforces "operator explicitly passed --confirm-X to
-	// radioactive_ralph service install" so gates aren't bypassed via
-	// the service wrapper.
-	GateConfirmed bool
 	// ExtraEnv is merged into the unit's environment block. Callers use
 	// this for RALPH_SPEND_CAP_USD etc.
 	ExtraEnv map[string]string
@@ -114,34 +107,24 @@ type InstallOptions struct {
 
 // Errors -------------------------------------------------------------
 
-// ErrRefuseServiceContext is returned when the variant pins
-// RefuseServiceContext=true.
-var ErrRefuseServiceContext = errors.New("service: variant refuses to run in a service context")
-
-// ErrGateNotConfirmed is returned when a gated variant is installed
-// without GateConfirmed=true.
-var ErrGateNotConfirmed = errors.New("service: gated variant requires explicit confirmation")
-
 // ErrUnsupportedBackend is returned for platforms we don't manage.
 var ErrUnsupportedBackend = errors.New("service: unsupported platform")
 
 // ErrMissingRalphBin is returned when RalphBin is empty.
 var ErrMissingRalphBin = errors.New("service: RalphBin required")
 
-// Install writes the unit file for the given variant.
-// Does not load it into launchd/systemd — callers do that via
-// `radioactive_ralph service start` to keep Install a pure filesystem
-// operation (trivial to test and to undo).
+// ErrMissingRepoPath is returned when RepoPath is empty.
+var ErrMissingRepoPath = errors.New("service: RepoPath required")
+
+// Install writes or registers the platform service definition for the
+// given repo. On launchd/systemd this means writing the unit file; on
+// Windows it also registers the SCM entry.
 func Install(opts InstallOptions) (path string, err error) {
 	if opts.RalphBin == "" {
 		return "", ErrMissingRalphBin
 	}
-	if opts.Variant.SafetyFloors.RefuseServiceContext {
-		return "", fmt.Errorf("%w: %s", ErrRefuseServiceContext, opts.Variant.Name)
-	}
-	if opts.Variant.HasGate() && !opts.GateConfirmed {
-		return "", fmt.Errorf("%w: %s requires %s",
-			ErrGateNotConfirmed, opts.Variant.Name, opts.Variant.ConfirmationGate)
+	if opts.RepoPath == "" {
+		return "", ErrMissingRepoPath
 	}
 
 	backend := opts.Backend
@@ -161,11 +144,11 @@ func Install(opts InstallOptions) (path string, err error) {
 		home = h
 	}
 
-	path = UnitPath(backend, home, opts.Variant.Name)
-	// 0o755 — the service manager (launchd on macOS, systemd-user on Linux)
-	// needs directory traversal permission even when running as the same
-	// user. 0o750 works on Linux but breaks on macOS where launchd's
-	// directory access prechecks expect 0o755 on intermediate dirs.
+	path = UnitPath(backend, home, opts.RepoPath)
+	// 0o755 — the platform service manager needs directory traversal
+	// permission even when running as the same user. 0o750 works on
+	// Linux but breaks on macOS where launchd's directory access
+	// prechecks expect 0o755 on intermediate dirs.
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil { //nolint:gosec // service managers require 0o755 intermediate dirs
 		return "", fmt.Errorf("service: mkdir %s: %w", filepath.Dir(path), err)
 	}
@@ -176,6 +159,8 @@ func Install(opts InstallOptions) (path string, err error) {
 		content = renderLaunchd(opts)
 	case BackendSystemdUser:
 		content = renderSystemdUser(opts)
+	case BackendWindowsSCM:
+		return installWindowsService(opts, path)
 	default:
 		return "", fmt.Errorf("%w: %s", ErrUnsupportedBackend, backend)
 	}
@@ -203,7 +188,13 @@ func Uninstall(opts InstallOptions) error {
 		}
 		home = h
 	}
-	path := UnitPath(backend, home, opts.Variant.Name)
+	if opts.RepoPath == "" {
+		return ErrMissingRepoPath
+	}
+	path := UnitPath(backend, home, opts.RepoPath)
+	if backend == BackendWindowsSCM {
+		return uninstallWindowsService(opts, path)
+	}
 	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("service: remove %s: %w", path, err)
 	}
@@ -211,8 +202,8 @@ func Uninstall(opts InstallOptions) error {
 }
 
 // IsServiceContext reports whether the current process looks like it's
-// running under a service manager (launchd / systemd --user). Checked
-// in pre-flight before spawning a RefuseServiceContext variant.
+// running under the durable repo-service host rather than an
+// operator-attached foreground invocation.
 func IsServiceContext() bool {
 	if os.Getenv("RALPH_SERVICE_CONTEXT") == "1" {
 		return true
@@ -226,4 +217,32 @@ func IsServiceContext() bool {
 		return true
 	}
 	return false
+}
+
+func repoToken(repoPath string) (slug, hash string) {
+	base := filepath.Base(strings.TrimSpace(repoPath))
+	if base == "" || base == "." || base == string(filepath.Separator) {
+		base = "repo"
+	}
+	var b strings.Builder
+	lastDash := false
+	for _, r := range strings.ToLower(base) {
+		switch {
+		case unicode.IsLetter(r) || unicode.IsDigit(r):
+			b.WriteRune(r)
+			lastDash = false
+		case r == '-' || r == '_' || unicode.IsSpace(r):
+			if !lastDash {
+				b.WriteByte('-')
+				lastDash = true
+			}
+		}
+	}
+	slug = strings.Trim(b.String(), "-")
+	if slug == "" {
+		slug = "repo"
+	}
+	sum := sha256.Sum256([]byte(repoPath))
+	hash = hex.EncodeToString(sum[:])[:10]
+	return slug, hash
 }

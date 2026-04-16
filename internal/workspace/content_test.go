@@ -3,6 +3,7 @@ package workspace
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -52,6 +53,9 @@ func TestHasLFSFalseWhenFileMissing(t *testing.T) {
 // ── Hook copy --------------------------------------------------------
 
 func TestCopyHooksPreservesExecutableBit(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows does not preserve POSIX executable bits")
+	}
 	repo := newTestRepo(t)
 	hookSrc := filepath.Join(repo, ".git", "hooks", "pre-commit")
 	if err := os.WriteFile(hookSrc, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {

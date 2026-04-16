@@ -32,7 +32,6 @@ See docs/design/fixit\-plan\-pipeline.md for the architectural rationale. Each s
 - [type IntentOptions](<#IntentOptions>)
 - [type IntentSpec](<#IntentSpec>)
   - [func CaptureIntent\(opts IntentOptions\) \(IntentSpec, error\)](<#CaptureIntent>)
-- [type InventorySnapshot](<#InventorySnapshot>)
 - [type PlanProposal](<#PlanProposal>)
   - [func Analyze\(ctx context.Context, opts AnalyzeOptions\) \(PlanProposal, error\)](<#Analyze>)
 - [type PlanStatus](<#PlanStatus>)
@@ -59,7 +58,7 @@ const MinConfidence = 50
 ```
 
 <a name="AnalyzeOptions"></a>
-## type [AnalyzeOptions](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/fixit/analyze.go#L21-L48>)
+## type [AnalyzeOptions](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/fixit/analyze.go#L23-L56>)
 
 AnalyzeOptions feeds Analyze.
 
@@ -69,17 +68,25 @@ type AnalyzeOptions struct {
     RC     RepoContext
     Scores []VariantScore
 
-    // ClaudeBin overrides the default `claude` binary path. Tests use
-    // the cassette replayer or the fake-claude double here.
-    ClaudeBin string
+    // Binding is the provider binding used for stage-4 planning.
+    // Zero value falls back to the built-in `claude` binding.
+    Binding provider.Binding
+
+    // ProviderBinary overrides the resolved provider binary. Tests may
+    // point this at a fake CLI.
+    ProviderBinary string
+
+    // RunnerFactory constructs the provider runner. Nil defaults to
+    // provider.NewRunner.
+    RunnerFactory func(binding provider.Binding) (provider.Runner, error)
 
     // WorkingDir is the cwd for the spawned subprocess. Defaults to the
     // repo root from RC.GitRoot.
     WorkingDir string
 
-    // Model pins the tier for the planning subprocess. Empty defaults
-    // to "opus" — the advisor runs infrequently (once per plan), so
-    // the cost is bounded and the quality delta is meaningful.
+    // Model pins the planning tier. Empty defaults to "opus" — the
+    // advisor runs infrequently, so the cost is bounded and the
+    // quality delta is meaningful.
     Model string
 
     // Effort pins the reasoning-effort level. Empty defaults to "high"
@@ -87,9 +94,7 @@ type AnalyzeOptions struct {
     // on simple ones.
     Effort string
 
-    // Timeout caps the total Claude analysis time. Default 180s —
-    // opus with auto-effort can take longer than the old sonnet/medium
-    // defaults, so the cap is lifted from 90s accordingly.
+    // Timeout caps the total provider analysis time. Default 180s.
     Timeout time.Duration
 }
 ```
@@ -133,7 +138,7 @@ EmitToDAG writes the fixit output into plandag. Creates:
 
 - one plans row \(status mapped from fixit PlanStatus\)
 - one intents row capturing raw operator input
-- one analyses row capturing Claude's Phase 2 output
+- one analyses row capturing Stage 4 provider output
 - N tasks rows \(one per proposal.Tasks entry\)
 - topologically\-sorted dependency edges when Task.DependsOn is set
 
@@ -153,12 +158,12 @@ type EmitToDAGOpts struct {
     Status     PlanStatus
     Intent     IntentSpec
     RC         RepoContext
-    RawOutput  string // Phase 2 Claude output; stored in analyses.raw_json
+    RawOutput  string // Phase 2 provider output; stored in analyses.raw_json
 }
 ```
 
 <a name="EmittedPlan"></a>
-## type [EmittedPlan](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/fixit/types.go#L163-L170>)
+## type [EmittedPlan](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/fixit/types.go#L151-L158>)
 
 EmittedPlan describes what Stage 6 wrote.
 
@@ -194,7 +199,7 @@ func EmitFallback(plansDir, topic string, reason string, rawOutput string, inten
 EmitFallback writes a diagnostic\-only plan whose status is \`fallback\`. Used when Stage 4 fails twice or Stage 5 produces a failure the operator should see directly.
 
 <a name="RunPipeline"></a>
-### func [RunPipeline](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/fixit/pipeline.go#L58>)
+### func [RunPipeline](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/fixit/pipeline.go#L65>)
 
 ```go
 func RunPipeline(ctx context.Context, opts RunOptions) (EmittedPlan, error)
@@ -286,23 +291,10 @@ func CaptureIntent(opts IntentOptions) (IntentSpec, error)
 
 CaptureIntent runs Stage 1. In non\-interactive mode it returns immediately with whatever the caller supplied. In interactive mode it asks three short questions on stdout and reads answers from stdin. Either way it consults a TOPIC.md at the repo root for an operator\-prepared description if \-\-description wasn't passed.
 
-<a name="InventorySnapshot"></a>
-## type [InventorySnapshot](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/fixit/types.go#L65-L69>)
-
-InventorySnapshot is a flattened view of the operator capability inventory \(helper integrations, MCPs, agents\). The full inventory.Inventory has more detail but the advisor only needs names and high\-level availability.
-
-```go
-type InventorySnapshot struct {
-    Skills []string // FullName form, e.g. "coderabbit:review"
-    MCPs   []string
-    Agents []string
-}
-```
-
 <a name="PlanProposal"></a>
-## type [PlanProposal](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/fixit/types.go#L126-L134>)
+## type [PlanProposal](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/fixit/types.go#L114-L122>)
 
-PlanProposal is Stage 4 output — the structured JSON the constrained Claude subprocess returns.
+PlanProposal is Stage 4 output — the structured JSON the constrained planning provider returns.
 
 ```go
 type PlanProposal struct {
@@ -317,7 +309,7 @@ type PlanProposal struct {
 ```
 
 <a name="Analyze"></a>
-### func [Analyze](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/fixit/analyze.go#L57>)
+### func [Analyze](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/fixit/analyze.go#L65>)
 
 ```go
 func Analyze(ctx context.Context, opts AnalyzeOptions) (PlanProposal, error)
@@ -325,10 +317,10 @@ func Analyze(ctx context.Context, opts AnalyzeOptions) (PlanProposal, error)
 
 Analyze runs Stage 4. Returns a parsed PlanProposal on success, or \(zero, error\) on hard failure. Callers handle fallback emission; this function never returns a half\-filled proposal.
 
-One retry on JSON\-parse failure: when Claude returns text that doesn't unmarshal cleanly, we re\-spawn with the parse error appended so the model can self\-correct. Second failure bubbles up.
+One retry on JSON\-parse failure: when the provider returns text that doesn't unmarshal cleanly, we re\-spawn with the parse error appended so the model can self\-correct. Second failure bubbles up.
 
 <a name="PlanStatus"></a>
-## type [PlanStatus](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/fixit/types.go#L145>)
+## type [PlanStatus](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/fixit/types.go#L133>)
 
 PlanStatus captures whether the emitted plan satisfies the plans\- first discipline gate.
 
@@ -349,7 +341,7 @@ const (
     // run on a provisional plan until the operator promotes it.
     StatusProvisional PlanStatus = "provisional"
 
-    // StatusFallback means Stage 4 (Claude analysis) failed twice. The
+    // StatusFallback means Stage 4 (provider analysis) failed twice. The
     // emitted file is a diagnostic, not a plan.
     StatusFallback PlanStatus = "fallback"
 )
@@ -410,12 +402,12 @@ Refine runs Stage 4 repeatedly, feeding validation failures back into each subse
 
 - Proposal validates AND confidence \>= MinConfidenceThreshold
 - MaxIterations reached
-- Hard error \(context cancel, claude spawn fail\)
+- Hard error \(context cancel, provider execution failure\)
 
 The LLM sees each prior attempt's failures appended to the system prompt, so it can deliberately address them rather than randomly redrafting.
 
 <a name="RepoContext"></a>
-## type [RepoContext](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/fixit/types.go#L73-L99>)
+## type [RepoContext](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/fixit/types.go#L63-L87>)
 
 RepoContext is Stage 2 output — everything the deterministic exploration discovered about the repo.
 
@@ -442,15 +434,13 @@ type RepoContext struct {
     OpenIssues      []GHIssue
     AIWelcomeIssues []GHIssue
 
-    Inventory InventorySnapshot
-
     LangCounts        map[string]int
     GovernanceMissing []string
 }
 ```
 
 <a name="Explore"></a>
-### func [Explore](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/fixit/explore.go#L22>)
+### func [Explore](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/fixit/explore.go#L21>)
 
 ```go
 func Explore(ctx context.Context, repoRoot string) (RepoContext, error)
@@ -459,7 +449,7 @@ func Explore(ctx context.Context, repoRoot string) (RepoContext, error)
 Explore runs Stage 2 — deterministic repo exploration. Every field in the returned RepoContext comes from a shell\-out \(git, gh, file walk\) — zero LLM calls.
 
 <a name="RunOptions"></a>
-## type [RunOptions](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/fixit/pipeline.go#L10-L52>)
+## type [RunOptions](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/fixit/pipeline.go#L12-L59>)
 
 RunOptions drives the full six\-stage pipeline.
 
@@ -471,9 +461,16 @@ type RunOptions struct {
     Constraints    []string
     NonInteractive bool
 
-    // ClaudeBin overrides the default `claude` binary for Stage 4.
-    // Tests pass the cassette replayer or fake-claude here.
-    ClaudeBin string
+    // ProviderBinding selects the provider used for stage-4 planning.
+    ProviderBinding provider.Binding
+
+    // ProviderBinary overrides the planning provider binary. Tests may
+    // point this at a fake CLI.
+    ProviderBinary string
+
+    // RunnerFactory constructs the planning provider runner. Nil uses
+    // provider.NewRunner.
+    RunnerFactory func(binding provider.Binding) (provider.Runner, error)
 
     // SkipAnalysis bypasses Stage 4 — useful only for tests that
     // exercise the deterministic stages without spawning a
@@ -481,7 +478,7 @@ type RunOptions struct {
     // a zero PlanProposal.
     SkipAnalysis bool
 
-    // MaxRefinementIterations caps how many rounds of Claude
+    // MaxRefinementIterations caps how many rounds of provider-backed
     // refinement Stage 4 will do before giving up. Default 3.
     // Configurable via CLI flag or config.toml [variants.fixit]
     // max_refinement_iterations.
@@ -495,22 +492,20 @@ type RunOptions struct {
     // min_confidence_threshold.
     MinConfidenceThreshold int
 
-    // PlanModel pins the Claude model tier for Stage 4 planning.
-    // Empty defaults to "opus" — planning benefits from the most
-    // capable tier and the advisor runs infrequently. Configurable
-    // via CLI (--plan-model) or config.toml [variants.fixit]
+    // PlanModel pins the planning tier for Stage 4. Empty defaults to
+    // "opus". Configurable via CLI or config.toml [variants.fixit]
     // plan_model.
     PlanModel string
 
-    // PlanEffort pins the reasoning-effort level for Stage 4.
-    // Empty defaults to "high". Configurable via CLI (--plan-effort)
-    // or config.toml [variants.fixit] plan_effort.
+    // PlanEffort pins the reasoning-effort level for Stage 4. Empty
+    // defaults to "high". Configurable via CLI or config.toml
+    // [variants.fixit] plan_effort.
     PlanEffort string
 }
 ```
 
 <a name="Task"></a>
-## type [Task](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/fixit/types.go#L114-L122>)
+## type [Task](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/fixit/types.go#L102-L110>)
 
 Task is one item in a PlanProposal's task list. The DAG\-oriented fields \(VariantHint, ContextBoundary, AcceptanceCriteria, DependsOn\) are populated when Stage 4 emits enough structure to build a real DAG. When omitted, EmitToDAG falls back to an implicit linear chain.
 
@@ -527,7 +522,7 @@ type Task struct {
 ```
 
 <a name="ValidationResult"></a>
-## type [ValidationResult](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/fixit/types.go#L138-L141>)
+## type [ValidationResult](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/fixit/types.go#L126-L129>)
 
 ValidationResult is Stage 5 output — whether the proposal passed every rule and, if not, what failed.
 
@@ -548,7 +543,7 @@ func Validate(p PlanProposal, rc RepoContext, intent IntentSpec) ValidationResul
 Validate runs Stage 5. Returns \(passed, failures\). A passing validation means the plan gets \`status: current\`; a failing validation still emits the plan but downgrades status to \`provisional\` so other variants' plans\-first gate refuses it.
 
 <a name="VariantScore"></a>
-## type [VariantScore](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/fixit/types.go#L102-L107>)
+## type [VariantScore](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/fixit/types.go#L90-L95>)
 
 VariantScore is one entry in Stage 3's deterministic ranking.
 
@@ -570,6 +565,6 @@ func Score(rc RepoContext, intent IntentSpec) []VariantScore
 
 Score runs Stage 3 — deterministic variant ranking. Every variant gets a 0..100 score with bullet\-justified Reasons. Disqualifying notes set the score to 0 \(e.g. world\-breaker without \-\-confirm\-burn\-everything from the CLI, since gated variants can't be auto\-handed\-off\).
 
-Same input always produces same output. Rules live here so they can be unit\-tested independently of Claude.
+Same input always produces same output. Rules live here so they can be unit\-tested independently of any provider call.
 
 Generated by [gomarkdoc](<https://github.com/princjef/gomarkdoc>)

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -47,7 +48,7 @@ func TestDAGRoundTrip(t *testing.T) {
 
 	// Create a session + two variant rows so claims have valid FKs.
 	sessID, err := s.CreateSession(ctx, SessionOpts{
-		Mode: SessionModePortable, Transport: SessionTransportStdio,
+		Mode: SessionModeAttached, Transport: SessionTransportStdio,
 		PID: 1, PIDStartTime: "2026-04-15T00:00:00Z",
 	})
 	if err != nil {
@@ -171,7 +172,7 @@ func TestRetryRequeues(t *testing.T) {
 
 	// Set up the FK targets for claim().
 	sessID, err := s.CreateSession(ctx, SessionOpts{
-		Mode: SessionModePortable, Transport: SessionTransportStdio,
+		Mode: SessionModeAttached, Transport: SessionTransportStdio,
 		PID: 1, PIDStartTime: "2026-04-15T00:00:00Z",
 	})
 	if err != nil {
@@ -211,5 +212,171 @@ func TestRetryRequeues(t *testing.T) {
 	}
 	if task.Status != TaskStatusFailed {
 		t.Errorf("final status = %q, want %q", task.Status, TaskStatusFailed)
+	}
+}
+
+func TestApprovalFlowAndHistory(t *testing.T) {
+	ctx := context.Background()
+	s, err := Open(ctx, Options{DSN: "file:" + filepath.Join(t.TempDir(), "plans.db")})
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer func() { _ = s.Close() }()
+
+	planID, err := s.CreatePlan(ctx, CreatePlanOpts{Slug: "approve", Title: "approval flow", RepoPath: "/tmp/repo"})
+	if err != nil {
+		t.Fatalf("CreatePlan: %v", err)
+	}
+	if err := s.CreateTask(ctx, CreateTaskOpts{
+		PlanID: planID, ID: "review-release", Description: "review release plan",
+	}); err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+
+	sessID, err := s.CreateSession(ctx, SessionOpts{
+		Mode: SessionModeDurable, Transport: SessionTransportSocket,
+		PID: 42, PIDStartTime: "service-42", Host: "local",
+	})
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	svID, err := s.CreateSessionVariant(ctx, SessionVariantOpts{
+		SessionID: sessID, VariantName: "green",
+		SubprocessPID: 9002, SubprocessStartTime: "2026-04-15T00:00:00Z",
+	})
+	if err != nil {
+		t.Fatalf("CreateSessionVariant: %v", err)
+	}
+
+	if _, err := s.ClaimNextReady(ctx, planID, "green", sessID, svID); err != nil {
+		t.Fatalf("ClaimNextReady: %v", err)
+	}
+	if err := s.RequeueTask(ctx, planID, "review-release", sessID, "needs professor review", "professor", true); err != nil {
+		t.Fatalf("RequeueTask: %v", err)
+	}
+
+	task, err := s.GetTask(ctx, planID, "review-release")
+	if err != nil {
+		t.Fatalf("GetTask: %v", err)
+	}
+	if task.Status != TaskStatusReadyPendingApproval {
+		t.Fatalf("status = %q, want %q", task.Status, TaskStatusReadyPendingApproval)
+	}
+	if task.VariantHint != "professor" {
+		t.Fatalf("variant hint = %q, want professor", task.VariantHint)
+	}
+
+	approvalTasks, err := s.ListTasks(ctx, planID, []TaskStatus{TaskStatusReadyPendingApproval})
+	if err != nil {
+		t.Fatalf("ListTasks: %v", err)
+	}
+	if len(approvalTasks) != 1 || approvalTasks[0].ID != "review-release" {
+		t.Fatalf("approval tasks = %+v, want only review-release", approvalTasks)
+	}
+
+	events, err := s.ListTaskEvents(ctx, planID, "review-release", 5)
+	if err != nil {
+		t.Fatalf("ListTaskEvents: %v", err)
+	}
+	if len(events) == 0 || events[0].EventType != "approval_required" {
+		t.Fatalf("latest event = %+v, want approval_required", events)
+	}
+	if !strings.Contains(events[0].PayloadJSON, "needs professor review") {
+		t.Fatalf("payload = %q, want approval reason", events[0].PayloadJSON)
+	}
+
+	if err := s.ApproveTask(ctx, planID, "review-release"); err != nil {
+		t.Fatalf("ApproveTask: %v", err)
+	}
+	task, err = s.GetTask(ctx, planID, "review-release")
+	if err != nil {
+		t.Fatalf("GetTask after approve: %v", err)
+	}
+	if task.Status != TaskStatusPending {
+		t.Fatalf("status after approve = %q, want %q", task.Status, TaskStatusPending)
+	}
+	if err := s.ApproveTask(ctx, planID, "review-release"); err == nil {
+		t.Fatal("second ApproveTask should fail once task is no longer waiting for approval")
+	}
+
+	events, err = s.ListTaskEvents(ctx, planID, "review-release", 2)
+	if err != nil {
+		t.Fatalf("ListTaskEvents after approve: %v", err)
+	}
+	if len(events) < 2 {
+		t.Fatalf("events len = %d, want at least 2", len(events))
+	}
+	if events[0].EventType != "approved" || events[1].EventType != "approval_required" {
+		t.Fatalf("events order = %+v, want approved then approval_required", events)
+	}
+}
+
+func TestBlockedAndOperatorRecoveryFlow(t *testing.T) {
+	ctx := context.Background()
+	s, err := Open(ctx, Options{DSN: "file:" + filepath.Join(t.TempDir(), "plans.db")})
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer func() { _ = s.Close() }()
+
+	planID, err := s.CreatePlan(ctx, CreatePlanOpts{Slug: "blocked", Title: "blocked flow", RepoPath: "/tmp/repo"})
+	if err != nil {
+		t.Fatalf("CreatePlan: %v", err)
+	}
+	if err := s.CreateTask(ctx, CreateTaskOpts{
+		PlanID: planID, ID: "collect-evidence", Description: "collect release evidence",
+	}); err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+
+	sessID, err := s.CreateSession(ctx, SessionOpts{
+		Mode: SessionModeDurable, Transport: SessionTransportSocket,
+		PID: 42, PIDStartTime: "service-42", Host: "local",
+	})
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	svID, err := s.CreateSessionVariant(ctx, SessionVariantOpts{
+		SessionID: sessID, VariantName: "green",
+		SubprocessPID: 9003, SubprocessStartTime: "2026-04-15T00:00:00Z",
+	})
+	if err != nil {
+		t.Fatalf("CreateSessionVariant: %v", err)
+	}
+	if _, err := s.ClaimNextReady(ctx, planID, "green", sessID, svID); err != nil {
+		t.Fatalf("ClaimNextReady: %v", err)
+	}
+	if err := s.MarkBlocked(ctx, planID, "collect-evidence", sessID, TaskEventPayload{
+		Reason:       "need release notes",
+		NeedsContext: []string{"release notes", "deploy logs"},
+		Retryable:    true,
+	}); err != nil {
+		t.Fatalf("MarkBlocked: %v", err)
+	}
+
+	task, err := s.GetTask(ctx, planID, "collect-evidence")
+	if err != nil {
+		t.Fatalf("GetTask: %v", err)
+	}
+	if task.Status != TaskStatusBlocked {
+		t.Fatalf("status = %q, want %q", task.Status, TaskStatusBlocked)
+	}
+	if err := s.OperatorHandoffTask(ctx, planID, "collect-evidence", TaskEventPayload{
+		Reason:    "professor should handle the evidence gap",
+		HandoffTo: "professor",
+	}, "professor", false); err != nil {
+		t.Fatalf("OperatorHandoffTask: %v", err)
+	}
+	task, err = s.GetTask(ctx, planID, "collect-evidence")
+	if err != nil {
+		t.Fatalf("GetTask after handoff: %v", err)
+	}
+	if task.Status != TaskStatusPending || task.VariantHint != "professor" {
+		t.Fatalf("task after handoff = %+v", task)
+	}
+	if err := s.OperatorRetryTask(ctx, planID, "collect-evidence", TaskEventPayload{
+		Reason: "operator wants one more attempt",
+	}); err == nil {
+		t.Fatal("retry should fail once task is no longer blocked/failed")
 	}
 }

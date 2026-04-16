@@ -18,7 +18,7 @@ State lives at one of these, in priority order:
 1. $RALPH\_STATE\_DIR \(explicit override, for tests\)
 2. $XDG\_STATE\_HOME/radioactive\-ralph \(Linux, WSL\)
 3. \~/Library/Application Support/radioactive\-ralph \(macOS\)
-4. %LOCALAPPDATA%/radioactive\-ralph \(Windows; only a few subcommands are supported on Windows natively, the full daemon expects POSIX\)
+4. %LOCALAPPDATA%/radioactive\-ralph \(Windows\)
 5. \~/.local/state/radioactive\-ralph \(POSIX default when XDG unset\)
 
 Within that root, every per\-repo workspace is keyed by a stable hash of the absolute path of the operator's repo. Cloning the same repo to two locations yields two independent workspaces, which is the correct behavior because Ralph's worktrees and event log are tied to the source tree on disk, not to the remote URL.
@@ -56,7 +56,7 @@ var ErrRepoPathRequired = errors.New("xdg: repo path is required")
 ```
 
 <a name="StateRoot"></a>
-## func [StateRoot](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/xdg/xdg.go#L130>)
+## func [StateRoot](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/xdg/xdg.go#L125>)
 
 ```go
 func StateRoot() (string, error)
@@ -64,10 +64,10 @@ func StateRoot() (string, error)
 
 StateRoot returns the absolute path to the Ralph state root for this machine and user, respecting overrides. Honors the $RALPH\_STATE\_DIR override for tests.
 
-Exported so packages outside the xdg package \(the plan subcommand, the MCP server bootstrap, etc.\) can land the plandag SQLite file and other global artifacts under the same root as per\-repo workspaces.
+Exported so packages outside the xdg package can land the plandag SQLite file and other global artifacts under the same root as per\-repo workspaces.
 
 <a name="Paths"></a>
-## type [Paths](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/xdg/xdg.go#L43-L73>)
+## type [Paths](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/xdg/xdg.go#L42-L70>)
 
 Paths holds the resolved set of directories for a single repo workspace. All fields are absolute paths; no field is created on disk until a caller asks \(Paths is a plan, not a mkdir\).
 
@@ -88,25 +88,23 @@ type Paths struct {
     // that use shallow isolation.
     Shallow string
 
-    // Worktrees is Workspace/worktrees — parent dir for per-variant worktrees.
+    // Worktrees is Workspace/worktrees — parent dir for repo-service worktrees.
     Worktrees string
 
-    // Sessions is Workspace/sessions — per-variant socket/PID/log/alive files.
+    // Sessions is Workspace/sessions — repo-service endpoint metadata and
+    // worker-session coordination files.
     Sessions string
 
-    // Logs is Workspace/logs — per-variant rolling log files.
+    // Logs is Workspace/logs — repo-service and worker rolling log files.
     Logs string
 
     // StateDB is Workspace/state.db — the SQLite event log path.
     StateDB string
-
-    // Inventory is Workspace/inventory.json — capability discovery snapshot.
-    Inventory string
 }
 ```
 
 <a name="Resolve"></a>
-### func [Resolve](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/xdg/xdg.go#L79>)
+### func [Resolve](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/xdg/xdg.go#L76>)
 
 ```go
 func Resolve(repoPath string) (Paths, error)
@@ -117,7 +115,7 @@ Resolve returns the full Paths plan for the given absolute repo path.
 The repo path is converted to its absolute, symlink\-resolved form before hashing so that \~/work and /Users/me/work produce the same hash.
 
 <a name="Paths.Ensure"></a>
-### func \(Paths\) [Ensure](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/xdg/xdg.go#L170>)
+### func \(Paths\) [Ensure](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/xdg/xdg.go#L166>)
 
 ```go
 func (p Paths) Ensure() error

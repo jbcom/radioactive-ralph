@@ -11,7 +11,7 @@ lastUpdated: 2026-04-10
 
 | At a glance | Lore / bio |
 |---|---|
-| **Mode:** read-only observer<br>**Scope:** review and diagnosis<br>**Tiering:** sonnet only<br>**Best when:** you want the truth without any risk of modification | The cosmic museum-trip Ralph sees everything, touches nothing, and turns non-interference into the whole point of the skill. |
+| **Mode:** read-only observer<br>**Scope:** review and diagnosis<br>**Tiering:** sonnet only<br>**Best when:** you want the truth without any risk of modification | The cosmic museum-trip Ralph sees everything, touches nothing, and turns non-interference into the whole point of the mode. |
 
 ## Character notes
 
@@ -52,7 +52,7 @@ When you want answers before edits.
 
 ```bash
 radioactive_ralph init
-radioactive_ralph run --variant blue --foreground
+radioactive_ralph run --variant blue
 ```
 
 ### Current runtime notes

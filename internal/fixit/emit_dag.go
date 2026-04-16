@@ -18,7 +18,7 @@ type EmitToDAGOpts struct {
 	Status     PlanStatus
 	Intent     IntentSpec
 	RC         RepoContext
-	RawOutput  string // Phase 2 Claude output; stored in analyses.raw_json
+	RawOutput  string // Phase 2 provider output; stored in analyses.raw_json
 }
 
 // EmitResult is what EmitToDAG returns.
@@ -33,7 +33,7 @@ type EmitResult struct {
 // EmitToDAG writes the fixit output into plandag. Creates:
 //   - one plans row (status mapped from fixit PlanStatus)
 //   - one intents row capturing raw operator input
-//   - one analyses row capturing Claude's Phase 2 output
+//   - one analyses row capturing Stage 4 provider output
 //   - N tasks rows (one per proposal.Tasks entry)
 //   - topologically-sorted dependency edges when Task.DependsOn is set
 //

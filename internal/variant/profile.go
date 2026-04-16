@@ -41,6 +41,9 @@ func (p Profile) Validate() error {
 	if p.Name == "" {
 		return errors.New("variant: Name required")
 	}
+	if !p.AttachedAllowed && !p.DurableAllowed {
+		return fmt.Errorf("variant %q: at least one execution mode must be allowed", p.Name)
+	}
 	if p.Isolation == "" {
 		return fmt.Errorf("variant %q: Isolation required", p.Name)
 	}

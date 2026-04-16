@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-// Client wraps a single Unix-socket connection to a Ralph supervisor.
+// Client wraps a single Unix-socket connection to a Ralph repo service.
 // Clients are short-lived: construct, send one command, read reply, close.
 // For streaming commands (attach), the client instance stays open until
 // the server closes the stream.
@@ -20,7 +20,7 @@ type Client struct {
 	reader *bufio.Reader
 }
 
-// Dial connects to the supervisor at socketPath with the given timeout.
+// Dial connects to the repo service at socketPath with the given timeout.
 // Typical usage:
 //
 //	c, err := ipc.Dial(socketPath, 3*time.Second)
@@ -31,8 +31,9 @@ func Dial(socketPath string, timeout time.Duration) (*Client, error) {
 	if timeout == 0 {
 		timeout = 3 * time.Second
 	}
-	dialer := net.Dialer{Timeout: timeout}
-	conn, err := dialer.Dial("unix", socketPath)
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	conn, err := dialEndpoint(ctx, socketPath, timeout)
 	if err != nil {
 		return nil, fmt.Errorf("ipc: dial %s: %w", socketPath, err)
 	}
@@ -112,7 +113,7 @@ func (c *Client) Stop(ctx context.Context, args StopArgs) error {
 	return nil
 }
 
-// ReloadConfig asks the supervisor to re-read config.toml.
+// ReloadConfig asks the repo service to re-read config.toml.
 func (c *Client) ReloadConfig(ctx context.Context) error {
 	if err := c.send(ctx, Request{Cmd: CmdReloadConfig}); err != nil {
 		return err
@@ -128,7 +129,7 @@ func (c *Client) ReloadConfig(ctx context.Context) error {
 }
 
 // Attach issues an attach request and streams event frames through fn
-// until the supervisor closes the stream or ctx is cancelled. The
+// until the repo service closes the stream or ctx is cancelled. The
 // returned error is nil for a clean end-of-stream.
 func (c *Client) Attach(ctx context.Context, fn func(json.RawMessage) error) error {
 	if err := c.send(ctx, Request{Cmd: CmdAttach}); err != nil {

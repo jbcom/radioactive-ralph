@@ -9,15 +9,16 @@ import (
 // renderLaunchd returns a fully-formed plist XML for a per-user
 // launchd agent.
 //
-// The agent runs `<ralphBin> run --variant <name> --foreground` under
-// RepoPath, auto-restarts on crash (KeepAlive=true), logs to
-// ~/Library/Logs/radioactive-ralph/<variant>.log, and always sets
-// LAUNCHED_BY=launchd so the supervisor's pre-flight can detect it.
+// The agent runs `<ralphBin> service start --foreground --repo-root <repo>`
+// under RepoPath, auto-restarts on crash (KeepAlive=true), logs to
+// ~/Library/Logs/radioactive-ralph/<repo-token>.log, and always sets
+// LAUNCHED_BY=launchd so the runtime can detect durable service context.
 //
 // Intentionally plain-string templated rather than via encoding/xml —
 // plists are finicky about attribute ordering and empty-element shape,
 // and the target format is small and stable.
 func renderLaunchd(opts InstallOptions) string {
+	slug, _ := repoToken(opts.RepoPath)
 	var sb strings.Builder
 	sb.WriteString(`<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -25,13 +26,14 @@ func renderLaunchd(opts InstallOptions) string {
 <dict>
 `)
 	fmt.Fprintf(&sb, "  <key>Label</key>\n  <string>%s</string>\n",
-		UnitName(BackendLaunchd, opts.Variant.Name))
+		UnitName(BackendLaunchd, opts.RepoPath))
 	sb.WriteString("  <key>ProgramArguments</key>\n  <array>\n")
 	fmt.Fprintf(&sb, "    <string>%s</string>\n", xmlEscape(opts.RalphBin))
-	sb.WriteString("    <string>run</string>\n")
-	fmt.Fprintf(&sb, "    <string>--variant</string>\n    <string>%s</string>\n",
-		opts.Variant.Name)
+	sb.WriteString("    <string>service</string>\n")
+	sb.WriteString("    <string>start</string>\n")
 	sb.WriteString("    <string>--foreground</string>\n")
+	sb.WriteString("    <string>--repo-root</string>\n")
+	fmt.Fprintf(&sb, "    <string>%s</string>\n", xmlEscape(opts.RepoPath))
 	sb.WriteString("  </array>\n")
 
 	if opts.RepoPath != "" {
@@ -44,8 +46,7 @@ func renderLaunchd(opts InstallOptions) string {
 	sb.WriteString("  <key>ProcessType</key>\n  <string>Background</string>\n")
 
 	// Log paths — ~/Library/Logs/radioactive-ralph/<variant>.log
-	logPath := fmt.Sprintf("${HOME}/Library/Logs/radioactive-ralph/%s.log",
-		opts.Variant.Name)
+	logPath := fmt.Sprintf("${HOME}/Library/Logs/radioactive-ralph/%s.log", slug)
 	fmt.Fprintf(&sb, "  <key>StandardOutPath</key>\n  <string>%s</string>\n", logPath)
 	fmt.Fprintf(&sb, "  <key>StandardErrorPath</key>\n  <string>%s</string>\n", logPath)
 

@@ -1,0 +1,58 @@
+name: Service Managers
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  launchd:
+    name: launchd smoke
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Build CLI
+        run: |
+          mkdir -p .tmp
+          go build -o .tmp/radioactive_ralph ./cmd/radioactive_ralph
+      - name: launchd smoke
+        run: bash scripts/ci/smoke_launchd.sh "$PWD/.tmp/radioactive_ralph"
+
+  systemd-user:
+    name: systemd-user smoke
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Build CLI
+        run: |
+          mkdir -p .tmp
+          go build -o .tmp/radioactive_ralph ./cmd/radioactive_ralph
+      - name: systemd-user smoke
+        run: bash scripts/ci/smoke_systemd_user.sh "$PWD/.tmp/radioactive_ralph"
+
+  windows-scm:
+    name: windows scm smoke
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Build CLI
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path .tmp | Out-Null
+          go build -o .\.tmp\radioactive_ralph.exe ./cmd/radioactive_ralph
+      - name: windows scm smoke
+        shell: pwsh
+        run: .\scripts\ci\smoke_windows_scm.ps1 -Bin "$PWD\.tmp\radioactive_ralph.exe"

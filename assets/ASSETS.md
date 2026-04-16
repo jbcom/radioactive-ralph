@@ -1,8 +1,6 @@
 ---
 title: Launch Assets Manifest
-updated: 2026-04-10
-status: current
-domain: creative
+lastUpdated: 2026-04-15
 ---
 
 # Launch Assets Manifest
@@ -22,7 +20,7 @@ Binary assets (PNG, GIF, SVG) are produced by the scripts in `scripts/` or by ha
 **Dimensions:** Source is roughly 2.4MB PNG at native resolution. Displays well at 300–500px.
 
 **Where it's used:**
-- `README.md` header (via the raw GitHub URL for `assets/brand/ralph-mascot.png`, so PyPI renders it correctly)
+- `README.md` header (via the raw GitHub URL for `assets/brand/ralph-mascot.png`, so it renders reliably outside the repo too)
 - Referenced by docs/guides/design.md
 - Should NOT be re-used as the GitHub social preview — that needs its own composition (see §2)
 
@@ -37,7 +35,7 @@ Binary assets (PNG, GIF, SVG) are produced by the scripts in `scripts/` or by ha
 **What it should contain:**
 - Left third: the `ralph-mascot.png` (bleed off the bottom slightly for energy)
 - Middle: large title `radioactive-ralph` in the project's green (`#22c55e` / Rich `bright_green` equivalent)
-- Subtitle directly below: `autonomous continuous development orchestrator for Claude Code`
+- Subtitle directly below: `binary-first repo runtime with many personalities`
 - Right third: a 2×5 grid of the ten variant icons (see §4) in their variant colors, labeled with the short name (`green`, `grey`, `red`, `blue`, `professor`, `savage`, `immortal`, `fixit`, `old-man`, `world-breaker`)
 - Bottom-right corner tagline in small type: *"Ralph has many forms."*
 - Dark background (`#0a0a0a`) so the green and the mascot pop
@@ -52,20 +50,19 @@ Binary assets (PNG, GIF, SVG) are produced by the scripts in `scripts/` or by ha
 
 **Status:** TODO
 
-**What it is:** A ~30-second terminal recording showing radioactive-ralph in action. Goal is to convey: *Ralph is alive, Ralph is funny, Ralph does actual work.* Not a tutorial — a vibe demo.
+**What it is:** A ~30-second terminal recording showing radioactive-ralph in action. Goal is to convey: *Ralph is alive, Ralph is funny, Ralph has a clear operator surface.* Not a tutorial — a vibe demo.
 
 **Shot list (what the viewer must see, in order):**
 1. Empty terminal, prompt visible
-2. `radioactive_ralph doctor` — quick environment pass with no Python-era output
-3. `radioactive_ralph init --yes --skip-mcp` — repo bootstrap and plan scaffolding
-4. `radioactive_ralph plan ls` — confirms the live plan store exists
-5. In a second pane or prepared fixture, a running supervisor for one variant
-6. `radioactive_ralph status --variant green` — shows live supervisor state
-7. `radioactive_ralph attach --variant green` — brief event stream / narration beat
-8. One Ralph Wiggum quote visible throughout (the narration is still the joke)
-9. Final frame lingers ~2s on a clean, populated status or attach view so the last frame reads as a poster
+2. `radioactive_ralph --help` — establishes the one-binary / three-surface contract
+3. `radioactive_ralph doctor` — quick environment pass with no Python-era output
+4. `radioactive_ralph service --help` — durable runtime surface
+5. `radioactive_ralph plan --help` — operator control surface
+6. `radioactive_ralph tui --help` — cockpit surface
+7. One Ralph Wiggum quote visible throughout (the narration is still the joke)
+8. Final frame lingers ~2s on a clean command surface so the last frame reads as a poster
 
-**How to produce it:** Use [vhs](https://github.com/charmbracelet/vhs) with the tape file at `scripts/demo.tape`, but update that tape first so it reflects the current Go CLI rather than the archived discovery / PR-list flow. Any visual changes to the GIF should flow through the tape, not through recording freehand. Run `scripts/record-demo.sh` and it will detect vhs, asciinema+agg, or print instructions.
+**How to produce it:** Use [vhs](https://github.com/charmbracelet/vhs) with the tape file at `scripts/demo.tape`. Any visual changes to the GIF should flow through the tape, not through recording freehand. Run `scripts/record-demo.sh` and it will detect vhs, asciinema+agg, or print instructions.
 
 **Dimensions:** 1200×720 window size set by the tape. Target output ~1–3 MB GIF (if larger, re-encode with `gifsicle -O3`).
 
@@ -75,16 +72,16 @@ Binary assets (PNG, GIF, SVG) are produced by the scripts in `scripts/` or by ha
 
 **Status:** TODO
 
-**What it is:** Ten small SVG icons, one per variant. Used in the social preview (§2), the skills index page, and the per-variant READMEs (optional, future).
+**What it is:** Ten small SVG icons, one per variant. Used in the social preview (§2), the docs variants index, and optional per-variant README callouts.
 
 **Common visual vocabulary:**
 - 128×128 viewBox
 - Ralph silhouette (simplified — just the head is fine, hair tuft + closed eyes)
-- Each icon uses its variant's color scheme from `_COLORS` in `src/radioactive_ralph/ralph_says.py`
+- Each icon uses the variant palette defined in the table below
 - Consistent stroke weight (4px), rounded caps
 - Transparent background
 
-**Per-variant colors (from `_COLORS`):**
+**Per-variant colors:**
 
 | File | Variant | Primary | Accent | Warn | Visual motif |
 |------|---------|---------|--------|------|--------------|
@@ -110,13 +107,14 @@ Binary assets (PNG, GIF, SVG) are produced by the scripts in `scripts/` or by ha
 **What it is:** A single SVG that replaces the ASCII diagram in `docs/reference/architecture.md` for places where SVG renders better (GitHub Pages, blog posts, the social preview if we want a variant).
 
 **What it shows:**
-- `radioactive_ralph` supervisor process on the left
-- Arrow pointing right to `claude` CLI subprocesses (stacked, showing up to N parallel)
-- Each Claude subprocess arrow-pointing to a repo
+- `radioactive_ralph` repo service process on the left
+- Arrow pointing right to provider CLI subprocesses (stacked, showing up to N parallel)
+- Label the provider stack with the shipped bindings today: `claude`, `codex`, `gemini`
+- Each provider subprocess arrow-pointing to a repo
 - Each repo arrow-pointing back to `gh` / GitHub (PRs)
-- Feedback loop arrow from GitHub back to the daemon (the `forge-client` / `pr_manager` layer)
-- Eight-phase cycle labeled around the daemon: `ORIENT → DRAIN_MERGE_QUEUE → INTERNAL_REVIEW → ADDRESS_FEEDBACK → DISCOVER_WORK → SPAWN_AGENTS → HANDLE_COMPLETIONS → SLEEP`
-- Color-code: daemon in green, Claude subprocesses in magenta (opus/sonnet/haiku tiers), GitHub in grey
+- Feedback loop arrow from GitHub back to the repo service
+- Control loop labeled around the repo service: `ORIENT → CLAIM → EXECUTE → VERIFY → HANDOFF / APPROVE → REQUEUE`
+- Color-code: repo service in green, provider subprocesses in magenta (opus/sonnet/haiku tiers), GitHub in grey
 
 **How to produce it:** Author in [Excalidraw](https://excalidraw.com) or [tldraw](https://tldraw.com), export SVG, strip metadata with `svgo` or `scour`. Must render correctly on both light and dark GitHub themes — avoid pure black/white fills, use semi-transparent strokes.
 

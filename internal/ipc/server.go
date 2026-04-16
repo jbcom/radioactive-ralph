@@ -10,7 +10,6 @@ import (
 	"log/slog"
 	"net"
 	"os"
-	"path/filepath"
 	"sync"
 	"time"
 )
@@ -19,28 +18,27 @@ import (
 // calling emit repeatedly; other commands return (reply, nil) and the
 // server transmits a single Response frame.
 type Handler interface {
-	// HandleStatus returns the current supervisor status.
+	// HandleStatus returns the current repo-service status.
 	HandleStatus(ctx context.Context) (StatusReply, error)
 
 	// HandleEnqueue queues a new task, returning the task ID and whether
 	// it was a fresh insert or a dedup hit.
 	HandleEnqueue(ctx context.Context, args EnqueueArgs) (EnqueueReply, error)
 
-	// HandleStop signals the supervisor to shut down. The server closes
+	// HandleStop signals the repo service to shut down. The server closes
 	// the IPC socket after sending the response.
 	HandleStop(ctx context.Context, args StopArgs) error
 
-	// HandleReloadConfig asks the supervisor to re-read config.toml.
+	// HandleReloadConfig asks the repo service to re-read config.toml.
 	HandleReloadConfig(ctx context.Context) error
 
 	// HandleAttach streams events to the client until either the
-	// supervisor exits or the client disconnects. The implementation
+	// service exits or the client disconnects. The implementation
 	// should return when ctx is cancelled.
 	HandleAttach(ctx context.Context, emit func(json.RawMessage) error) error
 }
 
-// Server is the Unix-socket IPC server. One instance per supervisor
-// process (one per variant per repo).
+// Server is the repo-service IPC server. One instance per repo service.
 type Server struct {
 	socketPath    string
 	heartbeatPath string
@@ -54,11 +52,13 @@ type Server struct {
 
 // ServerOptions configures a Server.
 type ServerOptions struct {
-	// SocketPath is the path to bind. Typically workspace/sessions/<variant>.sock.
+	// SocketPath is the local endpoint path to bind. Typically
+	// state/<repo>/sessions/service.sock on POSIX hosts.
 	SocketPath string
 
 	// HeartbeatPath is the file whose mtime is bumped every
-	// HeartbeatInterval by the server. Typically workspace/sessions/<variant>.alive.
+	// HeartbeatInterval by the server. Typically the repo-service
+	// heartbeat file next to the endpoint metadata.
 	HeartbeatPath string
 
 	// HeartbeatInterval controls how often we refresh the heartbeat.
@@ -105,21 +105,9 @@ func NewServer(opts ServerOptions) (*Server, error) {
 // Start binds the socket and begins accepting connections in a background
 // goroutine. Safe to call once. Returns the listener error if bind fails.
 func (s *Server) Start(heartbeatInterval time.Duration) error {
-	// Remove any stale socket from a previous supervisor that didn't
-	// clean up. If a live process is listening, subsequent Listen will
-	// still fail with "address already in use".
-	_ = os.Remove(s.socketPath)
-	if err := os.MkdirAll(filepath.Dir(s.socketPath), 0o700); err != nil {
-		return fmt.Errorf("ipc: mkdir socket parent: %w", err)
-	}
-
-	l, err := net.Listen("unix", s.socketPath)
+	l, err := listenEndpoint(s.socketPath)
 	if err != nil {
 		return fmt.Errorf("ipc: listen %s: %w", s.socketPath, err)
-	}
-	if err := os.Chmod(s.socketPath, 0o600); err != nil {
-		_ = l.Close()
-		return fmt.Errorf("ipc: chmod socket: %w", err)
 	}
 	s.listener = l
 
@@ -142,7 +130,7 @@ func (s *Server) Stop() error {
 		_ = s.listener.Close()
 	}
 	s.wg.Wait()
-	_ = os.Remove(s.socketPath)
+	_ = cleanupEndpoint(s.socketPath)
 	return nil
 }
 
@@ -151,8 +139,8 @@ func (s *Server) heartbeatLoop(interval time.Duration) {
 	if interval == 0 {
 		interval = 10 * time.Second
 	}
-	// Touch once at start so ralph status sees a fresh heartbeat
-	// immediately after the supervisor comes up.
+	// Touch once at start so radioactive_ralph status sees a fresh heartbeat
+	// immediately after the service comes up.
 	_ = touchFile(s.heartbeatPath)
 
 	t := time.NewTicker(interval)
@@ -197,7 +185,7 @@ func (s *Server) acceptLoop() {
 
 // handleConn reads a single JSON-line Request and dispatches to the
 // Handler. For CmdAttach, multiple frames are emitted on the same
-// connection until the client disconnects or the supervisor stops.
+// connection until the client disconnects or the service stops.
 func (s *Server) handleConn(conn net.Conn) {
 	defer func() { _ = conn.Close() }()
 
@@ -312,8 +300,8 @@ func errString(err error) string {
 
 // SocketAlive reports whether the heartbeat file at path was touched
 // within maxAge. Clients (`radioactive_ralph status`) call this before attempting
-// a socket connection so they can distinguish "supervisor dead"
-// from "supervisor slow to respond."
+// a socket connection so they can distinguish "service dead"
+// from "service slow to respond."
 func SocketAlive(heartbeatPath string, maxAge time.Duration) bool {
 	info, err := os.Stat(heartbeatPath)
 	if err != nil {

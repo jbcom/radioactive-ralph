@@ -2,7 +2,7 @@
   "name": "@jbcom/radioactive-ralph-site",
   "type": "module",
   "version": "0.0.1",
-  "description": "Documentation site for radioactive-ralph — autonomous Claude Code orchestrator",
+  "description": "Archived Astro prototype for radioactive-ralph docs",
   "scripts": {
     "dev": "astro dev",
     "start": "astro dev",

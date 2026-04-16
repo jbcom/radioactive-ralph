@@ -22,16 +22,6 @@ func realRunner(ctx context.Context, name string, args ...string) (string, error
 	return out.String(), nil
 }
 
-// hasOnPath returns true if the named binary is reachable via the runner
-// by invoking `<name> --version`. Using the runner (rather than
-// exec.LookPath directly) keeps the test-substitution hook consistent.
-func hasOnPath(ctx context.Context, cfg RunOptions, name string) bool {
-	_, err := withTimeout(ctx, 2*time.Second, func(ctx context.Context) (string, error) {
-		return cfg.runCommand(ctx, name, "--version")
-	})
-	return err == nil
-}
-
 // withTimeout runs fn with a per-call timeout, returning the result.
 func withTimeout(parent context.Context, d time.Duration, fn func(context.Context) (string, error)) (string, error) {
 	ctx, cancel := context.WithTimeout(parent, d)

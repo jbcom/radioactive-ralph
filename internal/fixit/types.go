@@ -58,16 +58,6 @@ type GHIssue struct {
 	Labels      []string
 }
 
-// InventorySnapshot is a flattened view of the operator capability
-// inventory (helper integrations, MCPs, agents). The full
-// inventory.Inventory has more detail but the advisor only needs
-// names and high-level availability.
-type InventorySnapshot struct {
-	Skills []string // FullName form, e.g. "coderabbit:review"
-	MCPs   []string
-	Agents []string
-}
-
 // RepoContext is Stage 2 output — everything the deterministic
 // exploration discovered about the repo.
 type RepoContext struct {
@@ -91,8 +81,6 @@ type RepoContext struct {
 	OpenPRs         []GHIssue
 	OpenIssues      []GHIssue
 	AIWelcomeIssues []GHIssue
-
-	Inventory InventorySnapshot
 
 	LangCounts        map[string]int
 	GovernanceMissing []string
@@ -122,7 +110,7 @@ type Task struct {
 }
 
 // PlanProposal is Stage 4 output — the structured JSON the constrained
-// Claude subprocess returns.
+// planning provider returns.
 type PlanProposal struct {
 	Primary            string   `json:"primary"`
 	PrimaryRationale   string   `json:"primary_rationale"`
@@ -154,7 +142,7 @@ const (
 	// run on a provisional plan until the operator promotes it.
 	StatusProvisional PlanStatus = "provisional"
 
-	// StatusFallback means Stage 4 (Claude analysis) failed twice. The
+	// StatusFallback means Stage 4 (provider analysis) failed twice. The
 	// emitted file is a diagnostic, not a plan.
 	StatusFallback PlanStatus = "fallback"
 )

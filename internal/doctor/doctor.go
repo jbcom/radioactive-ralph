@@ -6,10 +6,10 @@
 // is optimised for remediation (each failure carries a one-line
 // suggested fix) rather than diagnosis depth.
 //
-// Checks are ordered from "fundamental prerequisites" (git, claude)
-// down to "nice-to-have" (specific multiplexer available). Any hard
-// failure short-circuits subsequent dependent checks — no point probing
-// the claude version if `claude` isn't on PATH.
+// Checks are ordered from "fundamental prerequisites" (git, provider CLIs)
+// down to "nice-to-have" (service-mode ergonomics). Hard prerequisites stay
+// hard failures; optional providers and auth gaps surface as warnings so the
+// operator can still use the providers that are installed and logged in.
 package doctor
 
 import (
@@ -26,10 +26,9 @@ type Severity int
 const (
 	// OK means the check passed.
 	OK Severity = iota
-	// WARN means an issue was detected but is non-fatal (e.g. tmux
-	// missing, we'll fall through to screen or setsid).
+	// WARN means an issue was detected but is non-fatal.
 	WARN
-	// FAIL means a hard prerequisite failed and the supervisor cannot run.
+	// FAIL means a hard prerequisite failed and the runtime cannot run.
 	FAIL
 )
 
@@ -114,12 +113,17 @@ func Run(ctx context.Context, opts ...Option) Report {
 		cfg.runCommand = realRunner
 	}
 
-	checks := make([]Check, 0, 5)
+	checks := make([]Check, 0, 9)
 	checks = append(checks, checkGitVersion(ctx, cfg))
 	checks = append(checks, checkClaudeVersion(ctx, cfg))
+	checks = append(checks, checkClaudeAuth(ctx, cfg))
+	checks = append(checks, checkCodexVersion(ctx, cfg))
+	checks = append(checks, checkCodexAuth(ctx, cfg))
+	checks = append(checks, checkGeminiVersion(ctx, cfg))
+	checks = append(checks, checkGeminiAuth(ctx, cfg))
 	checks = append(checks, checkGhVersion(ctx, cfg))
 	checks = append(checks, checkGhAuth(ctx, cfg))
-	checks = append(checks, checkMultiplexers(ctx, cfg))
+	checks = append(checks, checkServicePlatform(ctx, cfg))
 
 	r := Report{Checks: checks}
 	for _, c := range checks {

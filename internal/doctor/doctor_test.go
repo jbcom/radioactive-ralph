@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -21,6 +22,18 @@ func fakeRunner(m map[string]struct {
 		}
 		r, ok := m[key]
 		if !ok {
+			switch key {
+			case "claude auth status":
+				return "authenticated", nil
+			case "codex --version":
+				return "codex-cli 0.1.0", nil
+			case "codex login status":
+				return "logged in", nil
+			case "gemini --version":
+				return "0.1.0", nil
+			}
+		}
+		if !ok {
 			return "", errors.New("runner: no stub for " + key)
 		}
 		return r.out, r.err
@@ -37,6 +50,9 @@ func TestSeverityString(t *testing.T) {
 }
 
 func TestRunAllGreen(t *testing.T) {
+	t.Setenv("GEMINI_API_KEY", "test-token")
+	t.Setenv("OPENAI_API_KEY", "test-token")
+	t.Setenv("ANTHROPIC_API_KEY", "test-token")
 	runner := fakeRunner(map[string]struct {
 		out string
 		err error
@@ -45,7 +61,6 @@ func TestRunAllGreen(t *testing.T) {
 		"claude --version": {out: "2.1.89 (Claude Code)"},
 		"gh --version":     {out: "gh version 2.60.1"},
 		"gh auth status":   {out: "Logged in to github.com"},
-		"tmux --version":   {out: "tmux 3.4"},
 	})
 	r := Run(context.Background(), WithRunner(runner), WithMinClaudeVersion("2.0.0"))
 	if !r.Passed() {
@@ -53,6 +68,28 @@ func TestRunAllGreen(t *testing.T) {
 	}
 	if r.WarnCount != 0 {
 		t.Errorf("expected 0 warnings, got %d: %+v", r.WarnCount, r.Checks)
+	}
+}
+
+func TestClaudeAuthUsesAPIKey(t *testing.T) {
+	t.Setenv("ANTHROPIC_API_KEY", "test-token")
+	check := checkClaudeAuth(context.Background(), RunOptions{runCommand: fakeRunner(nil)})
+	if check.Severity != OK {
+		t.Fatalf("checkClaudeAuth severity = %v, want OK", check.Severity)
+	}
+	if !strings.Contains(check.Detail, "ANTHROPIC_API_KEY") {
+		t.Fatalf("checkClaudeAuth detail = %q", check.Detail)
+	}
+}
+
+func TestCodexAuthUsesAPIKey(t *testing.T) {
+	t.Setenv("OPENAI_API_KEY", "test-token")
+	check := checkCodexAuth(context.Background(), RunOptions{runCommand: fakeRunner(nil)})
+	if check.Severity != OK {
+		t.Fatalf("checkCodexAuth severity = %v, want OK", check.Severity)
+	}
+	if !strings.Contains(check.Detail, "OPENAI_API_KEY") {
+		t.Fatalf("checkCodexAuth detail = %q", check.Detail)
 	}
 }
 
@@ -65,7 +102,6 @@ func TestRunMissingGit(t *testing.T) {
 		"claude --version": {out: "2.1.89"},
 		"gh --version":     {out: "gh version 2.60.1"},
 		"gh auth status":   {out: "Logged in"},
-		"tmux --version":   {out: "tmux 3.4"},
 	})
 	r := Run(context.Background(), WithRunner(runner))
 	if r.Passed() {
@@ -102,7 +138,6 @@ func TestRunMissingGhWarnsNotFails(t *testing.T) {
 		"claude --version": {out: "2.1.89"},
 		"gh --version":     {err: errors.New("not found")},
 		"gh auth status":   {err: errors.New("not found")},
-		"tmux --version":   {out: "tmux 3.4"},
 	})
 	r := Run(context.Background(), WithRunner(runner))
 	// gh is WARN, not FAIL — doctor should still pass overall.
@@ -114,7 +149,7 @@ func TestRunMissingGhWarnsNotFails(t *testing.T) {
 	}
 }
 
-func TestRunMissingTmuxFallsThroughToScreen(t *testing.T) {
+func TestRunIncludesServicePlatformCheck(t *testing.T) {
 	runner := fakeRunner(map[string]struct {
 		out string
 		err error
@@ -123,18 +158,22 @@ func TestRunMissingTmuxFallsThroughToScreen(t *testing.T) {
 		"claude --version": {out: "2.1.89"},
 		"gh --version":     {out: "gh version 2.60.1"},
 		"gh auth status":   {out: "Logged in"},
-		"tmux --version":   {err: errors.New("not found")},
-		"screen --version": {out: "Screen version 4.09.00"},
 	})
 	r := Run(context.Background(), WithRunner(runner))
-	if !r.Passed() {
-		t.Errorf("expected pass (screen fallback), got %d FAIL", r.FailCount)
-	}
-	// Multiplexer check should WARN not FAIL.
+	var found bool
 	for _, c := range r.Checks {
-		if c.Name == "multiplexer" && c.Severity == FAIL {
-			t.Errorf("multiplexer FAIL when screen available: %+v", c)
+		if c.Name == "service platform" {
+			found = true
+			if runtime.GOOS == "windows" && c.Severity != OK {
+				t.Errorf("expected Windows service-platform OK, got %+v", c)
+			}
+			if runtime.GOOS != "windows" && c.Severity != OK {
+				t.Errorf("expected non-Windows service-platform OK, got %+v", c)
+			}
 		}
+	}
+	if !found {
+		t.Fatal("missing service platform check")
 	}
 }
 
@@ -147,7 +186,6 @@ func TestRunClaudeVersionTooOldWarnsNotFails(t *testing.T) {
 		"claude --version": {out: "1.9.0"},
 		"gh --version":     {out: "gh version 2.60.1"},
 		"gh auth status":   {out: "Logged in"},
-		"tmux --version":   {out: "tmux 3.4"},
 	})
 	r := Run(context.Background(), WithRunner(runner), WithMinClaudeVersion("2.1.89"))
 	if !r.Passed() {
@@ -174,7 +212,6 @@ func TestRunGitTooOldFails(t *testing.T) {
 		"claude --version": {out: "2.1.89"},
 		"gh --version":     {out: "gh version 2.60.1"},
 		"gh auth status":   {out: "Logged in"},
-		"tmux --version":   {out: "tmux 3.4"},
 	})
 	r := Run(context.Background(), WithRunner(runner))
 	if r.Passed() {

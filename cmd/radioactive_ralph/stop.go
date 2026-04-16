@@ -1,44 +1,39 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/jbcom/radioactive-ralph/internal/ipc"
-	"github.com/jbcom/radioactive-ralph/internal/variant"
 )
 
-// StopCmd is `radioactive_ralph stop --variant X`.
+// StopCmd is `radioactive_ralph stop`.
 type StopCmd struct {
-	Variant  string `help:"Variant to stop." required:""`
 	RepoRoot string `help:"Repo root. Defaults to cwd." type:"path"`
 }
 
-// Run asks the supervisor to shut down gracefully.
+// Run asks the repo service to shut down gracefully.
 func (c *StopCmd) Run(rc *runContext) error {
 	repo, err := resolveRepoRoot(c.RepoRoot)
 	if err != nil {
 		return err
 	}
-	socket, heartbeat, err := socketPath(repo, variant.Name(c.Variant))
+	socket, heartbeat, err := socketPath(repo)
 	if err != nil {
 		return err
 	}
 	if err := ensureAlive(socket, heartbeat); err != nil {
 		return err
 	}
-
-	args, err := json.Marshal(ipc.StopArgs{Graceful: true})
+	client, err := ipc.Dial(socket, 5*time.Second)
 	if err != nil {
 		return err
 	}
-	resp, err := roundTrip(rc.ctx, socket, ipc.Request{Cmd: ipc.CmdStop, Args: args})
+	defer func() { _ = client.Close() }()
+	err = client.Stop(rc.ctx, ipc.StopArgs{Graceful: true})
 	if err != nil {
 		return err
 	}
-	if !resp.Ok {
-		return fmt.Errorf("supervisor returned error: %s", resp.Error)
-	}
-	fmt.Printf("stop requested for variant %s\n", c.Variant)
+	fmt.Printf("stop requested for repo service in %s\n", repo)
 	return nil
 }

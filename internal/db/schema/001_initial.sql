@@ -1,7 +1,7 @@
 -- Initial schema for radioactive-ralph's per-repo event log.
 --
--- Opened in WAL mode with foreign keys on. The daemon is the sole
--- writer; readers (ralph status, ralph attach) open separate
+-- Opened in WAL mode with foreign keys on. The repo service is the sole
+-- writer; readers (`radioactive_ralph status`, `radioactive_ralph attach`) open separate
 -- connections.
 
 PRAGMA journal_mode = WAL;
@@ -9,22 +9,22 @@ PRAGMA synchronous = NORMAL;
 PRAGMA foreign_keys = ON;
 PRAGMA busy_timeout = 5000;
 
--- events is an append-only log. Every interesting thing the supervisor
+-- events is an append-only log. Every interesting thing the repo service
 -- does goes here: spawns, user messages sent to managed sessions, stream-json
 -- events received, session deaths, resumes, commits authored, PRs opened,
 -- spend tracked, errors.
 --
--- payload_parsed is the structured form the supervisor understands;
+-- payload_parsed is the structured form the runtime understands;
 -- payload_raw is the exact bytes received from stream-json so we can
--- replay old events through a new parser if the Claude Code wire format
+-- replay old events through a new parser if a provider wire format
 -- drifts.
 CREATE TABLE IF NOT EXISTS events (
   id           INTEGER PRIMARY KEY AUTOINCREMENT,
   ts           TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
-  stream       TEXT NOT NULL,    -- "task:<uuid>" | "session:<uuid>" | "repo:<hash>" | "supervisor"
+  stream       TEXT NOT NULL,    -- "task:<uuid>" | "session:<uuid>" | "repo:<hash>" | "service"
   kind         TEXT NOT NULL,    -- "task.enqueued" | "session.spawned" | "message.user" | ...
-  actor        TEXT NOT NULL,    -- "daemon" | "session:<uuid>" | "operator"
-  payload_parsed TEXT,           -- JSON blob the supervisor understands (may be NULL if raw-only)
+  actor        TEXT NOT NULL,    -- "radioactive_ralph" | "session:<uuid>" | "operator"
+  payload_parsed TEXT,           -- JSON blob the runtime understands (may be NULL if raw-only)
   payload_raw  BLOB              -- exact bytes received, for forward-compat replay
 ) STRICT;
 
@@ -32,7 +32,7 @@ CREATE INDEX IF NOT EXISTS events_stream_ts ON events (stream, ts);
 CREATE INDEX IF NOT EXISTS events_kind_ts   ON events (kind, ts);
 
 -- tasks is the queue of work items. Rows transition between states as
--- the supervisor picks them up, assigns them to sessions, and finishes
+-- the runtime picks them up, assigns them to sessions, and finishes
 -- (or abandons) them.
 CREATE TABLE IF NOT EXISTS tasks (
   id             TEXT PRIMARY KEY,                      -- uuid
@@ -47,7 +47,7 @@ CREATE TABLE IF NOT EXISTS tasks (
 
 CREATE INDEX IF NOT EXISTS tasks_status_priority ON tasks (status, priority);
 
--- FTS5 index over task descriptions for dedup. When the supervisor
+-- FTS5 index over task descriptions for dedup. When the runtime
 -- enqueues a new task it queries this table to check whether a
 -- near-identical task is already pending/running.
 CREATE VIRTUAL TABLE IF NOT EXISTS tasks_fts USING fts5(
@@ -69,7 +69,7 @@ CREATE TRIGGER IF NOT EXISTS tasks_fts_update AFTER UPDATE ON tasks BEGIN
   INSERT INTO tasks_fts (rowid, description) VALUES (new.rowid, new.description);
 END;
 
--- sessions tracks every managed Claude subprocess the supervisor has
+-- sessions tracks every managed provider subprocess the runtime has
 -- spawned or adopted. One row per session UUID. Sessions may be long-lived
 -- across many task assignments; the tasks table references claimed_by =
 -- sessions.uuid while a task is in-flight.
@@ -78,7 +78,7 @@ CREATE TABLE IF NOT EXISTS sessions (
   variant         TEXT NOT NULL,       -- "green" | "grey" | ...
   worktree_path   TEXT,
   pid             INTEGER,
-  model           TEXT,                -- "claude-haiku-4-5-..." etc
+  model           TEXT,                -- provider model identifier
   stage           TEXT,                -- "plan" | "execute" | "reflect" | ...
   started_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
   exited_at       TEXT,
@@ -88,7 +88,7 @@ CREATE TABLE IF NOT EXISTS sessions (
 CREATE INDEX IF NOT EXISTS sessions_variant ON sessions (variant);
 
 -- spend tracks accumulated API usage per (session, model) for spend-cap
--- enforcement. Populated by the supervisor's event-loop consumer as
+-- enforcement. Populated by the runtime's event-loop consumer as
 -- stream-json result events carry usage fields.
 CREATE TABLE IF NOT EXISTS spend (
   session_uuid   TEXT NOT NULL,

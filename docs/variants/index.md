@@ -11,7 +11,7 @@ posture. Pick a persona with `radioactive_ralph run --variant <name>`.
 
 | Variant | Specialty | Best when | Declared gate |
 |---|---|---|---|
-| [`green-ralph`](./green-ralph.md) | The classic always-on loop | You want the default orchestrator behavior | — |
+| [`green-ralph`](./green-ralph.md) | The classic always-on loop | You want the default durable-runtime behavior | — |
 | [`grey-ralph`](./grey-ralph.md) | Cheap mechanical hygiene | You need frontmatter, CHANGELOG, and governance cleanup | — |
 | [`red-ralph`](./red-ralph.md) | Single-pass incident response | CI or PR blockers are on fire | — |
 | [`blue-ralph`](./blue-ralph.md) | Read-only review | You want diagnosis without modification | — |

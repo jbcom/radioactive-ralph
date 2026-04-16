@@ -3,12 +3,12 @@
 #
 # Usage:
 #   curl -sSL https://jonbogaty.com/radioactive-ralph/install.sh | sh
-#   curl -sSL https://jonbogaty.com/radioactive-ralph/install.sh | sh -s -- --version v0.6.1
+#   curl -sSL https://jonbogaty.com/radioactive-ralph/install.sh | sh -s -- --version v0.7.0
 #
 # Downloads the appropriate GitHub release archive, verifies the
 # checksum, extracts radioactive_ralph into $INSTALL_DIR (default
 # /usr/local/bin if writable, else ~/.local/bin), and prints the
-# next-step MCP registration command and PATH guidance.
+# next-step repo bootstrap guidance.
 
 set -eu
 
@@ -155,8 +155,11 @@ if ! printf '%s' "${PATH:-}" | tr ':' '\n' | grep -Fx "$INSTALL_DIR" >/dev/null 
   echo
 fi
 
-echo "Next step — register as an MCP server for Claude Code:"
+echo "Next step — initialize a repo and let Fixit seed the first plan:"
 echo
-echo "  $INSTALL_DIR/$BIN mcp register"
+echo "  cd /path/to/repo"
+echo "  $INSTALL_DIR/$BIN init"
+echo "  $INSTALL_DIR/$BIN run --variant fixit --advise --topic bootstrap"
+echo "  $INSTALL_DIR/$BIN service start"
 echo
-echo "This registers the binary as a stdio MCP server for Claude Code."
+echo "Use '$INSTALL_DIR/$BIN tui' for the repo cockpit once the service is running."

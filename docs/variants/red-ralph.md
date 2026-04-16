@@ -51,14 +51,14 @@ generalist.
 
 ```bash
 radioactive_ralph init
-radioactive_ralph run --variant red --foreground
+radioactive_ralph run --variant red
 ```
 
 ### Current runtime notes
 
-- Red is selected through `--variant red`, not a marketplace skill.
+- Red is selected through `radioactive_ralph run --variant red`.
 - The current runtime surface is still shared across personas; red-specific
-  orchestration behavior is a profile/runtime concern rather than a separate CLI.
+  runtime behavior is a profile concern rather than a separate CLI.
 
 ### Arguments
 

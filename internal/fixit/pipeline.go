@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+
+	"github.com/jbcom/radioactive-ralph/internal/provider"
 )
 
 // RunOptions drives the full six-stage pipeline.
@@ -14,9 +16,16 @@ type RunOptions struct {
 	Constraints    []string
 	NonInteractive bool
 
-	// ClaudeBin overrides the default `claude` binary for Stage 4.
-	// Tests pass the cassette replayer or fake-claude here.
-	ClaudeBin string
+	// ProviderBinding selects the provider used for stage-4 planning.
+	ProviderBinding provider.Binding
+
+	// ProviderBinary overrides the planning provider binary. Tests may
+	// point this at a fake CLI.
+	ProviderBinary string
+
+	// RunnerFactory constructs the planning provider runner. Nil uses
+	// provider.NewRunner.
+	RunnerFactory func(binding provider.Binding) (provider.Runner, error)
 
 	// SkipAnalysis bypasses Stage 4 — useful only for tests that
 	// exercise the deterministic stages without spawning a
@@ -24,7 +33,7 @@ type RunOptions struct {
 	// a zero PlanProposal.
 	SkipAnalysis bool
 
-	// MaxRefinementIterations caps how many rounds of Claude
+	// MaxRefinementIterations caps how many rounds of provider-backed
 	// refinement Stage 4 will do before giving up. Default 3.
 	// Configurable via CLI flag or config.toml [variants.fixit]
 	// max_refinement_iterations.
@@ -38,16 +47,14 @@ type RunOptions struct {
 	// min_confidence_threshold.
 	MinConfidenceThreshold int
 
-	// PlanModel pins the Claude model tier for Stage 4 planning.
-	// Empty defaults to "opus" — planning benefits from the most
-	// capable tier and the advisor runs infrequently. Configurable
-	// via CLI (--plan-model) or config.toml [variants.fixit]
+	// PlanModel pins the planning tier for Stage 4. Empty defaults to
+	// "opus". Configurable via CLI or config.toml [variants.fixit]
 	// plan_model.
 	PlanModel string
 
-	// PlanEffort pins the reasoning-effort level for Stage 4.
-	// Empty defaults to "high". Configurable via CLI (--plan-effort)
-	// or config.toml [variants.fixit] plan_effort.
+	// PlanEffort pins the reasoning-effort level for Stage 4. Empty
+	// defaults to "high". Configurable via CLI or config.toml
+	// [variants.fixit] plan_effort.
 	PlanEffort string
 }
 
@@ -96,13 +103,15 @@ func RunPipeline(ctx context.Context, opts RunOptions) (EmittedPlan, error) {
 	// feed failures back into Analyze, repeat until passing or capped.
 	refined, err := Refine(ctx, rc, intent, RefineOptions{
 		AnalyzeOpts: AnalyzeOptions{
-			Intent:     intent,
-			RC:         rc,
-			Scores:     scores,
-			ClaudeBin:  opts.ClaudeBin,
-			WorkingDir: opts.RepoRoot,
-			Model:      opts.PlanModel,
-			Effort:     opts.PlanEffort,
+			Intent:         intent,
+			RC:             rc,
+			Scores:         scores,
+			Binding:        opts.ProviderBinding,
+			ProviderBinary: opts.ProviderBinary,
+			RunnerFactory:  opts.RunnerFactory,
+			WorkingDir:     opts.RepoRoot,
+			Model:          opts.PlanModel,
+			Effort:         opts.PlanEffort,
 		},
 		MaxIterations:          opts.MaxRefinementIterations,
 		MinConfidenceThreshold: opts.MinConfidenceThreshold,

@@ -64,14 +64,14 @@ func TestAppendAndReplay(t *testing.T) {
 	ctx := context.Background()
 
 	first, err := db.Append(ctx, Event{
-		Stream: "session:abc", Kind: "session.spawned", Actor: "daemon",
+		Stream: "session:abc", Kind: "session.spawned", Actor: "radioactive_ralph",
 		PayloadParsed: map[string]any{"uuid": "abc", "variant": "green"},
 	})
 	if err != nil {
 		t.Fatalf("Append: %v", err)
 	}
 	second, err := db.Append(ctx, Event{
-		Stream: "session:abc", Kind: "message.user", Actor: "daemon",
+		Stream: "session:abc", Kind: "message.user", Actor: "radioactive_ralph",
 		PayloadRaw: []byte(`{"raw": "bytes"}`),
 	})
 	if err != nil {

@@ -7,23 +7,22 @@ import (
 	"time"
 )
 
-// SessionMode identifies portable-stdio vs durable-HTTP modes.
+// SessionMode identifies attached/headless vs durable repo-service modes.
 type SessionMode string
 
 // Session execution modes.
 const (
-	SessionModePortable SessionMode = "portable"
+	SessionModeAttached SessionMode = "attached"
 	SessionModeDurable  SessionMode = "durable"
 )
 
-// SessionTransport identifies stdio / http / sse transports.
+// SessionTransport identifies how the operator/runtime reached the session.
 type SessionTransport string
 
 // Session transport types.
 const (
-	SessionTransportStdio SessionTransport = "stdio"
-	SessionTransportHTTP  SessionTransport = "http"
-	SessionTransportSSE   SessionTransport = "sse"
+	SessionTransportStdio  SessionTransport = "stdio"
+	SessionTransportSocket SessionTransport = "socket"
 )
 
 // SessionOpts configures CreateSession.
@@ -37,8 +36,8 @@ type SessionOpts struct {
 }
 
 // CreateSession inserts a session row. Returns the session id.
-// Called by the MCP server on startup; the session's lifetime is
-// the lifetime of one server process.
+// The row lifetime matches one attached run or durable repo-service
+// process.
 func (s *Store) CreateSession(ctx context.Context, o SessionOpts) (string, error) {
 	id := o.ID
 	if id == "" {
@@ -70,8 +69,8 @@ func (s *Store) CreateSession(ctx context.Context, o SessionOpts) (string, error
 }
 
 // HeartbeatSession refreshes last_heartbeat for a session. Called
-// periodically by the server. Reaper uses staleness to detect dead
-// sessions.
+// periodically by the attached run or durable repo service. Reaper
+// uses staleness to detect dead sessions.
 func (s *Store) HeartbeatSession(ctx context.Context, sessionID string) error {
 	now := s.clock.Now().UTC().Format(time.RFC3339)
 	_, err := s.db.ExecContext(ctx,
@@ -115,8 +114,58 @@ func (s *Store) CreateSessionVariant(ctx context.Context, o SessionVariantOpts) 
 	return id, nil
 }
 
-// AttachPlan records which session is watching which plan. Used by
-// `ralph status` to enumerate active supervision.
+// SetSessionVariantTask updates the currently assigned plan/task for one
+// session_variant row and refreshes its heartbeat.
+func (s *Store) SetSessionVariantTask(ctx context.Context, sessionVariantID, planID, taskID string) error {
+	now := s.clock.Now().UTC().Format(time.RFC3339)
+	_, err := s.db.ExecContext(ctx, `
+		UPDATE session_variants
+		SET current_plan_id = ?,
+		    current_task_id = ?,
+		    status = 'running',
+		    last_heartbeat = ?
+		WHERE id = ?
+	`, nullIfEmpty(planID), nullIfEmpty(taskID), now, sessionVariantID)
+	if err != nil {
+		return fmt.Errorf("plandag: set session variant task: %w", err)
+	}
+	return nil
+}
+
+// HeartbeatSessionVariant refreshes one worker row's heartbeat.
+func (s *Store) HeartbeatSessionVariant(ctx context.Context, sessionVariantID string) error {
+	now := s.clock.Now().UTC().Format(time.RFC3339)
+	_, err := s.db.ExecContext(ctx, `
+		UPDATE session_variants
+		SET last_heartbeat = ?
+		WHERE id = ?
+	`, now, sessionVariantID)
+	return err
+}
+
+// ClearSessionVariantTask clears the active task from one worker row and marks
+// it idle or terminated.
+func (s *Store) ClearSessionVariantTask(ctx context.Context, sessionVariantID, status string) error {
+	if status == "" {
+		status = "idle"
+	}
+	now := s.clock.Now().UTC().Format(time.RFC3339)
+	_, err := s.db.ExecContext(ctx, `
+		UPDATE session_variants
+		SET current_plan_id = NULL,
+		    current_task_id = NULL,
+		    status = ?,
+		    last_heartbeat = ?
+		WHERE id = ?
+	`, status, now, sessionVariantID)
+	if err != nil {
+		return fmt.Errorf("plandag: clear session variant task: %w", err)
+	}
+	return nil
+}
+
+// AttachPlan records which session is attached to which plan. Used by
+// `radioactive_ralph status` to enumerate active runtime ownership.
 func (s *Store) AttachPlan(ctx context.Context, sessionID, planID string) error {
 	now := s.clock.Now().UTC().Format(time.RFC3339)
 	_, err := s.db.ExecContext(ctx, `
@@ -124,4 +173,11 @@ func (s *Store) AttachPlan(ctx context.Context, sessionID, planID string) error 
 		VALUES (?, ?, ?)
 	`, sessionID, planID, now)
 	return err
+}
+
+func nullIfEmpty(value string) any {
+	if value == "" {
+		return nil
+	}
+	return value
 }

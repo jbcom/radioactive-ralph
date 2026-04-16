@@ -11,15 +11,15 @@ description: Go API reference for the rlog package.
 import "github.com/jbcom/radioactive-ralph/internal/rlog"
 ```
 
-Package rlog is a thin slog wrapper that emits records shaped like Claude's stream\-json events when the caller opts into JSON output. Default \(text\) output is operator\-facing human logging on stderr.
+Package rlog is a thin slog wrapper that emits records shaped like the runtime's stream\-json event envelope when the caller opts into JSON output. Default \(text\) output is operator\-facing human logging on stderr.
 
-The shape is intentionally aligned with claude's stream\-json so operator\-facing and subprocess\-facing log streams can be multiplexed through the same tooling:
+The shape intentionally aligns with the provider\-session event stream so operator\-facing and subprocess\-facing logs can be multiplexed through the same tooling:
 
 ```
 {"type":"ralph","event":"init.start","ts":"2026-04-15T...","repo":"..."}
 ```
 
-\`type: ralph\` disambiguates ralph\-emitted records from claude\-emitted \`type: assistant\` / \`type: user\` records when an operator tails a merged log stream.
+\`type: ralph\` disambiguates ralph\-emitted records from provider \`type: assistant\` / \`type: user\` records when an operator tails a merged log stream.
 
 ## Index
 
@@ -30,7 +30,7 @@ The shape is intentionally aligned with claude's stream\-json so operator\-facin
 
 
 <a name="FromContext"></a>
-## func [FromContext](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/rlog/rlog.go#L82>)
+## func [FromContext](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/rlog/rlog.go#L83>)
 
 ```go
 func FromContext(ctx context.Context) *slog.Logger
@@ -39,7 +39,7 @@ func FromContext(ctx context.Context) *slog.Logger
 FromContext retrieves the logger attached by WithLogger, or returns the default slog logger if none. Callers can use this without threading a \*slog.Logger through every function signature.
 
 <a name="New"></a>
-## func [New](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/rlog/rlog.go#L36>)
+## func [New](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/rlog/rlog.go#L37>)
 
 ```go
 func New(mode Mode, w io.Writer) *slog.Logger
@@ -48,7 +48,7 @@ func New(mode Mode, w io.Writer) *slog.Logger
 New returns a \*slog.Logger configured for the requested mode. Writer defaults to os.Stderr when nil.
 
 <a name="WithLogger"></a>
-## func [WithLogger](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/rlog/rlog.go#L75>)
+## func [WithLogger](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/rlog/rlog.go#L76>)
 
 ```go
 func WithLogger(ctx context.Context, logger *slog.Logger) context.Context
@@ -57,7 +57,7 @@ func WithLogger(ctx context.Context, logger *slog.Logger) context.Context
 WithLogger attaches a logger to ctx for downstream callers.
 
 <a name="Mode"></a>
-## type [Mode](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/rlog/rlog.go#L24>)
+## type [Mode](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/rlog/rlog.go#L25>)
 
 Mode controls the output format selected by the CLI.
 
@@ -72,7 +72,7 @@ const (
     // ModeText is the default human-readable stderr output.
     ModeText Mode = "text"
     // ModeJSON emits one JSON record per log call, shaped like
-    // claude stream-json events with type=ralph.
+    // provider-session stream-json events with type=ralph.
     ModeJSON Mode = "json"
 )
 ```

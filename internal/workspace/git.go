@@ -30,7 +30,7 @@ func assertGitRepo(path string) error {
 //
 // The args are composed exclusively from workspace-controlled values
 // (variant profile knobs, XDG paths, caller-controlled remote names).
-// User input never reaches them directly — the supervisor validates
+// User input never reaches them directly — the runtime validates
 // variant + isolation mode before this function is called.
 func runGit(ctx context.Context, cwd string, args ...string) error {
 	cmd := exec.CommandContext(ctx, "git", args...) //nolint:gosec // args are workspace-controlled

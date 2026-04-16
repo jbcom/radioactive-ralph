@@ -47,7 +47,7 @@ func HasLFS(repoPath string) (bool, error) {
 //   - LFSPointersOnly   — lfs.fetchexclude = "*" AND lfs.hooksInstalled
 //     = false so pointers are never resolved
 //   - LFSExcluded       — pre-flight check refuses the task; nothing to
-//     configure here (supervisor handles refusal)
+//     configure here (runtime handles refusal)
 func (m *Manager) applyLFSConfig(ctx context.Context, target string) error {
 	hasLFS, err := HasLFS(m.RepoPath)
 	if err != nil {
@@ -68,7 +68,7 @@ func (m *Manager) applyLFSConfig(ctx context.Context, target string) error {
 		}
 		return runGit(ctx, target, "config", "lfs.hooksInstalled", "false")
 	case variant.LFSExcluded:
-		// Supervisor refuses tasks that touch LFS paths; no config needed.
+		// Runtime refuses tasks that touch LFS paths; no config needed.
 		return nil
 	default:
 		return fmt.Errorf("unknown LFS mode %q", m.LFS)

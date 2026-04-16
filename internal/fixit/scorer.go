@@ -13,7 +13,7 @@ import (
 // can't be auto-handed-off).
 //
 // Same input always produces same output. Rules live here so they
-// can be unit-tested independently of Claude.
+// can be unit-tested independently of any provider call.
 func Score(rc RepoContext, intent IntentSpec) []VariantScore {
 	scores := map[string]*VariantScore{
 		"blue":          {Variant: "blue", Score: 30},

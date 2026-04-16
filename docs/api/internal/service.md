@@ -11,47 +11,35 @@ description: Go API reference for the service package.
 import "github.com/jbcom/radioactive-ralph/internal/service"
 ```
 
-Package service manages per\-user OS service units for radioactive\-ralph.
+Package service manages platform service definitions for the durable repo\-scoped radioactive\_ralph runtime.
 
 Platform dispatch:
 
-- macOS → launchd user agent \(\~/Library/LaunchAgents/jbcom.radioactive\-ralph.\<variant\>.plist\)
-- Linux/WSL → systemd user unit \(\~/.config/systemd/user/radioactive\_ralph\-\<variant\>.service\)
-- Homebrew → brew\-services wrapper \(invokes the launchd/systemd path\)
+- macOS → launchd user agent
+- Linux/WSL → systemd user unit
+- Windows → native Service Control Manager entry
 
-Gating:
-
-- Variants with SafetyFloors.RefuseServiceContext = true refuse to install. Running savage/old\-man/world\-breaker under a service manager is operator malpractice \(they burn money or force\-push repos; neither should be on a cron\).
-- Variants with a confirmation gate require the operator to have passed the gate flag to \`radioactive\_ralph service install\` explicitly.
-
-Service\-context detection at \`radioactive\_ralph run\` time uses:
-
-- LAUNCHED\_BY=launchd \(our own plist sets this\)
-- INVOCATION\_ID set \(systemd user services set this\)
-- RALPH\_SERVICE\_CONTEXT=1 \(manual override for tests\)
-
-Supervisor refuses to spawn a RefuseServiceContext variant when any of those are set.
+Service\-context detection is used to distinguish durable service launches from operator\-attached \`radioactive\_ralph run\` sessions.
 
 ## Index
 
 - [Variables](<#variables>)
 - [func Install\(opts InstallOptions\) \(path string, err error\)](<#Install>)
 - [func IsServiceContext\(\) bool](<#IsServiceContext>)
+- [func MarshalWindowsServiceConfig\(opts InstallOptions\) \(\[\]byte, error\)](<#MarshalWindowsServiceConfig>)
 - [func Uninstall\(opts InstallOptions\) error](<#Uninstall>)
-- [func UnitName\(b Backend, v variant.Name\) string](<#UnitName>)
-- [func UnitPath\(b Backend, home string, v variant.Name\) string](<#UnitPath>)
+- [func UnitName\(b Backend, repoPath string\) string](<#UnitName>)
+- [func UnitPath\(b Backend, home, repoPath string\) string](<#UnitPath>)
+- [func WindowsServiceArgs\(repoPath, serviceName, configPath string\) \[\]string](<#WindowsServiceArgs>)
 - [type Backend](<#Backend>)
   - [func DetectBackend\(\) Backend](<#DetectBackend>)
 - [type InstallOptions](<#InstallOptions>)
+- [type WindowsServiceConfig](<#WindowsServiceConfig>)
+  - [func BuildWindowsServiceConfig\(opts InstallOptions\) WindowsServiceConfig](<#BuildWindowsServiceConfig>)
+  - [func ParseWindowsServiceConfig\(raw \[\]byte\) \(WindowsServiceConfig, error\)](<#ParseWindowsServiceConfig>)
 
 
 ## Variables
-
-<a name="ErrGateNotConfirmed"></a>ErrGateNotConfirmed is returned when a gated variant is installed without GateConfirmed=true.
-
-```go
-var ErrGateNotConfirmed = errors.New("service: gated variant requires explicit confirmation")
-```
 
 <a name="ErrMissingRalphBin"></a>ErrMissingRalphBin is returned when RalphBin is empty.
 
@@ -59,10 +47,10 @@ var ErrGateNotConfirmed = errors.New("service: gated variant requires explicit c
 var ErrMissingRalphBin = errors.New("service: RalphBin required")
 ```
 
-<a name="ErrRefuseServiceContext"></a>ErrRefuseServiceContext is returned when the variant pins RefuseServiceContext=true.
+<a name="ErrMissingRepoPath"></a>ErrMissingRepoPath is returned when RepoPath is empty.
 
 ```go
-var ErrRefuseServiceContext = errors.New("service: variant refuses to run in a service context")
+var ErrMissingRepoPath = errors.New("service: RepoPath required")
 ```
 
 <a name="ErrUnsupportedBackend"></a>ErrUnsupportedBackend is returned for platforms we don't manage.
@@ -72,25 +60,34 @@ var ErrUnsupportedBackend = errors.New("service: unsupported platform")
 ```
 
 <a name="Install"></a>
-## func [Install](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/service/service.go#L135>)
+## func [Install](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/service/service.go#L122>)
 
 ```go
 func Install(opts InstallOptions) (path string, err error)
 ```
 
-Install writes the unit file for the given variant. Does not load it into launchd/systemd — callers do that via \`radioactive\_ralph service start\` to keep Install a pure filesystem operation \(trivial to test and to undo\).
+Install writes or registers the platform service definition for the given repo. On launchd/systemd this means writing the unit file; on Windows it also registers the SCM entry.
 
 <a name="IsServiceContext"></a>
-## func [IsServiceContext](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/service/service.go#L216>)
+## func [IsServiceContext](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/service/service.go#L207>)
 
 ```go
 func IsServiceContext() bool
 ```
 
-IsServiceContext reports whether the current process looks like it's running under a service manager \(launchd / systemd \-\-user\). Checked in pre\-flight before spawning a RefuseServiceContext variant.
+IsServiceContext reports whether the current process looks like it's running under the durable repo\-service host rather than an operator\-attached foreground invocation.
+
+<a name="MarshalWindowsServiceConfig"></a>
+## func [MarshalWindowsServiceConfig](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/service/windows_config.go#L32>)
+
+```go
+func MarshalWindowsServiceConfig(opts InstallOptions) ([]byte, error)
+```
+
+MarshalWindowsServiceConfig renders the Windows service config in the exact JSON form written to disk for the native service host.
 
 <a name="Uninstall"></a>
-## func [Uninstall](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/service/service.go#L190>)
+## func [Uninstall](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/service/service.go#L175>)
 
 ```go
 func Uninstall(opts InstallOptions) error
@@ -99,25 +96,34 @@ func Uninstall(opts InstallOptions) error
 Uninstall removes the unit file. Returns nil if already absent.
 
 <a name="UnitName"></a>
-## func [UnitName](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/service/service.go#L65>)
+## func [UnitName](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/service/service.go#L60>)
 
 ```go
-func UnitName(b Backend, v variant.Name) string
+func UnitName(b Backend, repoPath string) string
 ```
 
-UnitName returns the canonical service unit name for a variant. launchd: "jbcom.radioactive\-ralph.green" systemd: "radioactive\_ralph\-green"
+UnitName returns the canonical service definition name for a repo. launchd: "jbcom.radioactive\-ralph.\<slug\>.\<hash\>" systemd: "radioactive\_ralph\-\<slug\>\-\<hash\>" windows\-scm: "radioactive\_ralph\-\<slug\>\-\<hash\>"
 
 <a name="UnitPath"></a>
-## func [UnitPath](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/service/service.go#L78>)
+## func [UnitPath](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/service/service.go#L74>)
 
 ```go
-func UnitPath(b Backend, home string, v variant.Name) string
+func UnitPath(b Backend, home, repoPath string) string
 ```
 
 UnitPath returns the on\-disk path where the unit file will be written. Callers pass the operator's home dir \(tests inject a tmpdir\).
 
+<a name="WindowsServiceArgs"></a>
+## func [WindowsServiceArgs](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/service/windows_config.go#L51>)
+
+```go
+func WindowsServiceArgs(repoPath, serviceName, configPath string) []string
+```
+
+WindowsServiceArgs returns the radioactive\_ralph argv used by the native Windows SCM service entry.
+
 <a name="Backend"></a>
-## type [Backend](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/service/service.go#L39>)
+## type [Backend](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/service/service.go#L28>)
 
 Backend identifies which platform mechanism is in use.
 
@@ -133,13 +139,16 @@ const (
     BackendLaunchd Backend = "launchd"
     // BackendSystemdUser is Linux/WSL systemd user unit.
     BackendSystemdUser Backend = "systemd-user"
+    // BackendWindowsSCM is a native Windows service managed by the Service
+    // Control Manager.
+    BackendWindowsSCM Backend = "windows-scm"
     // BackendUnsupported is returned for platforms we don't manage.
     BackendUnsupported Backend = "unsupported"
 )
 ```
 
 <a name="DetectBackend"></a>
-### func [DetectBackend](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/service/service.go#L51>)
+### func [DetectBackend](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/service/service.go#L43>)
 
 ```go
 func DetectBackend() Backend
@@ -148,7 +157,7 @@ func DetectBackend() Backend
 DetectBackend returns the appropriate backend for the current OS.
 
 <a name="InstallOptions"></a>
-## type [InstallOptions](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/service/service.go#L92-L113>)
+## type [InstallOptions](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/service/service.go#L91-L106>)
 
 InstallOptions configures an install.
 
@@ -162,19 +171,43 @@ type InstallOptions struct {
     // the unit should exec. Required.
     RalphBin string
     // RepoPath is the operator's repo — written into the unit as the
-    // working directory for the daemon.
+    // working directory for the durable runtime and used to derive the
+    // service unit name. Required.
     RepoPath string
-    // Variant is the variant profile to install for. Required.
-    Variant variant.Profile
-    // GateConfirmed must be true when Variant has a ConfirmationGate.
-    // Enforces "operator explicitly passed --confirm-X to
-    // radioactive_ralph service install" so gates aren't bypassed via
-    // the service wrapper.
-    GateConfirmed bool
     // ExtraEnv is merged into the unit's environment block. Callers use
     // this for RALPH_SPEND_CAP_USD etc.
     ExtraEnv map[string]string
 }
 ```
+
+<a name="WindowsServiceConfig"></a>
+## type [WindowsServiceConfig](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/service/windows_config.go#L10-L13>)
+
+WindowsServiceConfig is the persisted config payload used by the native Windows service host.
+
+```go
+type WindowsServiceConfig struct {
+    RepoPath string            `json:"repo_path"`
+    ExtraEnv map[string]string `json:"extra_env,omitempty"`
+}
+```
+
+<a name="BuildWindowsServiceConfig"></a>
+### func [BuildWindowsServiceConfig](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/service/windows_config.go#L17>)
+
+```go
+func BuildWindowsServiceConfig(opts InstallOptions) WindowsServiceConfig
+```
+
+BuildWindowsServiceConfig produces the persisted config payload for a repo service instance.
+
+<a name="ParseWindowsServiceConfig"></a>
+### func [ParseWindowsServiceConfig](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/service/windows_config.go#L41>)
+
+```go
+func ParseWindowsServiceConfig(raw []byte) (WindowsServiceConfig, error)
+```
+
+ParseWindowsServiceConfig parses the persisted Windows service config JSON.
 
 Generated by [gomarkdoc](<https://github.com/princjef/gomarkdoc>)

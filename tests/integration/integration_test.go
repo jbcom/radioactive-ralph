@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -20,7 +21,11 @@ import (
 func buildRalph(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
-	bin := filepath.Join(dir, "radioactive_ralph")
+	name := "radioactive_ralph"
+	if runtime.GOOS == "windows" {
+		name += ".exe"
+	}
+	bin := filepath.Join(dir, name)
 	cmd := exec.Command("go", "build", "-o", bin,
 		"github.com/jbcom/radioactive-ralph/cmd/radioactive_ralph")
 	cmd.Dir = projectRoot(t)
@@ -79,7 +84,11 @@ func mustGit(t *testing.T, cwd string, args ...string) {
 // 104-byte Unix socket limit.
 func shortTempDir(t *testing.T) string {
 	t.Helper()
-	d, err := os.MkdirTemp("/tmp", "itest-")
+	base := os.TempDir()
+	if runtime.GOOS == "darwin" {
+		base = "/tmp"
+	}
+	d, err := os.MkdirTemp(base, "itest-")
 	if err != nil {
 		t.Fatalf("MkdirTemp: %v", err)
 	}
@@ -98,7 +107,7 @@ func seedActivePlan(t *testing.T, bin, repo string, env []string) {
   "tasks": [
     {
       "id": "inspect-state",
-      "description": "Inspect supervisor state",
+      "description": "Inspect repo service state",
       "complexity": "S",
       "effort": "S",
       "variant_hint": "blue"
@@ -123,7 +132,7 @@ func TestRalphInitCreatesScaffold(t *testing.T) {
 	bin := buildRalph(t)
 	repo := newGitRepo(t)
 
-	cmd := exec.Command(bin, "init", "--yes", "--skip-mcp")
+	cmd := exec.Command(bin, "init", "--yes")
 	cmd.Dir = repo
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("ralph init: %v\n%s", err, out)
@@ -141,7 +150,7 @@ func TestRalphInitCreatesScaffold(t *testing.T) {
 	}
 }
 
-// ── Always-on: full supervisor lifecycle -------------------------
+// ── Always-on: full repo-service lifecycle -----------------------
 
 func TestRalphRunStatusStopRoundTrip(t *testing.T) {
 	bin := buildRalph(t)
@@ -157,7 +166,7 @@ func TestRalphRunStatusStopRoundTrip(t *testing.T) {
 
 	// Bootstrap: init, then seed a real active plan via plan import so
 	// the repo satisfies the plans-first gate honestly.
-	initCmd := exec.Command(bin, "init", "--yes", "--skip-mcp")
+	initCmd := exec.Command(bin, "init", "--yes")
 	initCmd.Dir = repo
 	initCmd.Env = env
 	if out, err := initCmd.CombinedOutput(); err != nil {
@@ -165,8 +174,8 @@ func TestRalphRunStatusStopRoundTrip(t *testing.T) {
 	}
 	seedActivePlan(t, bin, repo, env)
 
-	// Start the supervisor in the background.
-	runCmd := exec.Command(bin, "run", "--variant", "blue", "--foreground")
+	// Start the durable repo service in the background.
+	runCmd := exec.Command(bin, "service", "start", "--repo-root", repo)
 	runCmd.Dir = repo
 	runCmd.Env = env
 	var runOut strings.Builder
@@ -186,15 +195,14 @@ func TestRalphRunStatusStopRoundTrip(t *testing.T) {
 	var statusLastErr string
 	for time.Now().Before(deadline) {
 		time.Sleep(200 * time.Millisecond)
-		statusCmd := exec.Command(bin, "status", "--variant", "blue",
-			"--repo-root", repo, "--json")
+		statusCmd := exec.Command(bin, "status", "--repo-root", repo, "--json")
 		statusCmd.Env = env
 		out, err := statusCmd.CombinedOutput()
 		if err == nil {
 			// Parse the JSON status body.
 			var status map[string]any
 			if err := json.Unmarshal(out, &status); err == nil {
-				if v, ok := status["variant"].(string); ok && v == "blue" {
+				if v, ok := status["repo_path"].(string); ok && v != "" {
 					statusOK = true
 					break
 				}
@@ -203,12 +211,12 @@ func TestRalphRunStatusStopRoundTrip(t *testing.T) {
 		statusLastErr = string(out)
 	}
 	if !statusOK {
-		t.Fatalf("status never succeeded within 10s; last output: %s\nsupervisor log:\n%s",
+		t.Fatalf("status never succeeded within 10s; last output: %s\nservice log:\n%s",
 			statusLastErr, runOut.String())
 	}
 
-	// Stop the supervisor.
-	stopCmd := exec.Command(bin, "stop", "--variant", "blue", "--repo-root", repo)
+	// Stop the repo service.
+	stopCmd := exec.Command(bin, "stop", "--repo-root", repo)
 	stopCmd.Env = env
 	if out, err := stopCmd.CombinedOutput(); err != nil {
 		t.Fatalf("stop: %v\n%s", err, out)
@@ -223,25 +231,25 @@ func TestRalphRunStatusStopRoundTrip(t *testing.T) {
 			t.Errorf("run exited with error: %v\nlog:\n%s", err, runOut.String())
 		}
 	case <-time.After(5 * time.Second):
-		t.Fatal("supervisor did not exit within 5s of stop command")
+		t.Fatal("repo service did not exit within 5s of stop command")
 	}
 }
 
 // ── Always-on: plans-first discipline ----------------------------
 
-func TestRalphRunRefusesWithoutPlansIndex(t *testing.T) {
+func TestRalphRunRefusesWithoutActivePlan(t *testing.T) {
 	bin := buildRalph(t)
 	repo := newGitRepo(t)
 	stateDir := shortTempDir(t)
 
 	// Deliberately skip `radioactive_ralph init` so no active plan exists.
 	// Non-fixit variants must refuse to run.
-	cmd := exec.Command(bin, "run", "--variant", "blue", "--foreground")
+	cmd := exec.Command(bin, "run", "--variant", "blue")
 	cmd.Dir = repo
 	cmd.Env = append(os.Environ(), "RALPH_STATE_DIR="+stateDir)
 	out, err := cmd.CombinedOutput()
 	if err == nil {
-		t.Fatalf("expected non-fixit run without plans/index.md to fail; output:\n%s", out)
+		t.Fatalf("expected non-fixit run without an active plan to fail; output:\n%s", out)
 	}
 	if !strings.Contains(string(out), "plans-first discipline") {
 		t.Errorf("expected plans-first refusal message, got:\n%s", out)

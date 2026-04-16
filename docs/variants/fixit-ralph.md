@@ -11,7 +11,7 @@ lastUpdated: 2026-04-15
 
 | At a glance | Lore / bio |
 |---|---|
-| **Mode:** advisor + ROI-scored burst work<br>**Scope:** one repo<br>**Tiering:** haiku/sonnet, opus only when invited<br>**Best when:** you need a free-form ask turned into initialized plan context, or you want tight scope and a bill at the end | Tiny noir fixer Ralph is in it for the Squishee, which makes him excellent at choosing only the work that pays for itself. |
+| **Mode:** advisor + ROI-scored burst work<br>**Scope:** one repo<br>**Tiering:** sonnet execution with configurable planning tier<br>**Best when:** you need a free-form ask turned into initialized plan context, or you want tight scope and a bill at the end | Tiny noir fixer Ralph is in it for the Squishee, which makes him excellent at choosing only the work that pays for itself. |
 
 ## Character notes
 
@@ -41,7 +41,7 @@ bridge first, bursts second.
 
 - Interprets a free-form ask when the operator does not yet have usable plan context
 - Writes `.radioactive-ralph/plans/<topic>-advisor.md` as the human-visible artifact
-- Should become the bridge from operator intent into the durable SQLite plan flow
+- Acts as the bridge from operator intent into the durable SQLite plan flow
 - Carries the budget-conscious, ROI-sensitive temperament in the lineup
 
 ### When to use it
@@ -62,7 +62,7 @@ radioactive_ralph run --variant fixit --advise \
 - `--advise` — run fixit in advisor mode
 - `--topic <slug>` — name the advisor output topic
 - `--description <text>` — pass the operator ask directly
-- `--auto-handoff` — print the follow-up command when the recommendation is unambiguous
+- `--auto-handoff` — immediately start the recommended variant when the recommendation is unambiguous
 - `--max-iterations`, `--min-confidence`, `--plan-model`, `--plan-effort` — tuning knobs for the advisor pipeline
 - `--spend-cap-usd` — required when fixit is running non-advisor budgeted work
 

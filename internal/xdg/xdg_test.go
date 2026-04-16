@@ -5,7 +5,6 @@ import (
 	"encoding/hex"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 )
@@ -42,7 +41,6 @@ func TestResolveProducesAbsolutePaths(t *testing.T) {
 	assertAbs("Sessions", paths.Sessions)
 	assertAbs("Logs", paths.Logs)
 	assertAbs("StateDB", paths.StateDB)
-	assertAbs("Inventory", paths.Inventory)
 }
 
 func TestResolveHashesRepoPath(t *testing.T) {
@@ -142,34 +140,43 @@ func TestStateRootHonoursOverride(t *testing.T) {
 }
 
 func TestStateRootLinuxXDG(t *testing.T) {
-	if runtime.GOOS != "linux" {
-		t.Skip("XDG_STATE_HOME only honored on Linux")
-	}
-	t.Setenv("RALPH_STATE_DIR", "")
 	xdg := t.TempDir()
-	t.Setenv("XDG_STATE_HOME", xdg)
-
-	paths, err := Resolve(t.TempDir())
-	if err != nil {
-		t.Fatalf("Resolve: %v", err)
+	got := stateRootForGOOS("linux", "/home/me", xdg, "")
+	want := filepath.Join(xdg, AppName)
+	if got != want {
+		t.Fatalf("stateRootForGOOS(linux) = %q, want %q", got, want)
 	}
-	if !strings.HasPrefix(paths.Workspace, filepath.Join(xdg, AppName)) {
-		t.Errorf("Workspace %q should live under $XDG_STATE_HOME/%s", paths.Workspace, AppName)
+}
+
+func TestStateRootLinuxDefault(t *testing.T) {
+	got := stateRootForGOOS("linux", "/home/me", "", "")
+	want := filepath.Join("/home/me", ".local", "state", AppName)
+	if got != want {
+		t.Fatalf("stateRootForGOOS(linux default) = %q, want %q", got, want)
 	}
 }
 
 func TestStateRootDarwin(t *testing.T) {
-	if runtime.GOOS != "darwin" {
-		t.Skip("Darwin-specific path")
+	got := stateRootForGOOS("darwin", "/Users/me", "", "")
+	want := filepath.Join("/Users/me", "Library", "Application Support", AppName)
+	if got != want {
+		t.Fatalf("stateRootForGOOS(darwin) = %q, want %q", got, want)
 	}
-	t.Setenv("RALPH_STATE_DIR", "")
+}
 
-	paths, err := Resolve(t.TempDir())
-	if err != nil {
-		t.Fatalf("Resolve: %v", err)
+func TestStateRootWindowsLocalAppData(t *testing.T) {
+	got := stateRootForGOOS("windows", `C:\Users\me`, "", `C:\Users\me\AppData\Local`)
+	want := filepath.Join(`C:\Users\me\AppData\Local`, AppName)
+	if got != want {
+		t.Fatalf("stateRootForGOOS(windows localappdata) = %q, want %q", got, want)
 	}
-	if !strings.Contains(paths.Workspace, "Library/Application Support/"+AppName) {
-		t.Errorf("Workspace %q should contain Library/Application Support/%s", paths.Workspace, AppName)
+}
+
+func TestStateRootWindowsFallback(t *testing.T) {
+	got := stateRootForGOOS("windows", `C:\Users\me`, "", "")
+	want := filepath.Join(`C:\Users\me`, "AppData", "Local", AppName)
+	if got != want {
+		t.Fatalf("stateRootForGOOS(windows fallback) = %q, want %q", got, want)
 	}
 }
 

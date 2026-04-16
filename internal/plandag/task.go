@@ -3,6 +3,7 @@ package plandag
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -17,6 +18,7 @@ const (
 	TaskStatusPending              TaskStatus = "pending"
 	TaskStatusReady                TaskStatus = "ready"
 	TaskStatusReadyPendingApproval TaskStatus = "ready_pending_approval"
+	TaskStatusBlocked              TaskStatus = "blocked"
 	TaskStatusRunning              TaskStatus = "running"
 	TaskStatusDone                 TaskStatus = "done"
 	TaskStatusFailed               TaskStatus = "failed"
@@ -43,6 +45,34 @@ type Task struct {
 	ParentTaskID       string
 	CreatedAt          time.Time
 	UpdatedAt          time.Time
+}
+
+// TaskEvent is one append-only audit-log row for a task.
+type TaskEvent struct {
+	ID          int64
+	PlanID      string
+	TaskID      string
+	EventType   string
+	Variant     string
+	SessionID   string
+	PayloadJSON string
+	OccurredAt  time.Time
+}
+
+// TaskEventPayload keeps task history payloads structured so the CLI, TUI, and
+// tests can reason about approvals, handoffs, retries, and provider context
+// without string scraping.
+type TaskEventPayload struct {
+	Summary           string   `json:"summary,omitempty"`
+	Reason            string   `json:"reason,omitempty"`
+	Evidence          []string `json:"evidence,omitempty"`
+	HandoffTo         string   `json:"handoff_to,omitempty"`
+	Retryable         bool     `json:"retryable,omitempty"`
+	NeedsContext      []string `json:"needs_context,omitempty"`
+	ApprovalRequired  bool     `json:"approval_required,omitempty"`
+	Provider          string   `json:"provider,omitempty"`
+	ProviderSessionID string   `json:"provider_session_id,omitempty"`
+	OperatorAction    string   `json:"operator_action,omitempty"`
 }
 
 // CreateTaskOpts configures task creation.
@@ -179,28 +209,7 @@ func (s *Store) Ready(ctx context.Context, planID string) ([]Task, error) {
 		return nil, fmt.Errorf("plandag: query ready: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
-
-	var out []Task
-	for rows.Next() {
-		var t Task
-		var cb int
-		var createdStr, updatedStr string
-		if err := rows.Scan(
-			&t.ID, &t.PlanID, &t.Description, &t.Complexity, &t.Effort,
-			&t.VariantHint, &cb, &t.AcceptanceJSON,
-			&t.Status, &t.AssignedVariant,
-			&t.ClaimedBySession, &t.ClaimedByVariantID,
-			&t.RetryCount, &t.ReclaimCount, &t.ParentTaskID,
-			&createdStr, &updatedStr,
-		); err != nil {
-			return nil, err
-		}
-		t.ContextBoundary = cb == 1
-		t.CreatedAt, _ = time.Parse(time.RFC3339, createdStr)
-		t.UpdatedAt, _ = time.Parse(time.RFC3339, updatedStr)
-		out = append(out, t)
-	}
-	return out, rows.Err()
+	return scanTasks(rows)
 }
 
 // ClaimNextReady is the atomic "claim the next ready task for this
@@ -292,26 +301,90 @@ func (s *Store) GetTask(ctx context.Context, planID, id string) (*Task, error) {
 		FROM tasks WHERE plan_id = ? AND id = ?
 	`, planID, id)
 
-	var t Task
-	var cb int
-	var createdStr, updatedStr string
-	if err := row.Scan(
-		&t.ID, &t.PlanID, &t.Description, &t.Complexity, &t.Effort,
-		&t.VariantHint, &cb, &t.AcceptanceJSON,
-		&t.Status, &t.AssignedVariant,
-		&t.ClaimedBySession, &t.ClaimedByVariantID,
-		&t.RetryCount, &t.ReclaimCount, &t.ParentTaskID,
-		&createdStr, &updatedStr,
-	); err != nil {
+	t, err := scanTask(row)
+	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, fmt.Errorf("plandag: task %q not found in plan %q", id, planID)
 		}
 		return nil, fmt.Errorf("plandag: get task: %w", err)
 	}
-	t.ContextBoundary = cb == 1
-	t.CreatedAt, _ = time.Parse(time.RFC3339, createdStr)
-	t.UpdatedAt, _ = time.Parse(time.RFC3339, updatedStr)
 	return &t, nil
+}
+
+// ListTasks returns tasks for one plan, optionally filtered by status.
+func (s *Store) ListTasks(ctx context.Context, planID string, statuses []TaskStatus) ([]Task, error) {
+	query := `
+		SELECT id, plan_id, description, COALESCE(complexity,''), COALESCE(effort,''),
+		       COALESCE(variant_hint,''), context_boundary, COALESCE(acceptance_json,''),
+		       status, COALESCE(assigned_variant,''),
+		       COALESCE(claimed_by_session,''), COALESCE(claimed_by_variant_id,''),
+		       retry_count, reclaim_count, COALESCE(parent_task_id,''),
+		       created_at, updated_at
+		FROM tasks
+		WHERE plan_id = ?
+	`
+	args := []any{planID}
+	if len(statuses) > 0 {
+		//nolint:gosec // placeholders is generated entirely from '?' tokens
+		query += ` AND status IN (` + statusPlaceholders(len(statuses)) + `)`
+		for _, status := range statuses {
+			args = append(args, string(status))
+		}
+	}
+	query += `
+		ORDER BY
+		  CASE status
+		    WHEN 'ready_pending_approval' THEN 0
+		    WHEN 'blocked' THEN 1
+		    WHEN 'running' THEN 2
+		    WHEN 'pending' THEN 3
+		    WHEN 'done' THEN 4
+		    WHEN 'failed' THEN 5
+		    ELSE 6
+		  END,
+		  created_at,
+		  id
+	`
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("plandag: list tasks: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	return scanTasks(rows)
+}
+
+// ListTaskEvents returns the most recent task events first.
+func (s *Store) ListTaskEvents(ctx context.Context, planID, taskID string, limit int) ([]TaskEvent, error) {
+	if limit <= 0 {
+		limit = 20
+	}
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, plan_id, task_id, event_type, COALESCE(variant,''),
+		       COALESCE(session_id,''), COALESCE(payload_json,''), occurred_at
+		FROM task_events
+		WHERE plan_id = ? AND task_id = ?
+		ORDER BY occurred_at DESC, id DESC
+		LIMIT ?
+	`, planID, taskID, limit)
+	if err != nil {
+		return nil, fmt.Errorf("plandag: list task events: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var out []TaskEvent
+	for rows.Next() {
+		var ev TaskEvent
+		var occurredStr string
+		if err := rows.Scan(
+			&ev.ID, &ev.PlanID, &ev.TaskID, &ev.EventType, &ev.Variant,
+			&ev.SessionID, &ev.PayloadJSON, &occurredStr,
+		); err != nil {
+			return nil, fmt.Errorf("plandag: scan task event: %w", err)
+		}
+		ev.OccurredAt = parseDBTimestamp(occurredStr)
+		out = append(out, ev)
+	}
+	return out, rows.Err()
 }
 
 // MarkDone transitions a running task to done, logs the event, and
@@ -356,6 +429,12 @@ func (s *Store) MarkDone(ctx context.Context, planID, taskID, sessionID string, 
 
 // MarkFailed transitions a running task to failed or retries.
 func (s *Store) MarkFailed(ctx context.Context, planID, taskID, sessionID, reason string, maxRetries int) (retried bool, err error) {
+	return s.MarkFailedWithPayload(ctx, planID, taskID, sessionID, TaskEventPayload{Reason: reason}, maxRetries)
+}
+
+// MarkFailedWithPayload transitions a running task to failed or retries while
+// preserving structured payload details in task history.
+func (s *Store) MarkFailedWithPayload(ctx context.Context, planID, taskID, sessionID string, payload TaskEventPayload, maxRetries int) (retried bool, err error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return false, err
@@ -384,7 +463,7 @@ func (s *Store) MarkFailed(ctx context.Context, planID, taskID, sessionID, reaso
 		_, err = tx.ExecContext(ctx, `
 			INSERT INTO task_events(plan_id, task_id, event_type, session_id, payload_json)
 			VALUES (?, ?, 'failed', ?, ?)
-		`, planID, taskID, sessionID, jsonReason(reason))
+		`, planID, taskID, sessionID, payloadJSON(payload))
 		if err != nil {
 			return false, err
 		}
@@ -404,22 +483,314 @@ func (s *Store) MarkFailed(ctx context.Context, planID, taskID, sessionID, reaso
 	_, err = tx.ExecContext(ctx, `
 		INSERT INTO task_events(plan_id, task_id, event_type, session_id, payload_json)
 		VALUES (?, ?, 'failed', ?, ?)
-	`, planID, taskID, sessionID, jsonReason(reason))
+	`, planID, taskID, sessionID, payloadJSON(payload))
 	if err != nil {
 		return false, err
 	}
 	return false, tx.Commit()
 }
 
-// jsonReason produces a minimal JSON payload capturing a reason
-// string. Keeps payload structure consistent so `ralph plan history`
-// can read it uniformly.
-func jsonReason(reason string) string {
-	// Escape double quotes by falling back to SQLite's json() via
-	// ad-hoc literal; for correctness use encoding/json.
-	if reason == "" {
+// RequeueTask releases a running task back into the DAG, optionally
+// changing the variant hint and/or requiring operator approval before it
+// becomes runnable again.
+func (s *Store) RequeueTask(ctx context.Context, planID, taskID, sessionID, reason, variantHint string, requireApproval bool) error {
+	return s.RequeueTaskWithPayload(ctx, planID, taskID, sessionID, TaskEventPayload{
+		Reason:           reason,
+		HandoffTo:        variantHint,
+		ApprovalRequired: requireApproval,
+	}, variantHint, requireApproval)
+}
+
+// RequeueTaskWithPayload releases a running task back into the DAG and emits a
+// structured audit-log payload describing why it was requeued.
+func (s *Store) RequeueTaskWithPayload(ctx context.Context, planID, taskID, sessionID string, payload TaskEventPayload, variantHint string, requireApproval bool) error {
+	status := TaskStatusPending
+	eventType := "requeued"
+	if payload.HandoffTo != "" {
+		eventType = "handoff_requested"
+	}
+	if requireApproval {
+		status = TaskStatusReadyPendingApproval
+		eventType = "approval_required"
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	_, err = tx.ExecContext(ctx, `
+		UPDATE tasks
+		SET status = ?,
+		    variant_hint = COALESCE(NULLIF(?, ''), variant_hint),
+		    claimed_by_session = NULL,
+		    claimed_by_variant_id = NULL,
+		    assigned_variant = NULL
+		WHERE plan_id = ? AND id = ? AND status = 'running'
+	`, string(status), variantHint, planID, taskID)
+	if err != nil {
+		return fmt.Errorf("plandag: requeue task: %w", err)
+	}
+	_, err = tx.ExecContext(ctx, `
+		INSERT INTO task_events(plan_id, task_id, event_type, session_id, payload_json)
+		VALUES (?, ?, ?, ?, ?)
+	`, planID, taskID, eventType, sessionID, payloadJSON(payload))
+	if err != nil {
+		return fmt.Errorf("plandag: log requeue: %w", err)
+	}
+	return tx.Commit()
+}
+
+// ApproveTask transitions a task waiting for operator approval back into
+// the pending set.
+func (s *Store) ApproveTask(ctx context.Context, planID, taskID string) error {
+	return s.ApproveTaskWithPayload(ctx, planID, taskID, TaskEventPayload{OperatorAction: "approved"})
+}
+
+// ApproveTaskWithPayload transitions a task waiting for operator approval back
+// into the pending set and records the operator action in task history.
+func (s *Store) ApproveTaskWithPayload(ctx context.Context, planID, taskID string, payload TaskEventPayload) error {
+	res, err := s.db.ExecContext(ctx, `
+		UPDATE tasks
+		SET status = 'pending'
+		WHERE plan_id = ? AND id = ? AND status = 'ready_pending_approval'
+	`, planID, taskID)
+	if err != nil {
+		return fmt.Errorf("plandag: approve task: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return fmt.Errorf("plandag: task %q is not waiting for approval", taskID)
+	}
+	_, err = s.db.ExecContext(ctx, `
+		INSERT INTO task_events(plan_id, task_id, event_type, payload_json)
+		VALUES (?, ?, 'approved', ?)
+	`, planID, taskID, payloadJSON(payload))
+	return err
+}
+
+// OperatorRequeueTask returns a blocked/failed/approval-gated task to the
+// runnable queue and records the operator action in task history.
+func (s *Store) OperatorRequeueTask(ctx context.Context, planID, taskID string, payload TaskEventPayload, variantHint string, requireApproval bool) error {
+	status := TaskStatusPending
+	if requireApproval {
+		status = TaskStatusReadyPendingApproval
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	res, err := tx.ExecContext(ctx, `
+		UPDATE tasks
+		SET status = ?,
+		    variant_hint = COALESCE(NULLIF(?, ''), variant_hint),
+		    claimed_by_session = NULL,
+		    claimed_by_variant_id = NULL,
+		    assigned_variant = NULL
+		WHERE plan_id = ? AND id = ?
+		  AND status IN ('blocked', 'failed', 'ready_pending_approval', 'pending')
+	`, string(status), variantHint, planID, taskID)
+	if err != nil {
+		return fmt.Errorf("plandag: operator requeue task: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return fmt.Errorf("plandag: task %q is not requeueable", taskID)
+	}
+	payload.OperatorAction = firstNonEmpty(payload.OperatorAction, "requeue")
+	_, err = tx.ExecContext(ctx, `
+		INSERT INTO task_events(plan_id, task_id, event_type, payload_json)
+		VALUES (?, ?, 'requeued', ?)
+	`, planID, taskID, payloadJSON(payload))
+	if err != nil {
+		return fmt.Errorf("plandag: log operator requeue: %w", err)
+	}
+	return tx.Commit()
+}
+
+// OperatorRetryTask increments retry_count and returns a blocked/failed task to
+// the runnable queue.
+func (s *Store) OperatorRetryTask(ctx context.Context, planID, taskID string, payload TaskEventPayload) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	res, err := tx.ExecContext(ctx, `
+		UPDATE tasks
+		SET status = 'pending',
+		    retry_count = retry_count + 1,
+		    claimed_by_session = NULL,
+		    claimed_by_variant_id = NULL,
+		    assigned_variant = NULL
+		WHERE plan_id = ? AND id = ?
+		  AND status IN ('blocked', 'failed')
+	`, planID, taskID)
+	if err != nil {
+		return fmt.Errorf("plandag: operator retry task: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return fmt.Errorf("plandag: task %q is not retryable from its current state", taskID)
+	}
+	payload.OperatorAction = firstNonEmpty(payload.OperatorAction, "retry")
+	payload.Retryable = true
+	_, err = tx.ExecContext(ctx, `
+		INSERT INTO task_events(plan_id, task_id, event_type, payload_json)
+		VALUES (?, ?, 'retry_requested', ?)
+	`, planID, taskID, payloadJSON(payload))
+	if err != nil {
+		return fmt.Errorf("plandag: log operator retry: %w", err)
+	}
+	return tx.Commit()
+}
+
+// OperatorHandoffTask returns a task to the runnable queue with a new variant
+// hint supplied by the operator.
+func (s *Store) OperatorHandoffTask(ctx context.Context, planID, taskID string, payload TaskEventPayload, variantHint string, requireApproval bool) error {
+	payload.HandoffTo = variantHint
+	payload.OperatorAction = firstNonEmpty(payload.OperatorAction, "handoff")
+	return s.OperatorRequeueTask(ctx, planID, taskID, payload, variantHint, requireApproval)
+}
+
+// OperatorFailTask force-fails a task and records an operator action.
+func (s *Store) OperatorFailTask(ctx context.Context, planID, taskID string, payload TaskEventPayload) error {
+	res, err := s.db.ExecContext(ctx, `
+		UPDATE tasks
+		SET status = 'failed',
+		    claimed_by_session = NULL,
+		    claimed_by_variant_id = NULL,
+		    assigned_variant = NULL
+		WHERE plan_id = ? AND id = ?
+		  AND status NOT IN ('done', 'skipped', 'decomposed')
+	`, planID, taskID)
+	if err != nil {
+		return fmt.Errorf("plandag: operator fail task: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return fmt.Errorf("plandag: task %q cannot be force-failed", taskID)
+	}
+	payload.OperatorAction = firstNonEmpty(payload.OperatorAction, "fail")
+	_, err = s.db.ExecContext(ctx, `
+		INSERT INTO task_events(plan_id, task_id, event_type, payload_json)
+		VALUES (?, ?, 'failed_terminal', ?)
+	`, planID, taskID, payloadJSON(payload))
+	return err
+}
+
+// MarkBlocked releases a running task into the blocked set so an operator can
+// later requeue or otherwise intervene.
+func (s *Store) MarkBlocked(ctx context.Context, planID, taskID, sessionID string, payload TaskEventPayload) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	res, err := tx.ExecContext(ctx, `
+		UPDATE tasks
+		SET status = 'blocked',
+		    claimed_by_session = NULL,
+		    claimed_by_variant_id = NULL,
+		    assigned_variant = NULL
+		WHERE plan_id = ? AND id = ? AND status = 'running'
+	`, planID, taskID)
+	if err != nil {
+		return fmt.Errorf("plandag: block task: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return fmt.Errorf("plandag: task %q not in running state", taskID)
+	}
+
+	eventType := "blocked"
+	if len(payload.NeedsContext) > 0 {
+		eventType = "context_requested"
+	}
+	_, err = tx.ExecContext(ctx, `
+		INSERT INTO task_events(plan_id, task_id, event_type, session_id, payload_json)
+		VALUES (?, ?, ?, ?, ?)
+	`, planID, taskID, eventType, sessionID, payloadJSON(payload))
+	if err != nil {
+		return fmt.Errorf("plandag: log block: %w", err)
+	}
+	return tx.Commit()
+}
+
+func payloadJSON(payload TaskEventPayload) string {
+	if isZeroPayload(payload) {
 		return "{}"
 	}
-	esc := strings.ReplaceAll(reason, `"`, `\"`)
-	return `{"reason":"` + esc + `"}`
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		return "{}"
+	}
+	return string(raw)
+}
+
+func isZeroPayload(payload TaskEventPayload) bool {
+	return payload.Summary == "" &&
+		payload.Reason == "" &&
+		len(payload.Evidence) == 0 &&
+		payload.HandoffTo == "" &&
+		!payload.Retryable &&
+		len(payload.NeedsContext) == 0 &&
+		!payload.ApprovalRequired &&
+		payload.Provider == "" &&
+		payload.ProviderSessionID == "" &&
+		payload.OperatorAction == ""
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+type taskScanner interface {
+	Scan(dest ...any) error
+}
+
+func scanTask(scanner taskScanner) (Task, error) {
+	var t Task
+	var cb int
+	var createdStr, updatedStr string
+	err := scanner.Scan(
+		&t.ID, &t.PlanID, &t.Description, &t.Complexity, &t.Effort,
+		&t.VariantHint, &cb, &t.AcceptanceJSON,
+		&t.Status, &t.AssignedVariant,
+		&t.ClaimedBySession, &t.ClaimedByVariantID,
+		&t.RetryCount, &t.ReclaimCount, &t.ParentTaskID,
+		&createdStr, &updatedStr,
+	)
+	if err != nil {
+		return Task{}, err
+	}
+	t.ContextBoundary = cb == 1
+	t.CreatedAt = parseDBTimestamp(createdStr)
+	t.UpdatedAt = parseDBTimestamp(updatedStr)
+	return t, nil
+}
+
+func scanTasks(rows *sql.Rows) ([]Task, error) {
+	var out []Task
+	for rows.Next() {
+		t, err := scanTask(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, t)
+	}
+	return out, rows.Err()
+}
+
+func statusPlaceholders(n int) string {
+	return strings.TrimPrefix(strings.Repeat(",?", n), ",")
 }

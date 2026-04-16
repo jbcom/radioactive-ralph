@@ -3,6 +3,7 @@ package doctor
 import (
 	"context"
 	"fmt"
+	"os"
 	"runtime"
 	"time"
 )
@@ -36,27 +37,86 @@ func checkGitVersion(ctx context.Context, cfg RunOptions) Check {
 // checkClaudeVersion verifies the Claude Code CLI is installed at a
 // compatible version.
 func checkClaudeVersion(ctx context.Context, cfg RunOptions) Check {
-	out, err := withTimeout(ctx, 5*time.Second, func(ctx context.Context) (string, error) {
-		return cfg.runCommand(ctx, "claude", "--version")
+	return checkProviderVersion(ctx, cfg, providerVersionCheck{
+		Name:          "claude",
+		Binary:        "claude",
+		VersionArgs:   []string{"--version"},
+		MinVersion:    cfg.MinClaudeVersion,
+		MissingLevel:  FAIL,
+		MissingDetail: "claude CLI not found on PATH",
+		MissingFix:    "install Claude Code: `npm install -g @anthropic-ai/claude-code`",
+		UpgradeFix:    "upgrade Claude Code: `npm update -g @anthropic-ai/claude-code`",
+	})
+}
+
+func checkClaudeAuth(ctx context.Context, cfg RunOptions) Check {
+	if os.Getenv("ANTHROPIC_API_KEY") != "" {
+		return Check{Name: "claude auth", Severity: OK, Detail: "ANTHROPIC_API_KEY present in environment"}
+	}
+	_, err := withTimeout(ctx, 5*time.Second, func(ctx context.Context) (string, error) {
+		return cfg.runCommand(ctx, "claude", "auth", "status")
 	})
 	if err != nil {
 		return Check{
-			Name:      "claude",
-			Severity:  FAIL,
-			Detail:    "claude CLI not found on PATH",
-			Remediate: "install Claude Code: `npm install -g @anthropic-ai/claude-code`",
-		}
-	}
-	ver := parseVersion(out, "")
-	if cfg.MinClaudeVersion != "" && !versionAtLeast(ver, cfg.MinClaudeVersion) {
-		return Check{
-			Name:      "claude",
+			Name:      "claude auth",
 			Severity:  WARN,
-			Detail:    fmt.Sprintf("claude %s (newer recommended: ≥ %s)", ver, cfg.MinClaudeVersion),
-			Remediate: "upgrade Claude Code: `npm update -g @anthropic-ai/claude-code`",
+			Detail:    "claude CLI is not authenticated",
+			Remediate: "run `claude auth login`",
 		}
 	}
-	return Check{Name: "claude", Severity: OK, Detail: "claude " + ver}
+	return Check{Name: "claude auth", Severity: OK, Detail: "authenticated"}
+}
+
+func checkCodexVersion(ctx context.Context, cfg RunOptions) Check {
+	return checkProviderVersion(ctx, cfg, providerVersionCheck{
+		Name:          "codex",
+		Binary:        "codex",
+		VersionArgs:   []string{"--version"},
+		MissingLevel:  WARN,
+		MissingDetail: "codex CLI not found on PATH",
+		MissingFix:    "install Codex CLI so the `codex` provider binding is usable",
+	})
+}
+
+func checkCodexAuth(ctx context.Context, cfg RunOptions) Check {
+	if os.Getenv("OPENAI_API_KEY") != "" {
+		return Check{Name: "codex auth", Severity: OK, Detail: "OPENAI_API_KEY present in environment"}
+	}
+	_, err := withTimeout(ctx, 5*time.Second, func(ctx context.Context) (string, error) {
+		return cfg.runCommand(ctx, "codex", "login", "status")
+	})
+	if err != nil {
+		return Check{
+			Name:      "codex auth",
+			Severity:  WARN,
+			Detail:    "codex CLI is not authenticated",
+			Remediate: "run `codex login`",
+		}
+	}
+	return Check{Name: "codex auth", Severity: OK, Detail: "authenticated"}
+}
+
+func checkGeminiVersion(ctx context.Context, cfg RunOptions) Check {
+	return checkProviderVersion(ctx, cfg, providerVersionCheck{
+		Name:          "gemini",
+		Binary:        "gemini",
+		VersionArgs:   []string{"--version"},
+		MissingLevel:  WARN,
+		MissingDetail: "gemini CLI not found on PATH",
+		MissingFix:    "install Gemini CLI so the `gemini` provider binding is usable",
+	})
+}
+
+func checkGeminiAuth(_ context.Context, _ RunOptions) Check {
+	if os.Getenv("GEMINI_API_KEY") != "" || os.Getenv("GOOGLE_API_KEY") != "" {
+		return Check{Name: "gemini auth", Severity: OK, Detail: "API key present in environment"}
+	}
+	return Check{
+		Name:      "gemini auth",
+		Severity:  WARN,
+		Detail:    "Gemini auth could not be verified automatically",
+		Remediate: "set GEMINI_API_KEY / GOOGLE_API_KEY or complete the Gemini CLI login flow before using the `gemini` provider",
+	}
 }
 
 // checkGhVersion warns when the GitHub CLI is absent — present
@@ -93,37 +153,57 @@ func checkGhAuth(ctx context.Context, cfg RunOptions) Check {
 	return Check{Name: "gh auth", Severity: OK, Detail: "authenticated"}
 }
 
-// checkMultiplexers reports on the multiplexer fallback chain (tmux →
-// screen → setsid).
-func checkMultiplexers(ctx context.Context, cfg RunOptions) Check {
-	haveTmux := hasOnPath(ctx, cfg, "tmux")
-	haveScreen := hasOnPath(ctx, cfg, "screen")
-
-	switch {
-	case haveTmux:
-		return Check{Name: "multiplexer", Severity: OK, Detail: "tmux available (recommended)"}
-	case haveScreen:
-		return Check{
-			Name:      "multiplexer",
-			Severity:  WARN,
-			Detail:    "tmux not found; screen will be used as fallback",
-			Remediate: "install tmux for a better re-attach UX: `brew install tmux`",
-		}
+// checkServicePlatform reports whether the current platform supports the
+// durable repo service contract.
+func checkServicePlatform(_ context.Context, _ RunOptions) Check {
+	switch runtime.GOOS {
+	case "darwin":
+		return Check{Name: "service platform", Severity: OK, Detail: "macOS launchd + Unix sockets supported"}
+	case "linux":
+		return Check{Name: "service platform", Severity: OK, Detail: "Linux systemd-user + Unix sockets supported"}
+	case "windows":
+		return Check{Name: "service platform", Severity: OK, Detail: "native Windows SCM + named pipes supported"}
 	default:
-		// setsid is a syscall, not a binary — always available on POSIX.
-		if runtime.GOOS == "windows" {
-			return Check{
-				Name:      "multiplexer",
-				Severity:  FAIL,
-				Detail:    "no multiplexer; Windows requires WSL2 for supervisor",
-				Remediate: "run Ralph via WSL2 where tmux and POSIX setsid are available",
-			}
-		}
 		return Check{
-			Name:      "multiplexer",
-			Severity:  WARN,
-			Detail:    "neither tmux nor screen found; setsid fallback will be used (no re-attach UI)",
-			Remediate: "install tmux for re-attach support: `brew install tmux`",
+			Name:      "service platform",
+			Severity:  FAIL,
+			Detail:    fmt.Sprintf("%s is not a supported durable-service platform", runtime.GOOS),
+			Remediate: "use macOS, Linux, or native Windows for the full repo-service runtime",
 		}
 	}
+}
+
+type providerVersionCheck struct {
+	Name          string
+	Binary        string
+	VersionArgs   []string
+	MinVersion    string
+	MissingLevel  Severity
+	MissingDetail string
+	MissingFix    string
+	UpgradeFix    string
+}
+
+func checkProviderVersion(ctx context.Context, cfg RunOptions, check providerVersionCheck) Check {
+	out, err := withTimeout(ctx, 5*time.Second, func(ctx context.Context) (string, error) {
+		return cfg.runCommand(ctx, check.Binary, check.VersionArgs...)
+	})
+	if err != nil {
+		return Check{
+			Name:      check.Name,
+			Severity:  check.MissingLevel,
+			Detail:    check.MissingDetail,
+			Remediate: check.MissingFix,
+		}
+	}
+	ver := parseVersion(out, "")
+	if check.MinVersion != "" && !versionAtLeast(ver, check.MinVersion) {
+		return Check{
+			Name:      check.Name,
+			Severity:  WARN,
+			Detail:    fmt.Sprintf("%s %s (newer recommended: ≥ %s)", check.Name, ver, check.MinVersion),
+			Remediate: check.UpgradeFix,
+		}
+	}
+	return Check{Name: check.Name, Severity: OK, Detail: check.Name + " " + ver}
 }

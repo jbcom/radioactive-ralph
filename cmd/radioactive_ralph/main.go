@@ -1,10 +1,11 @@
 // Command radioactive_ralph is the radioactive-ralph CLI entry point.
 //
-// Ralph is a per-repo orchestration binary with multiple built-in
-// personas. Today the runtime targets the claude CLI, but the long-term
-// contract is provider-oriented rather than Claude-plugin-oriented.
-// See https://github.com/jbcom/radioactive-ralph for the full rationale
-// and architecture plan.
+// Ralph is a per-repo runtime binary with multiple built-in
+// personas. The runtime ships provider bindings for claude, codex, and
+// gemini today, while keeping the product contract provider-oriented
+// rather than provider-branded. See
+// https://github.com/jbcom/radioactive-ralph for the full rationale and
+// architecture plan.
 package main
 
 import (
@@ -30,19 +31,14 @@ type cli struct {
 	Version kong.VersionFlag `help:"Print version and exit."`
 
 	Init    InitCmd    `cmd:"" help:"Set up a fresh .radioactive-ralph/ tree in the current repo."`
-	Run     RunCmd     `cmd:"" help:"Launch a supervisor for a variant."`
-	Status  StatusCmd  `cmd:"" help:"Query the running supervisor via its Unix socket."`
-	Attach  AttachCmd  `cmd:"" help:"Stream the running supervisor's event log."`
-	Stop    StopCmd    `cmd:"" help:"Ask the running supervisor to shut down gracefully."`
+	Run     RunCmd     `cmd:"" help:"Run one bounded variant attached to the current terminal."`
+	Status  StatusCmd  `cmd:"" help:"Query the repo service over the local control plane."`
+	Attach  AttachCmd  `cmd:"" help:"Stream the repo service event log."`
+	Stop    StopCmd    `cmd:"" help:"Ask the running repo service to shut down gracefully."`
 	Doctor  DoctorCmd  `cmd:"" help:"Run environment health checks."`
-	Service ServiceCmd `cmd:"" help:"Install/uninstall/list OS service units."`
+	Service ServiceCmd `cmd:"" help:"Manage OS service units for the durable repo runtime."`
+	TUI     TUICmd     `cmd:"" help:"Open the repo service cockpit."`
 	Plan    PlanCmd    `cmd:"" help:"Query + manage plans in the plan DAG."`
-	Serve   ServeCmd   `cmd:"" help:"Run an MCP server exposing the plan + variant tool surface."`
-	MCP     MCPCmd     `cmd:"" help:"Register/unregister radioactive_ralph as an MCP server with Claude Code."`
-
-	// Supervisor is the hidden entry invoked by launchd/systemd/service
-	// wrappers. Human operators never call it directly.
-	Supervisor SupervisorCmd `cmd:"_supervisor" hidden:"" help:"(internal) run as supervisor foreground."`
 }
 
 func main() {
@@ -55,7 +51,7 @@ func mainCode() int {
 	var c cli
 	kctx := kong.Parse(&c,
 		kong.Name("radioactive_ralph"),
-		kong.Description("Autonomous development orchestrator with built-in Ralph personas."),
+		kong.Description("Helpful little repo runtime with built-in Ralph personas."),
 		kong.Vars{"version": fmt.Sprintf("%s (%s, built %s)", Version, Commit, Date)},
 		kong.UsageOnError(),
 	)
