@@ -2,8 +2,8 @@
 import { defineConfig } from "astro/config";
 import starlight from "@astrojs/starlight";
 
-// radioactive-ralph docs — served at https://jonbogaty.com/radioactive-ralph/
-// via GitHub Pages on the apex domain (CNAME handled repo-wide).
+// Archived Astro/Starlight prototype for the old site-local docs experiment.
+// The live docs now build from repo-root docs/ with Sphinx.
 
 export default defineConfig({
   site: "https://jonbogaty.com",
@@ -12,7 +12,7 @@ export default defineConfig({
     starlight({
       title: "radioactive-ralph",
       description:
-        "Autonomous continuous development orchestrator for Claude Code.",
+        "Archived Astro prototype for radioactive-ralph docs.",
       logo: {
         src: "./src/assets/ralph-mascot.png",
         alt: "Radioactive Ralph mascot",
@@ -30,11 +30,7 @@ export default defineConfig({
         // Full-bespoke hero for the landing to carry Ralph's personality.
         Hero: "./src/components/RalphHero.astro",
       },
-      lastUpdated: true,
-      editLink: {
-        baseUrl:
-          "https://github.com/jbcom/radioactive-ralph/edit/main/site/src/content/docs/",
-      },
+      lastUpdated: false,
       pagefind: true,
       sidebar: [
         {

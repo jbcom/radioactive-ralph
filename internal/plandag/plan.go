@@ -104,8 +104,8 @@ func (s *Store) GetPlan(ctx context.Context, id string) (*Plan, error) {
 		}
 		return nil, fmt.Errorf("plandag: get plan: %w", err)
 	}
-	p.CreatedAt, _ = time.Parse(time.RFC3339, createdStr)
-	p.UpdatedAt, _ = time.Parse(time.RFC3339, updatedStr)
+	p.CreatedAt = parseDBTimestamp(createdStr)
+	p.UpdatedAt = parseDBTimestamp(updatedStr)
 	return &p, nil
 }
 
@@ -161,8 +161,8 @@ func (s *Store) ListPlans(ctx context.Context, statuses []PlanStatus) ([]Plan, e
 		); err != nil {
 			return nil, fmt.Errorf("plandag: scan: %w", err)
 		}
-		p.CreatedAt, _ = time.Parse(time.RFC3339, createdStr)
-		p.UpdatedAt, _ = time.Parse(time.RFC3339, updatedStr)
+		p.CreatedAt = parseDBTimestamp(createdStr)
+		p.UpdatedAt = parseDBTimestamp(updatedStr)
 		out = append(out, p)
 	}
 	return out, rows.Err()

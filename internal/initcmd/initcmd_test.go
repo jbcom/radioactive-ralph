@@ -1,7 +1,6 @@
 package initcmd
 
 import (
-	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -9,8 +8,6 @@ import (
 	"time"
 
 	"github.com/jbcom/radioactive-ralph/internal/config"
-	"github.com/jbcom/radioactive-ralph/internal/inventory"
-	"github.com/jbcom/radioactive-ralph/internal/variant"
 )
 
 func init() {
@@ -20,12 +17,7 @@ func init() {
 
 func TestInitCreatesFreshConfigTree(t *testing.T) {
 	repo := t.TempDir()
-	inv := inventory.Inventory{
-		Skills: []inventory.Skill{
-			{Name: "review", Plugin: "coderabbit"},
-		},
-	}
-	res, err := Init(Options{RepoRoot: repo, Inventory: inv})
+	res, err := Init(Options{RepoRoot: repo})
 	if err != nil {
 		t.Fatalf("Init: %v", err)
 	}
@@ -39,7 +31,6 @@ func TestInitCreatesFreshConfigTree(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(res.PlansPath, "index.md")); err != nil {
 		t.Errorf("plans/index.md missing: %v", err)
 	}
-	// Verify .gitignore entry.
 	gi, err := os.ReadFile(res.GitIgnore) //nolint:gosec // test path
 	if err != nil {
 		t.Fatalf("read .gitignore: %v", err)
@@ -51,12 +42,10 @@ func TestInitCreatesFreshConfigTree(t *testing.T) {
 
 func TestInitRefusesToClobberExistingConfig(t *testing.T) {
 	repo := t.TempDir()
-	// Pre-seed a config.
-	if _, err := Init(Options{RepoRoot: repo, Inventory: inventory.Inventory{}}); err != nil {
+	if _, err := Init(Options{RepoRoot: repo}); err != nil {
 		t.Fatalf("first Init: %v", err)
 	}
-	// Second Init without Force should refuse.
-	_, err := Init(Options{RepoRoot: repo, Inventory: inventory.Inventory{}})
+	_, err := Init(Options{RepoRoot: repo})
 	if err == nil {
 		t.Fatal("expected refusal on second Init without Force")
 	}
@@ -67,175 +56,55 @@ func TestInitRefusesToClobberExistingConfig(t *testing.T) {
 
 func TestInitForceOverwrites(t *testing.T) {
 	repo := t.TempDir()
-	_, err := Init(Options{RepoRoot: repo})
-	if err != nil {
+	if _, err := Init(Options{RepoRoot: repo}); err != nil {
 		t.Fatalf("first Init: %v", err)
 	}
-	_, err = Init(Options{RepoRoot: repo, Force: true})
-	if err != nil {
+	if _, err := Init(Options{RepoRoot: repo, Force: true}); err != nil {
 		t.Errorf("force overwrite failed: %v", err)
 	}
 }
 
-func TestInitAutoSelectsSingleCandidate(t *testing.T) {
+func TestInitRefreshPreservesRepoSettings(t *testing.T) {
 	repo := t.TempDir()
-	inv := inventory.Inventory{
-		Skills: []inventory.Skill{{Name: "review", Plugin: "coderabbit"}},
+	if _, err := Init(Options{RepoRoot: repo}); err != nil {
+		t.Fatalf("initial Init: %v", err)
 	}
-	res, err := Init(Options{RepoRoot: repo, Inventory: inv})
+	custom := `
+[service]
+default_object_store = "full"
+
+default_provider = "codex"
+
+[providers.codex]
+type = "codex"
+binary = "codex"
+
+[variants.green]
+provider = "gemini"
+spend_cap_usd = 12.5
+`
+	if err := os.WriteFile(config.Path(repo), []byte(custom), 0o600); err != nil {
+		t.Fatalf("write custom config: %v", err)
+	}
+
+	if _, err := Init(Options{RepoRoot: repo, Refresh: true}); err != nil {
+		t.Fatalf("refresh Init: %v", err)
+	}
+	f, err := config.Load(repo)
 	if err != nil {
-		t.Fatalf("Init: %v", err)
+		t.Fatalf("config.Load after refresh: %v", err)
 	}
-	if res.Choices[variant.BiasReview] != "coderabbit:review" {
-		t.Errorf("expected auto-select coderabbit:review, got %q",
-			res.Choices[variant.BiasReview])
+	if f.DefaultProvider != "codex" {
+		t.Fatalf("DefaultProvider = %q, want codex", f.DefaultProvider)
 	}
-}
-
-func TestInitPromptsForMultipleCandidates(t *testing.T) {
-	repo := t.TempDir()
-	inv := inventory.Inventory{
-		Skills: []inventory.Skill{
-			{Name: "review", Plugin: "coderabbit"},
-			{Name: "review", Plugin: "github"},
-		},
+	if f.Service.DefaultObjectStore != "full" {
+		t.Fatalf("DefaultObjectStore = %q, want full", f.Service.DefaultObjectStore)
 	}
-	called := false
-	res, err := Init(Options{
-		RepoRoot:  repo,
-		Inventory: inv,
-		Resolver: func(cat variant.BiasCategory, candidates []string) (string, error) {
-			if cat != variant.BiasReview {
-				return "", nil
-			}
-			called = true
-			if len(candidates) != 2 {
-				t.Errorf("expected 2 candidates for review, got %d", len(candidates))
-			}
-			return "github:review", nil
-		},
-	})
-	if err != nil {
-		t.Fatalf("Init: %v", err)
+	if f.Variants["green"].Provider != "gemini" {
+		t.Fatalf("variants.green.provider = %q, want gemini", f.Variants["green"].Provider)
 	}
-	if !called {
-		t.Error("resolver was not called for multi-candidate category")
-	}
-	if res.Choices[variant.BiasReview] != "github:review" {
-		t.Errorf("expected github:review, got %q", res.Choices[variant.BiasReview])
-	}
-}
-
-func TestInitErrorsOnMultipleCandidatesWithoutResolver(t *testing.T) {
-	repo := t.TempDir()
-	inv := inventory.Inventory{
-		Skills: []inventory.Skill{
-			{Name: "review", Plugin: "a"},
-			{Name: "review", Plugin: "b"},
-		},
-	}
-	_, err := Init(Options{RepoRoot: repo, Inventory: inv})
-	if err == nil {
-		t.Fatal("expected error with ambiguous candidates + nil Resolver")
-	}
-	if !strings.Contains(err.Error(), "candidates") {
-		t.Errorf("unexpected error: %v", err)
-	}
-}
-
-func TestInitResolverEmptyReturnSkipsCategory(t *testing.T) {
-	repo := t.TempDir()
-	inv := inventory.Inventory{
-		Skills: []inventory.Skill{
-			{Name: "review", Plugin: "a"},
-			{Name: "review", Plugin: "b"},
-		},
-	}
-	res, err := Init(Options{
-		RepoRoot:  repo,
-		Inventory: inv,
-		Resolver:  func(_ variant.BiasCategory, _ []string) (string, error) { return "", nil },
-	})
-	if err != nil {
-		t.Fatalf("Init: %v", err)
-	}
-	if res.Choices[variant.BiasReview] != "" {
-		t.Errorf("expected empty choice, got %q", res.Choices[variant.BiasReview])
-	}
-}
-
-func TestInitResolverNonCandidatePickGoesToDisabled(t *testing.T) {
-	repo := t.TempDir()
-	inv := inventory.Inventory{
-		Skills: []inventory.Skill{
-			{Name: "review", Plugin: "a"},
-			{Name: "review", Plugin: "b"},
-		},
-	}
-	res, err := Init(Options{
-		RepoRoot:  repo,
-		Inventory: inv,
-		Resolver: func(_ variant.BiasCategory, _ []string) (string, error) {
-			return "a:review", nil // not in candidates (they are "a:review" and "b:review"; "a:review" IS in list, pick 'explicitly-disabled' instead)
-		},
-	})
-	if err != nil {
-		t.Fatalf("Init: %v", err)
-	}
-	// "a:review" IS in candidates, so it should be the choice.
-	if res.Choices[variant.BiasReview] != "a:review" {
-		t.Errorf("expected a:review choice, got %q", res.Choices[variant.BiasReview])
-	}
-
-	// Now try an out-of-candidate pick.
-	repo2 := t.TempDir()
-	res2, err := Init(Options{
-		RepoRoot:  repo2,
-		Inventory: inv,
-		Resolver: func(_ variant.BiasCategory, _ []string) (string, error) {
-			return "explicitly-disabled:review", nil
-		},
-	})
-	if err != nil {
-		t.Fatalf("Init 2: %v", err)
-	}
-	if !containsStr(res2.Disabled, "explicitly-disabled:review") {
-		t.Errorf("expected explicitly-disabled:review in Disabled, got %v", res2.Disabled)
-	}
-}
-
-func TestInitRefreshPreservesChoices(t *testing.T) {
-	repo := t.TempDir()
-	inv := inventory.Inventory{
-		Skills: []inventory.Skill{
-			{Name: "review", Plugin: "coderabbit"},
-		},
-	}
-	// First run seeds the choice.
-	if _, err := Init(Options{RepoRoot: repo, Inventory: inv}); err != nil {
-		t.Fatalf("initial: %v", err)
-	}
-
-	// Simulate new inventory with multiple review skills; Refresh must
-	// preserve the existing choice rather than ask.
-	invExpanded := inventory.Inventory{
-		Skills: []inventory.Skill{
-			{Name: "review", Plugin: "coderabbit"},
-			{Name: "review", Plugin: "github"},
-		},
-	}
-	res, err := Init(Options{
-		RepoRoot:  repo,
-		Inventory: invExpanded,
-		Refresh:   true,
-		Resolver:  func(_ variant.BiasCategory, _ []string) (string, error) { return "should-not-be-called", nil },
-	})
-	if err != nil {
-		t.Fatalf("Refresh: %v", err)
-	}
-	if res.Choices[variant.BiasReview] != "coderabbit:review" {
-		t.Errorf("Refresh should preserve prior choice; got %q",
-			res.Choices[variant.BiasReview])
+	if f.Variants["green"].SpendCapUSD == nil || *f.Variants["green"].SpendCapUSD != 12.5 {
+		t.Fatalf("variants.green.spend_cap_usd = %v, want 12.5", f.Variants["green"].SpendCapUSD)
 	}
 }
 
@@ -245,14 +114,12 @@ func TestInitAppendGitIgnoreIdempotent(t *testing.T) {
 		t.Fatalf("Init: %v", err)
 	}
 	before, _ := os.ReadFile(filepath.Join(repo, ".gitignore")) //nolint:gosec // test path
-	// Second Init with force — must not duplicate the entry.
 	if _, err := Init(Options{RepoRoot: repo, Force: true}); err != nil {
 		t.Fatalf("Init 2: %v", err)
 	}
 	after, _ := os.ReadFile(filepath.Join(repo, ".gitignore")) //nolint:gosec // test path
 	if string(before) != string(after) {
-		t.Errorf(".gitignore changed between idempotent runs:\nbefore: %s\nafter:  %s",
-			before, after)
+		t.Errorf(".gitignore changed between idempotent runs:\nbefore: %s\nafter:  %s", before, after)
 	}
 }
 
@@ -278,19 +145,20 @@ func TestInitPlansIndexHasFrontmatter(t *testing.T) {
 
 func TestInitConfigFileLoadableByConfigPackage(t *testing.T) {
 	repo := t.TempDir()
-	inv := inventory.Inventory{
-		Skills: []inventory.Skill{{Name: "review", Plugin: "coderabbit"}},
-	}
-	if _, err := Init(Options{RepoRoot: repo, Inventory: inv}); err != nil {
+	if _, err := Init(Options{RepoRoot: repo}); err != nil {
 		t.Fatalf("Init: %v", err)
 	}
-	// config.Load should succeed and see our choice.
 	f, err := config.Load(repo)
 	if err != nil {
 		t.Fatalf("config.Load after Init: %v", err)
 	}
-	if f.Capabilities.Review != "coderabbit:review" {
-		t.Errorf("Review = %q, want coderabbit:review", f.Capabilities.Review)
+	if f.DefaultProvider != "claude" {
+		t.Errorf("DefaultProvider = %q, want claude", f.DefaultProvider)
+	}
+	for _, name := range []string{"claude", "codex", "gemini"} {
+		if _, ok := f.Providers[name]; !ok {
+			t.Errorf("expected provider %q to be present", name)
+		}
 	}
 }
 
@@ -299,38 +167,4 @@ func TestInitErrorsWhenRepoRootMissing(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for missing RepoRoot")
 	}
-}
-
-func TestInitNoResolverAndAmbiguousErrorMatches(t *testing.T) {
-	repo := t.TempDir()
-	inv := inventory.Inventory{
-		Skills: []inventory.Skill{
-			{Name: "review", Plugin: "a"},
-			{Name: "review", Plugin: "b"},
-		},
-	}
-	var myErr *myTestError
-	_, err := Init(Options{RepoRoot: repo, Inventory: inv})
-	if errors.As(err, &myErr) {
-		t.Errorf("errors.As matched unexpected type")
-	}
-	// sanity-check the error is returned
-	if err == nil {
-		t.Fatal("expected error")
-	}
-}
-
-type myTestError struct{}
-
-func (m myTestError) Error() string { return "" }
-
-// containsStr is a small helper to avoid pulling in strings.Contains
-// slice-style loops across tests.
-func containsStr(s []string, v string) bool {
-	for _, x := range s {
-		if x == v {
-			return true
-		}
-	}
-	return false
 }

@@ -12,12 +12,14 @@ package variant
 //
 // Destructive variant: pins ObjectStoreFull (independent objects so
 // forceful history rewrites can't corrupt the operator's shared
-// objects), fresh confirm per invocation, refuses service context,
-// refuses default branches.
+// objects), fresh confirm per invocation, and refuses default
+// branches even in durable-service mode.
 func oldManProfile() Profile {
 	return Profile{
 		Name:                 OldMan,
 		Description:          "Maestro mode. Force-resets branches to your vision, resolves conflicts -X ours, removes obstacles. Gated.",
+		AttachedAllowed:      true,
+		DurableAllowed:       true,
 		Isolation:            IsolationMirrorSingle, // one worktree, one surgical strike
 		MaxParallelWorktrees: 1,
 		Models: map[Stage]Model{
@@ -37,13 +39,12 @@ func oldManProfile() Profile {
 			ObjectStore:               ObjectStoreFull,
 			RefuseDefaultBranch:       true, // main/master/production/release* exempt
 			FreshConfirmPerInvocation: true,
-			RefuseServiceContext:      true,
 		},
 		ObjectStoreDefault: ObjectStoreFull,
 		SyncSourceDefault:  SyncSourceBoth,
 		LFSModeDefault:     LFSOnDemand,
-		SkillBiases: map[BiasCategory]BiasSnippet{
-			BiasBrainstorm: "Before imposing, confirm the target state via /{skill} — the Maestro is ruthless, not suicidal.",
+		PromptDirectives: []string{
+			"Impose the requested target state directly, but confirm that state before destructive action.",
 		},
 	}
 }

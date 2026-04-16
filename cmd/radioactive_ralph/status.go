@@ -6,41 +6,35 @@ import (
 	"time"
 
 	"github.com/jbcom/radioactive-ralph/internal/ipc"
-	"github.com/jbcom/radioactive-ralph/internal/variant"
 )
 
-// StatusCmd is `radioactive_ralph status --variant X`.
+// StatusCmd is `radioactive_ralph status`.
 type StatusCmd struct {
-	Variant  string `help:"Variant to query." required:""`
 	RepoRoot string `help:"Repo root. Defaults to cwd." type:"path"`
 	JSON     bool   `help:"Emit status as JSON instead of the default text table."`
 }
 
-// Run dials the supervisor socket and prints the status reply.
+// Run dials the repo service socket and prints the status reply.
 func (c *StatusCmd) Run(rc *runContext) error {
 	repo, err := resolveRepoRoot(c.RepoRoot)
 	if err != nil {
 		return err
 	}
-	socket, heartbeat, err := socketPath(repo, variant.Name(c.Variant))
+	socket, heartbeat, err := socketPath(repo)
 	if err != nil {
 		return err
 	}
 	if err := ensureAlive(socket, heartbeat); err != nil {
 		return err
 	}
-
-	resp, err := roundTrip(rc.ctx, socket, ipc.Request{Cmd: ipc.CmdStatus})
+	client, err := ipc.Dial(socket, 5*time.Second)
 	if err != nil {
 		return err
 	}
-	if !resp.Ok {
-		return fmt.Errorf("supervisor returned error: %s", resp.Error)
-	}
-
-	var status ipc.StatusReply
-	if err := json.Unmarshal(resp.Data, &status); err != nil {
-		return fmt.Errorf("decode status: %w", err)
+	defer func() { _ = client.Close() }()
+	status, err := client.Status(rc.ctx)
+	if err != nil {
+		return err
 	}
 	if c.JSON {
 		enc := json.NewEncoder(newStdoutWriter())
@@ -48,12 +42,16 @@ func (c *StatusCmd) Run(rc *runContext) error {
 		return enc.Encode(status)
 	}
 
-	fmt.Printf("variant:          %s\n", status.Variant)
+	fmt.Printf("repo:             %s\n", status.RepoPath)
 	fmt.Printf("pid:              %d\n", status.PID)
 	fmt.Printf("uptime:           %s\n", status.Uptime.Round(time.Second))
-	fmt.Printf("active_sessions:  %d\n", status.ActiveSessions)
-	fmt.Printf("queued_tasks:     %d\n", status.QueuedTasks)
+	fmt.Printf("active_plans:     %d\n", status.ActivePlans)
+	fmt.Printf("ready_tasks:      %d\n", status.ReadyTasks)
+	fmt.Printf("approval_tasks:   %d\n", status.ApprovalTasks)
+	fmt.Printf("blocked_tasks:    %d\n", status.BlockedTasks)
+	fmt.Printf("active_workers:   %d\n", status.ActiveWorkers)
 	fmt.Printf("running_tasks:    %d\n", status.RunningTasks)
+	fmt.Printf("failed_tasks:     %d\n", status.FailedTasks)
 	if !status.LastEventAt.IsZero() {
 		fmt.Printf("last_event:       %s\n", status.LastEventAt.Format(time.RFC3339))
 	}

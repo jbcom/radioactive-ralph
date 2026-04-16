@@ -10,6 +10,8 @@ func professorProfile() Profile {
 	return Profile{
 		Name:                 Professor,
 		Description:          "Brains and brawn. Opus plans, sonnet executes, sonnet reflects. Think first, smash second.",
+		AttachedAllowed:      false,
+		DurableAllowed:       true,
 		Isolation:            IsolationMirrorPool,
 		MaxParallelWorktrees: 4, // spec caps at 4 execution agents
 		Models: map[Stage]Model{
@@ -26,10 +28,9 @@ func professorProfile() Profile {
 		ObjectStoreDefault: ObjectStoreReference,
 		SyncSourceDefault:  SyncSourceBoth,
 		LFSModeDefault:     LFSOnDemand,
-		SkillBiases: map[BiasCategory]BiasSnippet{
-			BiasBrainstorm: "Planning phase: run /{skill} to stress-test the task ranking before execution.",
-			BiasDocsQuery:  "During planning, query /{skill} for canonical references on any unfamiliar framework.",
-			BiasReview:     "After each execution task ships a PR, invoke /{skill} on the diff as part of reflection.",
+		PromptDirectives: []string{
+			"Plan before editing, then execute deliberately, then reflect on what changed.",
+			"Prefer explicit rationale and ranked next steps over improvisation.",
 		},
 	}
 }

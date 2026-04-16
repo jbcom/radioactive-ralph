@@ -1,20 +1,21 @@
 // Package db is radioactive-ralph's per-repo SQLite event log.
 //
-// Every interesting thing the supervisor does is recorded as an event
-// here: session spawns, user messages injected into managed Claude
+// Every interesting thing the repo service does is recorded as an event
+// here: session spawns, user messages injected into managed provider
 // subprocesses, stream-json events received, session deaths, resumes,
-// commits, PRs, errors. The database is an append-only log the
-// supervisor replays on startup to rebuild in-memory state.
+// commits, PRs, errors. The database is an append-only log the runtime
+// replays on startup to rebuild in-memory state.
 //
-// SQLite is opened with journal_mode=WAL so the supervisor (single
+// SQLite is opened with journal_mode=WAL so the runtime (single
 // writer) and status/attach readers (many readers) can coexist without
 // locking. foreign_keys=ON for referential integrity on sessions<->spend.
 // busy_timeout=5000 so brief writer contention during reader checkpoint
-// doesn't crash the supervisor.
+// doesn't crash the service.
 //
 // Dedup uses SQLite's built-in FTS5 virtual table over task descriptions.
-// Full semantic search (sqlite-vec) was scoped out of M2 because it
-// requires an embeddings pipeline we don't want to own yet.
+// Full semantic search (sqlite-vec) is intentionally out of scope for
+// the current runtime because it requires an embeddings pipeline we do
+// not want to own yet.
 package db
 
 import (
@@ -38,7 +39,7 @@ var schemaInitial string
 // tests can open in-memory databases directly.
 const DriverName = "sqlite"
 
-// DB is the package's wrapper around *sql.DB with the supervisor's
+// DB is the package's wrapper around *sql.DB with the runtime's
 // helper methods attached. Construct via Open.
 type DB struct {
 	conn *sql.DB
@@ -92,7 +93,7 @@ func (d *DB) Path() string {
 
 // Conn returns the underlying *sql.DB. Exposed for advanced callers
 // (integration tests that want to assert schema directly); most
-// supervisor code should use the typed methods on DB.
+// runtime code should use the typed methods on DB.
 func (d *DB) Conn() *sql.DB {
 	return d.conn
 }
@@ -114,7 +115,7 @@ func (d *DB) migrate(ctx context.Context) error {
 
 // Event is the structured form of an entry in the events table.
 // PayloadRaw holds the exact bytes received from stream-json (nil if
-// the event originated inside the supervisor).
+// the event originated inside the repo service).
 type Event struct {
 	ID            int64
 	Timestamp     time.Time

@@ -13,7 +13,7 @@ import "github.com/jbcom/radioactive-ralph/cmd/radioactive_ralph"
 
 Command radioactive\_ralph is the radioactive\-ralph CLI entry point.
 
-Ralph is a per\-repo orchestration binary with multiple built\-in personas. Today the runtime targets the claude CLI, but the long\-term contract is provider\-oriented rather than Claude\-plugin\-oriented. See https://github.com/jbcom/radioactive-ralph for the full rationale and architecture plan.
+Ralph is a per\-repo runtime binary with multiple built\-in personas. The runtime ships provider bindings for claude, codex, and gemini today, while keeping the product contract provider\-oriented rather than provider\-branded. See https://github.com/jbcom/radioactive-ralph for the full rationale and architecture plan.
 
 ## Index
 
@@ -24,14 +24,19 @@ Ralph is a per\-repo orchestration binary with multiple built\-in personas. Toda
   - [func \(c \*DoctorCmd\) Run\(rc \*runContext\) error](<#DoctorCmd.Run>)
 - [type InitCmd](<#InitCmd>)
   - [func \(c \*InitCmd\) Run\(rc \*runContext\) error](<#InitCmd.Run>)
-- [type MCPCmd](<#MCPCmd>)
-- [type MCPRegisterCmd](<#MCPRegisterCmd>)
-  - [func \(c \*MCPRegisterCmd\) Run\(\_ \*runContext\) error](<#MCPRegisterCmd.Run>)
-- [type MCPStatusCmd](<#MCPStatusCmd>)
-  - [func \(c \*MCPStatusCmd\) Run\(\_ \*runContext\) error](<#MCPStatusCmd.Run>)
-- [type MCPUnregisterCmd](<#MCPUnregisterCmd>)
-  - [func \(c \*MCPUnregisterCmd\) Run\(\_ \*runContext\) error](<#MCPUnregisterCmd.Run>)
+- [type PlanApprovalsCmd](<#PlanApprovalsCmd>)
+  - [func \(c \*PlanApprovalsCmd\) Run\(rc \*runContext\) error](<#PlanApprovalsCmd.Run>)
+- [type PlanApproveCmd](<#PlanApproveCmd>)
+  - [func \(c \*PlanApproveCmd\) Run\(rc \*runContext\) error](<#PlanApproveCmd.Run>)
+- [type PlanBlockedCmd](<#PlanBlockedCmd>)
+  - [func \(c \*PlanBlockedCmd\) Run\(rc \*runContext\) error](<#PlanBlockedCmd.Run>)
 - [type PlanCmd](<#PlanCmd>)
+- [type PlanFailCmd](<#PlanFailCmd>)
+  - [func \(c \*PlanFailCmd\) Run\(rc \*runContext\) error](<#PlanFailCmd.Run>)
+- [type PlanHandoffCmd](<#PlanHandoffCmd>)
+  - [func \(c \*PlanHandoffCmd\) Run\(rc \*runContext\) error](<#PlanHandoffCmd.Run>)
+- [type PlanHistoryCmd](<#PlanHistoryCmd>)
+  - [func \(c \*PlanHistoryCmd\) Run\(rc \*runContext\) error](<#PlanHistoryCmd.Run>)
 - [type PlanImportCmd](<#PlanImportCmd>)
   - [func \(c \*PlanImportCmd\) Run\(rc \*runContext\) error](<#PlanImportCmd.Run>)
 - [type PlanLsCmd](<#PlanLsCmd>)
@@ -40,27 +45,35 @@ Ralph is a per\-repo orchestration binary with multiple built\-in personas. Toda
   - [func \(c \*PlanMarkDoneCmd\) Run\(rc \*runContext\) error](<#PlanMarkDoneCmd.Run>)
 - [type PlanNextCmd](<#PlanNextCmd>)
   - [func \(c \*PlanNextCmd\) Run\(rc \*runContext\) error](<#PlanNextCmd.Run>)
+- [type PlanRequeueCmd](<#PlanRequeueCmd>)
+  - [func \(c \*PlanRequeueCmd\) Run\(rc \*runContext\) error](<#PlanRequeueCmd.Run>)
+- [type PlanRetryCmd](<#PlanRetryCmd>)
+  - [func \(c \*PlanRetryCmd\) Run\(rc \*runContext\) error](<#PlanRetryCmd.Run>)
 - [type PlanShowCmd](<#PlanShowCmd>)
   - [func \(c \*PlanShowCmd\) Run\(rc \*runContext\) error](<#PlanShowCmd.Run>)
+- [type PlanTasksCmd](<#PlanTasksCmd>)
+  - [func \(c \*PlanTasksCmd\) Run\(rc \*runContext\) error](<#PlanTasksCmd.Run>)
 - [type RunCmd](<#RunCmd>)
   - [func \(c \*RunCmd\) Run\(rc \*runContext\) error](<#RunCmd.Run>)
-- [type ServeCmd](<#ServeCmd>)
-  - [func \(c \*ServeCmd\) Run\(rc \*runContext\) error](<#ServeCmd.Run>)
 - [type ServiceCmd](<#ServiceCmd>)
 - [type ServiceInstallCmd](<#ServiceInstallCmd>)
   - [func \(c \*ServiceInstallCmd\) Run\(\_ \*runContext\) error](<#ServiceInstallCmd.Run>)
 - [type ServiceListCmd](<#ServiceListCmd>)
   - [func \(c \*ServiceListCmd\) Run\(\_ \*runContext\) error](<#ServiceListCmd.Run>)
+- [type ServiceStartCmd](<#ServiceStartCmd>)
+  - [func \(c \*ServiceStartCmd\) Run\(rc \*runContext\) error](<#ServiceStartCmd.Run>)
 - [type ServiceStatusCmd](<#ServiceStatusCmd>)
   - [func \(c \*ServiceStatusCmd\) Run\(\_ \*runContext\) error](<#ServiceStatusCmd.Run>)
 - [type ServiceUninstallCmd](<#ServiceUninstallCmd>)
   - [func \(c \*ServiceUninstallCmd\) Run\(\_ \*runContext\) error](<#ServiceUninstallCmd.Run>)
+- [type ServiceWindowsRunCmd](<#ServiceWindowsRunCmd>)
+  - [func \(c \*ServiceWindowsRunCmd\) Run\(\_ \*runContext\) error](<#ServiceWindowsRunCmd.Run>)
 - [type StatusCmd](<#StatusCmd>)
   - [func \(c \*StatusCmd\) Run\(rc \*runContext\) error](<#StatusCmd.Run>)
 - [type StopCmd](<#StopCmd>)
   - [func \(c \*StopCmd\) Run\(rc \*runContext\) error](<#StopCmd.Run>)
-- [type SupervisorCmd](<#SupervisorCmd>)
-  - [func \(c \*SupervisorCmd\) Run\(rc \*runContext\) error](<#SupervisorCmd.Run>)
+- [type TUICmd](<#TUICmd>)
+  - [func \(c \*TUICmd\) Run\(\_ \*runContext\) error](<#TUICmd.Run>)
 
 
 ## Variables
@@ -76,26 +89,25 @@ var (
 ```
 
 <a name="AttachCmd"></a>
-## type [AttachCmd](<https://github.com/jbcom/radioactive-ralph/blob/main/cmd/radioactive_ralph/attach.go#L16-L20>)
+## type [AttachCmd](<https://github.com/jbcom/radioactive-ralph/blob/main/cmd/radioactive_ralph/attach.go#L13-L16>)
 
-AttachCmd is \`radioactive\_ralph attach \-\-variant X\`.
+AttachCmd is \`radioactive\_ralph attach\`.
 
 ```go
 type AttachCmd struct {
-    Variant  string `help:"Variant to attach to." required:""`
     RepoRoot string `help:"Repo root. Defaults to cwd." type:"path"`
     Raw      bool   `help:"Emit raw JSON-line event frames instead of the default one-line summary."`
 }
 ```
 
 <a name="AttachCmd.Run"></a>
-### func \(\*AttachCmd\) [Run](<https://github.com/jbcom/radioactive-ralph/blob/main/cmd/radioactive_ralph/attach.go#L23>)
+### func \(\*AttachCmd\) [Run](<https://github.com/jbcom/radioactive-ralph/blob/main/cmd/radioactive_ralph/attach.go#L19>)
 
 ```go
 func (c *AttachCmd) Run(rc *runContext) error
 ```
 
-Run streams events from the supervisor until the operator cancels.
+Run streams events from the repo service until the operator cancels.
 
 <a name="DoctorCmd"></a>
 ## type [DoctorCmd](<https://github.com/jbcom/radioactive-ralph/blob/main/cmd/radioactive_ralph/doctor.go#L11>)
@@ -116,7 +128,7 @@ func (c *DoctorCmd) Run(rc *runContext) error
 Run prints the doctor report.
 
 <a name="InitCmd"></a>
-## type [InitCmd](<https://github.com/jbcom/radioactive-ralph/blob/main/cmd/radioactive_ralph/init.go#L16-L23>)
+## type [InitCmd](<https://github.com/jbcom/radioactive-ralph/blob/main/cmd/radioactive_ralph/init.go#L10-L15>)
 
 InitCmd is \`radioactive\_ralph init\`.
 
@@ -124,15 +136,13 @@ InitCmd is \`radioactive\_ralph init\`.
 type InitCmd struct {
     RepoRoot string `help:"Repo root to initialize. Defaults to cwd." type:"path" default:""`
     Force    bool   `help:"Overwrite existing config.toml."`
-    Refresh  bool   `help:"Re-discover capabilities while preserving existing operator choices."`
-    Yes      bool   `help:"Skip interactive prompts; auto-select first candidate for multi-candidate categories."`
-    SkipMCP  bool   `help:"Skip the Claude Code MCP registration step. Default is to register."`
-    MCPScope string `help:"Scope for the MCP registration: local, user, or project." default:"user" enum:"local,user,project"`
+    Refresh  bool   `help:"Re-write config while preserving existing repo settings."`
+    Yes      bool   `help:"No-op compatibility flag; init is non-interactive."`
 }
 ```
 
 <a name="InitCmd.Run"></a>
-### func \(\*InitCmd\) [Run](<https://github.com/jbcom/radioactive-ralph/blob/main/cmd/radioactive_ralph/init.go#L26>)
+### func \(\*InitCmd\) [Run](<https://github.com/jbcom/radioactive-ralph/blob/main/cmd/radioactive_ralph/init.go#L18>)
 
 ```go
 func (c *InitCmd) Run(rc *runContext) error
@@ -140,95 +150,85 @@ func (c *InitCmd) Run(rc *runContext) error
 
 Run executes the init subcommand.
 
-<a name="MCPCmd"></a>
-## type [MCPCmd](<https://github.com/jbcom/radioactive-ralph/blob/main/cmd/radioactive_ralph/mcp.go#L14-L18>)
+<a name="PlanApprovalsCmd"></a>
+## type [PlanApprovalsCmd](<https://github.com/jbcom/radioactive-ralph/blob/main/cmd/radioactive_ralph/plan.go#L155>)
 
-MCPCmd groups MCP server client\-registration helpers. These shell out to \`claude mcp add/remove/get\` rather than editing Claude Code's config files directly — the CLI is the supported interface, and using it means we stay correct when Claude changes its on\-disk format.
+PlanApprovalsCmd implements \`plan approvals\`.
 
 ```go
-type MCPCmd struct {
-    Register   MCPRegisterCmd   `cmd:"" help:"Register radioactive_ralph as an MCP server with Claude Code."`
-    Unregister MCPUnregisterCmd `cmd:"" help:"Remove radioactive_ralph's MCP server registration."`
-    Status     MCPStatusCmd     `cmd:"" help:"Show the registered MCP server entry, if any."`
+type PlanApprovalsCmd struct{}
+```
+
+<a name="PlanApprovalsCmd.Run"></a>
+### func \(\*PlanApprovalsCmd\) [Run](<https://github.com/jbcom/radioactive-ralph/blob/main/cmd/radioactive_ralph/plan.go#L157>)
+
+```go
+func (c *PlanApprovalsCmd) Run(rc *runContext) error
+```
+
+
+
+<a name="PlanApproveCmd"></a>
+## type [PlanApproveCmd](<https://github.com/jbcom/radioactive-ralph/blob/main/cmd/radioactive_ralph/plan.go#L252-L255>)
+
+PlanApproveCmd implements \`plan approve \<plan\> \<task\>\`.
+
+```go
+type PlanApproveCmd struct {
+    PlanIDOrSlug string `arg:"" help:"Plan UUID or slug."`
+    TaskID       string `arg:"" help:"Task id within the plan."`
 }
 ```
 
-<a name="MCPRegisterCmd"></a>
-## type [MCPRegisterCmd](<https://github.com/jbcom/radioactive-ralph/blob/main/cmd/radioactive_ralph/mcp.go#L22-L26>)
-
-MCPRegisterCmd is \`radioactive\_ralph mcp register\`. It wires the current binary into Claude Code as a stdio MCP server.
+<a name="PlanApproveCmd.Run"></a>
+### func \(\*PlanApproveCmd\) [Run](<https://github.com/jbcom/radioactive-ralph/blob/main/cmd/radioactive_ralph/plan.go#L257>)
 
 ```go
-type MCPRegisterCmd struct {
-    Name  string `help:"Registration name." default:"radioactive_ralph"`
-    Scope string `help:"Config scope: local, user, project." default:"user" enum:"local,user,project"`
-    Bin   string `help:"Path to radioactive_ralph binary. Defaults to argv[0]."`
-}
+func (c *PlanApproveCmd) Run(rc *runContext) error
 ```
 
-<a name="MCPRegisterCmd.Run"></a>
-### func \(\*MCPRegisterCmd\) [Run](<https://github.com/jbcom/radioactive-ralph/blob/main/cmd/radioactive_ralph/mcp.go#L29>)
+
+
+<a name="PlanBlockedCmd"></a>
+## type [PlanBlockedCmd](<https://github.com/jbcom/radioactive-ralph/blob/main/cmd/radioactive_ralph/plan.go#L209>)
+
+PlanBlockedCmd implements \`plan blocked\`.
 
 ```go
-func (c *MCPRegisterCmd) Run(_ *runContext) error
+type PlanBlockedCmd struct{}
 ```
 
-Run shells out to \`claude mcp add\`.
-
-<a name="MCPStatusCmd"></a>
-## type [MCPStatusCmd](<https://github.com/jbcom/radioactive-ralph/blob/main/cmd/radioactive_ralph/mcp.go#L73-L75>)
-
-MCPStatusCmd is \`radioactive\_ralph mcp status\`. Shells out to \`claude mcp get \<name\>\`; exit code 0 = registered, non\-zero = not.
+<a name="PlanBlockedCmd.Run"></a>
+### func \(\*PlanBlockedCmd\) [Run](<https://github.com/jbcom/radioactive-ralph/blob/main/cmd/radioactive_ralph/plan.go#L211>)
 
 ```go
-type MCPStatusCmd struct {
-    Name string `help:"Registration name." default:"radioactive_ralph"`
-}
+func (c *PlanBlockedCmd) Run(rc *runContext) error
 ```
 
-<a name="MCPStatusCmd.Run"></a>
-### func \(\*MCPStatusCmd\) [Run](<https://github.com/jbcom/radioactive-ralph/blob/main/cmd/radioactive_ralph/mcp.go#L78>)
 
-```go
-func (c *MCPStatusCmd) Run(_ *runContext) error
-```
-
-Run shells out to \`claude mcp get\`.
-
-<a name="MCPUnregisterCmd"></a>
-## type [MCPUnregisterCmd](<https://github.com/jbcom/radioactive-ralph/blob/main/cmd/radioactive_ralph/mcp.go#L55-L58>)
-
-MCPUnregisterCmd is \`radioactive\_ralph mcp unregister\`.
-
-```go
-type MCPUnregisterCmd struct {
-    Name  string `help:"Registration name." default:"radioactive_ralph"`
-    Scope string `help:"Config scope: local, user, project." default:"user" enum:"local,user,project"`
-}
-```
-
-<a name="MCPUnregisterCmd.Run"></a>
-### func \(\*MCPUnregisterCmd\) [Run](<https://github.com/jbcom/radioactive-ralph/blob/main/cmd/radioactive_ralph/mcp.go#L61>)
-
-```go
-func (c *MCPUnregisterCmd) Run(_ *runContext) error
-```
-
-Run shells out to \`claude mcp remove\`.
 
 <a name="PlanCmd"></a>
-## type [PlanCmd](<https://github.com/jbcom/radioactive-ralph/blob/main/cmd/radioactive_ralph/plan.go#L19-L31>)
+## type [PlanCmd](<https://github.com/jbcom/radioactive-ralph/blob/main/cmd/radioactive_ralph/plan.go#L20-L41>)
 
 PlanCmd is \`radioactive\_ralph plan \<sub\>\`. This is the durable plan\-DAG surface — direct CRUD against the SQLite store under $XDG\_STATE\_HOME/radioactive\_ralph/.
 
 ```go
 type PlanCmd struct {
-    Ls   PlanLsCmd   `cmd:"" help:"List plans for this repo by default. Use --all-repos to widen the view."`
-    Show PlanShowCmd `cmd:"" help:"Show one plan's tasks and current ready set."`
-    Next PlanNextCmd `cmd:"" help:"Print the next ready task for a plan (without claiming it)."`
+    Ls        PlanLsCmd        `cmd:"" help:"List plans for this repo by default. Use --all-repos to widen the view."`
+    Show      PlanShowCmd      `cmd:"" help:"Show one plan's tasks and current ready set."`
+    Next      PlanNextCmd      `cmd:"" help:"Print the next ready task for a plan (without claiming it)."`
+    Tasks     PlanTasksCmd     `cmd:"" help:"List tasks for one plan."`
+    Approvals PlanApprovalsCmd `cmd:"" help:"List tasks in this repo waiting for operator approval."`
+    Blocked   PlanBlockedCmd   `cmd:"" help:"List tasks in this repo that are blocked or waiting on more context."`
+    Approve   PlanApproveCmd   `cmd:"" help:"Approve a task and return it to the runnable queue."`
+    Requeue   PlanRequeueCmd   `cmd:"" help:"Requeue a blocked/failed task back into the runnable queue."`
+    Handoff   PlanHandoffCmd   `cmd:"" help:"Hand a blocked/failed task to a different variant."`
+    Retry     PlanRetryCmd     `cmd:"" help:"Retry a blocked or failed task."`
+    Fail      PlanFailCmd      `cmd:"" help:"Force-fail a task from the operator surface."`
+    History   PlanHistoryCmd   `cmd:"" help:"Show recent task events for one task."`
 
     // Import seeds a plan from a JSON file. Used during the
-    // dogfooding bootstrap before the MCP server + fixit rewire.
+    // dogfooding bootstrap before fixit owns full durable planning.
     Import PlanImportCmd `cmd:"" help:"Import tasks into a new plan from a JSON file."`
 
     // MarkDone lets an operator (or shell script acting as one)
@@ -237,8 +237,76 @@ type PlanCmd struct {
 }
 ```
 
+<a name="PlanFailCmd"></a>
+## type [PlanFailCmd](<https://github.com/jbcom/radioactive-ralph/blob/main/cmd/radioactive_ralph/plan.go#L380-L384>)
+
+PlanFailCmd implements \`plan fail \<plan\> \<task\>\`.
+
+```go
+type PlanFailCmd struct {
+    PlanIDOrSlug string `arg:"" help:"Plan UUID or slug."`
+    TaskID       string `arg:"" help:"Task id within the plan."`
+    Reason       string `help:"Operator reason for force-failing the task."`
+}
+```
+
+<a name="PlanFailCmd.Run"></a>
+### func \(\*PlanFailCmd\) [Run](<https://github.com/jbcom/radioactive-ralph/blob/main/cmd/radioactive_ralph/plan.go#L386>)
+
+```go
+func (c *PlanFailCmd) Run(rc *runContext) error
+```
+
+
+
+<a name="PlanHandoffCmd"></a>
+## type [PlanHandoffCmd](<https://github.com/jbcom/radioactive-ralph/blob/main/cmd/radioactive_ralph/plan.go#L314-L320>)
+
+PlanHandoffCmd implements \`plan handoff \<plan\> \<task\> \<variant\>\`.
+
+```go
+type PlanHandoffCmd struct {
+    PlanIDOrSlug    string `arg:"" help:"Plan UUID or slug."`
+    TaskID          string `arg:"" help:"Task id within the plan."`
+    Variant         string `arg:"" help:"Variant to hint for the next run."`
+    Reason          string `help:"Operator reason for the handoff."`
+    RequireApproval bool   `help:"Keep the task approval-gated after the handoff."`
+}
+```
+
+<a name="PlanHandoffCmd.Run"></a>
+### func \(\*PlanHandoffCmd\) [Run](<https://github.com/jbcom/radioactive-ralph/blob/main/cmd/radioactive_ralph/plan.go#L322>)
+
+```go
+func (c *PlanHandoffCmd) Run(rc *runContext) error
+```
+
+
+
+<a name="PlanHistoryCmd"></a>
+## type [PlanHistoryCmd](<https://github.com/jbcom/radioactive-ralph/blob/main/cmd/radioactive_ralph/plan.go#L411-L415>)
+
+PlanHistoryCmd implements \`plan history \<plan\> \<task\>\`.
+
+```go
+type PlanHistoryCmd struct {
+    PlanIDOrSlug string `arg:"" help:"Plan UUID or slug."`
+    TaskID       string `arg:"" help:"Task id within the plan."`
+    Limit        int    `help:"Maximum number of events to show." default:"20"`
+}
+```
+
+<a name="PlanHistoryCmd.Run"></a>
+### func \(\*PlanHistoryCmd\) [Run](<https://github.com/jbcom/radioactive-ralph/blob/main/cmd/radioactive_ralph/plan.go#L417>)
+
+```go
+func (c *PlanHistoryCmd) Run(rc *runContext) error
+```
+
+
+
 <a name="PlanImportCmd"></a>
-## type [PlanImportCmd](<https://github.com/jbcom/radioactive-ralph/blob/main/cmd/radioactive_ralph/plan.go#L170-L172>)
+## type [PlanImportCmd](<https://github.com/jbcom/radioactive-ralph/blob/main/cmd/radioactive_ralph/plan.go#L544-L546>)
 
 PlanImportCmd implements \`plan import \<json\-file\>\`.
 
@@ -249,7 +317,7 @@ type PlanImportCmd struct {
 ```
 
 <a name="PlanImportCmd.Run"></a>
-### func \(\*PlanImportCmd\) [Run](<https://github.com/jbcom/radioactive-ralph/blob/main/cmd/radioactive_ralph/plan.go#L196>)
+### func \(\*PlanImportCmd\) [Run](<https://github.com/jbcom/radioactive-ralph/blob/main/cmd/radioactive_ralph/plan.go#L570>)
 
 ```go
 func (c *PlanImportCmd) Run(rc *runContext) error
@@ -258,7 +326,7 @@ func (c *PlanImportCmd) Run(rc *runContext) error
 
 
 <a name="PlanLsCmd"></a>
-## type [PlanLsCmd](<https://github.com/jbcom/radioactive-ralph/blob/main/cmd/radioactive_ralph/plan.go#L34-L37>)
+## type [PlanLsCmd](<https://github.com/jbcom/radioactive-ralph/blob/main/cmd/radioactive_ralph/plan.go#L44-L47>)
 
 PlanLsCmd implements \`plan ls\`.
 
@@ -270,7 +338,7 @@ type PlanLsCmd struct {
 ```
 
 <a name="PlanLsCmd.Run"></a>
-### func \(\*PlanLsCmd\) [Run](<https://github.com/jbcom/radioactive-ralph/blob/main/cmd/radioactive_ralph/plan.go#L39>)
+### func \(\*PlanLsCmd\) [Run](<https://github.com/jbcom/radioactive-ralph/blob/main/cmd/radioactive_ralph/plan.go#L49>)
 
 ```go
 func (c *PlanLsCmd) Run(rc *runContext) error
@@ -279,7 +347,7 @@ func (c *PlanLsCmd) Run(rc *runContext) error
 
 
 <a name="PlanMarkDoneCmd"></a>
-## type [PlanMarkDoneCmd](<https://github.com/jbcom/radioactive-ralph/blob/main/cmd/radioactive_ralph/plan.go#L266-L270>)
+## type [PlanMarkDoneCmd](<https://github.com/jbcom/radioactive-ralph/blob/main/cmd/radioactive_ralph/plan.go#L640-L644>)
 
 PlanMarkDoneCmd implements \`plan mark\-done \<plan\> \<task\>\`.
 
@@ -292,7 +360,7 @@ type PlanMarkDoneCmd struct {
 ```
 
 <a name="PlanMarkDoneCmd.Run"></a>
-### func \(\*PlanMarkDoneCmd\) [Run](<https://github.com/jbcom/radioactive-ralph/blob/main/cmd/radioactive_ralph/plan.go#L272>)
+### func \(\*PlanMarkDoneCmd\) [Run](<https://github.com/jbcom/radioactive-ralph/blob/main/cmd/radioactive_ralph/plan.go#L646>)
 
 ```go
 func (c *PlanMarkDoneCmd) Run(rc *runContext) error
@@ -301,7 +369,7 @@ func (c *PlanMarkDoneCmd) Run(rc *runContext) error
 
 
 <a name="PlanNextCmd"></a>
-## type [PlanNextCmd](<https://github.com/jbcom/radioactive-ralph/blob/main/cmd/radioactive_ralph/plan.go#L121-L124>)
+## type [PlanNextCmd](<https://github.com/jbcom/radioactive-ralph/blob/main/cmd/radioactive_ralph/plan.go#L495-L498>)
 
 PlanNextCmd implements \`plan next \<id\-or\-slug\>\`.
 
@@ -313,7 +381,7 @@ type PlanNextCmd struct {
 ```
 
 <a name="PlanNextCmd.Run"></a>
-### func \(\*PlanNextCmd\) [Run](<https://github.com/jbcom/radioactive-ralph/blob/main/cmd/radioactive_ralph/plan.go#L126>)
+### func \(\*PlanNextCmd\) [Run](<https://github.com/jbcom/radioactive-ralph/blob/main/cmd/radioactive_ralph/plan.go#L500>)
 
 ```go
 func (c *PlanNextCmd) Run(rc *runContext) error
@@ -321,8 +389,54 @@ func (c *PlanNextCmd) Run(rc *runContext) error
 
 
 
+<a name="PlanRequeueCmd"></a>
+## type [PlanRequeueCmd](<https://github.com/jbcom/radioactive-ralph/blob/main/cmd/radioactive_ralph/plan.go#L280-L286>)
+
+PlanRequeueCmd implements \`plan requeue \<plan\> \<task\>\`.
+
+```go
+type PlanRequeueCmd struct {
+    PlanIDOrSlug    string `arg:"" help:"Plan UUID or slug."`
+    TaskID          string `arg:"" help:"Task id within the plan."`
+    Reason          string `help:"Operator reason for requeueing the task."`
+    VariantHint     string `help:"Optional new variant hint for the requeued task."`
+    RequireApproval bool   `help:"Return the task to approval-gated state instead of runnable pending."`
+}
+```
+
+<a name="PlanRequeueCmd.Run"></a>
+### func \(\*PlanRequeueCmd\) [Run](<https://github.com/jbcom/radioactive-ralph/blob/main/cmd/radioactive_ralph/plan.go#L288>)
+
+```go
+func (c *PlanRequeueCmd) Run(rc *runContext) error
+```
+
+
+
+<a name="PlanRetryCmd"></a>
+## type [PlanRetryCmd](<https://github.com/jbcom/radioactive-ralph/blob/main/cmd/radioactive_ralph/plan.go#L348-L352>)
+
+PlanRetryCmd implements \`plan retry \<plan\> \<task\>\`.
+
+```go
+type PlanRetryCmd struct {
+    PlanIDOrSlug string `arg:"" help:"Plan UUID or slug."`
+    TaskID       string `arg:"" help:"Task id within the plan."`
+    Reason       string `help:"Operator reason for retrying the task."`
+}
+```
+
+<a name="PlanRetryCmd.Run"></a>
+### func \(\*PlanRetryCmd\) [Run](<https://github.com/jbcom/radioactive-ralph/blob/main/cmd/radioactive_ralph/plan.go#L354>)
+
+```go
+func (c *PlanRetryCmd) Run(rc *runContext) error
+```
+
+
+
 <a name="PlanShowCmd"></a>
-## type [PlanShowCmd](<https://github.com/jbcom/radioactive-ralph/blob/main/cmd/radioactive_ralph/plan.go#L87-L89>)
+## type [PlanShowCmd](<https://github.com/jbcom/radioactive-ralph/blob/main/cmd/radioactive_ralph/plan.go#L97-L99>)
 
 PlanShowCmd implements \`plan show \<id\-or\-slug\>\`.
 
@@ -333,7 +447,7 @@ type PlanShowCmd struct {
 ```
 
 <a name="PlanShowCmd.Run"></a>
-### func \(\*PlanShowCmd\) [Run](<https://github.com/jbcom/radioactive-ralph/blob/main/cmd/radioactive_ralph/plan.go#L91>)
+### func \(\*PlanShowCmd\) [Run](<https://github.com/jbcom/radioactive-ralph/blob/main/cmd/radioactive_ralph/plan.go#L465>)
 
 ```go
 func (c *PlanShowCmd) Run(rc *runContext) error
@@ -341,16 +455,35 @@ func (c *PlanShowCmd) Run(rc *runContext) error
 
 
 
+<a name="PlanTasksCmd"></a>
+## type [PlanTasksCmd](<https://github.com/jbcom/radioactive-ralph/blob/main/cmd/radioactive_ralph/plan.go#L102-L105>)
+
+PlanTasksCmd implements \`plan tasks \<id\-or\-slug\>\`.
+
+```go
+type PlanTasksCmd struct {
+    IDOrSlug string   `arg:"" help:"Plan UUID or slug."`
+    Status   []string `help:"Only include these task statuses (repeatable)."`
+}
+```
+
+<a name="PlanTasksCmd.Run"></a>
+### func \(\*PlanTasksCmd\) [Run](<https://github.com/jbcom/radioactive-ralph/blob/main/cmd/radioactive_ralph/plan.go#L107>)
+
+```go
+func (c *PlanTasksCmd) Run(rc *runContext) error
+```
+
+
+
 <a name="RunCmd"></a>
-## type [RunCmd](<https://github.com/jbcom/radioactive-ralph/blob/main/cmd/radioactive_ralph/run.go#L15-L38>)
+## type [RunCmd](<https://github.com/jbcom/radioactive-ralph/blob/main/cmd/radioactive_ralph/run.go#L16-L37>)
 
 RunCmd is \`radioactive\_ralph run \-\-variant X\`.
 
 ```go
 type RunCmd struct {
     Variant     string  `help:"Variant name (blue, grey, green, red, professor, fixit, immortal, savage, old-man, world-breaker)." required:""`
-    Detach      bool    `help:"Spawn the supervisor in a multiplexer pane and return immediately."`
-    Foreground  bool    `help:"Run in the foreground — invoked by launchd/systemd service units."`
     RepoRoot    string  `help:"Repo root. Defaults to cwd." type:"path"`
     SpendCapUSD float64 `help:"Spend cap for variants that require one." name:"spend-cap-usd"`
 
@@ -361,135 +494,131 @@ type RunCmd struct {
     // Fixit-only flags.
     Advise      bool   `help:"(fixit only) Run in advisor mode: scan the codebase, write .radioactive-ralph/plans/<topic>-advisor.md, and sync the first durable DAG plan for this repo. Auto-enabled when no active plan exists for this repo."`
     Topic       string `help:"(fixit --advise only) Slug used for the output filename (plans/<topic>-advisor.md). Defaults to 'general'."`
-    Description string `help:"(fixit --advise only) Free-form operator goal. Overrides TOPIC.md. Passed verbatim to the Claude subprocess."`
-    AutoHandoff bool   `help:"(fixit --advise only) When the recommendation has no tradeoffs, spawn the recommended variant as a follow-up run automatically."`
+    Description string `help:"(fixit --advise only) Free-form operator goal. Overrides TOPIC.md. Passed verbatim to the provider subprocess."`
+    AutoHandoff bool   `help:"(fixit --advise only) When the recommendation has no tradeoffs, start the recommended variant automatically."`
 
     // Advisor refinement thresholds. Operators can also set these in
     // .radioactive-ralph/config.toml under [variants.fixit].
     MaxIterations int    `help:"(fixit --advise only) Max refinement passes. Default 3."`
     MinConfidence int    `help:"(fixit --advise only) Confidence threshold for accepting a proposal without refinement. Default 70."`
-    PlanModel     string `help:"(fixit --advise only) Claude model tier for planning. Default opus."`
+    PlanModel     string `help:"(fixit --advise only) Provider model tier for planning. Default opus."`
     PlanEffort    string `help:"(fixit --advise only) Reasoning-effort level for planning (low/medium/high/max). Default high."`
 }
 ```
 
 <a name="RunCmd.Run"></a>
-### func \(\*RunCmd\) [Run](<https://github.com/jbcom/radioactive-ralph/blob/main/cmd/radioactive_ralph/run.go#L41>)
+### func \(\*RunCmd\) [Run](<https://github.com/jbcom/radioactive-ralph/blob/main/cmd/radioactive_ralph/run.go#L40>)
 
 ```go
 func (c *RunCmd) Run(rc *runContext) error
 ```
 
-Run launches the supervisor for the named variant.
-
-<a name="ServeCmd"></a>
-## type [ServeCmd](<https://github.com/jbcom/radioactive-ralph/blob/main/cmd/radioactive_ralph/serve.go#L18-L20>)
-
-ServeCmd is \`radioactive\_ralph serve \-\-mcp\`.
-
-Claude Code spawns this as a stdio MCP server. One process = one Claude session; the binary remains the source of truth and the MCP layer is just the structured control plane.
-
-```go
-type ServeCmd struct {
-    MCP bool `help:"Required. Serve the MCP protocol."`
-}
-```
-
-<a name="ServeCmd.Run"></a>
-### func \(\*ServeCmd\) [Run](<https://github.com/jbcom/radioactive-ralph/blob/main/cmd/radioactive_ralph/serve.go#L23>)
-
-```go
-func (c *ServeCmd) Run(rc *runContext) error
-```
-
-Run implements the kong\-dispatched serve command.
+Run executes one bounded variant attached to the current terminal.
 
 <a name="ServiceCmd"></a>
-## type [ServiceCmd](<https://github.com/jbcom/radioactive-ralph/blob/main/cmd/radioactive_ralph/service.go#L14-L19>)
+## type [ServiceCmd](<https://github.com/jbcom/radioactive-ralph/blob/main/cmd/radioactive_ralph/service.go#L16-L23>)
 
 ServiceCmd is \`radioactive\_ralph service \<subcommand\>\`.
 
 ```go
 type ServiceCmd struct {
-    Install   ServiceInstallCmd   `cmd:"" help:"Install a per-user service unit for a variant."`
-    Uninstall ServiceUninstallCmd `cmd:"" help:"Remove a per-user service unit."`
-    List      ServiceListCmd      `cmd:"" help:"List installed service units."`
-    Status    ServiceStatusCmd    `cmd:"" help:"Shell out to launchctl/systemctl for live service status."`
+    Start      ServiceStartCmd      `cmd:"" help:"Launch the durable repo service in the foreground."`
+    Install    ServiceInstallCmd    `cmd:"" help:"Install the repo service definition for the current platform."`
+    Uninstall  ServiceUninstallCmd  `cmd:"" help:"Remove the repo service definition for the current platform."`
+    List       ServiceListCmd       `cmd:"" help:"List installed repo service definitions."`
+    Status     ServiceStatusCmd     `cmd:"" help:"Show service-manager status for the current platform."`
+    WindowsRun ServiceWindowsRunCmd `cmd:"run-windows" help:"Run as a native Windows service host." hidden:""`
 }
 ```
 
 <a name="ServiceInstallCmd"></a>
-## type [ServiceInstallCmd](<https://github.com/jbcom/radioactive-ralph/blob/main/cmd/radioactive_ralph/service.go#L22-L30>)
+## type [ServiceInstallCmd](<https://github.com/jbcom/radioactive-ralph/blob/main/cmd/radioactive_ralph/service.go#L49-L53>)
 
 ServiceInstallCmd wires the service.Install filesystem operation.
 
 ```go
 type ServiceInstallCmd struct {
-    Variant               string   `help:"Variant to install." required:""`
-    RepoRoot              string   `help:"Repo root. Defaults to cwd." type:"path"`
-    RalphBin              string   `help:"Absolute path to the radioactive_ralph binary. Defaults to the currently-running executable." name:"radioactive_ralph-bin"`
-    ConfirmBurnBudget     bool     `help:"Confirmation gate for savage." name:"confirm-burn-budget"`
-    ConfirmNoMercy        bool     `help:"Confirmation gate for old-man." name:"confirm-no-mercy"`
-    ConfirmBurnEverything bool     `help:"Confirmation gate for world-breaker." name:"confirm-burn-everything"`
-    Env                   []string `help:"KEY=VALUE env vars to inject into the service unit (repeatable)."`
+    RepoRoot string   `help:"Repo root. Defaults to cwd." type:"path"`
+    RalphBin string   `help:"Absolute path to the radioactive_ralph binary. Defaults to the currently-running executable." name:"radioactive_ralph-bin"`
+    Env      []string `help:"KEY=VALUE env vars to inject into the service unit (repeatable)."`
 }
 ```
 
 <a name="ServiceInstallCmd.Run"></a>
-### func \(\*ServiceInstallCmd\) [Run](<https://github.com/jbcom/radioactive-ralph/blob/main/cmd/radioactive_ralph/service.go#L33>)
+### func \(\*ServiceInstallCmd\) [Run](<https://github.com/jbcom/radioactive-ralph/blob/main/cmd/radioactive_ralph/service.go#L55>)
 
 ```go
 func (c *ServiceInstallCmd) Run(_ *runContext) error
 ```
 
-Run installs the unit.
+
 
 <a name="ServiceListCmd"></a>
 ## type [ServiceListCmd](<https://github.com/jbcom/radioactive-ralph/blob/main/cmd/radioactive_ralph/service.go#L108>)
 
-ServiceListCmd lists installed units.
+ServiceListCmd lists installed repo service definitions.
 
 ```go
 type ServiceListCmd struct{}
 ```
 
 <a name="ServiceListCmd.Run"></a>
-### func \(\*ServiceListCmd\) [Run](<https://github.com/jbcom/radioactive-ralph/blob/main/cmd/radioactive_ralph/service.go#L114>)
+### func \(\*ServiceListCmd\) [Run](<https://github.com/jbcom/radioactive-ralph/blob/main/cmd/radioactive_ralph/service.go#L110>)
 
 ```go
 func (c *ServiceListCmd) Run(_ *runContext) error
 ```
 
-Run shells out to launchctl/systemctl to enumerate installed units. M2 implementation is simple: list the unit files under the per\-user config dir and report their presence. Status is available via the dedicated status subcommand.
+
+
+<a name="ServiceStartCmd"></a>
+## type [ServiceStartCmd](<https://github.com/jbcom/radioactive-ralph/blob/main/cmd/radioactive_ralph/service.go#L26-L29>)
+
+ServiceStartCmd runs the durable repo\-scoped runtime.
+
+```go
+type ServiceStartCmd struct {
+    RepoRoot   string `help:"Repo root. Defaults to cwd." type:"path"`
+    Foreground bool   `help:"Run in the foreground. Service units pass this explicitly." hidden:""`
+}
+```
+
+<a name="ServiceStartCmd.Run"></a>
+### func \(\*ServiceStartCmd\) [Run](<https://github.com/jbcom/radioactive-ralph/blob/main/cmd/radioactive_ralph/service.go#L31>)
+
+```go
+func (c *ServiceStartCmd) Run(rc *runContext) error
+```
+
+
 
 <a name="ServiceStatusCmd"></a>
-## type [ServiceStatusCmd](<https://github.com/jbcom/radioactive-ralph/blob/main/cmd/radioactive_ralph/service.go#L137-L139>)
+## type [ServiceStatusCmd](<https://github.com/jbcom/radioactive-ralph/blob/main/cmd/radioactive_ralph/service.go#L131-L133>)
 
 ServiceStatusCmd invokes the platform service manager for live status.
 
 ```go
 type ServiceStatusCmd struct {
-    Variant string `help:"Variant to query." required:""`
+    RepoRoot string `help:"Repo root. Defaults to cwd." type:"path"`
 }
 ```
 
 <a name="ServiceStatusCmd.Run"></a>
-### func \(\*ServiceStatusCmd\) [Run](<https://github.com/jbcom/radioactive-ralph/blob/main/cmd/radioactive_ralph/service.go#L142>)
+### func \(\*ServiceStatusCmd\) [Run](<https://github.com/jbcom/radioactive-ralph/blob/main/cmd/radioactive_ralph/service.go#L135>)
 
 ```go
 func (c *ServiceStatusCmd) Run(_ *runContext) error
 ```
 
-Run shells out to launchctl list / systemctl \-\-user status.
+
 
 <a name="ServiceUninstallCmd"></a>
-## type [ServiceUninstallCmd](<https://github.com/jbcom/radioactive-ralph/blob/main/cmd/radioactive_ralph/service.go#L89-L92>)
+## type [ServiceUninstallCmd](<https://github.com/jbcom/radioactive-ralph/blob/main/cmd/radioactive_ralph/service.go#L91-L93>)
 
 ServiceUninstallCmd removes an installed unit.
 
 ```go
 type ServiceUninstallCmd struct {
-    Variant  string `help:"Variant to remove." required:""`
     RepoRoot string `help:"Repo root. Defaults to cwd." type:"path"`
 }
 ```
@@ -501,70 +630,86 @@ type ServiceUninstallCmd struct {
 func (c *ServiceUninstallCmd) Run(_ *runContext) error
 ```
 
-Run removes the unit.
+
+
+<a name="ServiceWindowsRunCmd"></a>
+## type [ServiceWindowsRunCmd](<https://github.com/jbcom/radioactive-ralph/blob/main/cmd/radioactive_ralph/service_windows_stub.go#L9>)
+
+ServiceWindowsRunCmd exists so the command tree stays buildable on every platform; only Windows uses it.
+
+```go
+type ServiceWindowsRunCmd struct{}
+```
+
+<a name="ServiceWindowsRunCmd.Run"></a>
+### func \(\*ServiceWindowsRunCmd\) [Run](<https://github.com/jbcom/radioactive-ralph/blob/main/cmd/radioactive_ralph/service_windows_stub.go#L11>)
+
+```go
+func (c *ServiceWindowsRunCmd) Run(_ *runContext) error
+```
+
+
 
 <a name="StatusCmd"></a>
-## type [StatusCmd](<https://github.com/jbcom/radioactive-ralph/blob/main/cmd/radioactive_ralph/status.go#L13-L17>)
+## type [StatusCmd](<https://github.com/jbcom/radioactive-ralph/blob/main/cmd/radioactive_ralph/status.go#L12-L15>)
 
-StatusCmd is \`radioactive\_ralph status \-\-variant X\`.
+StatusCmd is \`radioactive\_ralph status\`.
 
 ```go
 type StatusCmd struct {
-    Variant  string `help:"Variant to query." required:""`
     RepoRoot string `help:"Repo root. Defaults to cwd." type:"path"`
     JSON     bool   `help:"Emit status as JSON instead of the default text table."`
 }
 ```
 
 <a name="StatusCmd.Run"></a>
-### func \(\*StatusCmd\) [Run](<https://github.com/jbcom/radioactive-ralph/blob/main/cmd/radioactive_ralph/status.go#L20>)
+### func \(\*StatusCmd\) [Run](<https://github.com/jbcom/radioactive-ralph/blob/main/cmd/radioactive_ralph/status.go#L18>)
 
 ```go
 func (c *StatusCmd) Run(rc *runContext) error
 ```
 
-Run dials the supervisor socket and prints the status reply.
+Run dials the repo service socket and prints the status reply.
 
 <a name="StopCmd"></a>
-## type [StopCmd](<https://github.com/jbcom/radioactive-ralph/blob/main/cmd/radioactive_ralph/stop.go#L12-L15>)
+## type [StopCmd](<https://github.com/jbcom/radioactive-ralph/blob/main/cmd/radioactive_ralph/stop.go#L11-L13>)
 
-StopCmd is \`radioactive\_ralph stop \-\-variant X\`.
+StopCmd is \`radioactive\_ralph stop\`.
 
 ```go
 type StopCmd struct {
-    Variant  string `help:"Variant to stop." required:""`
     RepoRoot string `help:"Repo root. Defaults to cwd." type:"path"`
 }
 ```
 
 <a name="StopCmd.Run"></a>
-### func \(\*StopCmd\) [Run](<https://github.com/jbcom/radioactive-ralph/blob/main/cmd/radioactive_ralph/stop.go#L18>)
+### func \(\*StopCmd\) [Run](<https://github.com/jbcom/radioactive-ralph/blob/main/cmd/radioactive_ralph/stop.go#L16>)
 
 ```go
 func (c *StopCmd) Run(rc *runContext) error
 ```
 
-Run asks the supervisor to shut down gracefully.
+Run asks the repo service to shut down gracefully.
 
-<a name="SupervisorCmd"></a>
-## type [SupervisorCmd](<https://github.com/jbcom/radioactive-ralph/blob/main/cmd/radioactive_ralph/supervisor.go#L17-L20>)
+<a name="TUICmd"></a>
+## type [TUICmd](<https://github.com/jbcom/radioactive-ralph/blob/main/cmd/radioactive_ralph/tui.go#L32-L35>)
 
-SupervisorCmd is the hidden \`radioactive\_ralph \_supervisor\` entry invoked by service wrappers \(launchd/systemd\). Human operators use \`radioactive\_ralph run\` instead — which, for now, simply calls through to the same logic. This command exists so the plist/systemd unit can target a stable, internal\-only name that won't get re\-pointed at a different code path by a future CLI refactor.
+
 
 ```go
-type SupervisorCmd struct {
-    Variant  string `help:"Variant." required:""`
-    RepoRoot string `help:"Repo root." type:"path" required:""`
+type TUICmd struct {
+    RepoRoot    string `help:"Repo root. Defaults to cwd." type:"path"`
+    NoAutostart bool   `help:"Do not auto-launch the repo service if it is not already running." name:"no-autostart"`
 }
 ```
 
-<a name="SupervisorCmd.Run"></a>
-### func \(\*SupervisorCmd\) [Run](<https://github.com/jbcom/radioactive-ralph/blob/main/cmd/radioactive_ralph/supervisor.go#L23>)
+<a name="TUICmd.Run"></a>
+### func \(\*TUICmd\) [Run](<https://github.com/jbcom/radioactive-ralph/blob/main/cmd/radioactive_ralph/tui.go#L37>)
 
 ```go
-func (c *SupervisorCmd) Run(rc *runContext) error
+func (c *TUICmd) Run(_ *runContext) error
 ```
 
-Run boots a supervisor in the foreground.
+
 
 Generated by [gomarkdoc](<https://github.com/princjef/gomarkdoc>)

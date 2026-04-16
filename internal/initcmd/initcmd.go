@@ -2,21 +2,15 @@
 //
 // Responsibilities:
 //
-//  1. Resolve operator preferences for each capability bias category
-//     (review, security review, docs query, brainstorm, debugging).
-//     Single-candidate slots auto-select; multi-candidate slots defer
-//     to the caller-provided Resolver (interactive prompts in the CLI,
-//     scripted answers in tests).
-//  2. Write .radioactive-ralph/config.toml (committed) and local.toml
-//     (gitignored) with frontmatter comments naming alternatives for
-//     later review.
-//  3. Scaffold .radioactive-ralph/plans/ with a starter index.md so
+//  1. Write .radioactive-ralph/config.toml (committed) and local.toml
+//     (gitignored) with provider/service defaults.
+//  2. Scaffold .radioactive-ralph/plans/ with a starter index.md so
 //     non-Fixit variants have the plans structure they refuse to run
 //     without.
-//  4. Append .radioactive-ralph/local.toml to the repo's .gitignore.
-//  5. Refuse to clobber an existing config unless Force is true;
-//     support --refresh to re-discover capabilities while preserving
-//     the operator's choices.
+//  3. Append .radioactive-ralph/local.toml to the repo's .gitignore.
+//  4. Refuse to clobber an existing config unless Force is true;
+//     support --refresh to preserve prior provider/service/variant
+//     settings while rewriting the file layout.
 package initcmd
 
 import (
@@ -26,34 +20,13 @@ import (
 	"path/filepath"
 
 	"github.com/jbcom/radioactive-ralph/internal/config"
-	"github.com/jbcom/radioactive-ralph/internal/inventory"
-	"github.com/jbcom/radioactive-ralph/internal/variant"
 )
-
-// Resolver is the side-channel that asks the operator to pick between
-// multiple candidate skills when a category has more than one install.
-// The CLI wires it to stdin prompts; tests wire it to a deterministic
-// map lookup.
-//
-// Called once per multi-candidate category. Returning "" marks that
-// category as "no preference"; returning a value that isn't in
-// candidates is treated as "disabled" (added to DisabledBiases).
-type Resolver func(category variant.BiasCategory, candidates []string) (string, error)
 
 // Options drives Init.
 type Options struct {
 	// RepoRoot is the absolute path to the operator's repo. The
 	// .radioactive-ralph/ tree is created directly under it.
 	RepoRoot string
-
-	// Inventory is the pre-discovered capability snapshot. Callers can
-	// pass inventory.Discover(...).
-	Inventory inventory.Inventory
-
-	// Resolver handles multi-candidate category questions. If nil and
-	// any category has multiple candidates, Init returns an error
-	// rather than silently dropping the ambiguity.
-	Resolver Resolver
 
 	// Force overwrites an existing config.toml. Without this, Init
 	// refuses to clobber prior operator work.
@@ -70,8 +43,6 @@ type Result struct {
 	LocalPath  string
 	PlansPath  string
 	GitIgnore  string
-	Choices    map[variant.BiasCategory]string
-	Disabled   []string
 }
 
 // Init runs the wizard against Options. Returns a Result describing
@@ -111,14 +82,8 @@ func Init(opts Options) (Result, error) {
 		}
 	}
 
-	// Resolve each bias category.
-	choices, disabled, err := resolveChoices(opts.Inventory, opts.Resolver, prior)
-	if err != nil {
-		return zero, fmt.Errorf("resolve choices: %w", err)
-	}
-
 	// Compose the config.toml payload.
-	file := buildConfigFile(choices, disabled, prior)
+	file := buildConfigFile(prior)
 
 	// Write config.toml.
 	if err := writeTOML(configPath, file); err != nil {
@@ -145,7 +110,5 @@ func Init(opts Options) (Result, error) {
 		LocalPath:  localPath,
 		PlansPath:  plansDir,
 		GitIgnore:  gitignorePath,
-		Choices:    choices,
-		Disabled:   disabled,
 	}, nil
 }

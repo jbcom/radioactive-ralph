@@ -11,14 +11,14 @@ description: Go API reference for the config package.
 import "github.com/jbcom/radioactive-ralph/internal/config"
 ```
 
-Package config loads radioactive\-ralph's per\-repo TOML configuration and produces a resolved view that the supervisor consumes.
+Package config loads radioactive\-ralph's per\-repo TOML configuration and produces a resolved view that the runtime consumes.
 
 Two files live under .radioactive\-ralph/ in every repo that uses Ralph:
 
-- config.toml \(committed\) — declared capability biases, per\-variant overrides, and daemon\-wide defaults.
-- local.toml \(gitignored\) — operator\-specific overrides that don't belong in git: multiplexer preference, log verbosity, etc.
+- config.toml \(committed\) — provider bindings, per\-variant overrides, and service\-wide defaults.
+- local.toml \(gitignored\) — operator\-specific overrides that don't belong in git: local binary overrides, log verbosity, etc.
 
-The config package only parses and validates. Applying variant defaults and safety floors happens at supervisor boot time in cmd/radioactive\_ralph/run.go \(M2 shape\) and will move into a dedicated Resolve\(\) entry point once the knob\-override matrix grows enough per\-variant overrides to warrant the abstraction \(M3\).
+The config package only parses and validates. Applying variant defaults and provider bindings happens at runtime boot.
 
 ## Index
 
@@ -28,12 +28,15 @@ The config package only parses and validates. Applying variant defaults and safe
 - [func IsMissingLocal\(err error\) bool](<#IsMissingLocal>)
 - [func LocalPath\(repoRoot string\) string](<#LocalPath>)
 - [func Path\(repoRoot string\) string](<#Path>)
-- [type Capabilities](<#Capabilities>)
-- [type Daemon](<#Daemon>)
 - [type File](<#File>)
   - [func Load\(repoRoot string\) \(File, error\)](<#Load>)
 - [type Local](<#Local>)
   - [func LoadLocal\(repoRoot string\) \(Local, error\)](<#LoadLocal>)
+- [type ProviderFile](<#ProviderFile>)
+  - [func DefaultClaudeProvider\(\) ProviderFile](<#DefaultClaudeProvider>)
+  - [func DefaultCodexProvider\(\) ProviderFile](<#DefaultCodexProvider>)
+  - [func DefaultGeminiProvider\(\) ProviderFile](<#DefaultGeminiProvider>)
+- [type Service](<#Service>)
 - [type VariantFile](<#VariantFile>)
 
 
@@ -76,7 +79,7 @@ var (
 ```
 
 <a name="IsMissingConfig"></a>
-## func [IsMissingConfig](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/config/config.go#L130>)
+## func [IsMissingConfig](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/config/config.go#L123>)
 
 ```go
 func IsMissingConfig(err error) bool
@@ -85,7 +88,7 @@ func IsMissingConfig(err error) bool
 IsMissingConfig reports whether err indicates a missing config.toml.
 
 <a name="IsMissingLocal"></a>
-## func [IsMissingLocal](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/config/config.go#L135>)
+## func [IsMissingLocal](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/config/config.go#L128>)
 
 ```go
 func IsMissingLocal(err error) bool
@@ -94,7 +97,7 @@ func IsMissingLocal(err error) bool
 IsMissingLocal reports whether err indicates a missing local.toml.
 
 <a name="LocalPath"></a>
-## func [LocalPath](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/config/config.go#L187>)
+## func [LocalPath](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/config/config.go#L252>)
 
 ```go
 func LocalPath(repoRoot string) string
@@ -103,7 +106,7 @@ func LocalPath(repoRoot string) string
 LocalPath returns the absolute path to local.toml for repoRoot.
 
 <a name="Path"></a>
-## func [Path](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/config/config.go#L182>)
+## func [Path](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/config/config.go#L247>)
 
 ```go
 func Path(repoRoot string) string
@@ -111,58 +114,22 @@ func Path(repoRoot string) string
 
 Path returns the absolute path to config.toml for repoRoot.
 
-<a name="Capabilities"></a>
-## type [Capabilities](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/config/config.go#L55-L67>)
-
-Capabilities declares the operator's preferred helper per bias category. A zero\-valued string means "no preference / don't bias". The keys match the BiasCategory constants defined in the variant package \(M3\).
-
-```go
-type Capabilities struct {
-    Review         string `toml:"review"`
-    SecurityReview string `toml:"security_review"`
-    DocsQuery      string `toml:"docs_query"`
-    Brainstorm     string `toml:"brainstorm"`
-    Debugging      string `toml:"debugging"`
-
-    // DisabledBiases lists helpers the operator explicitly never wants
-    // Ralph to bias toward, even when they're present in the inventory.
-    // This is how operators opt out of a specific review helper in favor
-    // of another.
-    DisabledBiases []string `toml:"disabled_biases"`
-}
-```
-
-<a name="Daemon"></a>
-## type [Daemon](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/config/config.go#L71-L78>)
-
-Daemon holds repo\-wide defaults. Individual variants override these in their own \[variants.\<name\>\] section; safety floors still apply on top.
-
-```go
-type Daemon struct {
-    DefaultObjectStore      string `toml:"default_object_store"` // "reference" | "full"
-    DefaultLfsMode          string `toml:"default_lfs_mode"`     // "full" | "on-demand" | "pointers-only" | "excluded"
-    CopyHooks               *bool  `toml:"copy_hooks"`           // pointer so "unset" ≠ false
-    AllowConcurrentVariants *bool  `toml:"allow_concurrent_variants"`
-    MultiplexerPreference   string `toml:"multiplexer_preference"` // "tmux" | "screen" | "setsid"
-    LogLevel                string `toml:"log_level"`              // "debug" | "info" | "warn" | "error"
-}
-```
-
 <a name="File"></a>
-## type [File](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/config/config.go#L46-L50>)
+## type [File](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/config/config.go#L43-L48>)
 
 File represents the shape of config.toml. Every section is optional so that a fresh \`radioactive\_ralph init\` can emit minimal files and iterate.
 
 ```go
 type File struct {
-    Capabilities Capabilities           `toml:"capabilities"`
-    Daemon       Daemon                 `toml:"daemon"`
-    Variants     map[string]VariantFile `toml:"variants"`
+    Service         Service                 `toml:"service"`
+    DefaultProvider string                  `toml:"default_provider"`
+    Providers       map[string]ProviderFile `toml:"providers"`
+    Variants        map[string]VariantFile  `toml:"variants"`
 }
 ```
 
 <a name="Load"></a>
-### func [Load](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/config/config.go#L141>)
+### func [Load](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/config/config.go#L134>)
 
 ```go
 func Load(repoRoot string) (File, error)
@@ -171,44 +138,104 @@ func Load(repoRoot string) (File, error)
 Load parses the per\-repo config file\(s\) under repoRoot/.radioactive\-ralph/. It returns ErrMissingConfig if config.toml is absent.
 
 <a name="Local"></a>
-## type [Local](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/config/config.go#L112-L115>)
+## type [Local](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/config/config.go#L105-L108>)
 
 Local is the shape of local.toml \(gitignored per\-operator preferences\). Keeping it minimal on purpose — everything else belongs in config.toml.
 
 ```go
 type Local struct {
-    MultiplexerPreference string `toml:"multiplexer_preference"`
-    LogLevel              string `toml:"log_level"`
+    LogLevel       string `toml:"log_level"`
+    ProviderBinary string `toml:"provider_binary"`
 }
 ```
 
 <a name="LoadLocal"></a>
-### func [LoadLocal](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/config/config.go#L164>)
+### func [LoadLocal](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/config/config.go#L176>)
 
 ```go
 func LoadLocal(repoRoot string) (Local, error)
 ```
 
-LoadLocal parses the local.toml file under repoRoot/.radioactive\-ralph/. Returns ErrMissingLocal if absent; callers can decide whether to treat that as fatal or fall through to Daemon defaults.
+LoadLocal parses the local.toml file under repoRoot/.radioactive\-ralph/. Returns ErrMissingLocal if absent; callers can decide whether to treat that as fatal or fall through to committed service defaults.
+
+<a name="ProviderFile"></a>
+## type [ProviderFile](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/config/config.go#L62-L75>)
+
+ProviderFile declares how one named provider is invoked. The shape is intentionally generic.
+
+```go
+type ProviderFile struct {
+    Type                  string   `toml:"type"`
+    Binary                string   `toml:"binary"`
+    Args                  []string `toml:"args"`
+    HaikuModel            string   `toml:"haiku_model"`
+    SonnetModel           string   `toml:"sonnet_model"`
+    OpusModel             string   `toml:"opus_model"`
+    LowEffort             string   `toml:"low_effort"`
+    MediumEffort          string   `toml:"medium_effort"`
+    HighEffort            string   `toml:"high_effort"`
+    MaxEffort             string   `toml:"max_effort"`
+    SupportsResume        *bool    `toml:"supports_resume"`
+    UseAppendSystemPrompt *bool    `toml:"use_append_system_prompt"`
+}
+```
+
+<a name="DefaultClaudeProvider"></a>
+### func [DefaultClaudeProvider](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/config/config.go#L195>)
+
+```go
+func DefaultClaudeProvider() ProviderFile
+```
+
+DefaultClaudeProvider returns the built\-in provider binding that uses the local \`claude\` CLI as the execution backend.
+
+<a name="DefaultCodexProvider"></a>
+### func [DefaultCodexProvider](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/config/config.go#L215>)
+
+```go
+func DefaultCodexProvider() ProviderFile
+```
+
+DefaultCodexProvider returns the built\-in provider binding that uses the local \`codex\` CLI as the execution backend.
+
+<a name="DefaultGeminiProvider"></a>
+### func [DefaultGeminiProvider](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/config/config.go#L233>)
+
+```go
+func DefaultGeminiProvider() ProviderFile
+```
+
+DefaultGeminiProvider returns the built\-in provider binding that uses the local \`gemini\` CLI as the execution backend.
+
+<a name="Service"></a>
+## type [Service](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/config/config.go#L52-L58>)
+
+Service holds repo\-wide defaults. Individual variants override these in their own \[variants.\<name\>\] section; safety floors still apply on top.
+
+```go
+type Service struct {
+    DefaultObjectStore      string `toml:"default_object_store"` // "reference" | "full"
+    DefaultLfsMode          string `toml:"default_lfs_mode"`     // "full" | "on-demand" | "pointers-only" | "excluded"
+    CopyHooks               *bool  `toml:"copy_hooks"`           // pointer so "unset" ≠ false
+    AllowConcurrentVariants *bool  `toml:"allow_concurrent_variants"`
+    LogLevel                string `toml:"log_level"` // "debug" | "info" | "warn" | "error"
+}
+```
 
 <a name="VariantFile"></a>
-## type [VariantFile](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/config/config.go#L84-L108>)
+## type [VariantFile](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/config/config.go#L81-L101>)
 
-VariantFile is the per\-variant overrides block inside config.toml. Any field left zero\-valued falls through to the variant profile's hardcoded default, which falls through to Daemon, which falls through to project defaults. Safety floors may override any of these.
+VariantFile is the per\-variant overrides block inside config.toml. Any field left zero\-valued falls through to the variant profile's hardcoded default, which falls through to Service, which falls through to project defaults. Safety floors may override any of these.
 
 ```go
 type VariantFile struct {
-    Isolation      string   `toml:"isolation"`
-    ObjectStore    string   `toml:"object_store"`
-    SyncSource     string   `toml:"sync_source"`
-    LfsMode        string   `toml:"lfs_mode"`
-    ReviewBias     string   `toml:"review_bias"`
-    SecurityBias   string   `toml:"security_review_bias"`
-    DocsQueryBias  string   `toml:"docs_query_bias"`
-    BrainstormBias string   `toml:"brainstorm_bias"`
-    DebuggingBias  string   `toml:"debugging_bias"`
-    SpendCapUSD    *float64 `toml:"spend_cap_usd"`
-    CycleLimit     *int     `toml:"cycle_limit"`
+    Isolation   string   `toml:"isolation"`
+    ObjectStore string   `toml:"object_store"`
+    SyncSource  string   `toml:"sync_source"`
+    LfsMode     string   `toml:"lfs_mode"`
+    Provider    string   `toml:"provider"`
+    SpendCapUSD *float64 `toml:"spend_cap_usd"`
+    CycleLimit  *int     `toml:"cycle_limit"`
 
     // Fixit-specific advisor knobs. Only meaningful in
     // [variants.fixit]. CLI flags take precedence; these are the

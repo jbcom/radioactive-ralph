@@ -60,7 +60,7 @@ When negotiation is over and you know exactly what you want.
 radioactive_ralph init
 radioactive_ralph run --variant old-man \
   --confirm-no-mercy \
-  --foreground
+  --repo-root .
 ```
 
 ### Arguments

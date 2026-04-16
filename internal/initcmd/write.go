@@ -9,7 +9,6 @@ import (
 
 	"github.com/BurntSushi/toml"
 	"github.com/jbcom/radioactive-ralph/internal/config"
-	"github.com/jbcom/radioactive-ralph/internal/variant"
 )
 
 // ensureRepoExists verifies the directory exists and looks like a repo.
@@ -25,22 +24,26 @@ func ensureRepoExists(root string) error {
 }
 
 // buildConfigFile composes the config.File to marshal, taking care to
-// carry forward any pre-existing daemon or variants sections from
+// carry forward any pre-existing service, provider, or variants sections from
 // prior on Refresh.
-func buildConfigFile(choices map[variant.BiasCategory]string, disabled []string,
-	prior config.File,
-) config.File {
+func buildConfigFile(prior config.File) config.File {
+	defaultProvider := prior.DefaultProvider
+	if defaultProvider == "" {
+		defaultProvider = "claude"
+	}
+	providers := prior.Providers
+	if providers == nil {
+		providers = map[string]config.ProviderFile{
+			"claude": config.DefaultClaudeProvider(),
+			"codex":  config.DefaultCodexProvider(),
+			"gemini": config.DefaultGeminiProvider(),
+		}
+	}
 	return config.File{
-		Capabilities: config.Capabilities{
-			Review:         choices[variant.BiasReview],
-			SecurityReview: choices[variant.BiasSecurityReview],
-			DocsQuery:      choices[variant.BiasDocsQuery],
-			Brainstorm:     choices[variant.BiasBrainstorm],
-			Debugging:      choices[variant.BiasDebugging],
-			DisabledBiases: disabled,
-		},
-		Daemon:   prior.Daemon,
-		Variants: prior.Variants,
+		Service:         prior.Service,
+		DefaultProvider: defaultProvider,
+		Providers:       providers,
+		Variants:        prior.Variants,
 	}
 }
 
@@ -52,9 +55,8 @@ func writeTOML(path string, file config.File) error {
 	}
 	var sb strings.Builder
 	sb.WriteString(`# radioactive-ralph config.toml — committed.
-# [capabilities] picks which installed skill each variant biases toward for
-#                a given category. Empty value = no bias (silent skip).
-# [daemon]       repo-wide defaults; safety floors override.
+# [service]      repo-wide runtime defaults; safety floors override.
+# [providers.X]  named agent CLI bindings; default_provider picks the normal one.
 # [variants.X]   per-variant overrides; safety floors still override.
 
 `)
@@ -67,7 +69,7 @@ func writeTOML(path string, file config.File) error {
 
 // writeLocalTOML creates an empty local.toml with a header comment.
 // It's intentionally minimal — the operator can fill in
-// multiplexer_preference or log_level when they want to.
+// local provider-binary overrides or log level when they want to.
 func writeLocalTOML(path string) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
 		return err
@@ -76,8 +78,8 @@ func writeLocalTOML(path string) error {
 # Per-operator preferences that don't belong in the committed config.
 #
 # Examples:
-#   multiplexer_preference = "tmux"   # tmux | screen | setsid
-#   log_level              = "info"   # debug | info | warn | error
+#   log_level       = "info"     # debug | info | warn | error
+#   provider_binary = "/usr/local/bin/codex"
 `
 	return os.WriteFile(path, []byte(content), 0o644) //nolint:gosec // config readable by all
 }

@@ -1,14 +1,16 @@
-// Package ipc is radioactive-ralph's supervisor-client IPC layer.
+// Package ipc is radioactive-ralph's repo-service IPC layer.
 //
-// The supervisor listens on a Unix domain socket under its workspace's
-// sessions/ directory. `radioactive_ralph status`, `radioactive_ralph attach`, `radioactive_ralph enqueue`,
-// `radioactive_ralph stop`, and `radioactive_ralph reload-config` connect to the same socket
-// and exchange newline-delimited JSON messages.
+// The repo service listens on a local control-plane endpoint under the
+// repo's state directory: a Unix domain socket on macOS/Linux and a
+// named pipe on Windows. `radioactive_ralph status`,
+// `radioactive_ralph attach`, `radioactive_ralph stop`, and internal
+// control-path clients exchange newline-delimited JSON messages over
+// the same transport.
 //
-// Heartbeat liveness is signalled via the supervisor touching an
+// Heartbeat liveness is signalled via the repo service touching an
 // `.alive` file every few seconds. `radioactive_ralph status` checks the file's
-// mtime before even attempting a socket connect — if the supervisor
-// crashed and left a stale socket, we want to surface the dead-daemon
+// mtime before even attempting a socket connect — if the service
+// crashed and left a stale socket, we want to surface the dead-service
 // state cleanly rather than hang on a connection attempt.
 //
 // Wire protocol:
@@ -35,7 +37,7 @@ const (
 	CmdReloadConfig = "reload-config"
 )
 
-// Request is a single command from a client to the supervisor.
+// Request is a single command from a client to the repo service.
 type Request struct {
 	Cmd  string          `json:"cmd"`
 	Args json.RawMessage `json:"args,omitempty"`
@@ -55,23 +57,36 @@ type StreamEvent struct {
 	Event json.RawMessage `json:"event"`
 }
 
-// StatusReply is the data payload for CmdStatus responses. Keeping this
-// a plain struct rather than map[string]any makes versioning/migration
-// explicit — callers know at compile-time what fields to expect.
+// StatusReply is the data payload for CmdStatus responses.
 type StatusReply struct {
-	Variant        string        `json:"variant"`
-	PID            int           `json:"pid"`
-	Uptime         time.Duration `json:"uptime_ns"`
-	ActiveSessions int           `json:"active_sessions"`
-	QueuedTasks    int           `json:"queued_tasks"`
-	RunningTasks   int           `json:"running_tasks"`
-	LastEventAt    time.Time     `json:"last_event_at,omitempty"`
-	HeartbeatAge   time.Duration `json:"heartbeat_age_ns,omitempty"`
+	RepoPath      string          `json:"repo_path"`
+	PID           int             `json:"pid"`
+	Uptime        time.Duration   `json:"uptime_ns"`
+	ActiveWorkers int             `json:"active_workers"`
+	ReadyTasks    int             `json:"ready_tasks"`
+	ApprovalTasks int             `json:"approval_tasks"`
+	BlockedTasks  int             `json:"blocked_tasks"`
+	RunningTasks  int             `json:"running_tasks"`
+	FailedTasks   int             `json:"failed_tasks"`
+	ActivePlans   int             `json:"active_plans"`
+	Workers       []WorkerSummary `json:"workers,omitempty"`
+	LastEventAt   time.Time       `json:"last_event_at,omitempty"`
+	HeartbeatAge  time.Duration   `json:"heartbeat_age_ns,omitempty"`
+}
+
+// WorkerSummary is the runtime-facing status for one in-flight worker.
+type WorkerSummary struct {
+	PlanID            string `json:"plan_id"`
+	TaskID            string `json:"task_id"`
+	Variant           string `json:"variant"`
+	Provider          string `json:"provider,omitempty"`
+	ProviderSessionID string `json:"provider_session_id,omitempty"`
+	WorktreePath      string `json:"worktree_path,omitempty"`
 }
 
 // EnqueueArgs is the client's payload when pushing work via CmdEnqueue.
 type EnqueueArgs struct {
-	TaskID      string `json:"task_id"` // optional; supervisor generates UUID if empty
+	TaskID      string `json:"task_id"` // optional; service generates UUID if empty
 	Description string `json:"description"`
 	Priority    int    `json:"priority,omitempty"`
 }

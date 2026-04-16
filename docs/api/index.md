@@ -16,8 +16,8 @@ To improve this reference, edit the doc comments in the corresponding
 The reference mirrors the Go source tree:
 
 - **cmd/radioactive_ralph/** — CLI entry points and subcommand handlers
-- **internal/** — everything else — config, session, supervisor, fixit,
-  variant, multiplexer, IPC, service, workspace, etc.
+- **internal/** — everything else — config, session, runtime, fixit,
+  variant, IPC, service, workspace, provider, etc.
 
 Each package page lists constants, variables, functions, types, and
 their public methods with signatures and associated doc comments.
@@ -30,22 +30,18 @@ internal/db
 internal/doctor
 internal/fixit
 internal/initcmd
-internal/inventory
 internal/ipc
-internal/mcp
-internal/multiplexer
 internal/plandag
 internal/plandag/schema
-internal/proclife
+internal/provider
+internal/provider/claudesession
+internal/provider/claudesession/cassette
+internal/provider/claudesession/cassette/replayer
+internal/provider/claudesession/internal/fakeclaude
 internal/rlog
+internal/runtime
 internal/service
-internal/session
-internal/session/cassette
-internal/session/cassette/replayer
-internal/session/internal/fakeclaude
-internal/supervisor
 internal/variant
-internal/variantpool
 internal/voice
 internal/workspace
 internal/xdg

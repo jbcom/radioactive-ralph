@@ -9,18 +9,18 @@ Fixit-Ralph is the only variant in the Ralph family permitted to create
 plans for the rest. This document specifies exactly how Fixit produces
 those plans — deliberately, in stages, with constrained prompting and
 hard validation gates — so the output is trustworthy enough that the
-supervisor and the other nine variants can safely act on it.
+runtime and the other nine variants can safely act on it.
 
 The single most important property: **Fixit never freestyles.** Every
 LLM call has a narrow scope, a structured input, a constrained output
-schema, and a validation step. If Claude returns something off-shape,
+schema, and a validation step. If the provider returns something off-shape,
 Fixit retries with corrective context. If it still fails, Fixit writes
 an explicit "I could not produce a coherent plan; here's what I tried"
 report rather than guessing.
 
 ## Why deliberate pipeline matters
 
-Letting Claude wander a repo and "produce a plan" is what happens
+Letting a provider wander a repo and "produce a plan" is what happens
 when nobody specifies the contract. The result is verbose, optimistic,
 non-actionable, and impossible to validate. Concretely, an unbounded
 Fixit advisor would:
@@ -30,7 +30,7 @@ Fixit advisor would:
 - Skip the plans-frontmatter contract that the rest of the system
   enforces, making the output worthless to the gate it's meant to
   satisfy.
-- Drift toward "implement everything yourself, claude" — exactly the
+- Drift toward "implement everything yourself" — exactly the
   freestyle the operator was trying to escape by asking for advice
   in the first place.
 
@@ -43,7 +43,6 @@ Failure at any stage halts and produces a diagnostic, not a guess.
 ┌─────────────────────────────────────────────────────────────────┐
 │ Stage 1: Operator intent capture                                │
 │   • interactive --topic <slug> + optional --description text    │
-│   • interactive operator questions on first run (init prompts)  │
 │   • produces: IntentSpec{topic, description, constraints}       │
 └─────────────────────────────────────────────────────────────────┘
                               │
@@ -56,9 +55,7 @@ Failure at any stage halts and produces a diagnostic, not a guess.
 │   • read existing .radioactive-ralph/plans/ tree                │
 │   • gh pr list --json (if gh authenticated)                     │
 │   • gh issue list --label "ai-welcome" --json                   │
-│   • capability inventory snapshot (what helpers are installed)  │
-│   • produces: RepoContext{commits, docs, plans, prs, issues,    │
-│                            inventory}                            │
+│   • produces: RepoContext{commits, docs, plans, prs, issues}    │
 │   • NO LLM CALLS YET                                            │
 └─────────────────────────────────────────────────────────────────┘
                               │
@@ -79,8 +76,8 @@ Failure at any stage halts and produces a diagnostic, not a guess.
                               │
                               ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│ Stage 4: Constrained Claude analysis                            │
-│   • spawn sonnet subprocess in --advisor scope                  │
+│ Stage 4: Constrained provider analysis                          │
+│   • run one provider turn in --advisor scope                    │
 │   • inputs: IntentSpec + RepoContext + VariantScores            │
 │   • prompt template: structured-only, JSON output schema        │
 │   • output schema (strict):                                     │
@@ -157,7 +154,7 @@ When invoked interactively in a terminal, Stage 1 asks the operator three short 
    "1+ week", "no cap". Recorded as IntentSpec.Constraints.
 
 Operator can pass `--non-interactive` to skip; in that case all three are blank
-and Stage 4 prompts compensate by asking Claude to be more conservative.
+and Stage 4 prompts compensate by asking the planning provider to be more conservative.
 
 ## Contract: RepoContext (Stage 2 output)
 
@@ -185,8 +182,6 @@ type RepoContext struct {
     OpenIssues        []GHIssue
     AIWelcomeIssues   []GHIssue         // labeled ai-welcome
 
-    Inventory         InventorySnapshot // helpers/MCPs/agents installed
-
     LangCounts        map[string]int    // .go/.py/.ts/.tf/etc
     GovernanceMissing []string          // CHANGELOG, dependabot, etc
 }
@@ -210,7 +205,7 @@ produces same output. Rules live in `internal/fixit/scorer.go` so
 they can be unit-tested independently of the LLM pipeline.
 
 The scorer does NOT pick a winner — it provides ranked context to
-Stage 4. Picking is Claude's job because picking requires weighing
+Stage 4. Picking is the provider model's job because picking requires weighing
 the IntentSpec + tradeoffs.
 
 ## Contract: PlanProposal (Stage 4 output)
@@ -250,13 +245,13 @@ operative properties:
    the schema below. Do not include explanation, markdown, or any
    text outside the JSON object."
 2. **Schema is in the prompt as TypeScript-flavored type declarations.**
-   Claude follows TypeScript constraints reliably.
+   Provider CLIs follow TypeScript constraints reliably enough for a constrained planning schema.
 3. **RepoContext is rendered as compact YAML** (token-efficient and
    familiar to LLMs).
-4. **VariantScores are rendered as a table** so Claude can see
+4. **VariantScores are rendered as a table** so the provider can see
    ranking without re-deriving it.
 5. **IntentSpec.Constraints become hard constraints in the prompt:**
-   "The operator forbids: opus, force-push." Claude must respect
+   "The operator forbids: opus, force-push." The provider must respect
    them or the validator rejects.
 6. **No examples.** Examples bias toward repeating example patterns;
    the schema is enough.
@@ -288,7 +283,7 @@ Fixit emits a plan whose `status` is `fallback` and whose body
 explains:
 
 - What stage failed
-- The raw Claude output (when Stage 4 failure)
+- The raw provider output (when Stage 4 failure)
 - The validation errors (when Stage 5 failure)
 - A safe default recommendation (`grey` for unknown repos, `blue`
   for repos with config but unclear scope)
@@ -299,28 +294,30 @@ produce advice and they should inspect the report manually.
 
 ## Self-validation
 
-The first real validation of this pipeline is having Fixit answer:
-"How should radioactive-ralph finish M3?" The output plan should:
+One useful validation of this pipeline is having Fixit answer:
+"How should radioactive-ralph finish the next runtime stabilization pass?"
+The output plan should:
 
-- Recognize that the supervisor's session pool is the unblocking
-  dependency.
+- Recognize the current durable repo runtime and operator surface as
+  the main dependency chain.
 - Recommend `professor-ralph` (plan→execute→reflect) as primary,
   not `grey` (mechanical) and not `green` (free-for-all).
-- List concrete acceptance criteria (e.g. "tests/integration/ session-
-  pool-spawn test passes", "radioactive_ralph run --variant green
-  actually backgrounds
-  via tmux", "advisor stage 4 calls real claude subprocess").
-- Reference real files (cmd/radioactive_ralph/run.go, internal/supervisor/).
+- List concrete acceptance criteria (e.g. "repo service status works",
+  "attached runs refuse durable-only variants", "advisor stage 4 calls the
+  real provider subprocess").
+- Reference real files (for example `cmd/radioactive_ralph/run.go`,
+  `internal/runtime/`, and the live docs tree).
 
-If the pipeline produces that plan, M3 unblocks itself: every
-remaining task gets executed by a Ralph variant against this repo.
+If the pipeline produces that plan, Fixit is doing the right kind of
+work: translating a free-form operator ask into concrete, executable
+follow-up for the rest of the Ralph lineup.
 
 ## Implementation files
 
 - `internal/fixit/intent.go` — Stage 1 IntentSpec + interactive prompts
 - `internal/fixit/explore.go` — Stage 2 RepoContext gatherer
 - `internal/fixit/scorer.go` — Stage 3 deterministic ranker
-- `internal/fixit/analyze.go` — Stage 4 Claude subprocess + JSON parsing
+- `internal/fixit/analyze.go` — Stage 4 provider turn + JSON parsing
 - `internal/fixit/validate.go` — Stage 5 validation rules
 - `internal/fixit/emit.go` — Stage 6 plan-file writer
 - `internal/fixit/prompts/advisor.tmpl` — Stage 4 prompt template

@@ -94,7 +94,7 @@ brews:
       token: "{{ .Env.JBCOM_PKGS_GITHUB_TOKEN }}"
     directory: Formula
     homepage: https://github.com/jbcom/radioactive-ralph
-    description: Autonomous continuous development orchestrator for Claude Code
+    description: Binary-first repo runtime with many Ralph personalities
     license: MIT
     commit_author:
       name: jbcom-bot
@@ -104,21 +104,19 @@ brews:
     install: |
       bin.install "radioactive_ralph"
     caveats: |
-      To register this ralph as an MCP server for Claude Code (so a
-      fresh `claude` session automatically sees plan.* and variant.*
-      tools), run:
+      Next step — initialize a repo and let Fixit seed the first plan:
 
-        radioactive_ralph mcp register
+        radioactive_ralph init
+        radioactive_ralph run --variant fixit --advise --topic bootstrap
+        radioactive_ralph service start
 
-      Default scope is `user` and transport is `stdio`. Pass
-      `--transport http` if you plan to run ralph as a durable
-      brew-service + HTTP server. See:
+      Use `radioactive_ralph tui` for the cockpit once the repo service
+      is running. Full docs:
 
-        https://jonbogaty.com/radioactive-ralph/guides/transports/
-    # Service block is intentionally omitted for now.
-    # `radioactive_ralph service install --variant <name>` handles per-variant
-    # service registration at runtime, since only three of the ten
-    # variants are service-appropriate and they take different flags.
+        https://jonbogaty.com/radioactive-ralph/getting-started/
+    # Homebrew service blocks are intentionally omitted. Ralph's durable
+    # runtime is repo-scoped and `radioactive_ralph service install`
+    # needs the operator's chosen repo root at runtime.
 
 scoops:
   - name: radioactive-ralph
@@ -130,12 +128,14 @@ scoops:
       token: "{{ .Env.JBCOM_PKGS_GITHUB_TOKEN }}"
     directory: bucket
     homepage: https://github.com/jbcom/radioactive-ralph
-    description: Autonomous continuous development orchestrator for Claude Code
+    description: Binary-first repo runtime with many Ralph personalities
     license: MIT
     post_install:
-      - "Write-Host 'To register this ralph as an MCP server for Claude Code, run:'"
-      - "Write-Host '  radioactive_ralph mcp register'"
-      - "Write-Host 'See https://jonbogaty.com/radioactive-ralph/guides/transports/ for transport options.'"
+      - "Write-Host 'Next step — initialize a repo and let Fixit seed the first plan:'"
+      - "Write-Host '  radioactive_ralph init'"
+      - "Write-Host '  radioactive_ralph run --variant fixit --advise --topic bootstrap'"
+      - "Write-Host '  radioactive_ralph service start'"
+      - "Write-Host 'See https://jonbogaty.com/radioactive-ralph/getting-started/ for the full setup flow.'"
 
 # Chocolatey publishing is split into .goreleaser.chocolatey.yaml and
 # runs from a windows-latest job in release.yml, since `choco.exe`
@@ -151,9 +151,9 @@ release:
   footer: |
     ## Install
 
-    Homebrew (macOS / Linux / WSL2+Linuxbrew):
+    Homebrew (macOS / Linux / Linuxbrew):
     ```
-    brew tap jbcom/tap
+    brew tap jbcom/pkgs
     brew install radioactive-ralph
     ```
 
@@ -171,4 +171,12 @@ release:
     curl | sh:
     ```
     curl -sSL https://jonbogaty.com/radioactive-ralph/install.sh | sh
+    ```
+
+    First repo bootstrap:
+    ```
+    radioactive_ralph init
+    radioactive_ralph run --variant fixit --advise --topic bootstrap
+    radioactive_ralph service start
+    radioactive_ralph tui
     ```

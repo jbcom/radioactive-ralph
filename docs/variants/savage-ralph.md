@@ -52,15 +52,13 @@ When speed matters more than thrift.
 
 ```bash
 radioactive_ralph init
-radioactive_ralph run --variant savage \
-  --confirm-burn-budget \
-  --spend-cap-usd 50 \
-  --foreground
+radioactive_ralph run --variant fixit --advise --topic bootstrap
+radioactive_ralph service start
 ```
 
 ### Arguments
 
-- `--confirm-burn-budget` — required confirmation gate
-- `--spend-cap-usd <amount>` — required spend cap
+- Savage runs through the durable repo service.
+- `--confirm-burn-budget` and `--spend-cap-usd <amount>` remain required at execution time.
 
 [← Back to variants index](https://jonbogaty.com/radioactive-ralph/variants/)

@@ -23,7 +23,7 @@ func TestSayInterpolation(t *testing.T) {
 }
 
 func TestSayFallsBackToFallback(t *testing.T) {
-	// grey has no templates registered in M2, so fallback fires.
+	// grey has no bespoke templates registered yet, so fallback fires.
 	msg := Say(VariantGrey, EventStartup, Fields{})
 	if msg == "" {
 		t.Error("fallback should not produce empty output")

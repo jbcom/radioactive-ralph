@@ -1,16 +1,17 @@
 // Package rlog is a thin slog wrapper that emits records shaped like
-// Claude's stream-json events when the caller opts into JSON output.
-// Default (text) output is operator-facing human logging on stderr.
+// the runtime's stream-json event envelope when the caller opts into
+// JSON output. Default (text) output is operator-facing human logging
+// on stderr.
 //
-// The shape is intentionally aligned with claude's stream-json so
-// operator-facing and subprocess-facing log streams can be
-// multiplexed through the same tooling:
+// The shape intentionally aligns with the provider-session event stream
+// so operator-facing and subprocess-facing logs can be multiplexed
+// through the same tooling:
 //
 //	{"type":"ralph","event":"init.start","ts":"2026-04-15T...","repo":"..."}
 //
-// `type: ralph` disambiguates ralph-emitted records from
-// claude-emitted `type: assistant` / `type: user` records when an
-// operator tails a merged log stream.
+// `type: ralph` disambiguates ralph-emitted records from provider
+// `type: assistant` / `type: user` records when an operator tails a
+// merged log stream.
 package rlog
 
 import (
@@ -27,7 +28,7 @@ const (
 	// ModeText is the default human-readable stderr output.
 	ModeText Mode = "text"
 	// ModeJSON emits one JSON record per log call, shaped like
-	// claude stream-json events with type=ralph.
+	// provider-session stream-json events with type=ralph.
 	ModeJSON Mode = "json"
 )
 
@@ -53,7 +54,7 @@ func New(mode Mode, w io.Writer) *slog.Logger {
 }
 
 // replaceForStreamJSON renames slog's default keys to match the
-// stream-json convention used by claude (ts, msg → event).
+// runtime/provider stream-json convention (ts, msg → event).
 func replaceForStreamJSON(_ []string, a slog.Attr) slog.Attr {
 	switch a.Key {
 	case slog.TimeKey:

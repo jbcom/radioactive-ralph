@@ -1,7 +1,6 @@
 ---
 title: CHANGELOG
-updated: 2026-04-14
-status: current
+lastUpdated: 2026-04-15
 ---
 
 # Changelog
@@ -9,12 +8,17 @@ status: current
 All notable changes to this project will be documented in this file.
 Format: [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/), [Semantic Versioning](https://semver.org/).
 
+Older entries preserve the product language that was true when those releases
+shipped. That means historical sections may still mention MCP, plugins,
+supervisors, or the archived Python implementation even though those are no
+longer part of the live contract.
+
 ## [0.7.0](https://github.com/jbcom/radioactive-ralph/compare/v0.6.1...v0.7.0) (2026-04-15)
 
 
 ### Features
 
-* omnibus — MCP auto-install, transports, release fixes, docs ([#36](https://github.com/jbcom/radioactive-ralph/issues/36)) ([30db744](https://github.com/jbcom/radioactive-ralph/commit/30db744515c325e836c983186284a048234eeb03))
+* omnibus — repo-service runtime polish, release fixes, docs ([#36](https://github.com/jbcom/radioactive-ralph/issues/36)) ([30db744](https://github.com/jbcom/radioactive-ralph/commit/30db744515c325e836c983186284a048234eeb03))
 
 ## [0.6.1](https://github.com/jbcom/radioactive-ralph/compare/v0.6.0...v0.6.1) (2026-04-15)
 
@@ -34,7 +38,7 @@ Format: [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/), [Semanti
 * **m2:** foundation — Go rewrite Python→reference + xdg/config/inventory/db layers ([#27](https://github.com/jbcom/radioactive-ralph/issues/27)) ([325f095](https://github.com/jbcom/radioactive-ralph/commit/325f095be532aa96c7d0bab72ac4be17321b9d5b))
 * **m2:** multiplexer + ipc layers ([#29](https://github.com/jbcom/radioactive-ralph/issues/29)) ([51d90a7](https://github.com/jbcom/radioactive-ralph/commit/51d90a7beb65b32dd5add7d9fc1adefab5443bc6))
 
-## [Unreleased]
+## Historical Appendix — M2 Rewrite Planning Snapshot
 
 ### Added — M2 rewrite (PR #31)
 
@@ -47,12 +51,12 @@ Format: [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/), [Semanti
 - **`internal/workspace`** — mirror clone with `--reference`, worktree pool
   with monotonic branch naming, LFS per-mode config, hook copy preserving
   executable bit. Four orthogonal knobs (isolation/object_store/sync/LFS).
-- **`internal/session`** — ClaudeSession wrapping `claude -p
+- **`internal/provider/claudesession`** — ClaudeSession wrapping `claude -p
   --input-format stream-json`. Session-ID pinning, sentinel re-prompt on
   resume, PromptRenderer combining variant biases with inventory-selected
   skills. Three test tiers: fake-claude unit tests, cassette-replay
   (deterministic VCR, no auth), gated live tests.
-- **`internal/session/cassette`** — subprocess-level VCR. Recorder wraps
+- **`internal/provider/claudesession/cassette`** — subprocess-level VCR. Recorder wraps
   a real claude subprocess and tees stdin+stdout to a JSON cassette;
   replayer binary replays the cassette in CI without credentials.
 - **`internal/service`** — launchd + systemd-user unit installers with
@@ -170,7 +174,7 @@ Format: [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/), [Semanti
 * forge abstraction layer + GitPython local git ops ([#3](https://github.com/jbcom/radioactive-ralph/issues/3)) ([9bcb26f](https://github.com/jbcom/radioactive-ralph/commit/9bcb26f86229c9afca26f2e460564643105f9c2a))
 * initial radioactive-ralph v0.1.0 release ([b0af5c6](https://github.com/jbcom/radioactive-ralph/commit/b0af5c65b2aba3de7fae80194500081bf0c7e92c))
 
-## [Unreleased]
+## Historical Appendix — Initial Python-Era Unreleased Snapshot
 
 ### Added
 - Initial Python package structure with hatchling build
@@ -187,5 +191,3 @@ Format: [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/), [Semanti
 - CI/CD: GitHub Actions with OIDC PyPI publishing and Sphinx Pages deploy
 - release-please for automated changelog and versioning
 - dependabot for weekly dependency updates
-
-[Unreleased]: https://github.com/jbcom/radioactive-ralph/compare/HEAD...HEAD

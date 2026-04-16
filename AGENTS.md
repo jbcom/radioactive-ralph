@@ -7,20 +7,14 @@ lastUpdated: 2026-04-15
 
 ## Product contract
 
-radioactive-ralph is a **binary-first** orchestration tool.
+radioactive-ralph is one binary with three operator faces:
 
-The live product is:
+1. **`radioactive_ralph service start`** — the durable repo-scoped runtime.
+2. **`radioactive_ralph run --variant <name>`** — attached bounded execution.
+3. **`radioactive_ralph tui`** — the socket-backed cockpit.
 
-1. **`radioactive_ralph` CLI** — repo init, plan storage, supervisor launch,
-   doctor checks, MCP serving, and service installation all live under
-   `cmd/radioactive_ralph/`.
-2. **Claude Code via MCP** — Claude is treated as a client of the binary, not
-   the product boundary. `radioactive_ralph init` registers stdio MCP so Claude
-   can inspect plans and control Ralph through the binary.
-
-Do not write or review docs as though the main product is a Claude marketplace
-plugin or a family of slash-command skills. That is no longer the active
-direction.
+Do not describe the product as a Claude plugin, an MCP server, or a family of
+slash-command skills. Those are no longer part of the live contract.
 
 ## Personas
 
@@ -28,64 +22,59 @@ Ralph is one little guy with many personalities.
 
 - Variants are defined in code under `internal/variant/`.
 - Voice and flavor live in `internal/voice/`.
-- The operator-facing narrative for each personality lives in `docs/variants/`.
-- Fixit Ralph is the planning bridge personality: when a repo lacks usable plan
-  context, fixit is the variant that should interpret a free-form ask and
-  convert it into the real plan flow.
+- Operator-facing variant docs live under `docs/variants/`.
+- Fixit Ralph is the planning bridge personality. When no active plan exists,
+  Fixit is the variant that translates a free-form ask into durable DAG state.
 
 ## State
 
 radioactive-ralph has two state layers:
 
-- **Repo-visible config and planning files**
-  - `.radioactive-ralph/config.toml`
-  - `.radioactive-ralph/local.toml`
-  - `.radioactive-ralph/plans/index.md`
-  - `.radioactive-ralph/plans/*-advisor.md`
-- **Machine-local runtime state**
-  - `$RALPH_STATE_DIR` if set
-  - otherwise the XDG/App Support root resolved by `internal/xdg`
-  - includes `plans.db`, sockets, logs, and per-repo runtime state
+- Repo-visible config and planning files under `.radioactive-ralph/`
+- Machine-local runtime state under the XDG/App Support root resolved by
+  `internal/xdg`
+
+Machine-local state includes:
+
+- `plans.db`
+- repo service sockets and PID locks
+- runtime logs
+- worktrees and mirrors
 
 Never store runtime state under `.claude/`.
 
 ## Current command surface
 
-The live CLI is:
-
 - `radioactive_ralph init`
 - `radioactive_ralph run --variant <name>`
-- `radioactive_ralph status --variant <name>`
-- `radioactive_ralph attach --variant <name>`
-- `radioactive_ralph stop --variant <name>`
+- `radioactive_ralph status`
+- `radioactive_ralph attach`
+- `radioactive_ralph stop`
+- `radioactive_ralph tui`
 - `radioactive_ralph doctor`
-- `radioactive_ralph service <install|uninstall|list|status>`
-- `radioactive_ralph plan <ls|show|next|import|mark-done>`
-- `radioactive_ralph serve --mcp`
-- `radioactive_ralph mcp <register|unregister|status>`
-
-If documentation presents the product as a Claude plugin, a family of slash
-commands, or an HTTP MCP service first, treat that as stale unless it is
-clearly marked as archive or target-state design.
+- `radioactive_ralph service <start|install|uninstall|list|status>`
+- `radioactive_ralph plan <ls|show|next|tasks|approvals|blocked|approve|requeue|retry|handoff|fail|history|import|mark-done>`
 
 ## Provider direction
 
-Today the runtime targets the `claude` CLI directly. The intended long-term
-shape is broader:
+Today the runtime ships provider bindings for `claude`, `codex`, and `gemini`.
+That is the current implementation, not the permanent identity of the system.
+
+The long-term shape is:
 
 - code-defined persona prompts
-- declarative provider bindings in repo config
-- support for any compatible agent CLI once prompt/model/effort/output bindings
+- repo-declared provider bindings
+- support for any compatible CLI provider once prompt/model/effort/output rules
   are defined
 
-When writing docs or code comments, describe Claude as the **current provider**,
-not the permanent identity of the system.
+When writing docs or code comments, describe Claude as the current shipped
+provider, not the permanent boundary of the product.
 
 ## Testing patterns
 
-- Use `go test ./...` for the main test pass.
-- Use `make test`, `make lint`, and `make vuln` for the standard repo targets.
-- Use `python3 -m tox -e docs` for docs validation and Sphinx build.
+- Use `go test ./...` for the main pass.
+- Use `golangci-lint run` for lint.
+- Use `python3 -m tox -e docs` for docs build/validation.
 - Run `bash scripts/generate-api-docs.sh` when exported Go API surface changes.
 
 ## Adding a command

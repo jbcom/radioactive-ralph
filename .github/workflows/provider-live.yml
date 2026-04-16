@@ -1,0 +1,37 @@
+name: Provider Live
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  live-providers:
+    name: live provider smoke
+    runs-on: ubuntu-latest
+    env:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+      CLAUDE_AUTHENTICATED: ${{ secrets.ANTHROPIC_API_KEY != '' && '1' || '0' }}
+      CODEX_AUTHENTICATED: ${{ secrets.OPENAI_API_KEY != '' && '1' || '0' }}
+      GEMINI_AUTHENTICATED: ${{ (secrets.GEMINI_API_KEY != '' || secrets.GOOGLE_API_KEY != '') && '1' || '0' }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '22'
+      - name: Install Claude Code CLI
+        run: npm install -g @anthropic-ai/claude-code@latest
+      - name: Install Codex CLI
+        run: npm install -g @openai/codex@latest
+      - name: Install Gemini CLI
+        run: npm install -g @google/gemini-cli@latest
+      - name: Smoke live providers
+        run: go test ./tests/integration -run 'TestLiveClaudeRoundTrip|TestLiveClaudeModelSanity|TestLiveClaudeRunnerTurn|TestLiveCodexRunnerTurn|TestLiveGeminiRunnerTurn' -v

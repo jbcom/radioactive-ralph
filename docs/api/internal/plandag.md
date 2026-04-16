@@ -24,15 +24,20 @@ The schema is embedded under schema/\*.sql and applied in lexical order by Migra
 - [type Options](<#Options>)
 - [type Plan](<#Plan>)
 - [type PlanStatus](<#PlanStatus>)
+- [type RepoTaskSummary](<#RepoTaskSummary>)
 - [type SessionMode](<#SessionMode>)
 - [type SessionOpts](<#SessionOpts>)
 - [type SessionTransport](<#SessionTransport>)
 - [type SessionVariantOpts](<#SessionVariantOpts>)
+- [type SessionVariantSummary](<#SessionVariantSummary>)
 - [type Store](<#Store>)
   - [func Open\(ctx context.Context, opts Options\) \(\*Store, error\)](<#Open>)
   - [func \(s \*Store\) AddDep\(ctx context.Context, planID, taskID, dependsOn string\) error](<#Store.AddDep>)
+  - [func \(s \*Store\) ApproveTask\(ctx context.Context, planID, taskID string\) error](<#Store.ApproveTask>)
+  - [func \(s \*Store\) ApproveTaskWithPayload\(ctx context.Context, planID, taskID string, payload TaskEventPayload\) error](<#Store.ApproveTaskWithPayload>)
   - [func \(s \*Store\) AttachPlan\(ctx context.Context, sessionID, planID string\) error](<#Store.AttachPlan>)
   - [func \(s \*Store\) ClaimNextReady\(ctx context.Context, planID, variant, sessionID, sessionVariantID string\) \(\*Task, error\)](<#Store.ClaimNextReady>)
+  - [func \(s \*Store\) ClearSessionVariantTask\(ctx context.Context, sessionVariantID, status string\) error](<#Store.ClearSessionVariantTask>)
   - [func \(s \*Store\) Close\(\) error](<#Store.Close>)
   - [func \(s \*Store\) CloseSession\(ctx context.Context, sessionID string\) error](<#Store.CloseSession>)
   - [func \(s \*Store\) CreatePlan\(ctx context.Context, o CreatePlanOpts\) \(string, error\)](<#Store.CreatePlan>)
@@ -43,12 +48,29 @@ The schema is embedded under schema/\*.sql and applied in lexical order by Migra
   - [func \(s \*Store\) GetPlan\(ctx context.Context, id string\) \(\*Plan, error\)](<#Store.GetPlan>)
   - [func \(s \*Store\) GetTask\(ctx context.Context, planID, id string\) \(\*Task, error\)](<#Store.GetTask>)
   - [func \(s \*Store\) HeartbeatSession\(ctx context.Context, sessionID string\) error](<#Store.HeartbeatSession>)
+  - [func \(s \*Store\) HeartbeatSessionVariant\(ctx context.Context, sessionVariantID string\) error](<#Store.HeartbeatSessionVariant>)
+  - [func \(s \*Store\) ListActiveSessionVariants\(ctx context.Context, repoPath string, limit int\) \(\[\]SessionVariantSummary, error\)](<#Store.ListActiveSessionVariants>)
   - [func \(s \*Store\) ListPlans\(ctx context.Context, statuses \[\]PlanStatus\) \(\[\]Plan, error\)](<#Store.ListPlans>)
+  - [func \(s \*Store\) ListRepoTaskSummaries\(ctx context.Context, repoPath string, statuses \[\]TaskStatus, limit int\) \(\[\]RepoTaskSummary, error\)](<#Store.ListRepoTaskSummaries>)
+  - [func \(s \*Store\) ListTaskEvents\(ctx context.Context, planID, taskID string, limit int\) \(\[\]TaskEvent, error\)](<#Store.ListTaskEvents>)
+  - [func \(s \*Store\) ListTasks\(ctx context.Context, planID string, statuses \[\]TaskStatus\) \(\[\]Task, error\)](<#Store.ListTasks>)
+  - [func \(s \*Store\) MarkBlocked\(ctx context.Context, planID, taskID, sessionID string, payload TaskEventPayload\) error](<#Store.MarkBlocked>)
   - [func \(s \*Store\) MarkDone\(ctx context.Context, planID, taskID, sessionID string, evidenceJSON string\) \(\[\]Task, error\)](<#Store.MarkDone>)
   - [func \(s \*Store\) MarkFailed\(ctx context.Context, planID, taskID, sessionID, reason string, maxRetries int\) \(retried bool, err error\)](<#Store.MarkFailed>)
+  - [func \(s \*Store\) MarkFailedWithPayload\(ctx context.Context, planID, taskID, sessionID string, payload TaskEventPayload, maxRetries int\) \(retried bool, err error\)](<#Store.MarkFailedWithPayload>)
+  - [func \(s \*Store\) OperatorFailTask\(ctx context.Context, planID, taskID string, payload TaskEventPayload\) error](<#Store.OperatorFailTask>)
+  - [func \(s \*Store\) OperatorHandoffTask\(ctx context.Context, planID, taskID string, payload TaskEventPayload, variantHint string, requireApproval bool\) error](<#Store.OperatorHandoffTask>)
+  - [func \(s \*Store\) OperatorRequeueTask\(ctx context.Context, planID, taskID string, payload TaskEventPayload, variantHint string, requireApproval bool\) error](<#Store.OperatorRequeueTask>)
+  - [func \(s \*Store\) OperatorRetryTask\(ctx context.Context, planID, taskID string, payload TaskEventPayload\) error](<#Store.OperatorRetryTask>)
   - [func \(s \*Store\) Ready\(ctx context.Context, planID string\) \(\[\]Task, error\)](<#Store.Ready>)
+  - [func \(s \*Store\) RequeueTask\(ctx context.Context, planID, taskID, sessionID, reason, variantHint string, requireApproval bool\) error](<#Store.RequeueTask>)
+  - [func \(s \*Store\) RequeueTaskWithPayload\(ctx context.Context, planID, taskID, sessionID string, payload TaskEventPayload, variantHint string, requireApproval bool\) error](<#Store.RequeueTaskWithPayload>)
   - [func \(s \*Store\) SetPlanStatus\(ctx context.Context, id string, status PlanStatus\) error](<#Store.SetPlanStatus>)
+  - [func \(s \*Store\) SetSessionVariantTask\(ctx context.Context, sessionVariantID, planID, taskID string\) error](<#Store.SetSessionVariantTask>)
 - [type Task](<#Task>)
+- [type TaskEvent](<#TaskEvent>)
+- [type TaskEventPayload](<#TaskEventPayload>)
+  - [func ParseTaskPayload\(raw string\) \(TaskEventPayload, error\)](<#ParseTaskPayload>)
 - [type TaskStatus](<#TaskStatus>)
 
 
@@ -95,7 +117,7 @@ type CreatePlanOpts struct {
 ```
 
 <a name="CreateTaskOpts"></a>
-## type [CreateTaskOpts](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plandag/task.go#L49-L59>)
+## type [CreateTaskOpts](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plandag/task.go#L79-L89>)
 
 CreateTaskOpts configures task creation.
 
@@ -177,26 +199,43 @@ const (
 )
 ```
 
+<a name="RepoTaskSummary"></a>
+## type [RepoTaskSummary](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plandag/query.go#L12-L20>)
+
+RepoTaskSummary is a task plus its repo\-local plan context and latest event.
+
+```go
+type RepoTaskSummary struct {
+    PlanID            string
+    PlanSlug          string
+    PlanTitle         string
+    PlanStatus        PlanStatus
+    Task              Task
+    LatestEventType   string
+    LatestPayloadJSON string
+}
+```
+
 <a name="SessionMode"></a>
 ## type [SessionMode](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plandag/session.go#L11>)
 
-SessionMode identifies portable\-stdio vs durable\-HTTP modes.
+SessionMode identifies attached/headless vs durable repo\-service modes.
 
 ```go
 type SessionMode string
 ```
 
-<a name="SessionModePortable"></a>Session execution modes.
+<a name="SessionModeAttached"></a>Session execution modes.
 
 ```go
 const (
-    SessionModePortable SessionMode = "portable"
+    SessionModeAttached SessionMode = "attached"
     SessionModeDurable  SessionMode = "durable"
 )
 ```
 
 <a name="SessionOpts"></a>
-## type [SessionOpts](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plandag/session.go#L30-L37>)
+## type [SessionOpts](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plandag/session.go#L29-L36>)
 
 SessionOpts configures CreateSession.
 
@@ -214,7 +253,7 @@ type SessionOpts struct {
 <a name="SessionTransport"></a>
 ## type [SessionTransport](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plandag/session.go#L20>)
 
-SessionTransport identifies stdio / http / sse transports.
+SessionTransport identifies how the operator/runtime reached the session.
 
 ```go
 type SessionTransport string
@@ -224,14 +263,13 @@ type SessionTransport string
 
 ```go
 const (
-    SessionTransportStdio SessionTransport = "stdio"
-    SessionTransportHTTP  SessionTransport = "http"
-    SessionTransportSSE   SessionTransport = "sse"
+    SessionTransportStdio  SessionTransport = "stdio"
+    SessionTransportSocket SessionTransport = "socket"
 )
 ```
 
 <a name="SessionVariantOpts"></a>
-## type [SessionVariantOpts](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plandag/session.go#L90-L95>)
+## type [SessionVariantOpts](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plandag/session.go#L89-L94>)
 
 SessionVariantOpts configures CreateSessionVariant.
 
@@ -241,6 +279,26 @@ type SessionVariantOpts struct {
     VariantName         string
     SubprocessPID       int
     SubprocessStartTime string
+}
+```
+
+<a name="SessionVariantSummary"></a>
+## type [SessionVariantSummary](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plandag/query.go#L24-L35>)
+
+SessionVariantSummary is the current runtime\-facing view of one active session\_variant row joined to task \+ plan metadata.
+
+```go
+type SessionVariantSummary struct {
+    ID            string
+    SessionID     string
+    VariantName   string
+    Status        string
+    PlanID        string
+    PlanSlug      string
+    TaskID        string
+    TaskDesc      string
+    StartedAt     time.Time
+    LastHeartbeat time.Time
 }
 ```
 
@@ -265,7 +323,7 @@ func Open(ctx context.Context, opts Options) (*Store, error)
 Open returns a migrated, ready\-to\-use Store.
 
 <a name="Store.AddDep"></a>
-### func \(\*Store\) [AddDep](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plandag/task.go#L91>)
+### func \(\*Store\) [AddDep](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plandag/task.go#L121>)
 
 ```go
 func (s *Store) AddDep(ctx context.Context, planID, taskID, dependsOn string) error
@@ -273,23 +331,50 @@ func (s *Store) AddDep(ctx context.Context, planID, taskID, dependsOn string) er
 
 AddDep wires task → depends\_on for the same plan. Rejects cycles.
 
+<a name="Store.ApproveTask"></a>
+### func \(\*Store\) [ApproveTask](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plandag/task.go#L546>)
+
+```go
+func (s *Store) ApproveTask(ctx context.Context, planID, taskID string) error
+```
+
+ApproveTask transitions a task waiting for operator approval back into the pending set.
+
+<a name="Store.ApproveTaskWithPayload"></a>
+### func \(\*Store\) [ApproveTaskWithPayload](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plandag/task.go#L552>)
+
+```go
+func (s *Store) ApproveTaskWithPayload(ctx context.Context, planID, taskID string, payload TaskEventPayload) error
+```
+
+ApproveTaskWithPayload transitions a task waiting for operator approval back into the pending set and records the operator action in task history.
+
 <a name="Store.AttachPlan"></a>
-### func \(\*Store\) [AttachPlan](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plandag/session.go#L120>)
+### func \(\*Store\) [AttachPlan](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plandag/session.go#L169>)
 
 ```go
 func (s *Store) AttachPlan(ctx context.Context, sessionID, planID string) error
 ```
 
-AttachPlan records which session is watching which plan. Used by \`ralph status\` to enumerate active supervision.
+AttachPlan records which session is attached to which plan. Used by \`radioactive\_ralph status\` to enumerate active runtime ownership.
 
 <a name="Store.ClaimNextReady"></a>
-### func \(\*Store\) [ClaimNextReady](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plandag/task.go#L210-L213>)
+### func \(\*Store\) [ClaimNextReady](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plandag/task.go#L219-L222>)
 
 ```go
 func (s *Store) ClaimNextReady(ctx context.Context, planID, variant, sessionID, sessionVariantID string) (*Task, error)
 ```
 
 ClaimNextReady is the atomic "claim the next ready task for this variant" operation. Returns the claimed task id, or ErrNoReadyTask if none. Uses BEGIN IMMEDIATE \+ UPDATE ... RETURNING so two parallel ralphs never claim the same task.
+
+<a name="Store.ClearSessionVariantTask"></a>
+### func \(\*Store\) [ClearSessionVariantTask](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plandag/session.go#L148>)
+
+```go
+func (s *Store) ClearSessionVariantTask(ctx context.Context, sessionVariantID, status string) error
+```
+
+ClearSessionVariantTask clears the active task from one worker row and marks it idle or terminated.
 
 <a name="Store.Close"></a>
 ### func \(\*Store\) [Close](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plandag/store.go#L76>)
@@ -301,7 +386,7 @@ func (s *Store) Close() error
 Close releases DB resources.
 
 <a name="Store.CloseSession"></a>
-### func \(\*Store\) [CloseSession](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plandag/session.go#L84>)
+### func \(\*Store\) [CloseSession](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plandag/session.go#L83>)
 
 ```go
 func (s *Store) CloseSession(ctx context.Context, sessionID string) error
@@ -319,16 +404,16 @@ func (s *Store) CreatePlan(ctx context.Context, o CreatePlanOpts) (string, error
 CreatePlan inserts a fresh plan in draft status and returns the newly generated UUID v7 id.
 
 <a name="Store.CreateSession"></a>
-### func \(\*Store\) [CreateSession](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plandag/session.go#L42>)
+### func \(\*Store\) [CreateSession](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plandag/session.go#L41>)
 
 ```go
 func (s *Store) CreateSession(ctx context.Context, o SessionOpts) (string, error)
 ```
 
-CreateSession inserts a session row. Returns the session id. Called by the MCP server on startup; the session's lifetime is the lifetime of one server process.
+CreateSession inserts a session row. Returns the session id. The row lifetime matches one attached run or durable repo\-service process.
 
 <a name="Store.CreateSessionVariant"></a>
-### func \(\*Store\) [CreateSessionVariant](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plandag/session.go#L99>)
+### func \(\*Store\) [CreateSessionVariant](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plandag/session.go#L98>)
 
 ```go
 func (s *Store) CreateSessionVariant(ctx context.Context, o SessionVariantOpts) (string, error)
@@ -337,7 +422,7 @@ func (s *Store) CreateSessionVariant(ctx context.Context, o SessionVariantOpts) 
 CreateSessionVariant registers a newly\-spawned ralph subprocess against a session. Returns the variant row id.
 
 <a name="Store.CreateTask"></a>
-### func \(\*Store\) [CreateTask](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plandag/task.go#L62>)
+### func \(\*Store\) [CreateTask](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plandag/task.go#L92>)
 
 ```go
 func (s *Store) CreateTask(ctx context.Context, o CreateTaskOpts) error
@@ -364,7 +449,7 @@ func (s *Store) GetPlan(ctx context.Context, id string) (*Plan, error)
 GetPlan loads a plan by id.
 
 <a name="Store.GetTask"></a>
-### func \(\*Store\) [GetTask](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plandag/task.go#L284>)
+### func \(\*Store\) [GetTask](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plandag/task.go#L293>)
 
 ```go
 func (s *Store) GetTask(ctx context.Context, planID, id string) (*Task, error)
@@ -373,13 +458,31 @@ func (s *Store) GetTask(ctx context.Context, planID, id string) (*Task, error)
 GetTask loads one task by \(plan\_id, id\).
 
 <a name="Store.HeartbeatSession"></a>
-### func \(\*Store\) [HeartbeatSession](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plandag/session.go#L75>)
+### func \(\*Store\) [HeartbeatSession](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plandag/session.go#L74>)
 
 ```go
 func (s *Store) HeartbeatSession(ctx context.Context, sessionID string) error
 ```
 
-HeartbeatSession refreshes last\_heartbeat for a session. Called periodically by the server. Reaper uses staleness to detect dead sessions.
+HeartbeatSession refreshes last\_heartbeat for a session. Called periodically by the attached run or durable repo service. Reaper uses staleness to detect dead sessions.
+
+<a name="Store.HeartbeatSessionVariant"></a>
+### func \(\*Store\) [HeartbeatSessionVariant](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plandag/session.go#L136>)
+
+```go
+func (s *Store) HeartbeatSessionVariant(ctx context.Context, sessionVariantID string) error
+```
+
+HeartbeatSessionVariant refreshes one worker row's heartbeat.
+
+<a name="Store.ListActiveSessionVariants"></a>
+### func \(\*Store\) [ListActiveSessionVariants](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plandag/query.go#L123>)
+
+```go
+func (s *Store) ListActiveSessionVariants(ctx context.Context, repoPath string, limit int) ([]SessionVariantSummary, error)
+```
+
+ListActiveSessionVariants returns running/idle session variants for a repo.
 
 <a name="Store.ListPlans"></a>
 ### func \(\*Store\) [ListPlans](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plandag/plan.go#L126>)
@@ -390,8 +493,44 @@ func (s *Store) ListPlans(ctx context.Context, statuses []PlanStatus) ([]Plan, e
 
 ListPlans returns plans matching filter. Empty filter → active \+ paused.
 
+<a name="Store.ListRepoTaskSummaries"></a>
+### func \(\*Store\) [ListRepoTaskSummaries](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plandag/query.go#L39>)
+
+```go
+func (s *Store) ListRepoTaskSummaries(ctx context.Context, repoPath string, statuses []TaskStatus, limit int) ([]RepoTaskSummary, error)
+```
+
+ListRepoTaskSummaries returns tasks for one repo with enough plan/event context for operator UIs.
+
+<a name="Store.ListTaskEvents"></a>
+### func \(\*Store\) [ListTaskEvents](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plandag/task.go#L357>)
+
+```go
+func (s *Store) ListTaskEvents(ctx context.Context, planID, taskID string, limit int) ([]TaskEvent, error)
+```
+
+ListTaskEvents returns the most recent task events first.
+
+<a name="Store.ListTasks"></a>
+### func \(\*Store\) [ListTasks](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plandag/task.go#L315>)
+
+```go
+func (s *Store) ListTasks(ctx context.Context, planID string, statuses []TaskStatus) ([]Task, error)
+```
+
+ListTasks returns tasks for one plan, optionally filtered by status.
+
+<a name="Store.MarkBlocked"></a>
+### func \(\*Store\) [MarkBlocked](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plandag/task.go#L687>)
+
+```go
+func (s *Store) MarkBlocked(ctx context.Context, planID, taskID, sessionID string, payload TaskEventPayload) error
+```
+
+MarkBlocked releases a running task into the blocked set so an operator can later requeue or otherwise intervene.
+
 <a name="Store.MarkDone"></a>
-### func \(\*Store\) [MarkDone](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plandag/task.go#L319>)
+### func \(\*Store\) [MarkDone](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plandag/task.go#L392>)
 
 ```go
 func (s *Store) MarkDone(ctx context.Context, planID, taskID, sessionID string, evidenceJSON string) ([]Task, error)
@@ -400,7 +539,7 @@ func (s *Store) MarkDone(ctx context.Context, planID, taskID, sessionID string, 
 MarkDone transitions a running task to done, logs the event, and returns the set of newly\-ready downstream tasks.
 
 <a name="Store.MarkFailed"></a>
-### func \(\*Store\) [MarkFailed](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plandag/task.go#L358>)
+### func \(\*Store\) [MarkFailed](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plandag/task.go#L431>)
 
 ```go
 func (s *Store) MarkFailed(ctx context.Context, planID, taskID, sessionID, reason string, maxRetries int) (retried bool, err error)
@@ -408,14 +547,77 @@ func (s *Store) MarkFailed(ctx context.Context, planID, taskID, sessionID, reaso
 
 MarkFailed transitions a running task to failed or retries.
 
+<a name="Store.MarkFailedWithPayload"></a>
+### func \(\*Store\) [MarkFailedWithPayload](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plandag/task.go#L437>)
+
+```go
+func (s *Store) MarkFailedWithPayload(ctx context.Context, planID, taskID, sessionID string, payload TaskEventPayload, maxRetries int) (retried bool, err error)
+```
+
+MarkFailedWithPayload transitions a running task to failed or retries while preserving structured payload details in task history.
+
+<a name="Store.OperatorFailTask"></a>
+### func \(\*Store\) [OperatorFailTask](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plandag/task.go#L660>)
+
+```go
+func (s *Store) OperatorFailTask(ctx context.Context, planID, taskID string, payload TaskEventPayload) error
+```
+
+OperatorFailTask force\-fails a task and records an operator action.
+
+<a name="Store.OperatorHandoffTask"></a>
+### func \(\*Store\) [OperatorHandoffTask](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plandag/task.go#L653>)
+
+```go
+func (s *Store) OperatorHandoffTask(ctx context.Context, planID, taskID string, payload TaskEventPayload, variantHint string, requireApproval bool) error
+```
+
+OperatorHandoffTask returns a task to the runnable queue with a new variant hint supplied by the operator.
+
+<a name="Store.OperatorRequeueTask"></a>
+### func \(\*Store\) [OperatorRequeueTask](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plandag/task.go#L574>)
+
+```go
+func (s *Store) OperatorRequeueTask(ctx context.Context, planID, taskID string, payload TaskEventPayload, variantHint string, requireApproval bool) error
+```
+
+OperatorRequeueTask returns a blocked/failed/approval\-gated task to the runnable queue and records the operator action in task history.
+
+<a name="Store.OperatorRetryTask"></a>
+### func \(\*Store\) [OperatorRetryTask](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plandag/task.go#L615>)
+
+```go
+func (s *Store) OperatorRetryTask(ctx context.Context, planID, taskID string, payload TaskEventPayload) error
+```
+
+OperatorRetryTask increments retry\_count and returns a blocked/failed task to the runnable queue.
+
 <a name="Store.Ready"></a>
-### func \(\*Store\) [Ready](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plandag/task.go#L158>)
+### func \(\*Store\) [Ready](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plandag/task.go#L188>)
 
 ```go
 func (s *Store) Ready(ctx context.Context, planID string) ([]Task, error)
 ```
 
 Ready returns tasks that are ready to run — every dependency is \`done\` \(or \`skipped\`\). Result is ordered by created\_at for stable test output.
+
+<a name="Store.RequeueTask"></a>
+### func \(\*Store\) [RequeueTask](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plandag/task.go#L496>)
+
+```go
+func (s *Store) RequeueTask(ctx context.Context, planID, taskID, sessionID, reason, variantHint string, requireApproval bool) error
+```
+
+RequeueTask releases a running task back into the DAG, optionally changing the variant hint and/or requiring operator approval before it becomes runnable again.
+
+<a name="Store.RequeueTaskWithPayload"></a>
+### func \(\*Store\) [RequeueTaskWithPayload](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plandag/task.go#L506>)
+
+```go
+func (s *Store) RequeueTaskWithPayload(ctx context.Context, planID, taskID, sessionID string, payload TaskEventPayload, variantHint string, requireApproval bool) error
+```
+
+RequeueTaskWithPayload releases a running task back into the DAG and emits a structured audit\-log payload describing why it was requeued.
 
 <a name="Store.SetPlanStatus"></a>
 ### func \(\*Store\) [SetPlanStatus](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plandag/plan.go#L113>)
@@ -426,8 +628,17 @@ func (s *Store) SetPlanStatus(ctx context.Context, id string, status PlanStatus)
 
 SetPlanStatus updates the plan's status column.
 
+<a name="Store.SetSessionVariantTask"></a>
+### func \(\*Store\) [SetSessionVariantTask](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plandag/session.go#L119>)
+
+```go
+func (s *Store) SetSessionVariantTask(ctx context.Context, sessionVariantID, planID, taskID string) error
+```
+
+SetSessionVariantTask updates the currently assigned plan/task for one session\_variant row and refreshes its heartbeat.
+
 <a name="Task"></a>
-## type [Task](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plandag/task.go#L28-L46>)
+## type [Task](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plandag/task.go#L30-L48>)
 
 Task is a DAG node.
 
@@ -453,8 +664,55 @@ type Task struct {
 }
 ```
 
+<a name="TaskEvent"></a>
+## type [TaskEvent](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plandag/task.go#L51-L60>)
+
+TaskEvent is one append\-only audit\-log row for a task.
+
+```go
+type TaskEvent struct {
+    ID          int64
+    PlanID      string
+    TaskID      string
+    EventType   string
+    Variant     string
+    SessionID   string
+    PayloadJSON string
+    OccurredAt  time.Time
+}
+```
+
+<a name="TaskEventPayload"></a>
+## type [TaskEventPayload](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plandag/task.go#L65-L76>)
+
+TaskEventPayload keeps task history payloads structured so the CLI, TUI, and tests can reason about approvals, handoffs, retries, and provider context without string scraping.
+
+```go
+type TaskEventPayload struct {
+    Summary           string   `json:"summary,omitempty"`
+    Reason            string   `json:"reason,omitempty"`
+    Evidence          []string `json:"evidence,omitempty"`
+    HandoffTo         string   `json:"handoff_to,omitempty"`
+    Retryable         bool     `json:"retryable,omitempty"`
+    NeedsContext      []string `json:"needs_context,omitempty"`
+    ApprovalRequired  bool     `json:"approval_required,omitempty"`
+    Provider          string   `json:"provider,omitempty"`
+    ProviderSessionID string   `json:"provider_session_id,omitempty"`
+    OperatorAction    string   `json:"operator_action,omitempty"`
+}
+```
+
+<a name="ParseTaskPayload"></a>
+### func [ParseTaskPayload](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plandag/query.go#L181>)
+
+```go
+func ParseTaskPayload(raw string) (TaskEventPayload, error)
+```
+
+ParseTaskPayload decodes one payload\_json string into the typed helper.
+
 <a name="TaskStatus"></a>
-## type [TaskStatus](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plandag/task.go#L13>)
+## type [TaskStatus](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plandag/task.go#L14>)
 
 TaskStatus enumerates valid task lifecycle states.
 
@@ -469,6 +727,7 @@ const (
     TaskStatusPending              TaskStatus = "pending"
     TaskStatusReady                TaskStatus = "ready"
     TaskStatusReadyPendingApproval TaskStatus = "ready_pending_approval"
+    TaskStatusBlocked              TaskStatus = "blocked"
     TaskStatusRunning              TaskStatus = "running"
     TaskStatusDone                 TaskStatus = "done"
     TaskStatusFailed               TaskStatus = "failed"

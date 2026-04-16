@@ -15,7 +15,7 @@ import (
 
 func TestCaptureIntentNonInteractivePassthrough(t *testing.T) {
 	spec, err := CaptureIntent(IntentOptions{
-		Topic:          "m3-completion",
+		Topic:          "runtime-stabilization",
 		Description:    "finish the rewrite",
 		Constraints:    []string{"no opus"},
 		NonInteractive: true,
@@ -23,7 +23,7 @@ func TestCaptureIntentNonInteractivePassthrough(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CaptureIntent: %v", err)
 	}
-	if spec.Topic != "m3-completion" {
+	if spec.Topic != "runtime-stabilization" {
 		t.Errorf("Topic = %q", spec.Topic)
 	}
 	if spec.Description != "finish the rewrite" {
@@ -55,12 +55,12 @@ func TestCaptureIntentReadsTopicMD(t *testing.T) {
 
 func TestSanitizeTopic(t *testing.T) {
 	cases := map[string]string{
-		"":              "general",
-		"m3 completion": "m3-completion",
-		"M3-Completion": "m3-completion",
-		"weird!!@chars": "weird-chars",
-		"---":           "general",
-		"plan_a":        "plan_a",
+		"":                       "general",
+		"runtime stabilization":  "runtime-stabilization",
+		"Runtime-Stabilization":  "runtime-stabilization",
+		"weird!!@chars":          "weird-chars",
+		"---":                    "general",
+		"plan_a":                 "plan_a",
 	}
 	for in, want := range cases {
 		got := sanitizeTopic(in)

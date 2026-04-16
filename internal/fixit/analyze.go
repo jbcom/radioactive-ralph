@@ -11,7 +11,9 @@ import (
 	"text/template"
 	"time"
 
-	"github.com/jbcom/radioactive-ralph/internal/session"
+	"github.com/jbcom/radioactive-ralph/internal/config"
+	"github.com/jbcom/radioactive-ralph/internal/provider"
+	"github.com/jbcom/radioactive-ralph/internal/variant"
 )
 
 //go:embed prompts/advisor.tmpl
@@ -23,17 +25,25 @@ type AnalyzeOptions struct {
 	RC     RepoContext
 	Scores []VariantScore
 
-	// ClaudeBin overrides the default `claude` binary path. Tests use
-	// the cassette replayer or the fake-claude double here.
-	ClaudeBin string
+	// Binding is the provider binding used for stage-4 planning.
+	// Zero value falls back to the built-in `claude` binding.
+	Binding provider.Binding
+
+	// ProviderBinary overrides the resolved provider binary. Tests may
+	// point this at a fake CLI.
+	ProviderBinary string
+
+	// RunnerFactory constructs the provider runner. Nil defaults to
+	// provider.NewRunner.
+	RunnerFactory func(binding provider.Binding) (provider.Runner, error)
 
 	// WorkingDir is the cwd for the spawned subprocess. Defaults to the
 	// repo root from RC.GitRoot.
 	WorkingDir string
 
-	// Model pins the tier for the planning subprocess. Empty defaults
-	// to "opus" — the advisor runs infrequently (once per plan), so
-	// the cost is bounded and the quality delta is meaningful.
+	// Model pins the planning tier. Empty defaults to "opus" — the
+	// advisor runs infrequently, so the cost is bounded and the
+	// quality delta is meaningful.
 	Model string
 
 	// Effort pins the reasoning-effort level. Empty defaults to "high"
@@ -41,9 +51,7 @@ type AnalyzeOptions struct {
 	// on simple ones.
 	Effort string
 
-	// Timeout caps the total Claude analysis time. Default 180s —
-	// opus with auto-effort can take longer than the old sonnet/medium
-	// defaults, so the cap is lifted from 90s accordingly.
+	// Timeout caps the total provider analysis time. Default 180s.
 	Timeout time.Duration
 }
 
@@ -51,7 +59,7 @@ type AnalyzeOptions struct {
 // (zero, error) on hard failure. Callers handle fallback emission;
 // this function never returns a half-filled proposal.
 //
-// One retry on JSON-parse failure: when Claude returns text that
+// One retry on JSON-parse failure: when the provider returns text that
 // doesn't unmarshal cleanly, we re-spawn with the parse error
 // appended so the model can self-correct. Second failure bubbles up.
 func Analyze(ctx context.Context, opts AnalyzeOptions) (PlanProposal, error) {
@@ -65,10 +73,6 @@ func Analyze(ctx context.Context, opts AnalyzeOptions) (PlanProposal, error) {
 		opts.Model = "opus"
 	}
 	if opts.Effort == "" {
-		// `claude -p` accepts only low|medium|high|max (as of 2.1.108).
-		// Default to high for opus so the planning subprocess reasons
-		// deeply without operator tuning. Operators who want cheaper
-		// runs pass --plan-effort medium or override in config.toml.
 		opts.Effort = "high"
 	}
 
@@ -79,9 +83,9 @@ func Analyze(ctx context.Context, opts AnalyzeOptions) (PlanProposal, error) {
 
 	// Try once. On parse failure, retry once with the error appended.
 	for attempt := 1; attempt <= 2; attempt++ {
-		rawJSON, err := callClaude(ctx, opts, prompt)
+		rawJSON, err := callProvider(ctx, opts, prompt)
 		if err != nil {
-			return PlanProposal{}, fmt.Errorf("attempt %d: claude call: %w", attempt, err)
+			return PlanProposal{}, fmt.Errorf("attempt %d: provider call: %w", attempt, err)
 		}
 		proposal, perr := parseProposal(rawJSON)
 		if perr == nil {
@@ -129,88 +133,57 @@ func renderAdvisorPrompt(intent IntentSpec, rc RepoContext, scores []VariantScor
 	return buf.String(), nil
 }
 
-// callClaude spawns a sonnet subprocess in --advisor scope, sends the
-// prompt as the system prompt + an empty trigger user message, and
-// collects the assistant's text response. Returns the raw text
-// (expected to be a JSON object).
-func callClaude(ctx context.Context, opts AnalyzeOptions, prompt string) (string, error) {
+// callProvider executes one planning turn through the configured
+// provider binding and returns the raw assistant text expected to
+// contain a single JSON object.
+func callProvider(ctx context.Context, opts AnalyzeOptions, prompt string) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, opts.Timeout)
 	defer cancel()
 
-	s, err := session.Spawn(ctx, session.Options{
-		ClaudeBin:    opts.ClaudeBin,
+	binding := opts.Binding
+	if binding.Name == "" {
+		binding = provider.Binding{Name: "claude", Config: config.DefaultClaudeProvider()}
+	}
+	if binding.Config.Type == "" {
+		binding.Config.Type = binding.Name
+	}
+	if binding.Config.Binary == "" {
+		binding.Config.Binary = builtInBinary(binding.Config.Type)
+	}
+	if opts.ProviderBinary != "" {
+		binding.Config.Binary = opts.ProviderBinary
+	}
+	model, err := parsePlanningModel(opts.Model)
+	if err != nil {
+		return "", err
+	}
+	runnerFactory := opts.RunnerFactory
+	if runnerFactory == nil {
+		runnerFactory = provider.NewRunner
+	}
+	runner, err := runnerFactory(binding)
+	if err != nil {
+		return "", fmt.Errorf("runner: %w", err)
+	}
+	result, err := runner.Run(ctx, binding, provider.Request{
 		WorkingDir:   opts.WorkingDir,
 		SystemPrompt: prompt,
-		Model:        opts.Model,
+		UserPrompt:   "Produce the PlanProposal now.",
+		OutputSchema: proposalSchema(),
+		Model:        model,
 		Effort:       opts.Effort,
-		// No tools — the advisor must produce text only.
 		AllowedTools: []string{},
 	})
 	if err != nil {
-		return "", fmt.Errorf("spawn: %w", err)
-	}
-	defer func() { _ = s.Close() }()
-
-	// Collect assistant text frames until result.
-	var assistantBuf bytes.Buffer
-	done := make(chan error, 1)
-	go func() {
-		for ev := range s.Events() {
-			if ev.Err != nil {
-				done <- ev.Err
-				return
-			}
-			if ev.Inbound.Type == "assistant" {
-				if text := extractAssistantText(ev.Inbound.Message); text != "" {
-					assistantBuf.WriteString(text)
-				}
-			}
-			if ev.Inbound.Type == "result" {
-				done <- nil
-				return
-			}
-		}
-		done <- errors.New("event stream closed without result")
-	}()
-
-	if err := s.SendUserMessage(ctx, "Produce the PlanProposal now."); err != nil {
-		return "", fmt.Errorf("send: %w", err)
-	}
-	if err := <-done; err != nil {
 		return "", err
 	}
-	return strings.TrimSpace(assistantBuf.String()), nil
+	return strings.TrimSpace(result.AssistantOutput), nil
 }
 
-// extractAssistantText pulls the concatenated text from an assistant
-// frame's message field. The Claude content-block format wraps text
-// in {role, content: [{type:"text", text:"..."}, ...]}.
-func extractAssistantText(raw json.RawMessage) string {
-	if len(raw) == 0 {
-		return ""
-	}
-	var msg struct {
-		Content []struct {
-			Type string `json:"type"`
-			Text string `json:"text"`
-		} `json:"content"`
-	}
-	if err := json.Unmarshal(raw, &msg); err != nil {
-		return ""
-	}
-	var b strings.Builder
-	for _, c := range msg.Content {
-		if c.Type == "text" {
-			b.WriteString(c.Text)
-		}
-	}
-	return b.String()
-}
-
-// parseProposal decodes the JSON object Claude returned with strict
+// parseProposal decodes the JSON object the provider returned with strict
 // unknown-field rejection.
 func parseProposal(raw string) (PlanProposal, error) {
-	// Be lenient about leading whitespace / fences in case Claude
+	// Be lenient about leading whitespace / fences in case the provider
 	// drifts. Find the first '{' and the matching last '}'.
 	openIdx := strings.Index(raw, "{")
 	closeIdx := strings.LastIndex(raw, "}")
@@ -234,4 +207,70 @@ func truncate(s string, n int) string {
 		return s
 	}
 	return string(r[:n]) + "..."
+}
+
+func parsePlanningModel(raw string) (variant.Model, error) {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "", string(variant.ModelOpus):
+		return variant.ModelOpus, nil
+	case string(variant.ModelSonnet):
+		return variant.ModelSonnet, nil
+	case string(variant.ModelHaiku):
+		return variant.ModelHaiku, nil
+	default:
+		return "", fmt.Errorf("unsupported planning model %q; use haiku, sonnet, or opus", raw)
+	}
+}
+
+func builtInBinary(providerType string) string {
+	switch providerType {
+	case "codex":
+		return "codex"
+	case "gemini":
+		return "gemini"
+	default:
+		return "claude"
+	}
+}
+
+func proposalSchema() string {
+	return `{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["primary", "primary_rationale", "tasks", "acceptance_criteria", "confidence"],
+  "properties": {
+    "primary": {"type": "string"},
+    "primary_rationale": {"type": "string"},
+    "alternate": {"type": "string"},
+    "alternate_when": {"type": "string"},
+    "confidence": {"type": "integer"},
+    "acceptance_criteria": {
+      "type": "array",
+      "items": {"type": "string"}
+    },
+    "tasks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["title", "effort", "impact"],
+        "properties": {
+          "title": {"type": "string"},
+          "effort": {"type": "string"},
+          "impact": {"type": "string"},
+          "variant_hint": {"type": "string"},
+          "context_boundary": {"type": "boolean"},
+          "acceptance_criteria": {
+            "type": "array",
+            "items": {"type": "string"}
+          },
+          "depends_on": {
+            "type": "array",
+            "items": {"type": "string"}
+          }
+        }
+      }
+    }
+  }
+}`
 }

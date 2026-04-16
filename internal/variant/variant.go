@@ -3,8 +3,8 @@
 // Each variant is a distinct operating mode with its own parallelism,
 // model tiering, commit cadence, termination policy, tool allowlist,
 // safety floors, and capability-bias preferences. The Profile struct
-// is the canonical source of truth the supervisor reads to decide
-// how to spawn and manage Claude subprocesses.
+// is the canonical source of truth the runtime reads to decide
+// how to spawn and manage provider subprocesses.
 //
 // Each profile is registered from its own file (blue.go, grey.go, ...)
 // so any operator can read the full definition of a single variant
@@ -120,7 +120,8 @@ const (
 	StageReview  Stage = "review"
 )
 
-// Model identifies a specific Claude model tier.
+// Model identifies the abstract model tier a variant asks the provider
+// binding to resolve.
 type Model string
 
 // Model tiers used by variant profiles.
@@ -140,29 +141,9 @@ const (
 	TerminationInfinite   TerminationPolicy = "infinite"    // runs until operator stops
 )
 
-// BiasCategory identifies a helper-capability bias slot declared by the variant.
-// Matches the keys the operator configures in [capabilities] in
-// .radioactive-ralph/config.toml.
-type BiasCategory string
-
-// Bias categories that a variant may declare snippets for. Each maps
-// to a [capabilities] key in config.toml.
-const (
-	BiasReview         BiasCategory = "review"
-	BiasSecurityReview BiasCategory = "security_review"
-	BiasDocsQuery      BiasCategory = "docs_query"
-	BiasBrainstorm     BiasCategory = "brainstorm"
-	BiasDebugging      BiasCategory = "debugging"
-)
-
-// BiasSnippet is the system-prompt injection used when a bias slot has
-// a matching helper in the inventory.
-//
-// Placeholder: {skill} expands to the chosen helper's full name.
-type BiasSnippet string
-
-// Tool names that appear in allow/deny lists. Mirrors Claude Code's
-// built-in tools.
+// Tool names that appear in allow/deny lists. These are the runtime's
+// canonical tool identifiers; provider adapters map them to whatever
+// concrete backend surface they need.
 const (
 	ToolAgent      = "Agent"
 	ToolBash       = "Bash"
@@ -190,10 +171,6 @@ type SafetyFloors struct {
 	// passed on every single `radioactive_ralph run` — never cached in config.
 	FreshConfirmPerInvocation bool
 
-	// RefuseServiceContext means the variant will not run when detected
-	// under launchd/systemd (savage, old-man, world-breaker).
-	RefuseServiceContext bool
-
 	// RequireSpendCap means `radioactive_ralph run` fails without a cap value
 	// either via --spend-cap-usd flag or [variants.X] spend_cap_usd.
 	RequireSpendCap bool
@@ -203,10 +180,12 @@ type SafetyFloors struct {
 type Profile struct {
 	Name                 Name
 	Description          string // one-liner shown in `radioactive_ralph --help` and `radioactive_ralph init`
+	AttachedAllowed      bool   // whether `radioactive_ralph run --variant X` may execute the variant directly
+	DurableAllowed       bool   // whether the repo-local durable service may schedule the variant
 	Isolation            IsolationMode
 	MaxParallelWorktrees int
 	Models               map[Stage]Model // stage → model
-	ToolAllowlist        []string        // Claude Code tool names
+	ToolAllowlist        []string        // canonical runtime tool names
 	Termination          TerminationPolicy
 	CycleLimit           int    // meaningful only for NCycles
 	ConfirmationGate     string // CLI flag like "--confirm-burn-budget"; empty = no gate
@@ -214,7 +193,7 @@ type Profile struct {
 	SyncSourceDefault    SyncSource
 	LFSModeDefault       LFSMode
 	SafetyFloors         SafetyFloors
-	SkillBiases          map[BiasCategory]BiasSnippet
+	PromptDirectives     []string
 
 	// ShellExplicitlyTrusted lets a shared-isolation variant include
 	// Bash in its allowlist despite the structural "shared = read-only"

@@ -11,6 +11,8 @@ func immortalProfile() Profile {
 	return Profile{
 		Name:                 Immortal,
 		Description:          "Crash-resistant marathon loop. Sonnet only. Retries everything. Resumes on restart.",
+		AttachedAllowed:      false,
+		DurableAllowed:       true,
 		Isolation:            IsolationMirrorPool,
 		MaxParallelWorktrees: 3, // spec caps at 3 for resilience over speed
 		Models: map[Stage]Model{
@@ -25,9 +27,9 @@ func immortalProfile() Profile {
 		ObjectStoreDefault: ObjectStoreReference,
 		SyncSourceDefault:  SyncSourceBoth,
 		LFSModeDefault:     LFSOnDemand,
-		SkillBiases: map[BiasCategory]BiasSnippet{
-			BiasDebugging: "On transient failures, check /{skill} for known patterns before the retry-in-60s fallback.",
-			BiasReview:    "Every PR merges only after /{skill} signs off — conservative is the identity.",
+		PromptDirectives: []string{
+			"Prefer resilient recovery, conservative retries, and durable progress over speed.",
+			"Escalate operator attention only when recovery is no longer the rational path.",
 		},
 	}
 }

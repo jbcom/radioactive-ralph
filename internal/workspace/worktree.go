@@ -136,7 +136,7 @@ func (m *Manager) ReleaseWorktree(ctx context.Context, wt *Worktree) error {
 
 // Reconcile walks `git worktree list` and removes any registered
 // worktrees whose disk paths have disappeared (likely from an
-// ungraceful prior shutdown). Called at supervisor boot after replaying
+// ungraceful prior shutdown). Called at runtime boot after replaying
 // the event log.
 func (m *Manager) Reconcile(ctx context.Context) error {
 	if m.Isolation == variant.IsolationShared || m.Isolation == variant.IsolationShallow {

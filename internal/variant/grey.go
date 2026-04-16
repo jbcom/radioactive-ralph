@@ -10,6 +10,8 @@ func greyProfile() Profile {
 	return Profile{
 		Name:                 Grey,
 		Description:          "Mechanical file hygiene on one repo. Haiku exclusive. Single sweep, one PR, exit.",
+		AttachedAllowed:      true,
+		DurableAllowed:       true,
 		Isolation:            IsolationMirrorSingle,
 		MaxParallelWorktrees: 1,
 		Models: map[Stage]Model{
@@ -24,10 +26,8 @@ func greyProfile() Profile {
 		ObjectStoreDefault: ObjectStoreReference,
 		SyncSourceDefault:  SyncSourceBoth,
 		LFSModeDefault:     LFSPointersOnly, // grey never touches binaries
-		SkillBiases:        map[BiasCategory]BiasSnippet{
-			// Grey is dumb by design — no skill biases. Kept empty
-			// deliberately. Any bias declared here would contradict
-			// "dumb = safe".
+		PromptDirectives: []string{
+			"Keep the work mechanical, narrow, and unsurprising.",
 		},
 	}
 }

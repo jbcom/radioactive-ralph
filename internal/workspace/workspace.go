@@ -1,4 +1,5 @@
-// Package workspace manages the on-disk git workspace a variant runs in.
+// Package workspace manages the on-disk git workspace the repo service uses to
+// execute one variant task at a time.
 //
 // Four orthogonal knobs, resolved from variant profile + config.toml
 // overrides with safety-floor precedence:
@@ -17,7 +18,8 @@
 //
 // Zero git work happens in the package outside of clone, fetch, repack,
 // and worktree add/remove. Commits, PRs, merges, and history rewrites
-// are operator-skill work that lives inside the worktree Claude session.
+// happen inside the worktree provider session, not in the workspace
+// manager itself.
 package workspace
 
 import (
@@ -33,7 +35,8 @@ import (
 	"github.com/jbcom/radioactive-ralph/internal/xdg"
 )
 
-// Manager coordinates the per-variant on-disk workspace.
+// Manager coordinates the on-disk workspace strategy for one variant profile
+// within a repo-service run.
 type Manager struct {
 	// RepoPath is the absolute path to the operator's repo.
 	RepoPath string

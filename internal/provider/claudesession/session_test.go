@@ -1,0 +1,177 @@
+package claudesession
+
+import (
+	"context"
+	"encoding/json"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+)
+
+// buildFakeClaude compiles the fake-claude test double into t.TempDir()
+// and returns its absolute path. Cached via TestMain would be faster
+// but this keeps the test independent.
+func buildFakeClaude(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "fake-claude")
+	cmd := exec.Command("go", "build", "-o", bin,
+		"github.com/jbcom/radioactive-ralph/internal/provider/claudesession/internal/fakeclaude")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("build fake-claude: %v\n%s", err, out)
+	}
+	return bin
+}
+
+func TestSpawnAndSendMessageRoundTrip(t *testing.T) {
+	bin := buildFakeClaude(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	s, err := Spawn(ctx, Options{
+		ClaudeBin:    bin,
+		WorkingDir:   t.TempDir(),
+		SystemPrompt: "test",
+	})
+	if err != nil {
+		t.Fatalf("Spawn: %v", err)
+	}
+	defer func() { _ = s.Close() }()
+
+	if s.SessionID() == "" {
+		t.Error("SessionID should be populated post-Spawn")
+	}
+
+	if err := s.SendUserMessage(ctx, "hello"); err != nil {
+		t.Fatalf("SendUserMessage: %v", err)
+	}
+
+	// Expect: system init, assistant echo, result.
+	sawInit, sawAssistant, sawResult := false, false, false
+	waitCh := time.After(5 * time.Second)
+	for !sawInit || !sawAssistant || !sawResult {
+		select {
+		case <-waitCh:
+			t.Fatalf("timeout; saw init=%v assistant=%v result=%v", sawInit, sawAssistant, sawResult)
+		case ev, ok := <-s.Events():
+			if !ok {
+				t.Fatal("events closed before result")
+			}
+			if ev.Err != nil {
+				t.Fatalf("event err: %v", ev.Err)
+			}
+			switch ev.Inbound.Type {
+			case "system":
+				sawInit = true
+			case "assistant":
+				sawAssistant = true
+				// verify raw bytes roundtrip
+				if !json.Valid(ev.Inbound.Raw) {
+					t.Errorf("raw bytes not valid JSON: %s", ev.Inbound.Raw)
+				}
+				if len(ev.Inbound.Message) == 0 {
+					t.Error("assistant frame missing message payload")
+				}
+			case "result":
+				sawResult = true
+			}
+		}
+	}
+}
+
+func TestWaitForIdleResolvesOnResult(t *testing.T) {
+	bin := buildFakeClaude(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	s, err := Spawn(ctx, Options{ClaudeBin: bin, WorkingDir: t.TempDir()})
+	if err != nil {
+		t.Fatalf("Spawn: %v", err)
+	}
+	defer func() { _ = s.Close() }()
+
+	// Drain events into the background.
+	go func() {
+		for range s.Events() { //nolint:revive // drain
+		}
+	}()
+
+	if err := s.SendUserMessage(ctx, "do it"); err != nil {
+		t.Fatalf("SendUserMessage: %v", err)
+	}
+	if err := s.WaitForIdle(ctx); err != nil {
+		t.Fatalf("WaitForIdle: %v", err)
+	}
+}
+
+func TestResumeRequiresSessionID(t *testing.T) {
+	_, err := Spawn(context.Background(), Options{
+		ClaudeBin:  "true", // unused — fails before exec
+		ResumeMode: true,
+	})
+	if err == nil {
+		t.Fatal("expected error when ResumeMode=true without SessionID")
+	}
+}
+
+func TestResumeSendsSentinelOnSpawn(t *testing.T) {
+	bin := buildFakeClaude(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	t.Setenv("FAKE_CLAUDE_RESUME_ECHO", "1")
+	s, err := Spawn(ctx, Options{
+		ClaudeBin:      bin,
+		WorkingDir:     t.TempDir(),
+		ResumeMode:     true,
+		SessionID:      "00000000-0000-0000-0000-000000000001",
+		SentinelTaskID: "T42",
+	})
+	if err != nil {
+		t.Fatalf("Spawn(resume): %v", err)
+	}
+	defer func() { _ = s.Close() }()
+
+	// We expect to see the echo of our sentinel user message come back
+	// as an assistant frame. Sentinel text is `SENTINEL: resuming task T42 …`.
+	waitCh := time.After(5 * time.Second)
+	for {
+		select {
+		case <-waitCh:
+			t.Fatal("timeout waiting for sentinel echo")
+		case ev, ok := <-s.Events():
+			if !ok {
+				t.Fatal("events closed without echo")
+			}
+			if ev.Inbound.Type == "assistant" {
+				raw := string(ev.Inbound.Message)
+				if strings.Contains(raw, "T42") || strings.Contains(raw, "SENTINEL") {
+					return
+				}
+			}
+		}
+	}
+}
+
+// TestRealClaudeVersionSpawn verifies we can spawn the real `claude`
+// binary for an unauthenticated operation (--version). Authenticated
+// end-to-end tests live in the integration suite (B08) gated on
+// CLAUDE_AUTHENTICATED.
+//
+// This test skips when claude is not on PATH so CI environments
+// without Node.js installed still pass.
+func TestRealClaudeVersionSpawn(t *testing.T) {
+	path, err := exec.LookPath("claude")
+	if err != nil {
+		t.Skip("claude binary not on PATH; skipping real-binary spawn test")
+	}
+	out, err := exec.Command(path, "--version").CombinedOutput()
+	if err != nil {
+		t.Fatalf("claude --version: %v\n%s", err, out)
+	}
+	if !strings.Contains(string(out), "Claude") && !strings.Contains(string(out), "claude") {
+		t.Errorf("unexpected --version output: %s", out)
+	}
+}

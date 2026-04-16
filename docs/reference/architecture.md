@@ -3,38 +3,37 @@ title: Architecture
 lastUpdated: 2026-04-15
 ---
 
-# Architecture — radioactive-ralph
+# Architecture
 
-This page describes the **current architecture direction** for the live product.
-The implementation still has gaps, but the contract is now clearer than it was:
-radioactive-ralph is a binary-first tool with in-code personas, and Claude Code
-is treated as a client of that binary over stdio MCP.
+This page describes the current live architecture.
 
 ## Core commitment
 
-The repo is no longer trying to be all of these at once:
+radioactive-ralph is no longer trying to be all of these at once:
 
-- a Claude marketplace plugin
-- a family of slash-command skills
-- a binary
-- a durable HTTP MCP service
-- a provider-agnostic runtime
+- a plugin marketplace package
+- an MCP service
+- a slash-command bundle
+- a detached multiplexer wrapper
 
-The active direction is narrower:
+The live product is narrower and cleaner:
 
 1. **One binary** — `radioactive_ralph`
 2. **One durable state model** — repo config plus XDG/App Support runtime state
-3. **One Claude integration path** — stdio MCP
+3. **One repo runtime** — the durable service over the local control plane
 4. **One persona source of truth** — code-defined Ralph variants
 
-## Product shape
+## Runtime surfaces
 
-| Layer | Role |
+| Surface | Role |
 |---|---|
-| `radioactive_ralph` binary | The product boundary: init, plan store, supervisor, doctor, and MCP server |
-| Claude Code MCP | Structured control plane into the binary |
-| Variant profiles | Built-in Ralph personas that shape system prompt, safety posture, and runtime behavior |
-| Provider bindings | Future abstraction for non-Claude agent CLIs |
+| `radioactive_ralph service start` | Durable repo-scoped runtime |
+| `radioactive_ralph run --variant <name>` | Attached bounded execution |
+| `radioactive_ralph tui` | Cockpit that attaches to the repo service |
+
+The local RPC layer is the real control plane: Unix sockets on macOS/Linux,
+named pipes on Windows. The TUI and CLI both speak to the same repo-local
+runtime.
 
 ## Repo-visible state
 
@@ -51,7 +50,7 @@ Every repo that uses Ralph has `.radioactive-ralph/` alongside `.git/`:
 ```
 
 - `config.toml` is committed repo policy.
-- `local.toml` is gitignored operator-local state.
+- `local.toml` is gitignored operator-local override state.
 - `plans/` contains the human-readable planning artifacts.
 
 ## Machine-local state
@@ -67,61 +66,33 @@ $XDG_STATE_HOME/radioactive-ralph/
     └── worktrees/
 ```
 
-This is where the durable plan DAG, runtime sessions, and per-repo transient
-state belong. Never store this under `.claude/`.
+This is where the durable DAG, runtime sessions, repo service sockets, logs,
+and worktrees belong. Never store it under `.claude/`.
 
-## Claude integration
+## Variant execution policy
 
-Claude Code is integrated through stdio MCP:
+Variants are defined in `internal/variant/` and now declare whether they are:
 
-- `radioactive_ralph init` registers the binary with `claude mcp add`
-- Claude spawns `radioactive_ralph serve --mcp`
-- the MCP server exposes plan and runtime control surface
-- the binary remains the authority over variant behavior and state
+- allowed in attached mode
+- allowed in durable service mode
 
-The abandoned complexity was trying to make plugin skills, service-managed HTTP,
-and binary control all equally primary. They are not.
+The rule is:
 
-## Personas, not skills
+- bounded variants can run attached
+- all ten variants can run under the durable service
 
-Ralph has many personalities, but the source of truth is now the code:
+That keeps the operator model simple without flattening the personalities into
+one generic loop.
 
-- `internal/variant/` defines the behavioral profiles
-- `internal/voice/` defines the Ralph voice layer
-- `docs/variants/` explains each personality to operators
+## Provider layer
 
-This keeps the canon in one place. A persona may eventually be surfaced through
-different front ends, but it should not require a separate parallel skill spec
-to exist.
+Today the runtime ships provider bindings for the `claude`, `codex`, and
+`gemini` CLIs.
+The repo config now carries:
 
-## Current provider reality
+- `default_provider`
+- `[providers.<name>]`
+- optional per-variant `provider = "<name>"` overrides
 
-Today the runtime still assumes the `claude` CLI for agent execution. The code
-therefore still knows about Claude-specific concerns such as model tier names,
-reasoning effort, and CLI session behavior.
-
-That is **current implementation**, not the long-term contract.
-
-## Provider direction
-
-The target shape is a declarative provider binding layer inside repo config.
-Conceptually that means each repo can say:
-
-- which agent CLI to invoke
-- how to set model
-- how to set effort
-- how to append the Ralph persona prompt
-- how to pass the task/user prompt
-- what structured output format to expect back
-
-That would allow the same Ralph personas to drive Claude, Codex, Gemini, OpenAI
-CLI tooling, or any other provider with the necessary bindings.
-
-## Current gaps
-
-- Fixit still writes markdown advice but does not yet fully populate the live DAG.
-- Plan gating is not yet properly repo-scoped.
-- `run` still exposes less safety/runtime wiring than the variant docs imply.
-- Provider bindings are still a design direction, not live code.
-
-See [state](./state.md) for the explicit status of those gaps.
+The runtime owns task retrieval, prompt composition, result parsing, and DAG
+updates. Providers are just execution backends.

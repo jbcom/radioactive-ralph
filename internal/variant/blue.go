@@ -9,9 +9,11 @@ package variant
 // because reviews need reasoning; no opus because budget discipline).
 func blueProfile() Profile {
 	return Profile{
-		Name:        Blue,
-		Description: "Calm observer. Read-only review across all configured repos. Never writes.",
-		Isolation:   IsolationShared,
+		Name:            Blue,
+		Description:     "Calm observer. Read-only review across all configured repos. Never writes.",
+		AttachedAllowed: true,
+		DurableAllowed:  true,
+		Isolation:       IsolationShared,
 		// Shared isolation — operator's repo is the workspace, but tool
 		// allowlist forbids writes, so this is safe. No worktree pool.
 		MaxParallelWorktrees: 0,
@@ -33,9 +35,9 @@ func blueProfile() Profile {
 		ObjectStoreDefault:     "",                    // N/A for shared isolation
 		SyncSourceDefault:      "",                    // N/A for shared isolation
 		LFSModeDefault:         LFSOnDemand,           // reads may need LFS content
-		SkillBiases: map[BiasCategory]BiasSnippet{
-			BiasReview:         "Invoke /{skill} as the review engine for every PR diff and governance scan.",
-			BiasSecurityReview: "When the diff touches auth, secrets, or IAM, add a second pass with /{skill}.",
+		PromptDirectives: []string{
+			"Stay read-only. Diagnose precisely and do not mutate files or branch state.",
+			"Favor review, audit, and explanation over speculative prescriptions.",
 		},
 	}
 }

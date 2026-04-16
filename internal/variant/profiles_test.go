@@ -32,6 +32,17 @@ func TestProfileHasDescription(t *testing.T) {
 	}
 }
 
+func TestProfileDeclaresExecutionMode(t *testing.T) {
+	for _, name := range allVariantNames {
+		t.Run(string(name), func(t *testing.T) {
+			p := mustLookup(t, string(name))
+			if !p.AttachedAllowed && !p.DurableAllowed {
+				t.Errorf("%s must allow at least one execution mode", name)
+			}
+		})
+	}
+}
+
 // TestProfileToolAllowlistOnlyContainsKnownTools — typos in tool names
 // would silently neuter a variant, so guard with a whitelist.
 func TestProfileToolAllowlistOnlyContainsKnownTools(t *testing.T) {
@@ -192,8 +203,30 @@ func TestGatedVariantsDeclareConfirmationGate(t *testing.T) {
 			if !p.SafetyFloors.FreshConfirmPerInvocation {
 				t.Errorf("%s must require fresh confirmation per invocation", name)
 			}
-			if !p.SafetyFloors.RefuseServiceContext {
-				t.Errorf("%s must refuse service (launchd/systemd) context", name)
+		})
+	}
+}
+
+func TestInfiniteVariantsRequireDurableRuntime(t *testing.T) {
+	for _, name := range []Name{Green, Professor, Immortal, Savage, WorldBreaker} {
+		t.Run(string(name), func(t *testing.T) {
+			p := mustLookup(t, string(name))
+			if p.AttachedAllowed {
+				t.Errorf("%s should require the durable repo service for execution", name)
+			}
+			if !p.DurableAllowed {
+				t.Errorf("%s must remain available in durable mode", name)
+			}
+		})
+	}
+}
+
+func TestBoundedVariantsAllowAttachedExecution(t *testing.T) {
+	for _, name := range []Name{Blue, Grey, Red, Fixit, OldMan} {
+		t.Run(string(name), func(t *testing.T) {
+			p := mustLookup(t, string(name))
+			if !p.AttachedAllowed {
+				t.Errorf("%s should allow attached/headless execution", name)
 			}
 		})
 	}

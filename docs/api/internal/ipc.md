@@ -11,11 +11,11 @@ description: Go API reference for the ipc package.
 import "github.com/jbcom/radioactive-ralph/internal/ipc"
 ```
 
-Package ipc is radioactive\-ralph's supervisor\-client IPC layer.
+Package ipc is radioactive\-ralph's repo\-service IPC layer.
 
-The supervisor listens on a Unix domain socket under its workspace's sessions/ directory. \`radioactive\_ralph status\`, \`radioactive\_ralph attach\`, \`radioactive\_ralph enqueue\`, \`radioactive\_ralph stop\`, and \`radioactive\_ralph reload\-config\` connect to the same socket and exchange newline\-delimited JSON messages.
+The repo service listens on a local control\-plane endpoint under the repo's state directory: a Unix domain socket on macOS/Linux and a named pipe on Windows. \`radioactive\_ralph status\`, \`radioactive\_ralph attach\`, \`radioactive\_ralph stop\`, and internal control\-path clients exchange newline\-delimited JSON messages over the same transport.
 
-Heartbeat liveness is signalled via the supervisor touching an \`.alive\` file every few seconds. \`radioactive\_ralph status\` checks the file's mtime before even attempting a socket connect — if the supervisor crashed and left a stale socket, we want to surface the dead\-daemon state cleanly rather than hang on a connection attempt.
+Heartbeat liveness is signalled via the repo service touching an \`.alive\` file every few seconds. \`radioactive\_ralph status\` checks the file's mtime before even attempting a socket connect — if the service crashed and left a stale socket, we want to surface the dead\-service state cleanly rather than hang on a connection attempt.
 
 Wire protocol:
 
@@ -32,6 +32,7 @@ For commands that stream \(attach\), the server sends N \>= 0 frames of \{"event
 - [Variables](<#variables>)
 - [func Dial\(socketPath string, timeout time.Duration\) \(\*Client, error\)](<#Dial>)
 - [func NewServer\(opts ServerOptions\) \(\*Server, error\)](<#NewServer>)
+- [func ServiceEndpoint\(sessionsDir string\) \(endpoint, heartbeat string\)](<#ServiceEndpoint>)
 - [func SocketAlive\(heartbeatPath string, maxAge time.Duration\) bool](<#SocketAlive>)
 - [type Client](<#Client>)
   - [func \(c \*Client\) Attach\(ctx context.Context, fn func\(json.RawMessage\) error\) error](<#Client.Attach>)
@@ -52,6 +53,7 @@ For commands that stream \(attach\), the server sends N \>= 0 frames of \{"event
 - [type StatusReply](<#StatusReply>)
 - [type StopArgs](<#StopArgs>)
 - [type StreamEvent](<#StreamEvent>)
+- [type WorkerSummary](<#WorkerSummary>)
 
 
 ## Constants
@@ -83,7 +85,7 @@ var ErrClosed error = closedError{}
 func Dial(socketPath string, timeout time.Duration) (*Client, error)
 ```
 
-Dial connects to the supervisor at socketPath with the given timeout. Typical usage:
+Dial connects to the repo service at socketPath with the given timeout. Typical usage:
 
 ```
 c, err := ipc.Dial(socketPath, 3*time.Second)
@@ -101,19 +103,28 @@ func NewServer(opts ServerOptions) (*Server, error)
 
 NewServer constructs a Server. It does NOT bind the socket — call Start to begin accepting connections.
 
+<a name="ServiceEndpoint"></a>
+## func [ServiceEndpoint](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/paths.go#L12>)
+
+```go
+func ServiceEndpoint(sessionsDir string) (endpoint, heartbeat string)
+```
+
+ServiceEndpoint returns the local control\-plane endpoint plus its heartbeat file for one repo workspace.
+
 <a name="SocketAlive"></a>
-## func [SocketAlive](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/server.go#L317>)
+## func [SocketAlive](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/server.go#L305>)
 
 ```go
 func SocketAlive(heartbeatPath string, maxAge time.Duration) bool
 ```
 
-SocketAlive reports whether the heartbeat file at path was touched within maxAge. Clients \(\`radioactive\_ralph status\`\) call this before attempting a socket connection so they can distinguish "supervisor dead" from "supervisor slow to respond."
+SocketAlive reports whether the heartbeat file at path was touched within maxAge. Clients \(\`radioactive\_ralph status\`\) call this before attempting a socket connection so they can distinguish "service dead" from "service slow to respond."
 
 <a name="Client"></a>
 ## type [Client](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/client.go#L18-L21>)
 
-Client wraps a single Unix\-socket connection to a Ralph supervisor. Clients are short\-lived: construct, send one command, read reply, close. For streaming commands \(attach\), the client instance stays open until the server closes the stream.
+Client wraps a single Unix\-socket connection to a Ralph repo service. Clients are short\-lived: construct, send one command, read reply, close. For streaming commands \(attach\), the client instance stays open until the server closes the stream.
 
 ```go
 type Client struct {
@@ -122,16 +133,16 @@ type Client struct {
 ```
 
 <a name="Client.Attach"></a>
-### func \(\*Client\) [Attach](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/client.go#L133>)
+### func \(\*Client\) [Attach](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/client.go#L134>)
 
 ```go
 func (c *Client) Attach(ctx context.Context, fn func(json.RawMessage) error) error
 ```
 
-Attach issues an attach request and streams event frames through fn until the supervisor closes the stream or ctx is cancelled. The returned error is nil for a clean end\-of\-stream.
+Attach issues an attach request and streams event frames through fn until the repo service closes the stream or ctx is cancelled. The returned error is nil for a clean end\-of\-stream.
 
 <a name="Client.Close"></a>
-### func \(\*Client\) [Close](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/client.go#L46>)
+### func \(\*Client\) [Close](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/client.go#L47>)
 
 ```go
 func (c *Client) Close() error
@@ -140,7 +151,7 @@ func (c *Client) Close() error
 Close terminates the connection.
 
 <a name="Client.Enqueue"></a>
-### func \(\*Client\) [Enqueue](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/client.go#L72>)
+### func \(\*Client\) [Enqueue](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/client.go#L73>)
 
 ```go
 func (c *Client) Enqueue(ctx context.Context, args EnqueueArgs) (EnqueueReply, error)
@@ -149,16 +160,16 @@ func (c *Client) Enqueue(ctx context.Context, args EnqueueArgs) (EnqueueReply, e
 Enqueue pushes a task. Returns the resulting task ID \(possibly a dedup hit from FTS\) and whether the task was freshly inserted.
 
 <a name="Client.ReloadConfig"></a>
-### func \(\*Client\) [ReloadConfig](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/client.go#L116>)
+### func \(\*Client\) [ReloadConfig](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/client.go#L117>)
 
 ```go
 func (c *Client) ReloadConfig(ctx context.Context) error
 ```
 
-ReloadConfig asks the supervisor to re\-read config.toml.
+ReloadConfig asks the repo service to re\-read config.toml.
 
 <a name="Client.Status"></a>
-### func \(\*Client\) [Status](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/client.go#L51>)
+### func \(\*Client\) [Status](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/client.go#L52>)
 
 ```go
 func (c *Client) Status(ctx context.Context) (StatusReply, error)
@@ -167,7 +178,7 @@ func (c *Client) Status(ctx context.Context) (StatusReply, error)
 Status issues a status request and returns the parsed StatusReply.
 
 <a name="Client.Stop"></a>
-### func \(\*Client\) [Stop](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/client.go#L97>)
+### func \(\*Client\) [Stop](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/client.go#L98>)
 
 ```go
 func (c *Client) Stop(ctx context.Context, args StopArgs) error
@@ -176,20 +187,20 @@ func (c *Client) Stop(ctx context.Context, args StopArgs) error
 Stop issues a stop request. The server closes the socket after replying; expect the returned error to be ErrClosed on the next call.
 
 <a name="EnqueueArgs"></a>
-## type [EnqueueArgs](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/protocol.go#L73-L77>)
+## type [EnqueueArgs](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/protocol.go#L88-L92>)
 
 EnqueueArgs is the client's payload when pushing work via CmdEnqueue.
 
 ```go
 type EnqueueArgs struct {
-    TaskID      string `json:"task_id"` // optional; supervisor generates UUID if empty
+    TaskID      string `json:"task_id"` // optional; service generates UUID if empty
     Description string `json:"description"`
     Priority    int    `json:"priority,omitempty"`
 }
 ```
 
 <a name="EnqueueReply"></a>
-## type [EnqueueReply](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/protocol.go#L81-L84>)
+## type [EnqueueReply](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/protocol.go#L96-L99>)
 
 EnqueueReply tells the client whether a new task was created or a duplicate was collapsed \(via FTS dedup in the db layer\).
 
@@ -201,37 +212,37 @@ type EnqueueReply struct {
 ```
 
 <a name="Handler"></a>
-## type [Handler](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/server.go#L21-L40>)
+## type [Handler](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/server.go#L20-L39>)
 
 Handler handles a single client request. Attach streams events by calling emit repeatedly; other commands return \(reply, nil\) and the server transmits a single Response frame.
 
 ```go
 type Handler interface {
-    // HandleStatus returns the current supervisor status.
+    // HandleStatus returns the current repo-service status.
     HandleStatus(ctx context.Context) (StatusReply, error)
 
     // HandleEnqueue queues a new task, returning the task ID and whether
     // it was a fresh insert or a dedup hit.
     HandleEnqueue(ctx context.Context, args EnqueueArgs) (EnqueueReply, error)
 
-    // HandleStop signals the supervisor to shut down. The server closes
+    // HandleStop signals the repo service to shut down. The server closes
     // the IPC socket after sending the response.
     HandleStop(ctx context.Context, args StopArgs) error
 
-    // HandleReloadConfig asks the supervisor to re-read config.toml.
+    // HandleReloadConfig asks the repo service to re-read config.toml.
     HandleReloadConfig(ctx context.Context) error
 
     // HandleAttach streams events to the client until either the
-    // supervisor exits or the client disconnects. The implementation
+    // service exits or the client disconnects. The implementation
     // should return when ctx is cancelled.
     HandleAttach(ctx context.Context, emit func(json.RawMessage) error) error
 }
 ```
 
 <a name="Request"></a>
-## type [Request](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/protocol.go#L39-L42>)
+## type [Request](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/protocol.go#L41-L44>)
 
-Request is a single command from a client to the supervisor.
+Request is a single command from a client to the repo service.
 
 ```go
 type Request struct {
@@ -241,7 +252,7 @@ type Request struct {
 ```
 
 <a name="Response"></a>
-## type [Response](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/protocol.go#L47-L51>)
+## type [Response](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/protocol.go#L49-L53>)
 
 Response is the single\-shot reply shape. For streaming commands the server sends multiple Event frames followed by a final Response with Ok=true; mid\-stream errors send a Response with Ok=false.
 
@@ -254,9 +265,9 @@ type Response struct {
 ```
 
 <a name="Server"></a>
-## type [Server](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/server.go#L44-L53>)
+## type [Server](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/server.go#L42-L51>)
 
-Server is the Unix\-socket IPC server. One instance per supervisor process \(one per variant per repo\).
+Server is the repo\-service IPC server. One instance per repo service.
 
 ```go
 type Server struct {
@@ -274,7 +285,7 @@ func (s *Server) Start(heartbeatInterval time.Duration) error
 Start binds the socket and begins accepting connections in a background goroutine. Safe to call once. Returns the listener error if bind fails.
 
 <a name="Server.Stop"></a>
-### func \(\*Server\) [Stop](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/server.go#L134>)
+### func \(\*Server\) [Stop](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/server.go#L122>)
 
 ```go
 func (s *Server) Stop() error
@@ -283,17 +294,19 @@ func (s *Server) Stop() error
 Stop shuts the server down and waits for goroutines to exit.
 
 <a name="ServerOptions"></a>
-## type [ServerOptions](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/server.go#L56-L74>)
+## type [ServerOptions](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/server.go#L54-L74>)
 
 ServerOptions configures a Server.
 
 ```go
 type ServerOptions struct {
-    // SocketPath is the path to bind. Typically workspace/sessions/<variant>.sock.
+    // SocketPath is the local endpoint path to bind. Typically
+    // state/<repo>/sessions/service.sock on POSIX hosts.
     SocketPath string
 
     // HeartbeatPath is the file whose mtime is bumped every
-    // HeartbeatInterval by the server. Typically workspace/sessions/<variant>.alive.
+    // HeartbeatInterval by the server. Typically the repo-service
+    // heartbeat file next to the endpoint metadata.
     HeartbeatPath string
 
     // HeartbeatInterval controls how often we refresh the heartbeat.
@@ -310,25 +323,30 @@ type ServerOptions struct {
 ```
 
 <a name="StatusReply"></a>
-## type [StatusReply](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/protocol.go#L61-L70>)
+## type [StatusReply](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/protocol.go#L61-L75>)
 
-StatusReply is the data payload for CmdStatus responses. Keeping this a plain struct rather than map\[string\]any makes versioning/migration explicit — callers know at compile\-time what fields to expect.
+StatusReply is the data payload for CmdStatus responses.
 
 ```go
 type StatusReply struct {
-    Variant        string        `json:"variant"`
-    PID            int           `json:"pid"`
-    Uptime         time.Duration `json:"uptime_ns"`
-    ActiveSessions int           `json:"active_sessions"`
-    QueuedTasks    int           `json:"queued_tasks"`
-    RunningTasks   int           `json:"running_tasks"`
-    LastEventAt    time.Time     `json:"last_event_at,omitempty"`
-    HeartbeatAge   time.Duration `json:"heartbeat_age_ns,omitempty"`
+    RepoPath      string          `json:"repo_path"`
+    PID           int             `json:"pid"`
+    Uptime        time.Duration   `json:"uptime_ns"`
+    ActiveWorkers int             `json:"active_workers"`
+    ReadyTasks    int             `json:"ready_tasks"`
+    ApprovalTasks int             `json:"approval_tasks"`
+    BlockedTasks  int             `json:"blocked_tasks"`
+    RunningTasks  int             `json:"running_tasks"`
+    FailedTasks   int             `json:"failed_tasks"`
+    ActivePlans   int             `json:"active_plans"`
+    Workers       []WorkerSummary `json:"workers,omitempty"`
+    LastEventAt   time.Time       `json:"last_event_at,omitempty"`
+    HeartbeatAge  time.Duration   `json:"heartbeat_age_ns,omitempty"`
 }
 ```
 
 <a name="StopArgs"></a>
-## type [StopArgs](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/protocol.go#L87-L90>)
+## type [StopArgs](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/protocol.go#L102-L105>)
 
 StopArgs controls the termination mode for CmdStop.
 
@@ -340,13 +358,29 @@ type StopArgs struct {
 ```
 
 <a name="StreamEvent"></a>
-## type [StreamEvent](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/protocol.go#L54-L56>)
+## type [StreamEvent](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/protocol.go#L56-L58>)
 
 StreamEvent is one frame emitted during a streaming command \(e.g. attach\).
 
 ```go
 type StreamEvent struct {
     Event json.RawMessage `json:"event"`
+}
+```
+
+<a name="WorkerSummary"></a>
+## type [WorkerSummary](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/protocol.go#L78-L85>)
+
+WorkerSummary is the runtime\-facing status for one in\-flight worker.
+
+```go
+type WorkerSummary struct {
+    PlanID            string `json:"plan_id"`
+    TaskID            string `json:"task_id"`
+    Variant           string `json:"variant"`
+    Provider          string `json:"provider,omitempty"`
+    ProviderSessionID string `json:"provider_session_id,omitempty"`
+    WorktreePath      string `json:"worktree_path,omitempty"`
 }
 ```
 

@@ -1,6 +1,6 @@
 # Security Policy
 
-radioactive-ralph is an autonomous development tool that can inspect repositories,
+radioactive-ralph is a repo-scoped runtime that can inspect repositories,
 run local commands, interact with GitHub, and coordinate AI agents. That makes
 security reports especially important for issues involving command execution,
 credential handling, repository isolation, and prompt-driven behavior.
@@ -71,12 +71,12 @@ established.
 Please include:
 
 - affected version, commit SHA, or whether the issue is on `main`
-- deployment mode: Claude Code plugin or standalone daemon
-- installation path: `pip`, `uvx`, editable checkout, or packaged release
+- runtime mode: attached `radioactive_ralph run`, durable `radioactive_ralph service`, or `radioactive_ralph tui` attached to a running repo service
+- installation path: Homebrew, `curl | bash`, packaged release, or source checkout
 - operating system and environment details
 - reproduction steps or proof of concept
 - impact assessment
-- whether credentials, repository contents, prompts, or model/tool outputs are involved
+- whether credentials, repository contents, provider prompts, or model/tool outputs are involved
 - any proposed mitigation
 
 Please redact secrets before sending logs, transcripts, screenshots, or state

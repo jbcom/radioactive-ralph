@@ -89,9 +89,11 @@ func TestValidateRejectsMissingName(t *testing.T) {
 
 func TestValidateRejectsSharedWithWrites(t *testing.T) {
 	p := Profile{
-		Name:          "bad",
-		Isolation:     IsolationShared,
-		ToolAllowlist: []string{ToolRead, ToolEdit},
+		Name:            "bad",
+		AttachedAllowed: true,
+		DurableAllowed:  true,
+		Isolation:       IsolationShared,
+		ToolAllowlist:   []string{ToolRead, ToolEdit},
 	}
 	err := p.Validate()
 	if err == nil {
@@ -109,9 +111,11 @@ func TestValidateRejectsSharedWithWrites(t *testing.T) {
 // silently would be a defense-in-depth hole.
 func TestValidateRejectsSharedWithBashUntrusted(t *testing.T) {
 	p := Profile{
-		Name:          "bad",
-		Isolation:     IsolationShared,
-		ToolAllowlist: []string{ToolBash, ToolRead},
+		Name:            "bad",
+		AttachedAllowed: true,
+		DurableAllowed:  true,
+		Isolation:       IsolationShared,
+		ToolAllowlist:   []string{ToolBash, ToolRead},
 		// ShellExplicitlyTrusted deliberately false.
 	}
 	err := p.Validate()
@@ -128,6 +132,8 @@ func TestValidateRejectsSharedWithBashUntrusted(t *testing.T) {
 func TestValidateAcceptsSharedWithBashWhenExplicitlyTrusted(t *testing.T) {
 	p := Profile{
 		Name:                   "good",
+		AttachedAllowed:        true,
+		DurableAllowed:         true,
 		Isolation:              IsolationShared,
 		ToolAllowlist:          []string{ToolBash, ToolRead},
 		ShellExplicitlyTrusted: true,
@@ -140,6 +146,8 @@ func TestValidateAcceptsSharedWithBashWhenExplicitlyTrusted(t *testing.T) {
 func TestValidateRejectsMirrorPoolWithZeroParallel(t *testing.T) {
 	p := Profile{
 		Name:                 "bad",
+		AttachedAllowed:      true,
+		DurableAllowed:       true,
 		Isolation:            IsolationMirrorPool,
 		MaxParallelWorktrees: 0,
 	}
@@ -151,6 +159,8 @@ func TestValidateRejectsMirrorPoolWithZeroParallel(t *testing.T) {
 func TestValidateRejectsMirrorSingleWithWrongParallel(t *testing.T) {
 	p := Profile{
 		Name:                 "bad",
+		AttachedAllowed:      true,
+		DurableAllowed:       true,
 		Isolation:            IsolationMirrorSingle,
 		MaxParallelWorktrees: 3,
 	}
@@ -162,6 +172,8 @@ func TestValidateRejectsMirrorSingleWithWrongParallel(t *testing.T) {
 func TestValidateRejectsNCyclesWithoutLimit(t *testing.T) {
 	p := Profile{
 		Name:                 "bad",
+		AttachedAllowed:      true,
+		DurableAllowed:       true,
 		Isolation:            IsolationMirrorSingle,
 		MaxParallelWorktrees: 1,
 		Termination:          TerminationNCycles,
@@ -175,6 +187,8 @@ func TestValidateRejectsNCyclesWithoutLimit(t *testing.T) {
 func TestValidateRejectsFloorMismatch(t *testing.T) {
 	p := Profile{
 		Name:                 "bad",
+		AttachedAllowed:      true,
+		DurableAllowed:       true,
 		Isolation:            IsolationMirrorSingle,
 		MaxParallelWorktrees: 1,
 		ObjectStoreDefault:   ObjectStoreReference,

@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jbcom/radioactive-ralph/internal/session"
+	claudesession "github.com/jbcom/radioactive-ralph/internal/provider/claudesession"
 )
 
 // TestLiveClaudeRoundTrip drives a real `claude -p` subprocess via the
@@ -29,7 +29,7 @@ func TestLiveClaudeRoundTrip(t *testing.T) {
 	defer cancel()
 
 	// Spawn the session.
-	s, err := session.Spawn(ctx, session.Options{
+	s, err := claudesession.Spawn(ctx, claudesession.Options{
 		WorkingDir: t.TempDir(),
 		// Keep the prompt minimal so the reply is small and fast.
 		SystemPrompt: "You respond with exactly one word and nothing else.",
@@ -80,7 +80,7 @@ func TestLiveClaudeRoundTrip(t *testing.T) {
 	_ = s.Close()
 
 	// Resume. Sentinel verifies conversation continuity.
-	s2, err := session.Spawn(ctx, session.Options{
+	s2, err := claudesession.Spawn(ctx, claudesession.Options{
 		WorkingDir:     t.TempDir(),
 		SystemPrompt:   "You respond with exactly one word and nothing else.",
 		Model:          "haiku",
@@ -124,7 +124,7 @@ func TestLiveClaudeModelSanity(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 
-	s, err := session.Spawn(ctx, session.Options{
+	s, err := claudesession.Spawn(ctx, claudesession.Options{
 		WorkingDir:   t.TempDir(),
 		SystemPrompt: "Respond with the JSON object {\"ok\":true} and nothing else.",
 		Model:        "haiku",

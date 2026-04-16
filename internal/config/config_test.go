@@ -48,27 +48,36 @@ func TestLoadEmpty(t *testing.T) {
 	if f.Variants == nil {
 		t.Error("Variants map should be initialised even when empty")
 	}
+	if f.Providers == nil {
+		t.Error("Providers map should be initialised even when empty")
+	}
 }
 
 func TestLoadFullExample(t *testing.T) {
 	repo := t.TempDir()
 	writeConfigToml(t, repo, `
-[capabilities]
-review          = "coderabbit:review"
-security_review = "sec-context-depth"
-docs_query      = "plugin:context7:context7"
-disabled_biases = ["code-review:code-review"]
+default_provider = "codex"
 
-[daemon]
+[service]
 default_object_store      = "reference"
 default_lfs_mode          = "on-demand"
 copy_hooks                = true
 allow_concurrent_variants = true
 
+[providers.codex]
+type = "codex"
+binary = "codex"
+medium_effort = "medium"
+
+[providers.gemini]
+type = "gemini"
+binary = "gemini"
+
 [variants.green]
+provider = "gemini"
 
 [variants.red]
-review_bias = "coderabbit:review"
+cycle_limit = 2
 
 [variants.immortal]
 object_store = "full"
@@ -82,24 +91,23 @@ spend_cap_usd = 25.0
 		t.Fatalf("Load: %v", err)
 	}
 
-	if f.Capabilities.Review != "coderabbit:review" {
-		t.Errorf("review = %q, want coderabbit:review", f.Capabilities.Review)
+	if f.Service.DefaultObjectStore != "reference" {
+		t.Errorf("DefaultObjectStore = %q", f.Service.DefaultObjectStore)
 	}
-	if len(f.Capabilities.DisabledBiases) != 1 || f.Capabilities.DisabledBiases[0] != "code-review:code-review" {
-		t.Errorf("DisabledBiases = %v", f.Capabilities.DisabledBiases)
-	}
-	if f.Daemon.DefaultObjectStore != "reference" {
-		t.Errorf("DefaultObjectStore = %q", f.Daemon.DefaultObjectStore)
-	}
-	if f.Daemon.CopyHooks == nil || !*f.Daemon.CopyHooks {
+	if f.Service.CopyHooks == nil || !*f.Service.CopyHooks {
 		t.Errorf("CopyHooks pointer should be *true")
 	}
-
-	if _, ok := f.Variants["green"]; !ok {
-		t.Error("expected variants.green entry")
+	if f.DefaultProvider != "codex" {
+		t.Errorf("DefaultProvider = %q, want codex", f.DefaultProvider)
 	}
-	if f.Variants["red"].ReviewBias != "coderabbit:review" {
-		t.Errorf("variants.red.review_bias = %q", f.Variants["red"].ReviewBias)
+	if f.Providers["codex"].Binary != "codex" {
+		t.Errorf("providers.codex.binary = %q", f.Providers["codex"].Binary)
+	}
+	if f.Variants["green"].Provider != "gemini" {
+		t.Errorf("variants.green.provider = %q", f.Variants["green"].Provider)
+	}
+	if got := f.Variants["red"].CycleLimit; got == nil || *got != 2 {
+		t.Errorf("variants.red.cycle_limit = %v", got)
 	}
 	if f.Variants["immortal"].ObjectStore != "full" {
 		t.Errorf("variants.immortal.object_store = %q", f.Variants["immortal"].ObjectStore)
@@ -109,6 +117,22 @@ spend_cap_usd = 25.0
 	}
 	if _, ok := f.Variants["old_man"]; !ok {
 		t.Error("expected variants.old_man entry even if empty")
+	}
+}
+
+func TestLoadDefaultProviderDerivedFromSingleProvider(t *testing.T) {
+	repo := t.TempDir()
+	writeConfigToml(t, repo, `
+[providers.claude]
+type = "claude"
+binary = "claude"
+`)
+	f, err := Load(repo)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if f.DefaultProvider != "claude" {
+		t.Fatalf("DefaultProvider = %q, want claude", f.DefaultProvider)
 	}
 }
 
@@ -136,15 +160,15 @@ func TestLoadLocalMissing(t *testing.T) {
 func TestLoadLocal(t *testing.T) {
 	repo := t.TempDir()
 	writeLocalToml(t, repo, `
-multiplexer_preference = "tmux"
-log_level              = "debug"
+provider_binary = "/opt/bin/codex"
+log_level       = "debug"
 `)
 	l, err := LoadLocal(repo)
 	if err != nil {
 		t.Fatalf("LoadLocal: %v", err)
 	}
-	if l.MultiplexerPreference != "tmux" {
-		t.Errorf("MultiplexerPreference = %q", l.MultiplexerPreference)
+	if l.ProviderBinary != "/opt/bin/codex" {
+		t.Errorf("ProviderBinary = %q", l.ProviderBinary)
 	}
 	if l.LogLevel != "debug" {
 		t.Errorf("LogLevel = %q", l.LogLevel)

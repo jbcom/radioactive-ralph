@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/adrg/xdg"
 	"github.com/jbcom/radioactive-ralph/internal/plandag"
@@ -17,12 +18,21 @@ import (
 // This is the durable plan-DAG surface — direct CRUD against the
 // SQLite store under $XDG_STATE_HOME/radioactive_ralph/.
 type PlanCmd struct {
-	Ls   PlanLsCmd   `cmd:"" help:"List plans for this repo by default. Use --all-repos to widen the view."`
-	Show PlanShowCmd `cmd:"" help:"Show one plan's tasks and current ready set."`
-	Next PlanNextCmd `cmd:"" help:"Print the next ready task for a plan (without claiming it)."`
+	Ls        PlanLsCmd        `cmd:"" help:"List plans for this repo by default. Use --all-repos to widen the view."`
+	Show      PlanShowCmd      `cmd:"" help:"Show one plan's tasks and current ready set."`
+	Next      PlanNextCmd      `cmd:"" help:"Print the next ready task for a plan (without claiming it)."`
+	Tasks     PlanTasksCmd     `cmd:"" help:"List tasks for one plan."`
+	Approvals PlanApprovalsCmd `cmd:"" help:"List tasks in this repo waiting for operator approval."`
+	Blocked   PlanBlockedCmd   `cmd:"" help:"List tasks in this repo that are blocked or waiting on more context."`
+	Approve   PlanApproveCmd   `cmd:"" help:"Approve a task and return it to the runnable queue."`
+	Requeue   PlanRequeueCmd   `cmd:"" help:"Requeue a blocked/failed task back into the runnable queue."`
+	Handoff   PlanHandoffCmd   `cmd:"" help:"Hand a blocked/failed task to a different variant."`
+	Retry     PlanRetryCmd     `cmd:"" help:"Retry a blocked or failed task."`
+	Fail      PlanFailCmd      `cmd:"" help:"Force-fail a task from the operator surface."`
+	History   PlanHistoryCmd   `cmd:"" help:"Show recent task events for one task."`
 
 	// Import seeds a plan from a JSON file. Used during the
-	// dogfooding bootstrap before the MCP server + fixit rewire.
+	// dogfooding bootstrap before fixit owns full durable planning.
 	Import PlanImportCmd `cmd:"" help:"Import tasks into a new plan from a JSON file."`
 
 	// MarkDone lets an operator (or shell script acting as one)
@@ -86,6 +96,370 @@ func (c *PlanLsCmd) Run(rc *runContext) error {
 // PlanShowCmd implements `plan show <id-or-slug>`.
 type PlanShowCmd struct {
 	IDOrSlug string `arg:"" help:"Plan UUID or slug."`
+}
+
+// PlanTasksCmd implements `plan tasks <id-or-slug>`.
+type PlanTasksCmd struct {
+	IDOrSlug string   `arg:"" help:"Plan UUID or slug."`
+	Status   []string `help:"Only include these task statuses (repeatable)."`
+}
+
+func (c *PlanTasksCmd) Run(rc *runContext) error {
+	store, err := openPlanStore(rc.ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = store.Close() }()
+	repo, err := resolveRepoRoot("")
+	if err != nil {
+		return err
+	}
+
+	plan, err := resolvePlan(rc.ctx, store, c.IDOrSlug, repo)
+	if err != nil {
+		return err
+	}
+	statuses, err := parseTaskStatuses(c.Status)
+	if err != nil {
+		return err
+	}
+	tasks, err := store.ListTasks(rc.ctx, plan.ID, statuses)
+	if err != nil {
+		return err
+	}
+	if len(tasks) == 0 {
+		fmt.Printf("no matching tasks for plan %s\n", plan.Slug)
+		return nil
+	}
+	for _, task := range tasks {
+		line := fmt.Sprintf("[%-22s] %s  %s", task.Status, task.ID, task.Description)
+		var extras []string
+		if task.VariantHint != "" {
+			extras = append(extras, "hint="+task.VariantHint)
+		}
+		if task.AssignedVariant != "" {
+			extras = append(extras, "assigned="+task.AssignedVariant)
+		}
+		if task.ClaimedBySession != "" {
+			extras = append(extras, "session="+task.ClaimedBySession)
+		}
+		if len(extras) > 0 {
+			line += "  (" + strings.Join(extras, ", ") + ")"
+		}
+		fmt.Println(line)
+	}
+	return nil
+}
+
+// PlanApprovalsCmd implements `plan approvals`.
+type PlanApprovalsCmd struct{}
+
+func (c *PlanApprovalsCmd) Run(rc *runContext) error {
+	store, err := openPlanStore(rc.ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = store.Close() }()
+	repo, err := resolveRepoRoot("")
+	if err != nil {
+		return err
+	}
+
+	plans, err := store.ListPlans(rc.ctx, []plandag.PlanStatus{
+		plandag.PlanStatusActive,
+		plandag.PlanStatusPaused,
+	})
+	if err != nil {
+		return err
+	}
+
+	found := false
+	for _, plan := range plans {
+		if plan.RepoPath != repo {
+			continue
+		}
+		tasks, err := store.ListTasks(rc.ctx, plan.ID, []plandag.TaskStatus{plandag.TaskStatusReadyPendingApproval})
+		if err != nil {
+			return err
+		}
+		for _, task := range tasks {
+			found = true
+			reason := latestTaskReason(rc.ctx, store, plan.ID, task.ID)
+			fmt.Printf("%s  %s  %s", trunc(plan.Slug, 20), task.ID, task.Description)
+			var extras []string
+			if task.VariantHint != "" {
+				extras = append(extras, "hint="+task.VariantHint)
+			}
+			if reason != "" {
+				extras = append(extras, "reason="+reason)
+			}
+			if len(extras) > 0 {
+				fmt.Printf("  (%s)", strings.Join(extras, ", "))
+			}
+			fmt.Println()
+		}
+	}
+	if !found {
+		fmt.Println("no tasks are waiting for operator approval in this repo")
+	}
+	return nil
+}
+
+// PlanBlockedCmd implements `plan blocked`.
+type PlanBlockedCmd struct{}
+
+func (c *PlanBlockedCmd) Run(rc *runContext) error {
+	store, err := openPlanStore(rc.ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = store.Close() }()
+	repo, err := resolveRepoRoot("")
+	if err != nil {
+		return err
+	}
+
+	items, err := store.ListRepoTaskSummaries(rc.ctx, repo, []plandag.TaskStatus{plandag.TaskStatusBlocked}, 50)
+	if err != nil {
+		return err
+	}
+	if len(items) == 0 {
+		fmt.Println("no blocked tasks in this repo")
+		return nil
+	}
+	for _, item := range items {
+		payload, _ := plandag.ParseTaskPayload(item.LatestPayloadJSON)
+		fmt.Printf("%s  %s  %s", trunc(item.PlanSlug, 20), item.Task.ID, item.Task.Description)
+		var extras []string
+		if payload.Reason != "" {
+			extras = append(extras, "reason="+payload.Reason)
+		}
+		if len(payload.NeedsContext) > 0 {
+			extras = append(extras, "needs_context="+strings.Join(payload.NeedsContext, "|"))
+		}
+		if payload.HandoffTo != "" {
+			extras = append(extras, "handoff_to="+payload.HandoffTo)
+		}
+		if len(extras) > 0 {
+			fmt.Printf("  (%s)", strings.Join(extras, ", "))
+		}
+		fmt.Println()
+	}
+	return nil
+}
+
+// PlanApproveCmd implements `plan approve <plan> <task>`.
+type PlanApproveCmd struct {
+	PlanIDOrSlug string `arg:"" help:"Plan UUID or slug."`
+	TaskID       string `arg:"" help:"Task id within the plan."`
+}
+
+func (c *PlanApproveCmd) Run(rc *runContext) error {
+	store, err := openPlanStore(rc.ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = store.Close() }()
+	repo, err := resolveRepoRoot("")
+	if err != nil {
+		return err
+	}
+
+	plan, err := resolvePlan(rc.ctx, store, c.PlanIDOrSlug, repo)
+	if err != nil {
+		return err
+	}
+	if err := store.ApproveTask(rc.ctx, plan.ID, c.TaskID); err != nil {
+		return err
+	}
+	fmt.Printf("approved %s in plan %s\n", c.TaskID, plan.Slug)
+	return nil
+}
+
+// PlanRequeueCmd implements `plan requeue <plan> <task>`.
+type PlanRequeueCmd struct {
+	PlanIDOrSlug    string `arg:"" help:"Plan UUID or slug."`
+	TaskID          string `arg:"" help:"Task id within the plan."`
+	Reason          string `help:"Operator reason for requeueing the task."`
+	VariantHint     string `help:"Optional new variant hint for the requeued task."`
+	RequireApproval bool   `help:"Return the task to approval-gated state instead of runnable pending."`
+}
+
+func (c *PlanRequeueCmd) Run(rc *runContext) error {
+	store, err := openPlanStore(rc.ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = store.Close() }()
+	repo, err := resolveRepoRoot("")
+	if err != nil {
+		return err
+	}
+	plan, err := resolvePlan(rc.ctx, store, c.PlanIDOrSlug, repo)
+	if err != nil {
+		return err
+	}
+	if err := store.OperatorRequeueTask(rc.ctx, plan.ID, c.TaskID, plandag.TaskEventPayload{
+		Reason:         c.Reason,
+		HandoffTo:      c.VariantHint,
+		OperatorAction: "requeue",
+	}, c.VariantHint, c.RequireApproval); err != nil {
+		return err
+	}
+	fmt.Printf("requeued %s in plan %s\n", c.TaskID, plan.Slug)
+	return nil
+}
+
+// PlanHandoffCmd implements `plan handoff <plan> <task> <variant>`.
+type PlanHandoffCmd struct {
+	PlanIDOrSlug    string `arg:"" help:"Plan UUID or slug."`
+	TaskID          string `arg:"" help:"Task id within the plan."`
+	Variant         string `arg:"" help:"Variant to hint for the next run."`
+	Reason          string `help:"Operator reason for the handoff."`
+	RequireApproval bool   `help:"Keep the task approval-gated after the handoff."`
+}
+
+func (c *PlanHandoffCmd) Run(rc *runContext) error {
+	store, err := openPlanStore(rc.ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = store.Close() }()
+	repo, err := resolveRepoRoot("")
+	if err != nil {
+		return err
+	}
+	plan, err := resolvePlan(rc.ctx, store, c.PlanIDOrSlug, repo)
+	if err != nil {
+		return err
+	}
+	if err := store.OperatorHandoffTask(rc.ctx, plan.ID, c.TaskID, plandag.TaskEventPayload{
+		Reason:         c.Reason,
+		HandoffTo:      c.Variant,
+		OperatorAction: "handoff",
+	}, c.Variant, c.RequireApproval); err != nil {
+		return err
+	}
+	fmt.Printf("handed off %s in plan %s to %s\n", c.TaskID, plan.Slug, c.Variant)
+	return nil
+}
+
+// PlanRetryCmd implements `plan retry <plan> <task>`.
+type PlanRetryCmd struct {
+	PlanIDOrSlug string `arg:"" help:"Plan UUID or slug."`
+	TaskID       string `arg:"" help:"Task id within the plan."`
+	Reason       string `help:"Operator reason for retrying the task."`
+}
+
+func (c *PlanRetryCmd) Run(rc *runContext) error {
+	store, err := openPlanStore(rc.ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = store.Close() }()
+	repo, err := resolveRepoRoot("")
+	if err != nil {
+		return err
+	}
+	plan, err := resolvePlan(rc.ctx, store, c.PlanIDOrSlug, repo)
+	if err != nil {
+		return err
+	}
+	if err := store.OperatorRetryTask(rc.ctx, plan.ID, c.TaskID, plandag.TaskEventPayload{
+		Reason:         c.Reason,
+		OperatorAction: "retry",
+		Retryable:      true,
+	}); err != nil {
+		return err
+	}
+	fmt.Printf("retry requested for %s in plan %s\n", c.TaskID, plan.Slug)
+	return nil
+}
+
+// PlanFailCmd implements `plan fail <plan> <task>`.
+type PlanFailCmd struct {
+	PlanIDOrSlug string `arg:"" help:"Plan UUID or slug."`
+	TaskID       string `arg:"" help:"Task id within the plan."`
+	Reason       string `help:"Operator reason for force-failing the task."`
+}
+
+func (c *PlanFailCmd) Run(rc *runContext) error {
+	store, err := openPlanStore(rc.ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = store.Close() }()
+	repo, err := resolveRepoRoot("")
+	if err != nil {
+		return err
+	}
+	plan, err := resolvePlan(rc.ctx, store, c.PlanIDOrSlug, repo)
+	if err != nil {
+		return err
+	}
+	if err := store.OperatorFailTask(rc.ctx, plan.ID, c.TaskID, plandag.TaskEventPayload{
+		Reason:         c.Reason,
+		OperatorAction: "fail",
+	}); err != nil {
+		return err
+	}
+	fmt.Printf("force-failed %s in plan %s\n", c.TaskID, plan.Slug)
+	return nil
+}
+
+// PlanHistoryCmd implements `plan history <plan> <task>`.
+type PlanHistoryCmd struct {
+	PlanIDOrSlug string `arg:"" help:"Plan UUID or slug."`
+	TaskID       string `arg:"" help:"Task id within the plan."`
+	Limit        int    `help:"Maximum number of events to show." default:"20"`
+}
+
+func (c *PlanHistoryCmd) Run(rc *runContext) error {
+	store, err := openPlanStore(rc.ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = store.Close() }()
+	repo, err := resolveRepoRoot("")
+	if err != nil {
+		return err
+	}
+
+	plan, err := resolvePlan(rc.ctx, store, c.PlanIDOrSlug, repo)
+	if err != nil {
+		return err
+	}
+	events, err := store.ListTaskEvents(rc.ctx, plan.ID, c.TaskID, c.Limit)
+	if err != nil {
+		return err
+	}
+	if len(events) == 0 {
+		fmt.Printf("no events for %s in plan %s\n", c.TaskID, plan.Slug)
+		return nil
+	}
+	for _, event := range events {
+		ts := event.OccurredAt.Format(time.RFC3339)
+		if event.OccurredAt.IsZero() {
+			ts = "unknown-time"
+		}
+		line := fmt.Sprintf("%s  %-18s", ts, event.EventType)
+		var extras []string
+		if event.Variant != "" {
+			extras = append(extras, "variant="+event.Variant)
+		}
+		if event.SessionID != "" {
+			extras = append(extras, "session="+event.SessionID)
+		}
+		payload := strings.TrimSpace(event.PayloadJSON)
+		if payload != "" && payload != "{}" {
+			extras = append(extras, "payload="+payload)
+		}
+		if len(extras) > 0 {
+			line += "  " + strings.Join(extras, "  ")
+		}
+		fmt.Println(line)
+	}
+	return nil
 }
 
 func (c *PlanShowCmd) Run(rc *runContext) error {
@@ -297,7 +671,7 @@ func (c *PlanMarkDoneCmd) Run(rc *runContext) error {
 		// lands somewhere real. Expires on process exit; future
 		// reaper sweeps clean it up.
 		sessID, err := store.CreateSession(rc.ctx, plandag.SessionOpts{
-			Mode:         plandag.SessionModePortable,
+			Mode:         plandag.SessionModeAttached,
 			Transport:    plandag.SessionTransportStdio,
 			PID:          os.Getpid(),
 			PIDStartTime: "operator",
@@ -384,6 +758,48 @@ func resolvePlan(ctx context.Context, store *plandag.Store, ref string, repo str
 		}
 	}
 	return nil, fmt.Errorf("no plan matching %q for this repo", ref)
+}
+
+func parseTaskStatuses(values []string) ([]plandag.TaskStatus, error) {
+	if len(values) == 0 {
+		return nil, nil
+	}
+	allowed := map[string]plandag.TaskStatus{
+		string(plandag.TaskStatusPending):              plandag.TaskStatusPending,
+		string(plandag.TaskStatusReady):                plandag.TaskStatusReady,
+		string(plandag.TaskStatusReadyPendingApproval): plandag.TaskStatusReadyPendingApproval,
+		string(plandag.TaskStatusBlocked):              plandag.TaskStatusBlocked,
+		string(plandag.TaskStatusRunning):              plandag.TaskStatusRunning,
+		string(plandag.TaskStatusDone):                 plandag.TaskStatusDone,
+		string(plandag.TaskStatusFailed):               plandag.TaskStatusFailed,
+		string(plandag.TaskStatusSkipped):              plandag.TaskStatusSkipped,
+		string(plandag.TaskStatusDecomposed):           plandag.TaskStatusDecomposed,
+	}
+	statuses := make([]plandag.TaskStatus, 0, len(values))
+	for _, value := range values {
+		status, ok := allowed[value]
+		if !ok {
+			return nil, fmt.Errorf("unknown task status %q", value)
+		}
+		statuses = append(statuses, status)
+	}
+	return statuses, nil
+}
+
+func latestTaskReason(ctx context.Context, store *plandag.Store, planID, taskID string) string {
+	events, err := store.ListTaskEvents(ctx, planID, taskID, 1)
+	if err != nil || len(events) == 0 {
+		return ""
+	}
+	payload := strings.TrimSpace(events[0].PayloadJSON)
+	if payload == "" || payload == "{}" {
+		return ""
+	}
+	parsed, err := plandag.ParseTaskPayload(payload)
+	if err == nil && parsed.Reason != "" {
+		return parsed.Reason
+	}
+	return payload
 }
 
 // trunc cuts s to n chars with an ellipsis.

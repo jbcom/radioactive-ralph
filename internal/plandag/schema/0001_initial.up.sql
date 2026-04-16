@@ -50,7 +50,7 @@ CREATE TABLE intents (
 CREATE INDEX intents_plan ON intents(plan_id, captured_at DESC);
 
 -- ──────────────────────────────────────────────────────────
--- analyses: Phase 2 artifact. Claude's structured output per intent.
+-- analyses: Phase 2 artifact. Planning-provider structured output per intent.
 -- ──────────────────────────────────────────────────────────
 CREATE TABLE analyses (
   id           INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -59,7 +59,7 @@ CREATE TABLE analyses (
   model        TEXT NOT NULL,                  -- e.g., 'opus'
   effort       TEXT NOT NULL,                  -- low|medium|high|max
   confidence   INTEGER,                        -- 0-100
-  raw_json     TEXT NOT NULL,                  -- full Claude output, frozen for replay
+  raw_json     TEXT NOT NULL,                  -- full provider output, frozen for replay
   completed_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -113,7 +113,7 @@ CREATE INDEX task_deps_dependent ON task_deps(plan_id, depends_on);
 
 -- ──────────────────────────────────────────────────────────
 -- parallelism_hints: Phase 2 clusters tasks that can run in
--- parallel. Supervisor uses these to batch claim+spawn.
+-- parallel. The repo service uses these to batch claim+spawn.
 -- ──────────────────────────────────────────────────────────
 CREATE TABLE parallelism_hints (
   plan_id  TEXT NOT NULL,
@@ -125,7 +125,7 @@ CREATE TABLE parallelism_hints (
 
 -- ──────────────────────────────────────────────────────────
 -- task_events: append-only audit log of every task state change.
--- Supervisor reaper + `ralph plan history` read from this.
+-- The repo service and `radioactive_ralph plan history` read from this.
 -- ──────────────────────────────────────────────────────────
 CREATE TABLE task_events (
   id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -133,7 +133,7 @@ CREATE TABLE task_events (
   task_id     TEXT NOT NULL,
   event_type  TEXT NOT NULL,                   -- claimed|started|progress|completed|failed|refined|reclaimed|decomposed|skipped
   variant     TEXT,                            -- which ralph
-  session_id  TEXT,                            -- owning MCP session
+  session_id  TEXT,                            -- owning provider session
   payload_json TEXT,                           -- free-form JSON for event-specific data
   occurred_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (plan_id, task_id) REFERENCES tasks(plan_id, id) ON DELETE CASCADE
@@ -143,14 +143,15 @@ CREATE INDEX task_events_task ON task_events(plan_id, task_id, occurred_at);
 CREATE INDEX task_events_session ON task_events(session_id, occurred_at) WHERE session_id IS NOT NULL;
 
 -- ──────────────────────────────────────────────────────────
--- sessions: every MCP server instance that's touched this DB.
--- Reaper deletes stale rows; `ralph status` reads from here.
+-- sessions: every attached run or durable repo-service instance that's
+-- touched this DB. Reaper deletes stale rows; `radioactive_ralph status` reads
+-- from here.
 -- ──────────────────────────────────────────────────────────
 CREATE TABLE sessions (
   id              TEXT PRIMARY KEY,            -- UUID v7
-  mode            TEXT NOT NULL,               -- portable|durable
-  transport       TEXT NOT NULL,               -- stdio|http|sse
-  pid             INTEGER,                     -- NULL for durable (service pid changes)
+  mode            TEXT NOT NULL,               -- attached|durable
+  transport       TEXT NOT NULL,               -- stdio|socket
+  pid             INTEGER,                     -- optional process id for the owning session
   pid_start_time  TEXT,                        -- from /proc or ps, recycling defense
   host            TEXT,                        -- hostname, for multi-machine registries
   started_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -159,7 +160,7 @@ CREATE TABLE sessions (
 
 CREATE INDEX sessions_heartbeat ON sessions(last_heartbeat DESC);
 
--- Which plan(s) is each session supervising? One-to-many.
+-- Which plan(s) is each session currently attached to? One-to-many.
 CREATE TABLE session_plans (
   session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
   plan_id    TEXT NOT NULL REFERENCES plans(id) ON DELETE CASCADE,

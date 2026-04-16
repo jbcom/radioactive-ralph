@@ -73,9 +73,11 @@ func TestAllIsSortedByName(t *testing.T) {
 
 func TestRegisterInvalidProfileReturnsError(t *testing.T) {
 	err := Register(Profile{
-		Name:          "x",
-		Isolation:     IsolationShared,
-		ToolAllowlist: []string{ToolWrite},
+		Name:            "x",
+		AttachedAllowed: true,
+		DurableAllowed:  true,
+		Isolation:       IsolationShared,
+		ToolAllowlist:   []string{ToolWrite},
 	})
 	if err == nil {
 		t.Fatal("expected error for invalid profile")
@@ -93,9 +95,11 @@ func TestMustRegisterPanicsOnInvalid(t *testing.T) {
 
 func TestResetRegistry(t *testing.T) {
 	extra := Profile{
-		Name:          "extra",
-		Isolation:     IsolationShared,
-		ToolAllowlist: []string{ToolRead},
+		Name:            "extra",
+		AttachedAllowed: true,
+		DurableAllowed:  true,
+		Isolation:       IsolationShared,
+		ToolAllowlist:   []string{ToolRead},
 	}
 	if err := Register(extra); err != nil {
 		t.Fatalf("Register: %v", err)

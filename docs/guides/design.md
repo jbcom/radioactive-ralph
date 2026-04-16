@@ -7,7 +7,7 @@ lastUpdated: 2026-04-15
 
 ## Vision
 
-radioactive-ralph is a little orchestration creature with a lot of different
+radioactive-ralph is a little runtime creature with a lot of different
 personalities who really wants to help any way he can.
 
 The product should feel like:
@@ -24,7 +24,7 @@ The repo got into trouble by trying to support too many identities at once:
 - plugin
 - marketplace add-on packaging
 - binary
-- HTTP MCP server
+- detached sidecar transports
 - provider-specific implementation
 - provider-agnostic future
 
@@ -34,8 +34,8 @@ The correct story is:
 
 - **binary first**
 - **personas in code**
-- **Claude via MCP**
-- **provider abstraction later**
+- **repo service + socket IPC**
+- **provider bindings as adapters, not product identity**
 
 ## Personality matters
 
@@ -48,8 +48,9 @@ the binary.
 
 ## Provider direction
 
-The long-term design goal is a declarative provider layer in repo config so a
-repo can bind Ralph to whatever agent CLI it wants, provided it defines:
+The runtime already ships a declarative provider layer in repo config so a
+repo can bind Ralph to whatever compatible agent CLI it wants, provided it
+defines:
 
 - how to run the tool
 - how to set model
@@ -58,4 +59,6 @@ repo can bind Ralph to whatever agent CLI it wants, provided it defines:
 - how to pass the operator/user prompt
 - what structured output format the runtime should parse
 
-Claude is simply the first supported provider.
+Claude, Codex, and Gemini ship today. More providers should fit the same
+binding contract rather than forcing the product to reinvent itself around
+each vendor.

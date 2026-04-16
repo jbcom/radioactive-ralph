@@ -1,9 +1,9 @@
 ---
 title: Safety floors & shell trust
-description: Non-negotiable guardrails the supervisor enforces, and how to opt into destructive operations.
+description: Non-negotiable guardrails the runtime enforces, and how to opt into destructive operations.
 ---
 
-Ralph manages autonomous Claude sessions that run for hours or days
+Ralph manages long-running provider sessions that run for hours or days
 without operator attention. **Safety floors** are the set of
 non-negotiable guardrails that keep those sessions from damaging the
 repo, the operator's machine, or the broader state of the world.
@@ -27,7 +27,7 @@ ensures every destructive op runs against a disposable clone.
 ### 2. Confirmation gates on destructive operations
 
 Before certain operations — force-push, `git reset --hard`, deleting
-non-merged branches — the supervisor raises a gate that blocks the
+non-merged branches — the runtime raises a gate that blocks the
 session until the operator confirms. Gates are defined per-variant
 in the variant profile.
 
@@ -51,49 +51,39 @@ attaching a worktree, and refuses to operate on a worktree whose
 origin is still HTTPS. Enforced in `internal/workspace`.
 
 **Why:** HTTPS remotes default to prompting for credentials, which
-freezes autonomous sessions indefinitely.
+freezes long-running sessions indefinitely.
 
 ### 5. Conventional commits
 
-The supervisor's system-prompt bias includes a conventional-commits
+The runtime's system-prompt bias includes a conventional-commits
 rule. Variants that don't honor it get their commits rejected at
 the commit-message hook level.
 
-### 6. `cmd.ExtraFiles` lifeline pipe
+### 6. Durable runtime ownership
 
-Every spawned variant subprocess holds a read handle on FD 3 tied to
-a pipe the supervisor owns. When the supervisor dies for any reason
-(clean exit, crash, SIGKILL, OOM), the child reads EOF and
-self-terminates within ~3 seconds. See `internal/variantpool/pool.go`
-and `internal/proclife` for the per-platform belt-and-suspenders.
+The durable repo service owns long-running work, worktree state, and provider
+subprocess execution. Attached runs are bounded specifically so the operator is
+not depending on orphaned background state.
 
-**Why:** without this, a supervisor that crashes leaves orphan Claude
-subprocesses burning API tokens indefinitely.
+**Why:** the runtime should be the only authority over durable execution.
 
-## `ShellExplicitlyTrusted`
+## Confirmation flow
 
-A single operator-set flag in `.radioactive-ralph/local.toml`
-(gitignored) that unlocks the confirmation gates for variants the
-operator has already vetted. It is **intentionally** machine-local:
-it cannot be committed to the repo or propagated across machines.
+The live runtime does not use a committed shell-trust block. Destructive
+variants are gated by explicit run-time confirmations and, where applicable,
+spend caps declared either by CLI flag or variant config. Operator intervention
+flows through:
 
-```toml
-# .radioactive-ralph/local.toml
-[shell]
-explicitly_trusted = true
-
-[shell.variants]
-# Per-variant grants — a blanket trust flag isn't enough; the variant
-# profile must also declare shell_trust_eligible = true.
-green = true
-```
-
-When both are present, the supervisor skips the shell-confirmation
-gate for that variant. All other floors (isolation, plans-first,
-SSH, lifeline) still apply.
+- `radioactive_ralph plan approvals`
+- `radioactive_ralph plan approve <plan> <task>`
+- `radioactive_ralph plan blocked`
+- `radioactive_ralph plan requeue <plan> <task>`
+- `radioactive_ralph plan retry <plan> <task>`
+- `radioactive_ralph plan handoff <plan> <task> <variant>`
 
 ## Auditing
 
 Every time a safety floor triggers — whether it passes or blocks —
-the supervisor writes an event into the plan DAG's `task_events`
-table. `radioactive_ralph plan history --events floor` surfaces them.
+the runtime writes an event into the plan DAG's `task_events`
+table. `radioactive_ralph plan history <plan> <task>` surfaces the
+per-task floor events.

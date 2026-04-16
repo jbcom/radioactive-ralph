@@ -6,22 +6,22 @@ import (
 )
 
 // renderSystemdUser returns a systemd user .service unit for the given
-// variant.
+// repo-scoped runtime.
 //
-// The unit runs `radioactive_ralph run --variant <name> --foreground` with
+// The unit runs `radioactive_ralph service start --foreground --repo-root <repo>` with
 // Restart=on-failure and systemd's own journal for stdout/stderr.
 // INVOCATION_ID is automatically set by systemd — no need to inject.
 func renderSystemdUser(opts InstallOptions) string {
 	var sb strings.Builder
 	sb.WriteString("[Unit]\n")
-	fmt.Fprintf(&sb, "Description=radioactive-ralph supervisor (%s)\n",
-		opts.Variant.Name)
+	fmt.Fprintf(&sb, "Description=radioactive-ralph durable runtime (%s)\n",
+		UnitName(BackendSystemdUser, opts.RepoPath))
 	sb.WriteString("After=network-online.target\n\n")
 
 	sb.WriteString("[Service]\n")
 	sb.WriteString("Type=simple\n")
-	fmt.Fprintf(&sb, "ExecStart=%s run --variant %s --foreground\n",
-		opts.RalphBin, opts.Variant.Name)
+	fmt.Fprintf(&sb, "ExecStart=%s service start --foreground --repo-root %s\n",
+		opts.RalphBin, opts.RepoPath)
 	if opts.RepoPath != "" {
 		fmt.Fprintf(&sb, "WorkingDirectory=%s\n", opts.RepoPath)
 	}
