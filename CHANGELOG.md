@@ -13,6 +13,13 @@ shipped. That means historical sections may still mention MCP, plugins,
 supervisors, or the archived Python implementation even though those are no
 longer part of the live contract.
 
+## [0.8.0](https://github.com/jbcom/radioactive-ralph/compare/v0.7.0...v0.8.0) (2026-04-16)
+
+
+### Features
+
+* ship repo service runtime ([#40](https://github.com/jbcom/radioactive-ralph/issues/40)) ([ba538cd](https://github.com/jbcom/radioactive-ralph/commit/ba538cd61e8cca21db66bbfd9cedef46c261d94d))
+
 ## [0.7.0](https://github.com/jbcom/radioactive-ralph/compare/v0.6.1...v0.7.0) (2026-04-15)
 
 
