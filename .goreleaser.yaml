@@ -90,8 +90,18 @@ brews:
     repository:
       owner: jbcom
       name: pkgs
-      branch: main
+      branch: "chore/update-radioactive-ralph-{{ .Version }}"
       token: "{{ .Env.JBCOM_PKGS_GITHUB_TOKEN }}"
+      # jbcom/pkgs main is governed by the enterprise Main ruleset
+      # which requires pull_request for all pushes. GoReleaser opens a
+      # PR from the version-named branch; jbcom/pkgs' automerge
+      # workflow takes it from there.
+      pull_request:
+        enabled: true
+        base:
+          owner: jbcom
+          name: pkgs
+          branch: main
     directory: Formula
     homepage: https://github.com/jbcom/radioactive-ralph
     description: Binary-first repo runtime with many Ralph personalities
@@ -124,8 +134,14 @@ scoops:
     repository:
       owner: jbcom
       name: pkgs
-      branch: main
+      branch: "chore/update-radioactive-ralph-{{ .Version }}"
       token: "{{ .Env.JBCOM_PKGS_GITHUB_TOKEN }}"
+      pull_request:
+        enabled: true
+        base:
+          owner: jbcom
+          name: pkgs
+          branch: main
     directory: bucket
     homepage: https://github.com/jbcom/radioactive-ralph
     description: Binary-first repo runtime with many Ralph personalities
