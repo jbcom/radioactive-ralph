@@ -37,7 +37,7 @@ defined.
 
 | Platform | Command |
 |---|---|
-| macOS / Linux (Homebrew) | `brew tap jbcom/pkgs && brew install radioactive-ralph` |
+| macOS / Linux (Homebrew) | `brew tap jbcom/pkgs https://github.com/jbcom/pkgs && brew install radioactive-ralph` |
 | Windows Scoop | `scoop bucket add jbcom https://github.com/jbcom/pkgs && scoop install radioactive-ralph` |
 | Windows Chocolatey | `choco install radioactive-ralph` |
 | macOS / Linux curl installer | <code>curl -sSL https://jonbogaty.com/radioactive-ralph/install.sh | sh</code> |

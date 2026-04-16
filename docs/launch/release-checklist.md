@@ -57,10 +57,12 @@ Every documented install command must match a real artifact. This is
 what `docs/getting-started/index.md` and the root `README.md` promise;
 confirm each one.
 
-- [ ] `brew tap jbcom/pkgs && brew install radioactive-ralph` —
+- [ ] `brew tap jbcom/pkgs https://github.com/jbcom/pkgs && brew install radioactive-ralph` —
       verified against `dist/homebrew/Formula/radioactive-ralph.rb`
       (formula class `RadioactiveRalph`, install name
-      `radioactive-ralph`, binary installed as `radioactive_ralph`)
+      `radioactive-ralph`, binary installed as `radioactive_ralph`).
+      The explicit URL form is required because the repo is
+      named `pkgs`, not `homebrew-pkgs`.
 - [ ] `scoop bucket add jbcom https://github.com/jbcom/pkgs && scoop install radioactive-ralph` —
       verified against `dist/scoop/bucket/radioactive-ralph.json`
 - [ ] `choco install radioactive-ralph` — verified against
@@ -149,7 +151,7 @@ Perform at least two of the following from a clean shell / machine.
 
 ```sh
 brew untap jbcom/pkgs 2>/dev/null
-brew tap jbcom/pkgs
+brew tap jbcom/pkgs https://github.com/jbcom/pkgs
 brew install radioactive-ralph
 radioactive_ralph --version
 ```

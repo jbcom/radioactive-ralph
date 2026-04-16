@@ -10,13 +10,16 @@ section.
 ## 1a. Homebrew (macOS, Linux, WSL2 + Linuxbrew)
 
 ```sh
-brew tap jbcom/pkgs
+# Explicit URL form — the repo is named `pkgs`, not `homebrew-pkgs`,
+# so the convention-shortcut `brew tap jbcom/pkgs` alone doesn't
+# resolve. Pass the URL and brew taps it correctly.
+brew tap jbcom/pkgs https://github.com/jbcom/pkgs
 brew install radioactive-ralph
 radioactive_ralph --version
 ```
 
 Expected: the version string matches whatever tag you're installing
-(e.g. `v0.7.0 (abc1234, built 2026-04-16T...)`).
+(e.g. `0.8.1 (99536d0, built 2026-04-16T...)`).
 
 ## 1b. Scoop (Windows)
 
