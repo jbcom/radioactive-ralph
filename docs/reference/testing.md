@@ -34,7 +34,8 @@ python3 -m tox -e docs
 
 | Check | Purpose |
 |-------|---------|
-| `go test ./...` on Ubuntu, macOS, and Windows | Native unit and integration coverage across the supported host platforms, including repo-service lifecycle and attach-stream smoke over the real local control plane |
+| `go test -race ./...` on Ubuntu and macOS | Native unit and integration coverage with the race detector on the Unix host platforms |
+| `go test ./...` on Windows | Native unit and integration coverage on the supported Windows host platform, paired with Windows-specific CLI and repo-service smoke |
 | CLI smoke on Ubuntu, macOS, and Windows | Verifies the built binary can execute the core help/doctor/service surface on each native runner |
 | Temp-repo smoke on Ubuntu, macOS, and Windows | Verifies repo init, basic plan-surface behavior, and the expected pre-service `status` failure against a fresh repo on each native runner |
 | Live repo-service IPC smoke on Ubuntu, macOS, and Windows | Launches `service start` on the native runner, polls `status` over the real local control plane, and verifies graceful `stop` against the live runtime |

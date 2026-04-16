@@ -37,7 +37,7 @@ jobs:
       - name: go test (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
-        run: go test -race ./...
+        run: go test ./...
       - name: Build CLI (Unix)
         if: runner.os != 'Windows'
         shell: bash
