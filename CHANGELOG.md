@@ -13,6 +13,13 @@ shipped. That means historical sections may still mention MCP, plugins,
 supervisors, or the archived Python implementation even though those are no
 longer part of the live contract.
 
+## [0.8.1](https://github.com/jbcom/radioactive-ralph/compare/v0.8.0...v0.8.1) (2026-04-16)
+
+
+### Bug Fixes
+
+* **release:** goreleaser opens PRs on jbcom/pkgs instead of direct push ([#42](https://github.com/jbcom/radioactive-ralph/issues/42)) ([d7233b6](https://github.com/jbcom/radioactive-ralph/commit/d7233b6f70f31328b5b59554900027fa38b42292))
+
 ## [0.8.0](https://github.com/jbcom/radioactive-ralph/compare/v0.7.0...v0.8.0) (2026-04-16)
 
 
