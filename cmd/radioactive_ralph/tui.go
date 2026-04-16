@@ -104,6 +104,8 @@ type taskSummary struct {
 	LatestEventType  string
 	LatestPayload    plandag.TaskEventPayload
 	AcceptanceJSON   string
+	DependsOn        []string
+	DependedBy       []string
 }
 
 type queueSnapshot struct {
@@ -704,6 +706,12 @@ func renderTaskDetail(task taskSummary, muted lipgloss.Style) string {
 		b.WriteString("acceptance:\n")
 		b.WriteString(accept)
 	}
+	if len(task.DependsOn) > 0 {
+		b.WriteString("depends_on: " + strings.Join(task.DependsOn, ", ") + "\n")
+	}
+	if len(task.DependedBy) > 0 {
+		b.WriteString("depended_by: " + strings.Join(task.DependedBy, ", ") + "\n")
+	}
 	return strings.TrimRight(b.String(), "\n")
 }
 
@@ -888,6 +896,12 @@ func loadQueueSnapshot(ctx context.Context, repo string) (queueSnapshot, error) 
 	}
 	for _, item := range items {
 		task := toTaskSummary(item)
+		// Best-effort dep enrichment — an error here doesn't kill the
+		// snapshot, we just leave the drilldown dep lines blank.
+		if deps, err := store.TaskDeps(ctx, item.PlanID, item.Task.ID); err == nil {
+			task.DependsOn = deps.DependsOn
+			task.DependedBy = deps.DependedBy
+		}
 		out.planTasks[item.PlanID] = appendTaskLimit(out.planTasks[item.PlanID], task, 12)
 		if plan := counts[item.PlanID]; plan != nil {
 			switch item.Task.Status {
