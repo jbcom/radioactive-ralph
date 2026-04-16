@@ -97,6 +97,50 @@ ubuntu-latest and (conditionally) `goreleaser release --clean
 - [ ] If `vars.ENABLE_CHOCOLATEY=true` and `secrets.CHOCOLATEY_API_KEY`
       set: nupkg published to <https://community.chocolatey.org/packages/radioactive-ralph>
 
+## 5a. Manual workflow dispatches (PRD § 4.2 native-host validation)
+
+Two workflow-dispatch jobs must be run manually — they require live
+secrets and real host runners that we don't want firing on every
+commit. Run both before calling a release validated.
+
+### Service managers — launchd / systemd-user / SCM
+
+```sh
+gh workflow run service-managers.yml --ref v<MAJ>.<MIN>.<PATCH>
+```
+
+- [ ] macOS launchd job green (registers + starts + stops a plist
+      under `~/Library/LaunchAgents/`)
+- [ ] Linux systemd-user job green (registers + starts + stops a
+      unit under `~/.config/systemd/user/`)
+- [ ] Windows SCM job green (registers + starts + stops an SCM
+      service, elevated)
+
+Scripts at `scripts/ci/smoke_{launchd,systemd_user}.sh` and
+`scripts/ci/smoke_windows_scm.ps1`. These are the same shell loops an
+operator would run by hand, so a green job here matches real-host
+behavior.
+
+### Live provider smoke
+
+Requires at least one of `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, or
+(`GEMINI_API_KEY` | `GOOGLE_API_KEY`) set at repo level.
+
+```sh
+gh workflow run provider-live.yml --ref v<MAJ>.<MIN>.<PATCH>
+```
+
+- [ ] Claude round-trip + model-sanity + runner-turn tests pass
+      (skipped if `ANTHROPIC_API_KEY` not set)
+- [ ] Codex runner-turn passes (skipped if `OPENAI_API_KEY` not set)
+- [ ] Gemini runner-turn passes (skipped if neither `GEMINI_API_KEY`
+      nor `GOOGLE_API_KEY` set)
+
+If a provider has no credentials configured, the skip is the
+correct behavior — v1 does not require all three providers to be
+authenticated. Record which providers were validated in the release
+notes.
+
 ## 6. Install-path smoke
 
 Perform at least two of the following from a clean shell / machine.

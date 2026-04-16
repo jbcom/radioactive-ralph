@@ -27,11 +27,22 @@ func combinePrompt(req Request) string {
 func runCommand(ctx context.Context, dir, bin string, args []string) (string, error) {
 	cmd := exec.CommandContext(ctx, bin, args...) //nolint:gosec // argv is runtime-controlled
 	cmd.Dir = dir
-	out, err := cmd.CombinedOutput()
+	// Capture stdout and stderr separately so success-path callers
+	// (gemini in particular) don't get warnings/progress lines folded
+	// into AssistantOutput. On failure we surface stderr in the
+	// wrapped error so operators can see why the CLI exited non-zero.
+	var stdout, stderr strings.Builder
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	err := cmd.Run()
 	if err != nil {
-		return "", fmt.Errorf("%s %s: %w\n%s", bin, strings.Join(args, " "), err, strings.TrimSpace(string(out)))
+		msg := strings.TrimSpace(stderr.String())
+		if msg == "" {
+			msg = strings.TrimSpace(stdout.String())
+		}
+		return "", fmt.Errorf("%s %s: %w\n%s", bin, strings.Join(args, " "), err, msg)
 	}
-	return strings.TrimSpace(string(out)), nil
+	return strings.TrimSpace(stdout.String()), nil
 }
 
 func withTempSchema(req Request) (schemaPath string, cleanup func(), err error) {
