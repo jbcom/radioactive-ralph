@@ -1,9 +1,16 @@
-# reference/ — archival Python snapshot
+# reference/ — archival Python snapshot (not part of the live runtime)
+
+> **Historical prototype.** This directory is frozen at v0.5.1 of the
+> pre-Go Python implementation. It is **not** the live product, is
+> **not** maintained, and is **not** shipped.
 
 This directory contains the original Python implementation of radioactive-ralph
-as it existed at v0.5.1. The project is being rewritten in Go — see
+as it existed at v0.5.1. The project was rewritten in Go — see
 [`../docs/plans/2026-04-14-radioactive-ralph-rewrite.prq.md`](../docs/plans/2026-04-14-radioactive-ralph-rewrite.prq.md)
-for the rationale and the four-milestone plan.
+for the rationale and the four-milestone plan, and
+[`../docs/plans/m2-audit.md`](../docs/plans/m2-audit.md) for a
+commit-by-commit map of what was ported, renamed, or intentionally
+dropped.
 
 Nothing here is maintained, supported, or part of the shipped product
 contract. It is preserved to:

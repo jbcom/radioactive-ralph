@@ -53,6 +53,7 @@ getting-started/index
 guides/index
 runbooks/index
 launch/index
+design/index
 variants/index
 reference/index
 api/index
