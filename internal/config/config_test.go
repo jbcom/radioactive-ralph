@@ -71,7 +71,7 @@ medium_effort = "medium"
 
 [providers.gemini]
 type = "gemini"
-binary = "gemini"
+bin = "gemini"
 
 [variants.green]
 provider = "gemini"
@@ -102,6 +102,9 @@ spend_cap_usd = 25.0
 	}
 	if f.Providers["codex"].Binary != "codex" {
 		t.Errorf("providers.codex.binary = %q", f.Providers["codex"].Binary)
+	}
+	if f.Providers["gemini"].Binary != "gemini" {
+		t.Errorf("providers.gemini.binary = %q, want bin alias to normalize", f.Providers["gemini"].Binary)
 	}
 	if f.Variants["green"].Provider != "gemini" {
 		t.Errorf("variants.green.provider = %q", f.Variants["green"].Provider)

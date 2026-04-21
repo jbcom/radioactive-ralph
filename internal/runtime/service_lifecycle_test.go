@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 
@@ -78,6 +80,36 @@ func TestServiceLifecycleOverIPC(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		cancel()
 		t.Fatal("service did not stop after Stop request")
+	}
+}
+
+func TestServiceStartRejectsInvalidDeclarativeProvider(t *testing.T) {
+	t.Setenv("RALPH_STATE_DIR", shortStateRoot(t))
+	repo := t.TempDir()
+	cfgDir := filepath.Join(repo, ".radioactive-ralph")
+	if err := os.MkdirAll(cfgDir, 0o700); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(cfgDir, "config.toml"), []byte(`
+default_provider = "bad"
+
+[providers.bad]
+type = "plain-stdout"
+binary = "sh"
+args = ["{modl}"]
+`), 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	svc, err := NewService(Options{RepoPath: repo})
+	if err != nil {
+		t.Fatalf("NewService: %v", err)
+	}
+	runCtx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	err = svc.Run(runCtx)
+	if err == nil || !strings.Contains(err.Error(), "unknown template token") {
+		t.Fatalf("Run error = %v, want unknown template token", err)
 	}
 }
 

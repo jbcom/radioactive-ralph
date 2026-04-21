@@ -211,6 +211,9 @@ func resolveFixitPlanningBinding(repo string, fromConfig config.VariantFile) (pr
 	if binding.Config.Binary == "" {
 		return provider.Binding{}, fmt.Errorf("provider %q has no configured binary", binding.Name)
 	}
+	if err := provider.ValidateBinding(binding); err != nil {
+		return provider.Binding{}, err
+	}
 	if _, err := exec.LookPath(binding.Config.Binary); err != nil {
 		return provider.Binding{}, fmt.Errorf("provider binary %q not on PATH", binding.Config.Binary)
 	}
