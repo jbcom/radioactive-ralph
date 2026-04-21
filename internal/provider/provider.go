@@ -79,6 +79,8 @@ func NewRunner(binding Binding) (Runner, error) {
 		return CodexRunner{}, nil
 	case "gemini":
 		return GeminiRunner{}, nil
+	case declarativePlainStdout, declarativeLastMessageFile, declarativeStreamJSON:
+		return DeclarativeRunner{}, nil
 	default:
 		return nil, fmt.Errorf("unsupported provider type %q", binding.Config.Type)
 	}

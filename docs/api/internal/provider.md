@@ -15,12 +15,15 @@ Package provider adapts configured CLI backends into radioactive\_ralph's provid
 
 ## Index
 
+- [func ValidateBinding\(binding Binding\) error](<#ValidateBinding>)
 - [type Binding](<#Binding>)
   - [func ResolveBinding\(cfg config.File, local config.Local, \_ variant.Profile, fromConfig config.VariantFile\) \(Binding, error\)](<#ResolveBinding>)
 - [type ClaudeRunner](<#ClaudeRunner>)
   - [func \(ClaudeRunner\) Run\(ctx context.Context, binding Binding, req Request\) \(Result, error\)](<#ClaudeRunner.Run>)
 - [type CodexRunner](<#CodexRunner>)
   - [func \(CodexRunner\) Run\(ctx context.Context, binding Binding, req Request\) \(Result, error\)](<#CodexRunner.Run>)
+- [type DeclarativeRunner](<#DeclarativeRunner>)
+  - [func \(DeclarativeRunner\) Run\(ctx context.Context, binding Binding, req Request\) \(Result, error\)](<#DeclarativeRunner.Run>)
 - [type GeminiRunner](<#GeminiRunner>)
   - [func \(GeminiRunner\) Run\(ctx context.Context, binding Binding, req Request\) \(Result, error\)](<#GeminiRunner.Run>)
 - [type Request](<#Request>)
@@ -28,6 +31,15 @@ Package provider adapts configured CLI backends into radioactive\_ralph's provid
 - [type Runner](<#Runner>)
   - [func NewRunner\(binding Binding\) \(Runner, error\)](<#NewRunner>)
 
+
+<a name="ValidateBinding"></a>
+## func [ValidateBinding](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/declarative.go#L158>)
+
+```go
+func ValidateBinding(binding Binding) error
+```
+
+ValidateBinding validates the parts of a binding that can be checked without spawning a provider turn.
 
 <a name="Binding"></a>
 ## type [Binding](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/provider.go#L15-L18>)
@@ -85,6 +97,24 @@ func (CodexRunner) Run(ctx context.Context, binding Binding, req Request) (Resul
 ```
 
 Run executes one non\-interactive Codex turn.
+
+<a name="DeclarativeRunner"></a>
+## type [DeclarativeRunner](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/declarative.go#L39>)
+
+DeclarativeRunner executes a config\-defined provider binding. It supports a small set of framing modes that cover the common provider CLI shapes without requiring a custom Go runner.
+
+```go
+type DeclarativeRunner struct{}
+```
+
+<a name="DeclarativeRunner.Run"></a>
+### func \(DeclarativeRunner\) [Run](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/declarative.go#L42>)
+
+```go
+func (DeclarativeRunner) Run(ctx context.Context, binding Binding, req Request) (Result, error)
+```
+
+Run executes one declarative provider turn.
 
 <a name="GeminiRunner"></a>
 ## type [GeminiRunner](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/gemini.go#L8>)

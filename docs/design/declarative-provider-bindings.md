@@ -1,15 +1,15 @@
 ---
-title: Declarative provider bindings (post-v1 design)
+title: Declarative provider bindings
 description: Config-only path for adding a compatible CLI provider without writing a new Go binding.
 ---
 
-# Declarative provider bindings (post-v1 design)
+# Declarative provider bindings
 
-> **Design doc, not landed.** This describes the direction tracked
-> in v1 PRD § 4.5 task 4 — a config-only way to add a new CLI
-> provider binding without writing a Go file. v1 ships with three
-> hand-written bindings (`claude`, `codex`, `gemini`). Declarative
-> bindings are planned for a later release.
+radioactive-ralph supports config-only provider bindings for CLIs
+that fit one of the supported I/O framings. The built-ins
+(`claude`, `codex`, `gemini`) still use hand-written Go runners for
+their edge cases, but additional compatible CLIs no longer require a
+new `internal/provider/<name>.go` file.
 
 ## Why declarative bindings
 
@@ -28,11 +28,11 @@ template, you can register it in `config.toml` and be done.*
 
 ```toml
 [providers.my-cli]
-# One of: stream-json | plain-stdout | last-message-file
+# One of: stream-json | plain-stdout | last-message-file.
 type = "stream-json"
 
 # Binary lookup: absolute path, or bare name resolved via $PATH.
-bin = "my-cli"
+binary = "my-cli"
 
 # Argv template. Tokens in {braces} are substituted at runtime.
 # Available tokens:
@@ -59,10 +59,6 @@ output_file = "{working_dir}/.my-cli/last.txt"
 turn_timeout = "10m"
 max_retries = 2
 
-# Session-resume: "stateful" means the runner threads SessionID
-# through; "stateless" means every turn is a fresh call.
-state_model = "stateless"
-
 # Optional: a session-id extractor. For stateful bindings the runner
 # needs to know how to pull the session id out of the output. A
 # regex against the final frame / output is enough for most CLIs.
@@ -79,7 +75,7 @@ frames as they arrive and returns the last `assistant.text`.
 
 This is the claude CLI framing and is the richest option — it lets
 the runner surface partial progress, tool-use intents, etc., to the
-supervisor event log.
+repo-service event log.
 
 ### `plain-stdout`
 
@@ -99,8 +95,9 @@ This is the codex shape with `--output-last-message`.
 
 ## Validation at load time
 
-On `service start`, the runtime expands every declarative binding
-against a synthetic `Request` and validates:
+On `service start`, the runtime resolves provider bindings for every
+built-in variant. Any selected declarative binding is validated before
+workers can spawn:
 
 - `bin` resolves on `$PATH` (fail loud if missing)
 - `args` template references only known tokens (no typos like
@@ -110,24 +107,17 @@ against a synthetic `Request` and validates:
 - `session_id_regex`, if present, compiles
 
 Any failure here is a hard error with a pointer to the misbehaving
-`[providers.<name>]` block. Validation runs before any worker spawn.
+`[providers.<name>]` block. Declarative provider blocks that are
+declared but not selected by `default_provider` or a variant override
+are left alone.
 
-## Migration path
+## Runtime path
 
-v1 keeps the three hand-written bindings in `internal/provider/`.
-When declarative bindings land:
-
-1. Add a new `declarative.go` runner that implements `Runner` and
-   reads its config from `Binding.Config`.
-2. `NewRunner` returns the declarative runner when
-   `Binding.Config.Type` is not one of the built-in type names.
-3. The three built-ins keep their hand-written runners (they handle
-   edge cases — session resume for claude, schema-file for codex —
-   that we don't want to relitigate).
-4. Docs shift `docs/design/provider-contract.md` § "Extension model"
-   to point at declarative as the default path, with "contribute a
-   Go binding" as the fallback for CLIs whose framing doesn't match
-   the three supported shapes.
+The implementation lives in `internal/provider/declarative.go`.
+`NewRunner` returns the declarative runner for the three supported
+framing types. The built-ins keep their hand-written runners because
+they handle provider-specific edge cases — session resume for Claude,
+schema-file handling for Codex, and Gemini's current CLI flags.
 
 ## Non-goals
 
@@ -137,7 +127,7 @@ When declarative bindings land:
 - **Multi-turn within one `Runner.Run` call** — the runtime already
   handles multi-turn via the claim loop + session resume. Declarative
   bindings don't try to batch multiple turns into one CLI invocation.
-- **Streaming back to the operator** — the supervisor's event log
+- **Streaming back to the operator** — the repo-service event log
   shows claim/start/finish, not assistant-token-level streaming.
   Streaming stays inside the runner.
 
@@ -146,7 +136,7 @@ When declarative bindings land:
 - Do we want a `providers_path` config option pointing at
   `~/.config/radioactive-ralph/providers.d/*.toml` so declarative
   bindings live outside the repo? Probably yes for user-scope
-  defaults; deferred to the implementation PR.
+  defaults, but repo-local config is the implemented path today.
 - How do declarative bindings handle `AllowedTools`? Most CLIs
   either always grant all tools or have a bespoke per-provider
   flag. First pass: ignore `AllowedTools` for declarative bindings;
@@ -161,4 +151,4 @@ When declarative bindings land:
 - Current contract: [`provider-contract.md`](./provider-contract.md)
 - Go interface: `internal/provider/provider.go::Runner`
 - Built-in bindings: `internal/provider/{claude,codex,gemini}.go`
-- v1 PRD tracking: `docs/plans/2026-04-16-v1-remaining-work.prd.md` § 4.5 task 4
+- Implementation: `internal/provider/declarative.go`

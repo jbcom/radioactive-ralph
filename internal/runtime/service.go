@@ -212,6 +212,9 @@ func (s *Service) loadRepoState() error {
 	if s.cfg.DefaultProvider == "" {
 		s.cfg.DefaultProvider = "claude"
 	}
+	if err := s.validateProviderBindings(); err != nil {
+		return err
+	}
 
 	sessionID, err := s.planStore.CreateSession(context.Background(), plandag.SessionOpts{
 		Mode:         s.opts.SessionMode,
@@ -224,6 +227,25 @@ func (s *Service) loadRepoState() error {
 		return fmt.Errorf("create durable session: %w", err)
 	}
 	s.sessionID = sessionID
+	return nil
+}
+
+func (s *Service) validateProviderBindings() error {
+	seen := map[string]bool{}
+	for _, profile := range variant.All() {
+		variantCfg := s.cfg.Variants[string(profile.Name)]
+		binding, err := provider.ResolveBinding(s.cfg, s.local, profile, variantCfg)
+		if err != nil {
+			return fmt.Errorf("provider binding for variant %s: %w", profile.Name, err)
+		}
+		if seen[binding.Name] {
+			continue
+		}
+		seen[binding.Name] = true
+		if err := provider.ValidateBinding(binding); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 

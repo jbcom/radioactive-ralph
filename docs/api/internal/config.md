@@ -79,7 +79,7 @@ var (
 ```
 
 <a name="IsMissingConfig"></a>
-## func [IsMissingConfig](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/config/config.go#L123>)
+## func [IsMissingConfig](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/config/config.go#L128>)
 
 ```go
 func IsMissingConfig(err error) bool
@@ -88,7 +88,7 @@ func IsMissingConfig(err error) bool
 IsMissingConfig reports whether err indicates a missing config.toml.
 
 <a name="IsMissingLocal"></a>
-## func [IsMissingLocal](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/config/config.go#L128>)
+## func [IsMissingLocal](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/config/config.go#L133>)
 
 ```go
 func IsMissingLocal(err error) bool
@@ -97,7 +97,7 @@ func IsMissingLocal(err error) bool
 IsMissingLocal reports whether err indicates a missing local.toml.
 
 <a name="LocalPath"></a>
-## func [LocalPath](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/config/config.go#L252>)
+## func [LocalPath](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/config/config.go#L263>)
 
 ```go
 func LocalPath(repoRoot string) string
@@ -106,7 +106,7 @@ func LocalPath(repoRoot string) string
 LocalPath returns the absolute path to local.toml for repoRoot.
 
 <a name="Path"></a>
-## func [Path](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/config/config.go#L247>)
+## func [Path](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/config/config.go#L258>)
 
 ```go
 func Path(repoRoot string) string
@@ -129,7 +129,7 @@ type File struct {
 ```
 
 <a name="Load"></a>
-### func [Load](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/config/config.go#L134>)
+### func [Load](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/config/config.go#L139>)
 
 ```go
 func Load(repoRoot string) (File, error)
@@ -138,7 +138,7 @@ func Load(repoRoot string) (File, error)
 Load parses the per\-repo config file\(s\) under repoRoot/.radioactive\-ralph/. It returns ErrMissingConfig if config.toml is absent.
 
 <a name="Local"></a>
-## type [Local](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/config/config.go#L105-L108>)
+## type [Local](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/config/config.go#L110-L113>)
 
 Local is the shape of local.toml \(gitignored per\-operator preferences\). Keeping it minimal on purpose — everything else belongs in config.toml.
 
@@ -150,7 +150,7 @@ type Local struct {
 ```
 
 <a name="LoadLocal"></a>
-### func [LoadLocal](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/config/config.go#L176>)
+### func [LoadLocal](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/config/config.go#L187>)
 
 ```go
 func LoadLocal(repoRoot string) (Local, error)
@@ -159,15 +159,20 @@ func LoadLocal(repoRoot string) (Local, error)
 LoadLocal parses the local.toml file under repoRoot/.radioactive\-ralph/. Returns ErrMissingLocal if absent; callers can decide whether to treat that as fatal or fall through to committed service defaults.
 
 <a name="ProviderFile"></a>
-## type [ProviderFile](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/config/config.go#L62-L75>)
+## type [ProviderFile](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/config/config.go#L62-L80>)
 
 ProviderFile declares how one named provider is invoked. The shape is intentionally generic.
 
 ```go
 type ProviderFile struct {
     Type                  string   `toml:"type"`
+    Bin                   string   `toml:"bin"`
     Binary                string   `toml:"binary"`
     Args                  []string `toml:"args"`
+    OutputFile            string   `toml:"output_file"`
+    TurnTimeout           string   `toml:"turn_timeout"`
+    MaxRetries            int      `toml:"max_retries"`
+    SessionIDRegex        string   `toml:"session_id_regex"`
     HaikuModel            string   `toml:"haiku_model"`
     SonnetModel           string   `toml:"sonnet_model"`
     OpusModel             string   `toml:"opus_model"`
@@ -181,7 +186,7 @@ type ProviderFile struct {
 ```
 
 <a name="DefaultClaudeProvider"></a>
-### func [DefaultClaudeProvider](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/config/config.go#L195>)
+### func [DefaultClaudeProvider](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/config/config.go#L206>)
 
 ```go
 func DefaultClaudeProvider() ProviderFile
@@ -190,7 +195,7 @@ func DefaultClaudeProvider() ProviderFile
 DefaultClaudeProvider returns the built\-in provider binding that uses the local \`claude\` CLI as the execution backend.
 
 <a name="DefaultCodexProvider"></a>
-### func [DefaultCodexProvider](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/config/config.go#L215>)
+### func [DefaultCodexProvider](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/config/config.go#L226>)
 
 ```go
 func DefaultCodexProvider() ProviderFile
@@ -199,7 +204,7 @@ func DefaultCodexProvider() ProviderFile
 DefaultCodexProvider returns the built\-in provider binding that uses the local \`codex\` CLI as the execution backend.
 
 <a name="DefaultGeminiProvider"></a>
-### func [DefaultGeminiProvider](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/config/config.go#L233>)
+### func [DefaultGeminiProvider](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/config/config.go#L244>)
 
 ```go
 func DefaultGeminiProvider() ProviderFile
@@ -223,7 +228,7 @@ type Service struct {
 ```
 
 <a name="VariantFile"></a>
-## type [VariantFile](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/config/config.go#L81-L101>)
+## type [VariantFile](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/config/config.go#L86-L106>)
 
 VariantFile is the per\-variant overrides block inside config.toml. Any field left zero\-valued falls through to the variant profile's hardcoded default, which falls through to Service, which falls through to project defaults. Safety floors may override any of these.
 

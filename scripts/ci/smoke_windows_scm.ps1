@@ -16,6 +16,34 @@ $state = Join-Path $tmp "state"
 New-Item -ItemType Directory -Force -Path $repo, $state | Out-Null
 
 $serviceName = $null
+$configPath = $null
+
+function Write-Diagnostics {
+  param([string]$Reason)
+
+  Write-Output "windows scm diagnostics: $Reason"
+  if ($serviceName) {
+    Write-Output "sc.exe queryex $serviceName"
+    sc.exe queryex $serviceName
+    Write-Output "sc.exe qc $serviceName"
+    sc.exe qc $serviceName
+  }
+  if ($configPath -and (Test-Path $configPath)) {
+    Write-Output "service config: $configPath"
+    Get-Content -Raw $configPath
+  }
+  if (Test-Path $state) {
+    Write-Output "state tree: $state"
+    Get-ChildItem -Force -Recurse $state | Select-Object FullName, Length, LastWriteTime | Format-Table -AutoSize
+  }
+  if ($serviceName) {
+    Write-Output "recent Service Control Manager events for $serviceName"
+    Get-WinEvent -FilterHashtable @{ LogName = 'System'; ProviderName = 'Service Control Manager'; StartTime = (Get-Date).AddMinutes(-10) } -ErrorAction SilentlyContinue |
+      Where-Object { $_.Message -like "*$serviceName*" } |
+      Select-Object TimeCreated, Id, LevelDisplayName, Message |
+      Format-List
+  }
+}
 
 function Cleanup {
   if ($serviceName) {
@@ -56,7 +84,7 @@ try {
     Start-Sleep -Seconds 1
   }
   if (-not $ready) {
-    sc.exe query $serviceName
+    Write-Diagnostics "service did not become ready"
     throw "windows scm service never became ready"
   }
 
@@ -73,7 +101,7 @@ try {
     Start-Sleep -Seconds 1
   }
   if (-not $stopped) {
-    sc.exe query $serviceName
+    Write-Diagnostics "service did not stop after stop request"
     throw "windows scm service never stopped"
   }
 

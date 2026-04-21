@@ -82,14 +82,33 @@ func TestClaudeAuthUsesAPIKey(t *testing.T) {
 	}
 }
 
-func TestCodexAuthUsesAPIKey(t *testing.T) {
-	t.Setenv("OPENAI_API_KEY", "test-token")
+func TestCodexAuthUsesLoginStatus(t *testing.T) {
 	check := checkCodexAuth(context.Background(), RunOptions{runCommand: fakeRunner(nil)})
 	if check.Severity != OK {
 		t.Fatalf("checkCodexAuth severity = %v, want OK", check.Severity)
 	}
+	if !strings.Contains(check.Detail, "authenticated") {
+		t.Fatalf("checkCodexAuth detail = %q", check.Detail)
+	}
+}
+
+func TestCodexAuthRequiresCLILoginWithAPIKey(t *testing.T) {
+	t.Setenv("OPENAI_API_KEY", "test-token")
+	runner := fakeRunner(map[string]struct {
+		out string
+		err error
+	}{
+		"codex login status": {err: errors.New("not authenticated")},
+	})
+	check := checkCodexAuth(context.Background(), RunOptions{runCommand: runner})
+	if check.Severity != WARN {
+		t.Fatalf("checkCodexAuth severity = %v, want WARN", check.Severity)
+	}
 	if !strings.Contains(check.Detail, "OPENAI_API_KEY") {
 		t.Fatalf("checkCodexAuth detail = %q", check.Detail)
+	}
+	if !strings.Contains(check.Remediate, "codex login --with-api-key") {
+		t.Fatalf("checkCodexAuth remediate = %q", check.Remediate)
 	}
 }
 

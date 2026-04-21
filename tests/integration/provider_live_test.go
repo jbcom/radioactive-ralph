@@ -122,12 +122,10 @@ func requireLiveCodex(t *testing.T) {
 	if _, err := exec.LookPath("codex"); err != nil {
 		t.Skip("codex binary not on PATH")
 	}
-	if os.Getenv("OPENAI_API_KEY") != "" {
-		return
-	}
 	cmd := exec.Command("codex", "login", "status")
-	if err := cmd.Run(); err != nil {
-		t.Skip("codex login status failed; skipping live codex runner smoke test")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("codex login status failed: %v\n%s", err, strings.TrimSpace(string(out)))
 	}
 }
 

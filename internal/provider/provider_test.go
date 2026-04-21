@@ -20,6 +20,9 @@ func TestNewRunnerSupportsBuiltins(t *testing.T) {
 		{name: "claude", typ: "claude"},
 		{name: "codex", typ: "codex"},
 		{name: "gemini", typ: "gemini"},
+		{name: "plain", typ: "plain-stdout"},
+		{name: "file", typ: "last-message-file"},
+		{name: "stream", typ: "stream-json"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -31,6 +34,111 @@ func TestNewRunnerSupportsBuiltins(t *testing.T) {
 				t.Fatalf("NewRunner(%s) returned nil runner", tc.typ)
 			}
 		})
+	}
+}
+
+func TestDeclarativePlainStdoutRunner(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell-script fake CLI is Unix-only")
+	}
+	bin := writeFakeCLI(t, "fake-plain.sh", `#!/bin/sh
+printf '%s' "$@"
+`)
+	result, err := DeclarativeRunner{}.Run(context.Background(), Binding{
+		Name: "plain",
+		Config: config.ProviderFile{
+			Type:   "plain-stdout",
+			Binary: bin,
+			Args:   []string{"--model={model}", "{prompt}"},
+		},
+	}, Request{
+		WorkingDir:   t.TempDir(),
+		SystemPrompt: "system",
+		UserPrompt:   `{"outcome":"done","summary":"plain ok","evidence":["plain"]}`,
+		Model:        variant.ModelSonnet,
+	})
+	if err != nil {
+		t.Fatalf("DeclarativeRunner.Run: %v", err)
+	}
+	if !strings.Contains(result.AssistantOutput, "plain ok") {
+		t.Fatalf("unexpected plain output: %q", result.AssistantOutput)
+	}
+}
+
+func TestDeclarativeLastMessageFileRunner(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell-script fake CLI is Unix-only")
+	}
+	bin := writeFakeCLI(t, "fake-file.sh", `#!/bin/sh
+out=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --out)
+      out="$2"
+      shift 2
+      ;;
+    *)
+      shift 1
+      ;;
+  esac
+done
+printf '%s' '{"outcome":"done","summary":"file ok","evidence":["file"]}' > "$out"
+`)
+	result, err := DeclarativeRunner{}.Run(context.Background(), Binding{
+		Name: "file",
+		Config: config.ProviderFile{
+			Type:   "last-message-file",
+			Binary: bin,
+			Args:   []string{"--out", "{output_file}"},
+		},
+	}, Request{WorkingDir: t.TempDir()})
+	if err != nil {
+		t.Fatalf("DeclarativeRunner.Run: %v", err)
+	}
+	if !strings.Contains(result.AssistantOutput, "file ok") {
+		t.Fatalf("unexpected file output: %q", result.AssistantOutput)
+	}
+}
+
+func TestDeclarativeStreamJSONRunner(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell-script fake CLI is Unix-only")
+	}
+	bin := writeFakeCLI(t, "fake-stream.sh", `#!/bin/sh
+printf '%s\n' '{"type":"system","session":"abc-123"}'
+printf '%s\n' '{"type":"assistant","text":"{\"outcome\":\"done\",\"summary\":\"stream ok\",\"evidence\":[\"stream\"]}"}'
+printf '%s\n' '{"type":"result","subtype":"success"}'
+`)
+	result, err := DeclarativeRunner{}.Run(context.Background(), Binding{
+		Name: "stream",
+		Config: config.ProviderFile{
+			Type:           "stream-json",
+			Binary:         bin,
+			SessionIDRegex: `"session":"([^"]+)"`,
+		},
+	}, Request{WorkingDir: t.TempDir(), OutputSchema: `{"type":"object"}`})
+	if err != nil {
+		t.Fatalf("DeclarativeRunner.Run: %v", err)
+	}
+	if result.SessionID != "abc-123" {
+		t.Fatalf("SessionID = %q, want abc-123", result.SessionID)
+	}
+	if !strings.Contains(result.AssistantOutput, "stream ok") {
+		t.Fatalf("unexpected stream output: %q", result.AssistantOutput)
+	}
+}
+
+func TestValidateBindingRejectsUnknownTemplateToken(t *testing.T) {
+	err := ValidateBinding(Binding{
+		Name: "bad",
+		Config: config.ProviderFile{
+			Type:   "plain-stdout",
+			Binary: "sh",
+			Args:   []string{"{modl}"},
+		},
+	})
+	if err == nil || !strings.Contains(err.Error(), "unknown template token") {
+		t.Fatalf("ValidateBinding error = %v, want unknown template token", err)
 	}
 }
 

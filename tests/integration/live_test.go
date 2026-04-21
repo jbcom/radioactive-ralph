@@ -27,10 +27,11 @@ func TestLiveClaudeRoundTrip(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
+	workDir := t.TempDir()
 
 	// Spawn the session.
 	s, err := claudesession.Spawn(ctx, claudesession.Options{
-		WorkingDir: t.TempDir(),
+		WorkingDir: workDir,
 		// Keep the prompt minimal so the reply is small and fast.
 		SystemPrompt: "You respond with exactly one word and nothing else.",
 		Model:        "haiku", // cheapest tier
@@ -81,7 +82,7 @@ func TestLiveClaudeRoundTrip(t *testing.T) {
 
 	// Resume. Sentinel verifies conversation continuity.
 	s2, err := claudesession.Spawn(ctx, claudesession.Options{
-		WorkingDir:     t.TempDir(),
+		WorkingDir:     workDir,
 		SystemPrompt:   "You respond with exactly one word and nothing else.",
 		Model:          "haiku",
 		SessionID:      sessionID,

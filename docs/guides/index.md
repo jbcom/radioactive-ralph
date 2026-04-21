@@ -8,6 +8,7 @@ lastUpdated: 2026-04-15
 | Guide | What it covers |
 |---|---|
 | [Runtime surfaces](./transports.md) | How `service`, attached `run`, and `tui` fit together |
+| [TUI cockpit](./tui.md) | Keyboard shortcuts, queue views, and operator actions in the socket-backed cockpit |
 | [Plan format](./plan-format.md) | How repo-visible plan markdown and the live DAG store relate, plus what `plan import` accepts |
 | [Fixit delegation](./fixit-delegation.md) | How fixit advisor mode writes recommendation docs and seeds the durable plan DAG |
 | [Cassette VCR](./cassette-vcr.md) | Deterministic replay for the Claude provider backend tests |
@@ -21,12 +22,12 @@ lastUpdated: 2026-04-15
 :hidden:
 
 transports
+tui
 plan-format
 fixit-delegation
 cassette-vcr
 safety-floors
 design
-../design/fixit-plan-pipeline
 launch
 demo
 ```

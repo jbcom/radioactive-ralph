@@ -28,9 +28,10 @@ acts, and spends effort.
 - Providers are configured in `.radioactive-ralph/config.toml` with a
   repo-level `default_provider` and named `[providers.<name>]` blocks.
 
-The v1 shipped providers are `claude`, `codex`, and `gemini`. The runtime
-model is broader: Ralph personas live in code, and repositories can bind any
-compatible CLI provider once the prompt/model/effort/output contract is
+The shipped providers are `claude`, `codex`, and `gemini`. The runtime model
+is broader: Ralph personas live in code, and repositories can bind compatible
+CLI providers through declarative `plain-stdout`, `last-message-file`, or
+`stream-json` provider blocks when the prompt/model/effort/output contract is
 defined.
 
 ## Install
@@ -39,7 +40,6 @@ defined.
 |---|---|
 | macOS / Linux (Homebrew) | `brew tap jbcom/pkgs https://github.com/jbcom/pkgs && brew install radioactive-ralph` |
 | Windows Scoop | `scoop bucket add jbcom https://github.com/jbcom/pkgs && scoop install radioactive-ralph` |
-| Windows Chocolatey | `choco install radioactive-ralph` |
 | macOS / Linux curl installer | <code>curl -sSL https://jonbogaty.com/radioactive-ralph/install.sh | sh</code> |
 
 ## Start a repo
@@ -114,9 +114,8 @@ radioactive_ralph plan mark-done <id-or-slug> <task-id>
 
 ## Contributing
 
-See [AGENTS.md](/Users/jbogaty/src/jbcom/radioactive-ralph/AGENTS.md),
-[STANDARDS.md](/Users/jbogaty/src/jbcom/radioactive-ralph/STANDARDS.md), and
-[docs/reference/testing.md](/Users/jbogaty/src/jbcom/radioactive-ralph/docs/reference/testing.md).
+See [AGENTS.md](./AGENTS.md), [STANDARDS.md](./STANDARDS.md), and
+[docs/reference/testing.md](./docs/reference/testing.md).
 
 ```bash
 go test ./...

@@ -17,7 +17,8 @@ Execute top-to-bottom. Every step has a concrete verification — no
 - [ ] `go vet ./...` is clean
 - [ ] `golangci-lint run` is clean
 - [ ] `bash scripts/validate-docs.sh` passes
-- [ ] `python3 -m tox -e docs` builds the Sphinx site cleanly
+- [ ] `python3 -m tox -e docs` builds the Sphinx site cleanly, without
+      unexpected warnings
 - [ ] No `CHANGELOG.md` entries for the upcoming version left as `[TBD]`
 - [ ] No open `P0` issues in the milestone
 
@@ -65,12 +66,11 @@ confirm each one.
       named `pkgs`, not `homebrew-pkgs`.
 - [ ] `scoop bucket add jbcom https://github.com/jbcom/pkgs && scoop install radioactive-ralph` —
       verified against `dist/scoop/bucket/radioactive-ralph.json`
-- [ ] `choco install radioactive-ralph` — verified against
-      `.goreleaser.chocolatey.yaml` `chocolateys[0].name:
-      radioactive-ralph`
 - [ ] `curl -sSL https://jonbogaty.com/radioactive-ralph/install.sh | sh` —
       verified against `site/public/install.sh`: `BIN` matches binary
       name, `ARCHIVE` template matches GoReleaser naming
+- [ ] Public install docs expose only the stable install surface:
+      Homebrew, Scoop, and the curl installer.
 
 ## 4. Tag + push
 
@@ -81,7 +81,8 @@ git push origin v<MAJ>.<MIN>.<PATCH>
 
 - [ ] Tag pushed to origin
 - [ ] `Release` workflow triggered on the tag
-- [ ] `Chocolatey` workflow triggered via `needs: goreleaser`
+- [ ] Optional Chocolatey job is either disabled or recorded separately
+      from the stable install-surface gate
 
 ## 5. Post-tag hosted verification
 
@@ -125,23 +126,22 @@ behavior.
 
 ### Live provider smoke
 
-Requires at least one of `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, or
-(`GEMINI_API_KEY` | `GOOGLE_API_KEY`) set at repo level.
+Requires all shipped-provider secrets at repo level:
+`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, and either `GEMINI_API_KEY` or
+`GOOGLE_API_KEY`. For Codex, the workflow converts `OPENAI_API_KEY`
+into a headless `codex login` before enabling the live smoke.
 
 ```sh
 gh workflow run provider-live.yml --ref v<MAJ>.<MIN>.<PATCH>
 ```
 
 - [ ] Claude round-trip + model-sanity + runner-turn tests pass
-      (skipped if `ANTHROPIC_API_KEY` not set)
-- [ ] Codex runner-turn passes (skipped if `OPENAI_API_KEY` not set)
-- [ ] Gemini runner-turn passes (skipped if neither `GEMINI_API_KEY`
-      nor `GOOGLE_API_KEY` set)
+- [ ] Codex runner-turn passes; the headless `codex login` preflight
+      must succeed
+- [ ] Gemini runner-turn passes
 
-If a provider has no credentials configured, the skip is the
-correct behavior — v1 does not require all three providers to be
-authenticated. Record which providers were validated in the release
-notes.
+Provider skips are acceptable for local development, but not for the
+stable-release gate.
 
 ## 6. Install-path smoke
 
@@ -231,8 +231,10 @@ Do NOT `git tag -d` a pushed tag. If the tag itself needs to move,
 open a new patch release and deprecate the bad one in the release
 notes.
 
-## Deferred — not blocking
+## 10. Tooling warning
 
 - The `brews:` block in `.goreleaser.yaml` is deprecated in GoReleaser
-  v2 in favor of `homebrew_casks`. Migration is a follow-on; the
-  current block still produces the expected formula.
+  v2 in favor of `homebrew_casks`. `goreleaser check` must still pass
+  and the generated formula must still match the documented Homebrew
+  install path. If the installed GoReleaser version stops accepting
+  `brews:`, migrate before tagging.

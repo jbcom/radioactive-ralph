@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -20,6 +21,7 @@ import (
 const (
 	tabOverview = iota
 	tabPlans
+	tabReady
 	tabApprovals
 	tabBlocked
 	tabRunning
@@ -27,7 +29,7 @@ const (
 	tabEvents
 )
 
-var tabNames = []string{"overview", "plans", "approvals", "blocked", "running", "failed", "events"}
+var tabNames = []string{"overview", "plans", "ready", "approvals", "blocked", "running", "failed", "events"}
 
 type TUICmd struct {
 	RepoRoot    string `help:"Repo root. Defaults to cwd." type:"path"`
@@ -92,20 +94,22 @@ type planSummary struct {
 }
 
 type taskSummary struct {
-	PlanID           string
-	PlanSlug         string
-	PlanTitle        string
-	TaskID           string
-	Description      string
-	VariantHint      string
-	AssignedTo       string
-	ClaimedBySession string
-	Status           plandag.TaskStatus
-	LatestEventType  string
-	LatestPayload    plandag.TaskEventPayload
-	AcceptanceJSON   string
-	DependsOn        []string
-	DependedBy       []string
+	PlanID            string
+	PlanSlug          string
+	PlanTitle         string
+	TaskID            string
+	Description       string
+	VariantHint       string
+	AssignedTo        string
+	Provider          string
+	ProviderSessionID string
+	ClaimedBySession  string
+	Status            plandag.TaskStatus
+	LatestEventType   string
+	LatestPayload     plandag.TaskEventPayload
+	AcceptanceJSON    string
+	DependsOn         []string
+	DependedBy        []string
 }
 
 type queueSnapshot struct {
@@ -139,6 +143,8 @@ type tuiModel struct {
 	tab            int
 	cursors        map[int]int
 	selectedPlanID string
+	variantFilter  string
+	providerFilter string
 	inputMode      inputMode
 	input          string
 	showHelp       bool
@@ -247,6 +253,16 @@ func (m *tuiModel) updateNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 		}
 		return m, nil
+	case "v":
+		m.cycleVariantFilter()
+		return m, nil
+	case "p":
+		m.cycleProviderFilter()
+		return m, nil
+	case "c":
+		m.variantFilter = ""
+		m.providerFilter = ""
+		return m, nil
 	case "r":
 		return m, manualRefreshCmd(m.socket)
 	case "s":
@@ -334,11 +350,16 @@ func (m *tuiModel) View() string {
 	if !m.serviceRunning {
 		statusLine = errStyle.Render("repo service disconnected")
 	}
+	filterLine := m.filterLine(muted)
 
 	var b strings.Builder
 	b.WriteString(title)
 	b.WriteString("\n")
 	b.WriteString(statusLine)
+	if filterLine != "" {
+		b.WriteString("\n")
+		b.WriteString(filterLine)
+	}
 	if m.serviceStarted && m.serviceLog != "" {
 		b.WriteString("\n")
 		b.WriteString(muted.Render("autostarted service log: " + m.serviceLog))
@@ -352,14 +373,16 @@ func (m *tuiModel) View() string {
 		b.WriteString(m.renderOverview(label, muted))
 	case tabPlans:
 		b.WriteString(m.renderPlans(label, muted))
+	case tabReady:
+		b.WriteString(m.renderTaskList("Ready Tasks", m.filteredTasks(m.snapshot.ready), label, muted))
 	case tabApprovals:
-		b.WriteString(m.renderTaskList("Waiting Approval", m.snapshot.approvals, label, muted))
+		b.WriteString(m.renderTaskList("Waiting Approval", m.filteredTasks(m.snapshot.approvals), label, muted))
 	case tabBlocked:
-		b.WriteString(m.renderTaskList("Blocked Tasks", m.snapshot.blocked, label, muted))
+		b.WriteString(m.renderTaskList("Blocked Tasks", m.filteredTasks(m.snapshot.blocked), label, muted))
 	case tabRunning:
 		b.WriteString(m.renderRunning(label, muted))
 	case tabFailed:
-		b.WriteString(m.renderTaskList("Failed Tasks", m.snapshot.failed, label, muted))
+		b.WriteString(m.renderTaskList("Failed Tasks", m.filteredTasks(m.snapshot.failed), label, muted))
 	case tabEvents:
 		b.WriteString(m.renderEvents(label, muted))
 	}
@@ -376,7 +399,7 @@ func (m *tuiModel) View() string {
 	if m.showHelp {
 		b.WriteString(renderHelpOverlay(label, muted))
 	} else {
-		b.WriteString(muted.Render("keys: tab/←→ switch • ↑↓ move • r refresh • s stop • S start • a approve • R requeue • t retry • h handoff • d done • f fail • ? help • q quit"))
+		b.WriteString(muted.Render("keys: tab/←→ switch • ↑↓ move • v/p filters • c clear • r refresh • s stop • S start • a approve • R requeue • t retry • h handoff • d done • f fail • ? help • q quit"))
 	}
 	return b.String()
 }
@@ -395,6 +418,11 @@ func renderHelpOverlay(label, muted lipgloss.Style) string {
 	b.WriteString("  j / ↓               cursor down\n")
 	b.WriteString("  k / ↑               cursor up\n")
 	b.WriteString("  enter               select plan (on Plans tab)\n\n")
+	b.WriteString(label.Render("Filters"))
+	b.WriteString("\n")
+	b.WriteString("  v                   cycle variant filter\n")
+	b.WriteString("  p                   cycle provider filter\n")
+	b.WriteString("  c                   clear filters\n\n")
 	b.WriteString(label.Render("Service"))
 	b.WriteString("\n")
 	b.WriteString("  r                   refresh status now\n")
@@ -494,7 +522,7 @@ func (m *tuiModel) renderPlans(label, muted lipgloss.Style) string {
 	b.WriteString(label.Render("Selected Plan"))
 	b.WriteString("\n")
 	fmt.Fprintf(&b, "%s\n%s\nstatus=%s\n", selected.Title, selected.Slug, selected.Status)
-	tasks := m.snapshot.planTasks[selected.ID]
+	tasks := m.filteredTasks(m.snapshot.planTasks[selected.ID])
 	if len(tasks) == 0 {
 		b.WriteString(muted.Render("no tracked tasks in the current plan snapshot"))
 		b.WriteString("\n")
@@ -537,7 +565,7 @@ func (m *tuiModel) renderTaskList(title string, tasks []taskSummary, label, mute
 
 func (m *tuiModel) renderRunning(label, muted lipgloss.Style) string {
 	var b strings.Builder
-	b.WriteString(m.renderTaskList("Running Tasks", m.snapshot.running, label, muted))
+	b.WriteString(m.renderTaskList("Running Tasks", m.filteredTasks(m.snapshot.running), label, muted))
 	b.WriteString("\n")
 	b.WriteString(label.Render("Worker Sessions"))
 	b.WriteString("\n")
@@ -600,14 +628,16 @@ func (m *tuiModel) currentListLength() int {
 	switch m.tab {
 	case tabPlans:
 		return len(m.snapshot.plans)
+	case tabReady:
+		return len(m.filteredTasks(m.snapshot.ready))
 	case tabApprovals:
-		return len(m.snapshot.approvals)
+		return len(m.filteredTasks(m.snapshot.approvals))
 	case tabBlocked:
-		return len(m.snapshot.blocked)
+		return len(m.filteredTasks(m.snapshot.blocked))
 	case tabRunning:
-		return len(m.snapshot.running)
+		return len(m.filteredTasks(m.snapshot.running))
 	case tabFailed:
-		return len(m.snapshot.failed)
+		return len(m.filteredTasks(m.snapshot.failed))
 	default:
 		return 0
 	}
@@ -627,14 +657,16 @@ func (m *tuiModel) currentPlan() *planSummary {
 func (m *tuiModel) currentTask() *taskSummary {
 	var tasks []taskSummary
 	switch m.tab {
+	case tabReady:
+		tasks = m.filteredTasks(m.snapshot.ready)
 	case tabApprovals:
-		tasks = m.snapshot.approvals
+		tasks = m.filteredTasks(m.snapshot.approvals)
 	case tabBlocked:
-		tasks = m.snapshot.blocked
+		tasks = m.filteredTasks(m.snapshot.blocked)
 	case tabRunning:
-		tasks = m.snapshot.running
+		tasks = m.filteredTasks(m.snapshot.running)
 	case tabFailed:
-		tasks = m.snapshot.failed
+		tasks = m.filteredTasks(m.snapshot.failed)
 	default:
 		return nil
 	}
@@ -646,6 +678,139 @@ func (m *tuiModel) currentTask() *taskSummary {
 		cursor = 0
 	}
 	return &tasks[cursor]
+}
+
+func (m *tuiModel) filterLine(muted lipgloss.Style) string {
+	var parts []string
+	if m.variantFilter != "" {
+		parts = append(parts, "variant="+m.variantFilter)
+	}
+	if m.providerFilter != "" {
+		parts = append(parts, "provider="+m.providerFilter)
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return muted.Render("filters: " + strings.Join(parts, "  "))
+}
+
+func (m *tuiModel) cycleVariantFilter() {
+	m.variantFilter = nextFilter(m.variantFilter, m.availableVariants())
+	m.resetVisibleCursor()
+}
+
+func (m *tuiModel) cycleProviderFilter() {
+	m.providerFilter = nextFilter(m.providerFilter, m.availableProviders())
+	m.resetVisibleCursor()
+}
+
+func (m *tuiModel) resetVisibleCursor() {
+	m.cursors[tabReady] = 0
+	m.cursors[tabApprovals] = 0
+	m.cursors[tabBlocked] = 0
+	m.cursors[tabRunning] = 0
+	m.cursors[tabFailed] = 0
+}
+
+func (m *tuiModel) availableVariants() []string {
+	values := map[string]bool{}
+	for _, task := range m.allTasks() {
+		if value := taskVariantLabel(task); value != "" {
+			values[value] = true
+		}
+	}
+	for _, worker := range m.status.Workers {
+		if worker.Variant != "" {
+			values[worker.Variant] = true
+		}
+	}
+	return sortedKeys(values)
+}
+
+func (m *tuiModel) availableProviders() []string {
+	values := map[string]bool{}
+	for _, task := range m.allTasks() {
+		if value := taskProviderLabel(task); value != "" {
+			values[value] = true
+		}
+	}
+	for _, worker := range m.status.Workers {
+		if worker.Provider != "" {
+			values[worker.Provider] = true
+		}
+	}
+	return sortedKeys(values)
+}
+
+func (m *tuiModel) allTasks() []taskSummary {
+	out := make([]taskSummary, 0,
+		len(m.snapshot.ready)+len(m.snapshot.approvals)+len(m.snapshot.blocked)+
+			len(m.snapshot.running)+len(m.snapshot.failed))
+	out = append(out, m.snapshot.ready...)
+	out = append(out, m.snapshot.approvals...)
+	out = append(out, m.snapshot.blocked...)
+	out = append(out, m.snapshot.running...)
+	out = append(out, m.snapshot.failed...)
+	return out
+}
+
+func (m *tuiModel) filteredTasks(tasks []taskSummary) []taskSummary {
+	if m.variantFilter == "" && m.providerFilter == "" {
+		return tasks
+	}
+	out := make([]taskSummary, 0, len(tasks))
+	for _, task := range tasks {
+		if m.variantFilter != "" && taskVariantLabel(task) != m.variantFilter {
+			continue
+		}
+		if m.providerFilter != "" && taskProviderLabel(task) != m.providerFilter {
+			continue
+		}
+		out = append(out, task)
+	}
+	return out
+}
+
+func nextFilter(current string, values []string) string {
+	if len(values) == 0 {
+		return ""
+	}
+	cycle := append([]string{""}, values...)
+	for idx, value := range cycle {
+		if value == current {
+			return cycle[(idx+1)%len(cycle)]
+		}
+	}
+	return cycle[1]
+}
+
+func sortedKeys(values map[string]bool) []string {
+	out := make([]string, 0, len(values))
+	for value := range values {
+		out = append(out, value)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func taskVariantLabel(task taskSummary) string {
+	switch {
+	case task.AssignedTo != "":
+		return task.AssignedTo
+	case task.VariantHint != "":
+		return task.VariantHint
+	case task.LatestPayload.HandoffTo != "":
+		return task.LatestPayload.HandoffTo
+	default:
+		return ""
+	}
+}
+
+func taskProviderLabel(task taskSummary) string {
+	if task.Provider != "" {
+		return task.Provider
+	}
+	return task.LatestPayload.Provider
 }
 
 func renderTabs(active int, activeStyle, muted lipgloss.Style) string {
@@ -669,6 +834,9 @@ func renderTaskLine(task taskSummary) string {
 	if task.AssignedTo != "" {
 		extras = append(extras, "assigned="+task.AssignedTo)
 	}
+	if task.Provider != "" {
+		extras = append(extras, "provider="+task.Provider)
+	}
 	if task.LatestPayload.HandoffTo != "" {
 		extras = append(extras, "handoff_to="+task.LatestPayload.HandoffTo)
 	}
@@ -685,6 +853,12 @@ func renderTaskDetail(task taskSummary, muted lipgloss.Style) string {
 	b.WriteString("\n")
 	if task.LatestEventType != "" {
 		b.WriteString("latest_event=" + task.LatestEventType + "\n")
+	}
+	if task.Provider != "" {
+		b.WriteString("provider=" + task.Provider + "\n")
+	}
+	if task.ProviderSessionID != "" {
+		b.WriteString("provider_session_id=" + task.ProviderSessionID + "\n")
 	}
 	if task.LatestPayload.Reason != "" {
 		b.WriteString("reason=" + task.LatestPayload.Reason + "\n")
@@ -934,19 +1108,22 @@ func loadQueueSnapshot(ctx context.Context, repo string) (queueSnapshot, error) 
 }
 
 func toTaskSummary(item plandag.RepoTaskSummary) taskSummary {
+	payload := parseTaskPayload(item.LatestPayloadJSON)
 	return taskSummary{
-		PlanID:           item.PlanID,
-		PlanSlug:         item.PlanSlug,
-		PlanTitle:        item.PlanTitle,
-		TaskID:           item.Task.ID,
-		Description:      item.Task.Description,
-		VariantHint:      item.Task.VariantHint,
-		AssignedTo:       item.Task.AssignedVariant,
-		ClaimedBySession: item.Task.ClaimedBySession,
-		Status:           item.Task.Status,
-		LatestEventType:  item.LatestEventType,
-		LatestPayload:    parseTaskPayload(item.LatestPayloadJSON),
-		AcceptanceJSON:   item.Task.AcceptanceJSON,
+		PlanID:            item.PlanID,
+		PlanSlug:          item.PlanSlug,
+		PlanTitle:         item.PlanTitle,
+		TaskID:            item.Task.ID,
+		Description:       item.Task.Description,
+		VariantHint:       item.Task.VariantHint,
+		AssignedTo:        item.Task.AssignedVariant,
+		Provider:          payload.Provider,
+		ProviderSessionID: payload.ProviderSessionID,
+		ClaimedBySession:  item.Task.ClaimedBySession,
+		Status:            item.Task.Status,
+		LatestEventType:   item.LatestEventType,
+		LatestPayload:     payload,
+		AcceptanceJSON:    item.Task.AcceptanceJSON,
 	}
 }
 

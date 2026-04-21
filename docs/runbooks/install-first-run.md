@@ -1,6 +1,6 @@
 ---
 title: Install + first run
-description: Install the radioactive_ralph binary, initialize a repo, and do a first supervised run.
+description: Install the radioactive_ralph binary, initialize a repo, and do a first runner-backed run.
 ---
 
 This is the canonical first-time flow. Use the package-manager path
@@ -29,18 +29,7 @@ scoop install radioactive-ralph
 radioactive_ralph --version
 ```
 
-## 1c. Chocolatey (Windows)
-
-```powershell
-choco install radioactive-ralph
-radioactive_ralph --version
-```
-
-Chocolatey publishing is gated behind the repo's `ENABLE_CHOCOLATEY`
-variable; older releases may not have a nupkg. Fall back to Scoop if
-`choco install` reports "not found".
-
-## 1d. curl installer (macOS, Linux, WSL2)
+## 1c. curl installer (macOS, Linux, WSL2)
 
 ```sh
 curl -sSL https://jonbogaty.com/radioactive-ralph/install.sh | sh
@@ -124,7 +113,7 @@ With a plan in place, any non-fixit variant can claim tasks:
 radioactive_ralph run --variant grey
 ```
 
-The supervisor polls the DAG for ready tasks, dispatches each to the
+The runner polls the DAG for ready tasks, dispatches each to the
 provider subprocess (your configured Claude / Codex / Gemini), and
 marks tasks done/failed based on acceptance criteria.
 
