@@ -2,8 +2,10 @@ package doctor
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"runtime"
 	"time"
 )
@@ -84,6 +86,14 @@ func checkCodexAuth(ctx context.Context, cfg RunOptions) Check {
 	})
 	if err == nil {
 		return Check{Name: "codex auth", Severity: OK, Detail: "authenticated"}
+	}
+	if errors.Is(err, exec.ErrNotFound) {
+		return Check{
+			Name:      "codex auth",
+			Severity:  WARN,
+			Detail:    "codex CLI not found on PATH; auth check skipped",
+			Remediate: "install Codex CLI so the `codex` provider binding is usable",
+		}
 	}
 	if os.Getenv("OPENAI_API_KEY") != "" {
 		return Check{

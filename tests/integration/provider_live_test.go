@@ -122,7 +122,9 @@ func requireLiveCodex(t *testing.T) {
 	if _, err := exec.LookPath("codex"); err != nil {
 		t.Skip("codex binary not on PATH")
 	}
-	cmd := exec.Command("codex", "login", "status")
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "codex", "login", "status")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("codex login status failed: %v\n%s", err, strings.TrimSpace(string(out)))

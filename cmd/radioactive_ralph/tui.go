@@ -1054,7 +1054,7 @@ func loadQueueSnapshot(ctx context.Context, repo string) (queueSnapshot, error) 
 	out := queueSnapshot{
 		planTasks: map[string][]taskSummary{},
 	}
-	counts := map[string]*planSummary{}
+	planIndexes := map[string]int{}
 	for _, plan := range plans {
 		if plan.RepoPath != repo {
 			continue
@@ -1066,8 +1066,9 @@ func loadQueueSnapshot(ctx context.Context, repo string) (queueSnapshot, error) 
 			Status: plan.Status,
 		}
 		out.plans = append(out.plans, summary)
-		counts[plan.ID] = &out.plans[len(out.plans)-1]
+		planIndexes[plan.ID] = len(out.plans) - 1
 	}
+	taskSummaries := map[string]taskSummary{}
 	for _, item := range items {
 		task := toTaskSummary(item)
 		// Best-effort dep enrichment — an error here doesn't kill the
@@ -1076,19 +1077,18 @@ func loadQueueSnapshot(ctx context.Context, repo string) (queueSnapshot, error) 
 			task.DependsOn = deps.DependsOn
 			task.DependedBy = deps.DependedBy
 		}
+		taskSummaries[item.PlanID+"\x00"+item.Task.ID] = task
 		out.planTasks[item.PlanID] = appendTaskLimit(out.planTasks[item.PlanID], task, 12)
-		if plan := counts[item.PlanID]; plan != nil {
+		if idx, ok := planIndexes[item.PlanID]; ok {
 			switch item.Task.Status {
-			case plandag.TaskStatusPending, plandag.TaskStatusReady:
-				plan.ReadyCount++
 			case plandag.TaskStatusReadyPendingApproval:
-				plan.ApprovalCount++
+				out.plans[idx].ApprovalCount++
 			case plandag.TaskStatusBlocked:
-				plan.BlockCount++
+				out.plans[idx].BlockCount++
 			case plandag.TaskStatusRunning:
-				plan.RunningCount++
+				out.plans[idx].RunningCount++
 			case plandag.TaskStatusFailed:
-				plan.FailedCount++
+				out.plans[idx].FailedCount++
 			}
 		}
 		switch item.Task.Status {
@@ -1098,10 +1098,37 @@ func loadQueueSnapshot(ctx context.Context, repo string) (queueSnapshot, error) 
 			out.blocked = append(out.blocked, task)
 		case plandag.TaskStatusRunning:
 			out.running = append(out.running, task)
-		case plandag.TaskStatusPending, plandag.TaskStatusReady:
-			out.ready = append(out.ready, task)
 		case plandag.TaskStatusFailed:
 			out.failed = append(out.failed, task)
+		}
+	}
+	for _, plan := range plans {
+		idx, ok := planIndexes[plan.ID]
+		if !ok {
+			continue
+		}
+		ready, err := store.Ready(ctx, plan.ID)
+		if err != nil {
+			return queueSnapshot{}, err
+		}
+		out.plans[idx].ReadyCount = len(ready)
+		for _, readyTask := range ready {
+			key := plan.ID + "\x00" + readyTask.ID
+			task, ok := taskSummaries[key]
+			if !ok {
+				task = taskSummary{
+					PlanID:         plan.ID,
+					PlanSlug:       plan.Slug,
+					PlanTitle:      plan.Title,
+					TaskID:         readyTask.ID,
+					Description:    readyTask.Description,
+					VariantHint:    readyTask.VariantHint,
+					AssignedTo:     readyTask.AssignedVariant,
+					Status:         readyTask.Status,
+					AcceptanceJSON: readyTask.AcceptanceJSON,
+				}
+			}
+			out.ready = append(out.ready, task)
 		}
 	}
 	return out, nil

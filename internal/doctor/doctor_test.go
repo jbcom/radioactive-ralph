@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"os/exec"
 	"runtime"
 	"strings"
 	"testing"
@@ -112,6 +113,26 @@ func TestCodexAuthRequiresCLILoginWithAPIKey(t *testing.T) {
 	}
 }
 
+func TestCodexAuthMissingCLIReportsMissingBinary(t *testing.T) {
+	t.Setenv("OPENAI_API_KEY", "test-token")
+	runner := fakeRunner(map[string]struct {
+		out string
+		err error
+	}{
+		"codex login status": {err: exec.ErrNotFound},
+	})
+	check := checkCodexAuth(context.Background(), RunOptions{runCommand: runner})
+	if check.Severity != WARN {
+		t.Fatalf("checkCodexAuth severity = %v, want WARN", check.Severity)
+	}
+	if !strings.Contains(check.Detail, "not found") {
+		t.Fatalf("checkCodexAuth detail = %q", check.Detail)
+	}
+	if strings.Contains(check.Remediate, "codex login --with-api-key") {
+		t.Fatalf("checkCodexAuth remediate = %q, want install guidance", check.Remediate)
+	}
+}
+
 func TestRunMissingGit(t *testing.T) {
 	runner := fakeRunner(map[string]struct {
 		out string
@@ -130,14 +151,16 @@ func TestRunMissingGit(t *testing.T) {
 		t.Error("expected at least one FAIL")
 	}
 	// Assert the git check specifically flagged FAIL with remediation.
-	var gitCheck *Check
+	var gitCheck Check
+	foundGit := false
 	for i := range r.Checks {
 		if r.Checks[i].Name == "git" {
-			gitCheck = &r.Checks[i]
+			gitCheck = r.Checks[i]
+			foundGit = true
 			break
 		}
 	}
-	if gitCheck == nil {
+	if !foundGit {
 		t.Fatal("no git check in report")
 	}
 	if gitCheck.Severity != FAIL {

@@ -192,6 +192,45 @@ func TestTUIVariantAndProviderFiltersApplyToTaskLists(t *testing.T) {
 	}
 }
 
+func TestLoadQueueSnapshotReadyUsesDAGReadySet(t *testing.T) {
+	ctx := context.Background()
+	repo, store, planID := setupTUIPlan(t, "release")
+	defer func() { _ = store.Close() }()
+
+	for _, task := range []struct {
+		id   string
+		desc string
+	}{
+		{id: "first", desc: "first runnable task"},
+		{id: "second", desc: "blocked by first"},
+	} {
+		if err := store.CreateTask(ctx, plandag.CreateTaskOpts{
+			PlanID:      planID,
+			ID:          task.id,
+			Description: task.desc,
+		}); err != nil {
+			t.Fatalf("CreateTask(%s): %v", task.id, err)
+		}
+	}
+	if err := store.AddDep(ctx, planID, "second", "first"); err != nil {
+		t.Fatalf("AddDep: %v", err)
+	}
+
+	snapshot, err := loadQueueSnapshot(ctx, repo)
+	if err != nil {
+		t.Fatalf("loadQueueSnapshot: %v", err)
+	}
+	if len(snapshot.ready) != 1 || snapshot.ready[0].TaskID != "first" {
+		t.Fatalf("ready tasks = %+v, want only first", snapshot.ready)
+	}
+	if len(snapshot.plans) != 1 || snapshot.plans[0].ReadyCount != 1 {
+		t.Fatalf("plan summaries = %+v, want ReadyCount=1", snapshot.plans)
+	}
+	if len(snapshot.planTasks[planID]) != 2 {
+		t.Fatalf("plan task list = %+v, want both tracked tasks", snapshot.planTasks[planID])
+	}
+}
+
 func TestParseHandoffInput(t *testing.T) {
 	variantName, reason := parseHandoffInput(" red : needs incident response ")
 	if variantName != "red" || reason != "needs incident response" {
