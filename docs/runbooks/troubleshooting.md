@@ -208,7 +208,7 @@ user_version than the running binary knows how to read.
 - Or nuke the state and re-init (if you don't care about plan
   history):
   ```sh
-  rm -rf $XDG_STATE_HOME/radioactive-ralph/<repo-hash>/plans.db
+  rm -f $XDG_STATE_HOME/radioactive-ralph/plans.db
   radioactive_ralph init
   ```
 

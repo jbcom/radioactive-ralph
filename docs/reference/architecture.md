@@ -59,15 +59,17 @@ Machine-local runtime state lives under the Ralph state root:
 
 ```text
 $XDG_STATE_HOME/radioactive-ralph/
+├── plans.db
 └── <repo-hash>/
-    ├── plans.db
+    ├── state.db
     ├── sessions/
     ├── logs/
     └── worktrees/
 ```
 
-This is where the durable DAG, runtime sessions, repo service sockets, logs,
-and worktrees belong. Never store it under `.claude/`.
+The global `plans.db` stores the durable DAG. The per-repo hash workspace stores
+runtime sessions, repo service sockets, logs, event state, and worktrees. Never
+store Ralph runtime state under `.claude/`.
 
 ## Variant execution policy
 
