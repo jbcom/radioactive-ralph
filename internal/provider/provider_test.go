@@ -128,6 +128,44 @@ printf '%s\n' '{"type":"result","subtype":"success"}'
 	}
 }
 
+func TestDeclarativeStreamJSONRunnerAcceptsLargeFrames(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell-script fake CLI is Unix-only")
+	}
+	bin := writeFakeCLI(t, "fake-large-stream.sh", `#!/bin/sh
+printf '%s' '{"type":"assistant","text":"'
+dd if=/dev/zero bs=1049600 count=1 2>/dev/null | tr '\000' a
+printf '%s\n' '"}'
+`)
+	result, err := DeclarativeRunner{}.Run(context.Background(), Binding{
+		Name: "stream",
+		Config: config.ProviderFile{
+			Type:   "stream-json",
+			Binary: bin,
+		},
+	}, Request{WorkingDir: t.TempDir()})
+	if err != nil {
+		t.Fatalf("DeclarativeRunner.Run: %v", err)
+	}
+	if len(result.AssistantOutput) < 1049600 {
+		t.Fatalf("AssistantOutput length = %d, want at least 1049600", len(result.AssistantOutput))
+	}
+}
+
+func TestRenderArgTemplateDoesNotReprocessTokenValues(t *testing.T) {
+	got, err := renderArgTemplate("prompt={prompt} model={model}", map[string]string{
+		"prompt": "literal {model}",
+		"model":  "sonnet",
+	})
+	if err != nil {
+		t.Fatalf("renderArgTemplate: %v", err)
+	}
+	want := "prompt=literal {model} model=sonnet"
+	if got != want {
+		t.Fatalf("renderArgTemplate() = %q, want %q", got, want)
+	}
+}
+
 func TestValidateBindingRejectsUnknownTemplateToken(t *testing.T) {
 	err := ValidateBinding(Binding{
 		Name: "bad",

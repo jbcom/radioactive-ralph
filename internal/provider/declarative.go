@@ -15,9 +15,10 @@ import (
 )
 
 const (
-	declarativePlainStdout     = "plain-stdout"
-	declarativeLastMessageFile = "last-message-file"
-	declarativeStreamJSON      = "stream-json"
+	declarativePlainStdout       = "plain-stdout"
+	declarativeLastMessageFile   = "last-message-file"
+	declarativeStreamJSON        = "stream-json"
+	declarativeStreamJSONLineMax = 16 << 20
 )
 
 var declarativeTokens = []string{
@@ -236,11 +237,21 @@ func renderArgTemplate(input string, tokens map[string]string) (string, error) {
 	if err := validateArgTemplate(input); err != nil {
 		return "", err
 	}
-	out := input
-	for key, value := range tokens {
-		out = strings.ReplaceAll(out, "{"+key+"}", value)
+	var out strings.Builder
+	out.Grow(len(input))
+	for len(input) > 0 {
+		open := strings.Index(input, "{")
+		if open < 0 {
+			out.WriteString(input)
+			break
+		}
+		out.WriteString(input[:open])
+		closeIdx := strings.Index(input[open:], "}")
+		token := input[open+1 : open+closeIdx]
+		out.WriteString(tokens[token])
+		input = input[open+closeIdx+1:]
 	}
-	return out, nil
+	return out.String(), nil
 }
 
 func validateArgTemplate(input string) error {
@@ -277,7 +288,7 @@ func runStreamJSONCommand(ctx context.Context, dir, bin string, args []string) (
 	var assistant strings.Builder
 	var raw strings.Builder
 	scanner := bufio.NewScanner(stdout)
-	scanner.Buffer(make([]byte, 0, 64*1024), 1<<20)
+	scanner.Buffer(make([]byte, 0, 64*1024), declarativeStreamJSONLineMax)
 	for scanner.Scan() {
 		line := scanner.Text()
 		raw.WriteString(line)

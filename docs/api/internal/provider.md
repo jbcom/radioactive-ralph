@@ -33,7 +33,7 @@ Package provider adapts configured CLI backends into radioactive\_ralph's provid
 
 
 <a name="ValidateBinding"></a>
-## func [ValidateBinding](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/declarative.go#L158>)
+## func [ValidateBinding](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/declarative.go#L159>)
 
 ```go
 func ValidateBinding(binding Binding) error
@@ -99,7 +99,7 @@ func (CodexRunner) Run(ctx context.Context, binding Binding, req Request) (Resul
 Run executes one non\-interactive Codex turn.
 
 <a name="DeclarativeRunner"></a>
-## type [DeclarativeRunner](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/declarative.go#L39>)
+## type [DeclarativeRunner](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/declarative.go#L40>)
 
 DeclarativeRunner executes a config\-defined provider binding. It supports a small set of framing modes that cover the common provider CLI shapes without requiring a custom Go runner.
 
@@ -108,7 +108,7 @@ type DeclarativeRunner struct{}
 ```
 
 <a name="DeclarativeRunner.Run"></a>
-### func \(DeclarativeRunner\) [Run](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/declarative.go#L42>)
+### func \(DeclarativeRunner\) [Run](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/declarative.go#L43>)
 
 ```go
 func (DeclarativeRunner) Run(ctx context.Context, binding Binding, req Request) (Result, error)
