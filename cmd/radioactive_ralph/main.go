@@ -48,6 +48,14 @@ func main() {
 // mainCode runs the CLI and returns the exit code so deferred cleanup
 // (signal context cancel) always runs before process exit.
 func mainCode() int {
+	if handled, err := maybeRunWindowsServiceHost(os.Args); handled {
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "radioactive_ralph: %v\n", err)
+			return 1
+		}
+		return 0
+	}
+
 	var c cli
 	kctx := kong.Parse(&c,
 		kong.Name("radioactive_ralph"),

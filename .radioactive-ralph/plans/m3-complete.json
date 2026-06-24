@@ -1,6 +1,8 @@
 {
   "slug": "m3-complete",
   "title": "Finish M3: variantpool + MCP server + fixit rewire onto plandag",
+  "status": "superseded",
+  "superseded_by": "zero-deferment-release-closeout",
   "primary_variant": "green",
   "confidence": 90,
   "intent": "Continue M3 work: plandag is shipped and tested. Remaining: variantpool for subprocess lifecycles, MCP server (stdio first, HTTP later), port fixit Emit onto plandag, replace markdown plans_gate with plandag-based HasActivePlan check, and ship release tag with Homebrew/Scoop/Chocolatey manifests landing in jbcom/pkgs.",

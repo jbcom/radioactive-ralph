@@ -51,6 +51,7 @@ v1 draws a hard line:
 | `claude` | **Stateful** — session resume via `claude --resume <id>` | `internal/provider/claudesession` holds the session lifecycle |
 | `codex`  | **Stateless** — each turn is independent | `internal/provider/codex.go` |
 | `gemini` | **Stateless** — each turn is independent | `internal/provider/gemini.go` |
+| declarative | Config-defined; stateful only when `session_id_regex` extracts an ID | `internal/provider/declarative.go` |
 
 A stateful binding means the runtime threads `SessionID` through
 `Result` → next `Request` so the provider can reuse its conversation
@@ -109,31 +110,27 @@ Resolution order at claim time:
 
 An unknown provider name fails loudly at `service start`.
 
-## Extension model (post-v1)
+## Extension model
 
-The near-term future is **declarative provider bindings**. Target
-shape (not yet shipped):
+The default extension path is **declarative provider bindings**.
+Supported framings are `plain-stdout`, `last-message-file`, and
+`stream-json`:
 
 ```toml
 [providers.my-custom-cli]
 type         = "stream-json"         # how to frame I/O
-bin          = "mycli"
+binary       = "mycli"
 args         = ["chat", "--stream"]  # argv template
-model_flag   = "--model"             # how to pass Model
-effort_flag  = "--reasoning"         # how to pass Effort
-prompt_mode  = "stdin"               # stdin | file | arg
 ```
 
-When declarative bindings land, any CLI that speaks one of the
-supported framing modes becomes usable without writing a new Go file.
-Until then, `claude` / `codex` / `gemini` are the three built-ins and
-everything else requires a code contribution under `internal/provider/`.
-
-Declarative-binding work is tracked in the v1 PRD § 4.5 task 4.
+Any CLI that speaks one of the supported framing modes can be wired in
+without writing a new Go file. CLIs that need bespoke streaming,
+authentication, or output recovery still belong in a hand-written
+runner under `internal/provider/`.
 
 ## Adding a new built-in provider
 
-If you need a new built-in for v1 (before declarative bindings land):
+If a declarative binding is not enough and you need a new built-in:
 
 1. Create `internal/provider/<name>.go` with a type that implements
    `Runner`.

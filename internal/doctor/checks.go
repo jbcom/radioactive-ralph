@@ -2,8 +2,10 @@ package doctor
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"runtime"
 	"time"
 )
@@ -79,21 +81,34 @@ func checkCodexVersion(ctx context.Context, cfg RunOptions) Check {
 }
 
 func checkCodexAuth(ctx context.Context, cfg RunOptions) Check {
-	if os.Getenv("OPENAI_API_KEY") != "" {
-		return Check{Name: "codex auth", Severity: OK, Detail: "OPENAI_API_KEY present in environment"}
-	}
 	_, err := withTimeout(ctx, 5*time.Second, func(ctx context.Context) (string, error) {
 		return cfg.runCommand(ctx, "codex", "login", "status")
 	})
-	if err != nil {
+	if err == nil {
+		return Check{Name: "codex auth", Severity: OK, Detail: "authenticated"}
+	}
+	if errors.Is(err, exec.ErrNotFound) {
 		return Check{
 			Name:      "codex auth",
 			Severity:  WARN,
-			Detail:    "codex CLI is not authenticated",
-			Remediate: "run `codex login`",
+			Detail:    "codex CLI not found on PATH; auth check skipped",
+			Remediate: "install Codex CLI so the `codex` provider binding is usable",
 		}
 	}
-	return Check{Name: "codex auth", Severity: OK, Detail: "authenticated"}
+	if os.Getenv("OPENAI_API_KEY") != "" {
+		return Check{
+			Name:      "codex auth",
+			Severity:  WARN,
+			Detail:    "OPENAI_API_KEY is present, but the codex CLI is not logged in",
+			Remediate: "run `printenv OPENAI_API_KEY | codex login --with-api-key`",
+		}
+	}
+	return Check{
+		Name:      "codex auth",
+		Severity:  WARN,
+		Detail:    "codex CLI is not authenticated",
+		Remediate: "run `codex login`",
+	}
 }
 
 func checkGeminiVersion(ctx context.Context, cfg RunOptions) Check {

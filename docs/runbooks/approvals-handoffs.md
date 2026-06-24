@@ -23,10 +23,13 @@ A task enters the approval state when:
 - fixit's plan-creation pipeline emits it with `status:
   ready_pending_approval` (happens automatically for variants whose
   `SafetyFloors.RequireOperatorApproval = true`)
-- The operator sets the state manually:
-  ```sh
-  radioactive_ralph plan approve-gate <plan-slug> <task-id>
-  ```
+- an operator requeues a blocked, failed, pending, or approval-gated
+  task with approval still required:
+
+```sh
+radioactive_ralph plan requeue <plan> <task> --require-approval
+radioactive_ralph plan handoff <plan> <task> <variant> --require-approval
+```
 
 ### Approve a pending task
 
@@ -35,27 +38,29 @@ radioactive_ralph plan approvals                # list tasks awaiting approval
 radioactive_ralph plan approve <plan> <task>    # release a single task
 ```
 
-Approved tasks move to `ready`; the next variant to poll the DAG
-claims them normally.
+Approved tasks move back to `pending`; the ready query promotes them
+when their dependencies are satisfied, and the next variant to poll
+the DAG claims them normally.
 
 ### Deny / requeue
 
 If you don't want to run a pending task at all:
 
 ```sh
-radioactive_ralph plan requeue <plan> <task>    # send back to pending (with retry budget reset)
+radioactive_ralph plan requeue <plan> <task>    # send back to pending
 radioactive_ralph plan fail <plan> <task>       # mark failed, don't retry
 ```
 
 ## Handoffs
 
-### List claimed / running tasks
+### List blocked or failed tasks
 
 ```sh
-radioactive_ralph plan tasks <plan> --status running
+radioactive_ralph plan blocked
+radioactive_ralph plan tasks <plan> --status failed
 ```
 
-### Hand a running task to a different variant
+### Hand a requeueable task to a different variant
 
 ```sh
 radioactive_ralph plan handoff <plan> <task> <new-variant>
@@ -63,25 +68,19 @@ radioactive_ralph plan handoff <plan> <task> <new-variant>
 
 What this does:
 
-1. Kills the current variant's subprocess (gracefully — sends
-   SIGTERM, waits for lifeline pipe to drain)
-2. Resets the task's `assigned_variant` to the new one
-3. Clears `claimed_by_session` + `claimed_by_variant_id`
-4. Moves the task back to `ready`
+1. Sets the task's next `variant_hint`
+2. Clears `assigned_variant`, `claimed_by_session`, and `claimed_by_variant_id`
+3. Moves the task back to `pending`, or `ready_pending_approval` if
+   `--require-approval` is set
+4. Records a durable `requeued` event with the handoff payload
 
 The new variant claims it on the next poll.
 
 ### Handoff policies
 
-Some variant profiles refuse handoffs on specific work:
-
-- `red` (destructive) → refuses handoff TO itself unless the caller
-  passes `--confirm-burn-budget`
-- `world-breaker` → refuses handoff period; the task must be
-  explicitly re-imported via fixit
-
-Check the variant's `SafetyFloors` in `internal/variant/<variant>.go`
-for the full rules.
+Handoff itself does not bypass a variant's normal confirmation gates.
+For example, `savage`, `old-man`, and `world-breaker` still require
+their execution-time confirmation flags when the hinted variant runs.
 
 ## Retry budget
 
@@ -92,9 +91,9 @@ retry:
 radioactive_ralph plan retry <plan> <task>
 ```
 
-Retries bypass the variant's max-retries floor IF the operator
-passes `--force`. Without `--force`, a task that has already hit its
-retry ceiling fails fast instead of retrying.
+Retries increment the task's retry counter and move the task back to
+`pending`. If the task was not blocked or failed, the command refuses
+the transition.
 
 ## History
 

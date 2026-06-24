@@ -61,8 +61,13 @@ type Service struct {
 // is intentionally generic.
 type ProviderFile struct {
 	Type                  string   `toml:"type"`
+	Bin                   string   `toml:"bin"`
 	Binary                string   `toml:"binary"`
 	Args                  []string `toml:"args"`
+	OutputFile            string   `toml:"output_file"`
+	TurnTimeout           string   `toml:"turn_timeout"`
+	MaxRetries            int      `toml:"max_retries"`
+	SessionIDRegex        string   `toml:"session_id_regex"`
 	HaikuModel            string   `toml:"haiku_model"`
 	SonnetModel           string   `toml:"sonnet_model"`
 	OpusModel             string   `toml:"opus_model"`
@@ -165,6 +170,12 @@ func Load(repoRoot string) (File, error) {
 	if f.DefaultProvider == "" && len(f.Providers) == 1 {
 		for name := range f.Providers {
 			f.DefaultProvider = name
+		}
+	}
+	for name, provider := range f.Providers {
+		if provider.Binary == "" && provider.Bin != "" {
+			provider.Binary = provider.Bin
+			f.Providers[name] = provider
 		}
 	}
 	return f, nil

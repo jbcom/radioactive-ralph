@@ -68,7 +68,8 @@ and Gemini CLIs and runs the live provider smoke tests when the corresponding
 repository secrets are present. That workflow expects:
 
 - `ANTHROPIC_API_KEY` for Claude live smoke
-- `OPENAI_API_KEY` for Codex live smoke
+- `OPENAI_API_KEY` for Codex live smoke. The workflow uses it to run
+  `codex login --with-api-key` before enabling the Codex test.
 - `GEMINI_API_KEY` or `GOOGLE_API_KEY` for Gemini live smoke
 
 The repo still covers the service and IPC contract in hermetic tests by
@@ -92,8 +93,8 @@ High confidence over vanity percentages. The important gates are variant-profile
 
 Manual live checks require:
 
-- at least one provider CLI on `PATH`, authenticated, depending on which
-  binding you want to exercise:
+- the shipped provider CLIs on `PATH`, authenticated, for a full
+  release-gate run:
   - `claude`
   - `codex`
   - `gemini`
@@ -106,13 +107,16 @@ The live smoke tests are opt-in and gated explicitly:
 - `CODEX_AUTHENTICATED=1` enables the real Codex runner test
 - `GEMINI_AUTHENTICATED=1` enables the real Gemini runner test
 
-Claude also accepts `ANTHROPIC_API_KEY` in the environment, and Codex accepts
-`OPENAI_API_KEY`, so those tests do not require an interactive CLI login flow
-when API-key auth is available.
+Claude accepts `ANTHROPIC_API_KEY` in the environment. Current Codex CLI
+releases require a CLI login before `codex exec`; use
+`printenv OPENAI_API_KEY | codex login --with-api-key` for headless API-key
+setup.
 
 Gemini also requires `GEMINI_API_KEY` or `GOOGLE_API_KEY` in the environment.
 
 Default CI stays hermetic and does not depend on a live provider account.
+Release validation is stricter: the manual provider workflow should pass
+without provider skips for all three shipped bindings before a stable tag.
 
 ## Current test focus
 
