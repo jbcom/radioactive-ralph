@@ -16,6 +16,8 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"sync"
+	"time"
 )
 
 // Severity classifies a check outcome. Hard failures (FAIL) cause
@@ -76,6 +78,9 @@ type RunOptions struct {
 	// Empty means "don't pin."
 	MinGitVersion string
 
+	// CommandTimeout bounds each external diagnostic command.
+	CommandTimeout time.Duration
+
 	// runCommand is swappable for tests. Exposed via lowercase so
 	// callers must use WithRunner option.
 	runCommand func(ctx context.Context, name string, args ...string) (string, error)
@@ -100,11 +105,18 @@ func WithMinGitVersion(v string) Option {
 	return func(o *RunOptions) { o.MinGitVersion = v }
 }
 
+// WithCommandTimeout overrides the per-command timeout.
+func WithCommandTimeout(d time.Duration) Option {
+	return func(o *RunOptions) { o.CommandTimeout = d }
+}
+
 // Run executes every check and returns a consolidated report.
-// ctx is used to bound each subprocess invocation (default 5s each).
+// ctx is used to bound each subprocess invocation (default 15s each).
+// Checks run concurrently and are reported in a stable order.
 func Run(ctx context.Context, opts ...Option) Report {
 	cfg := RunOptions{
-		MinGitVersion: "2.5.0",
+		MinGitVersion:  "2.5.0",
+		CommandTimeout: defaultCommandTimeout,
 	}
 	for _, o := range opts {
 		o(&cfg)
@@ -113,17 +125,29 @@ func Run(ctx context.Context, opts ...Option) Report {
 		cfg.runCommand = realRunner
 	}
 
-	checks := make([]Check, 0, 9)
-	checks = append(checks, checkGitVersion(ctx, cfg))
-	checks = append(checks, checkClaudeVersion(ctx, cfg))
-	checks = append(checks, checkClaudeAuth(ctx, cfg))
-	checks = append(checks, checkCodexVersion(ctx, cfg))
-	checks = append(checks, checkCodexAuth(ctx, cfg))
-	checks = append(checks, checkGeminiVersion(ctx, cfg))
-	checks = append(checks, checkGeminiAuth(ctx, cfg))
-	checks = append(checks, checkGhVersion(ctx, cfg))
-	checks = append(checks, checkGhAuth(ctx, cfg))
-	checks = append(checks, checkServicePlatform(ctx, cfg))
+	checkFns := []func(context.Context, RunOptions) Check{
+		checkGitVersion,
+		checkClaudeVersion,
+		checkClaudeAuth,
+		checkCodexVersion,
+		checkCodexAuth,
+		checkGeminiVersion,
+		checkGeminiAuth,
+		checkGhVersion,
+		checkGhAuth,
+		checkServicePlatform,
+	}
+
+	checks := make([]Check, len(checkFns))
+	var wg sync.WaitGroup
+	for i, fn := range checkFns {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			checks[i] = fn(ctx, cfg)
+		}()
+	}
+	wg.Wait()
 
 	r := Report{Checks: checks}
 	for _, c := range checks {

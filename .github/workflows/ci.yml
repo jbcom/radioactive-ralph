@@ -61,7 +61,7 @@ jobs:
           "$RALPH_BIN" plan approvals --help >/dev/null
           "$RALPH_BIN" plan blocked --help >/dev/null
           "$RALPH_BIN" tui --help >/dev/null
-          "$RALPH_BIN" doctor >/dev/null
+          "$RALPH_BIN" doctor
           "$RALPH_BIN" service list >/dev/null
       - name: Temp repo + service-definition smoke (Unix)
         if: runner.os != 'Windows'
@@ -153,17 +153,32 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          & $env:RALPH_BIN --help | Out-Null
-          & $env:RALPH_BIN run --help | Out-Null
-          & $env:RALPH_BIN service --help | Out-Null
-          & $env:RALPH_BIN service install --help | Out-Null
-          & $env:RALPH_BIN service status --help | Out-Null
-          & $env:RALPH_BIN plan --help | Out-Null
-          & $env:RALPH_BIN plan approvals --help | Out-Null
-          & $env:RALPH_BIN plan blocked --help | Out-Null
-          & $env:RALPH_BIN tui --help | Out-Null
-          & $env:RALPH_BIN doctor | Out-Null
-          & $env:RALPH_BIN service list | Out-Null
+          function Invoke-NativeChecked {
+            param(
+              [Parameter(Mandatory = $true)][string]$FilePath,
+              [Parameter(Mandatory = $true)][string[]]$ArgumentList,
+              [switch]$SuppressOutput
+            )
+            if ($SuppressOutput) {
+              & $FilePath @ArgumentList | Out-Null
+            } else {
+              & $FilePath @ArgumentList
+            }
+            if ($LASTEXITCODE -ne 0) {
+              throw "$FilePath $($ArgumentList -join ' ') failed with exit code $LASTEXITCODE"
+            }
+          }
+          Invoke-NativeChecked -FilePath $env:RALPH_BIN -ArgumentList @("--help") -SuppressOutput
+          Invoke-NativeChecked -FilePath $env:RALPH_BIN -ArgumentList @("run", "--help") -SuppressOutput
+          Invoke-NativeChecked -FilePath $env:RALPH_BIN -ArgumentList @("service", "--help") -SuppressOutput
+          Invoke-NativeChecked -FilePath $env:RALPH_BIN -ArgumentList @("service", "install", "--help") -SuppressOutput
+          Invoke-NativeChecked -FilePath $env:RALPH_BIN -ArgumentList @("service", "status", "--help") -SuppressOutput
+          Invoke-NativeChecked -FilePath $env:RALPH_BIN -ArgumentList @("plan", "--help") -SuppressOutput
+          Invoke-NativeChecked -FilePath $env:RALPH_BIN -ArgumentList @("plan", "approvals", "--help") -SuppressOutput
+          Invoke-NativeChecked -FilePath $env:RALPH_BIN -ArgumentList @("plan", "blocked", "--help") -SuppressOutput
+          Invoke-NativeChecked -FilePath $env:RALPH_BIN -ArgumentList @("tui", "--help") -SuppressOutput
+          Invoke-NativeChecked -FilePath $env:RALPH_BIN -ArgumentList @("doctor")
+          Invoke-NativeChecked -FilePath $env:RALPH_BIN -ArgumentList @("service", "list") -SuppressOutput
       - name: Temp repo smoke (Windows)
         if: runner.os == 'Windows'
         shell: pwsh

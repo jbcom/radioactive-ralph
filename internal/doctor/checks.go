@@ -10,10 +10,12 @@ import (
 	"time"
 )
 
+const defaultCommandTimeout = 15 * time.Second
+
 // checkGitVersion verifies git is installed at a high-enough version
 // for worktree support (≥ 2.5.0 by default).
 func checkGitVersion(ctx context.Context, cfg RunOptions) Check {
-	out, err := withTimeout(ctx, 5*time.Second, func(ctx context.Context) (string, error) {
+	out, err := withTimeout(ctx, cfg.CommandTimeout, func(ctx context.Context) (string, error) {
 		return cfg.runCommand(ctx, "git", "--version")
 	})
 	if err != nil {
@@ -55,7 +57,7 @@ func checkClaudeAuth(ctx context.Context, cfg RunOptions) Check {
 	if os.Getenv("ANTHROPIC_API_KEY") != "" {
 		return Check{Name: "claude auth", Severity: OK, Detail: "ANTHROPIC_API_KEY present in environment"}
 	}
-	_, err := withTimeout(ctx, 5*time.Second, func(ctx context.Context) (string, error) {
+	_, err := withTimeout(ctx, cfg.CommandTimeout, func(ctx context.Context) (string, error) {
 		return cfg.runCommand(ctx, "claude", "auth", "status")
 	})
 	if err != nil {
@@ -81,7 +83,7 @@ func checkCodexVersion(ctx context.Context, cfg RunOptions) Check {
 }
 
 func checkCodexAuth(ctx context.Context, cfg RunOptions) Check {
-	_, err := withTimeout(ctx, 5*time.Second, func(ctx context.Context) (string, error) {
+	_, err := withTimeout(ctx, cfg.CommandTimeout, func(ctx context.Context) (string, error) {
 		return cfg.runCommand(ctx, "codex", "login", "status")
 	})
 	if err == nil {
@@ -138,7 +140,7 @@ func checkGeminiAuth(_ context.Context, _ RunOptions) Check {
 // because most variants use `gh pr ...` internally, but non-fatal so
 // Ralph can still run on machines without it.
 func checkGhVersion(ctx context.Context, cfg RunOptions) Check {
-	out, err := withTimeout(ctx, 5*time.Second, func(ctx context.Context) (string, error) {
+	out, err := withTimeout(ctx, cfg.CommandTimeout, func(ctx context.Context) (string, error) {
 		return cfg.runCommand(ctx, "gh", "--version")
 	})
 	if err != nil {
@@ -154,7 +156,7 @@ func checkGhVersion(ctx context.Context, cfg RunOptions) Check {
 
 // checkGhAuth verifies `gh auth status` reports authenticated.
 func checkGhAuth(ctx context.Context, cfg RunOptions) Check {
-	_, err := withTimeout(ctx, 5*time.Second, func(ctx context.Context) (string, error) {
+	_, err := withTimeout(ctx, cfg.CommandTimeout, func(ctx context.Context) (string, error) {
 		return cfg.runCommand(ctx, "gh", "auth", "status")
 	})
 	if err != nil {
@@ -200,7 +202,7 @@ type providerVersionCheck struct {
 }
 
 func checkProviderVersion(ctx context.Context, cfg RunOptions, check providerVersionCheck) Check {
-	out, err := withTimeout(ctx, 5*time.Second, func(ctx context.Context) (string, error) {
+	out, err := withTimeout(ctx, cfg.CommandTimeout, func(ctx context.Context) (string, error) {
 		return cfg.runCommand(ctx, check.Binary, check.VersionArgs...)
 	})
 	if err != nil {
