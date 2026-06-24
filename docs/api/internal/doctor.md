@@ -21,6 +21,7 @@ Checks are ordered from "fundamental prerequisites" \(git, provider CLIs\) down 
 
 - [type Check](<#Check>)
 - [type Option](<#Option>)
+  - [func WithCommandTimeout\(d time.Duration\) Option](<#WithCommandTimeout>)
   - [func WithMinClaudeVersion\(v string\) Option](<#WithMinClaudeVersion>)
   - [func WithMinGitVersion\(v string\) Option](<#WithMinGitVersion>)
   - [func WithRunner\(fn func\(ctx context.Context, name string, args ...string\) \(string, error\)\) Option](<#WithRunner>)
@@ -34,7 +35,7 @@ Checks are ordered from "fundamental prerequisites" \(git, provider CLIs\) down 
 
 
 <a name="Check"></a>
-## type [Check](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/doctor/doctor.go#L49-L54>)
+## type [Check](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/doctor/doctor.go#L51-L56>)
 
 Check is one diagnostic step's output.
 
@@ -48,7 +49,7 @@ type Check struct {
 ```
 
 <a name="Option"></a>
-## type [Option](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/doctor/doctor.go#L85>)
+## type [Option](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/doctor/doctor.go#L90>)
 
 Option configures Run.
 
@@ -56,8 +57,17 @@ Option configures Run.
 type Option func(*RunOptions)
 ```
 
+<a name="WithCommandTimeout"></a>
+### func [WithCommandTimeout](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/doctor/doctor.go#L109>)
+
+```go
+func WithCommandTimeout(d time.Duration) Option
+```
+
+WithCommandTimeout overrides the per\-command timeout.
+
 <a name="WithMinClaudeVersion"></a>
-### func [WithMinClaudeVersion](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/doctor/doctor.go#L94>)
+### func [WithMinClaudeVersion](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/doctor/doctor.go#L99>)
 
 ```go
 func WithMinClaudeVersion(v string) Option
@@ -66,7 +76,7 @@ func WithMinClaudeVersion(v string) Option
 WithMinClaudeVersion pins the minimum claude CLI version expected.
 
 <a name="WithMinGitVersion"></a>
-### func [WithMinGitVersion](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/doctor/doctor.go#L99>)
+### func [WithMinGitVersion](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/doctor/doctor.go#L104>)
 
 ```go
 func WithMinGitVersion(v string) Option
@@ -75,7 +85,7 @@ func WithMinGitVersion(v string) Option
 WithMinGitVersion pins the minimum git version expected.
 
 <a name="WithRunner"></a>
-### func [WithRunner](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/doctor/doctor.go#L89>)
+### func [WithRunner](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/doctor/doctor.go#L94>)
 
 ```go
 func WithRunner(fn func(ctx context.Context, name string, args ...string) (string, error)) Option
@@ -84,7 +94,7 @@ func WithRunner(fn func(ctx context.Context, name string, args ...string) (strin
 WithRunner lets tests override exec.CommandContext behaviour. The runner receives the command name \+ args, returns stdout or error.
 
 <a name="Report"></a>
-## type [Report](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/doctor/doctor.go#L57-L62>)
+## type [Report](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/doctor/doctor.go#L59-L64>)
 
 Report aggregates check outcomes plus a summary.
 
@@ -98,16 +108,16 @@ type Report struct {
 ```
 
 <a name="Run"></a>
-### func [Run](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/doctor/doctor.go#L105>)
+### func [Run](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/doctor/doctor.go#L116>)
 
 ```go
 func Run(ctx context.Context, opts ...Option) Report
 ```
 
-Run executes every check and returns a consolidated report. ctx is used to bound each subprocess invocation \(default 5s each\).
+Run executes every check and returns a consolidated report. ctx is used to bound each subprocess invocation \(default 15s each\). Checks run concurrently and are reported in a stable order.
 
 <a name="Report.Passed"></a>
-### func \(Report\) [Passed](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/doctor/doctor.go#L65>)
+### func \(Report\) [Passed](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/doctor/doctor.go#L67>)
 
 ```go
 func (r Report) Passed() bool
@@ -116,7 +126,7 @@ func (r Report) Passed() bool
 Passed reports whether the overall doctor run succeeded \(zero FAILs\).
 
 <a name="Report.WriteText"></a>
-### func \(Report\) [WriteText](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/doctor/doctor.go#L144>)
+### func \(Report\) [WriteText](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/doctor/doctor.go#L168>)
 
 ```go
 func (r Report) WriteText(w io.Writer)
@@ -125,7 +135,7 @@ func (r Report) WriteText(w io.Writer)
 WriteText writes a human\-friendly report to w. Intended for the CLI \`radioactive\_ralph doctor\` subcommand.
 
 <a name="RunOptions"></a>
-## type [RunOptions](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/doctor/doctor.go#L70-L82>)
+## type [RunOptions](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/doctor/doctor.go#L72-L87>)
 
 RunOptions controls the checks. Zero value runs all checks.
 
@@ -138,12 +148,15 @@ type RunOptions struct {
     // MinGitVersion is the pinned minimum git version (e.g. "2.5.0").
     // Empty means "don't pin."
     MinGitVersion string
+
+    // CommandTimeout bounds each external diagnostic command.
+    CommandTimeout time.Duration
     // contains filtered or unexported fields
 }
 ```
 
 <a name="Severity"></a>
-## type [Severity](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/doctor/doctor.go#L24>)
+## type [Severity](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/doctor/doctor.go#L26>)
 
 Severity classifies a check outcome. Hard failures \(FAIL\) cause \`radioactive\_ralph doctor\` to exit non\-zero. Soft failures \(WARN\) are printed but don't gate execution.
 
@@ -165,7 +178,7 @@ const (
 ```
 
 <a name="Severity.String"></a>
-### func \(Severity\) [String](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/doctor/doctor.go#L36>)
+### func \(Severity\) [String](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/doctor/doctor.go#L38>)
 
 ```go
 func (s Severity) String() string
