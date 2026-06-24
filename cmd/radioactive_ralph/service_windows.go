@@ -24,49 +24,77 @@ func (c *ServiceWindowsRunCmd) Run(_ *runContext) error {
 	if err != nil {
 		return err
 	}
-	if c.ConfigPath != "" {
-		if err := applyWindowsServiceEnv(c.ConfigPath); err != nil {
-			return err
-		}
-	}
-	name := c.ServiceName
-	if name == "" {
-		name = service.UnitName(service.BackendWindowsSCM, repo)
-	}
-	return runWindowsService(name, repo)
+	return runWindowsServiceHost(windowsServiceHostArgs{
+		RepoRoot:    repo,
+		ServiceName: c.ServiceName,
+		ConfigPath:  c.ConfigPath,
+	})
 }
 
-func applyWindowsServiceEnv(path string) error {
+func maybeRunWindowsServiceHost(args []string) (bool, error) {
+	parsed, handled, err := parseWindowsServiceHostArgs(args)
+	if !handled || err != nil {
+		return handled, err
+	}
+	return true, runWindowsServiceHost(parsed)
+}
+
+func applyWindowsServiceEnv(path string) (service.WindowsServiceConfig, error) {
 	raw, err := os.ReadFile(path) //nolint:gosec // service-owned path
 	if err != nil {
-		return fmt.Errorf("read %s: %w", path, err)
+		return service.WindowsServiceConfig{}, fmt.Errorf("read %s: %w", path, err)
 	}
 	cfg, err := service.ParseWindowsServiceConfig(raw)
 	if err != nil {
-		return fmt.Errorf("parse %s: %w", path, err)
+		return service.WindowsServiceConfig{}, fmt.Errorf("parse %s: %w", path, err)
 	}
 	for k, v := range cfg.ExtraEnv {
 		if err := os.Setenv(k, v); err != nil {
-			return fmt.Errorf("set %s: %w", k, err)
+			return service.WindowsServiceConfig{}, fmt.Errorf("set %s: %w", k, err)
 		}
 	}
-	return nil
+	return cfg, nil
 }
 
-func runWindowsService(name, repo string) error {
+func runWindowsServiceHost(args windowsServiceHostArgs) error {
+	name := args.ServiceName
+	if name == "" && args.RepoRoot != "" {
+		name = service.UnitName(service.BackendWindowsSCM, args.RepoRoot)
+	}
+	if name == "" {
+		return fmt.Errorf("service name required")
+	}
 	if err := os.Setenv("RALPH_SERVICE_CONTEXT", "1"); err != nil {
 		return fmt.Errorf("set RALPH_SERVICE_CONTEXT: %w", err)
 	}
-	return svc.Run(name, &windowsServiceHandler{repo: repo})
+	return svc.Run(name, &windowsServiceHandler{
+		repo:       args.RepoRoot,
+		configPath: args.ConfigPath,
+	})
 }
 
 type windowsServiceHandler struct {
-	repo string
+	repo       string
+	configPath string
 }
 
 func (h *windowsServiceHandler) Execute(_ []string, requests <-chan svc.ChangeRequest, status chan<- svc.Status) (bool, uint32) {
 	const accepted = svc.AcceptStop | svc.AcceptShutdown
 	status <- svc.Status{State: svc.StartPending}
+
+	repo := h.repo
+	if h.configPath != "" {
+		cfg, err := applyWindowsServiceEnv(h.configPath)
+		if err != nil {
+			return false, 1
+		}
+		if cfg.RepoPath != "" {
+			repo = cfg.RepoPath
+		}
+	}
+	if repo == "" {
+		return false, 1
+	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -74,7 +102,7 @@ func (h *windowsServiceHandler) Execute(_ []string, requests <-chan svc.ChangeRe
 	errCh := make(chan error, 1)
 	go func() {
 		svcRuntime, err := runtimecmd.NewService(runtimecmd.Options{
-			RepoPath:         h.repo,
+			RepoPath:         repo,
 			SessionMode:      plandag.SessionModeDurable,
 			SessionTransport: plandag.SessionTransportSocket,
 		})
