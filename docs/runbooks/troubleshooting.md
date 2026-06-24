@@ -206,8 +206,18 @@ user_version than the running binary knows how to read.
 
 - Re-install the newer binary (recommended)
 - Or nuke the plandag state (if you don't care about plan history):
+  If `RALPH_STATE_DIR` is set, remove `$RALPH_STATE_DIR/plans.db`
+  instead of the platform default.
   ```sh
-  rm -f $XDG_STATE_HOME/radioactive-ralph/plans.db
+  # macOS
+  rm -f "$HOME/Library/Application Support/radioactive-ralph/plans.db"
+
+  # Linux / WSL2
+  rm -f "${XDG_STATE_HOME:-$HOME/.local/state}/radioactive-ralph/plans.db"
+  ```
+  ```powershell
+  # Windows PowerShell
+  Remove-Item "$env:LOCALAPPDATA\radioactive-ralph\plans.db" -ErrorAction SilentlyContinue
   ```
   The next command that reads or writes the plan DAG will recreate and
   migrate `plans.db`.
