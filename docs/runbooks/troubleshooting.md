@@ -205,12 +205,12 @@ user_version than the running binary knows how to read.
 ### Fix
 
 - Re-install the newer binary (recommended)
-- Or nuke the state and re-init (if you don't care about plan
-  history):
+- Or nuke the plandag state (if you don't care about plan history):
   ```sh
   rm -f $XDG_STATE_HOME/radioactive-ralph/plans.db
-  radioactive_ralph init
   ```
+  The next command that reads or writes the plan DAG will recreate and
+  migrate `plans.db`.
 
 ## Fixit advisor writes a fallback plan
 
