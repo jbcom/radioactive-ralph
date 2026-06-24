@@ -8,6 +8,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 )
 
 // fakeRunner returns a runner that replies with predetermined output
@@ -69,6 +70,35 @@ func TestRunAllGreen(t *testing.T) {
 	}
 	if r.WarnCount != 0 {
 		t.Errorf("expected 0 warnings, got %d: %+v", r.WarnCount, r.Checks)
+	}
+}
+
+func TestRunCommandTimeoutOption(t *testing.T) {
+	t.Setenv("GEMINI_API_KEY", "test-token")
+	t.Setenv("OPENAI_API_KEY", "test-token")
+	t.Setenv("ANTHROPIC_API_KEY", "test-token")
+	base := fakeRunner(map[string]struct {
+		out string
+		err error
+	}{
+		"git --version":  {out: "git version 2.42.0"},
+		"gh --version":   {out: "gh version 2.60.1"},
+		"gh auth status": {out: "Logged in to github.com"},
+	})
+	runner := func(ctx context.Context, name string, args ...string) (string, error) {
+		key := name
+		if len(args) > 0 {
+			key = name + " " + strings.Join(args, " ")
+		}
+		if key == "claude --version" {
+			<-ctx.Done()
+			return "", ctx.Err()
+		}
+		return base(ctx, name, args...)
+	}
+	r := Run(context.Background(), WithRunner(runner), WithCommandTimeout(time.Nanosecond))
+	if r.Passed() {
+		t.Fatalf("expected timeout to fail a required check, got %+v", r.Checks)
 	}
 }
 
