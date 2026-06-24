@@ -127,3 +127,49 @@ func TestServiceStatusInvocation(t *testing.T) {
 		})
 	}
 }
+
+func TestParseWindowsServiceHostArgs(t *testing.T) {
+	args := []string{
+		"radioactive_ralph",
+		"service",
+		"run-windows",
+		"--repo-root", `C:\repo`,
+		"--service-name=radioactive_ralph-repo-123",
+		"--config-path", `C:\state\svc.json`,
+	}
+	got, handled, err := parseWindowsServiceHostArgs(args)
+	if err != nil {
+		t.Fatalf("parseWindowsServiceHostArgs() err = %v", err)
+	}
+	if !handled {
+		t.Fatal("parseWindowsServiceHostArgs() did not handle run-windows args")
+	}
+	if got.RepoRoot != `C:\repo` {
+		t.Fatalf("RepoRoot = %q", got.RepoRoot)
+	}
+	if got.ServiceName != "radioactive_ralph-repo-123" {
+		t.Fatalf("ServiceName = %q", got.ServiceName)
+	}
+	if got.ConfigPath != `C:\state\svc.json` {
+		t.Fatalf("ConfigPath = %q", got.ConfigPath)
+	}
+}
+
+func TestParseWindowsServiceHostArgsRejectsUnknownArg(t *testing.T) {
+	_, handled, err := parseWindowsServiceHostArgs([]string{
+		"radioactive_ralph",
+		"service",
+		"run-windows",
+		"--repo-root", `C:\repo`,
+		"--wat",
+	})
+	if !handled {
+		t.Fatal("parseWindowsServiceHostArgs() did not handle run-windows args")
+	}
+	if err == nil {
+		t.Fatal("parseWindowsServiceHostArgs() err = nil, want error")
+	}
+	if !strings.Contains(err.Error(), "unknown run-windows argument") {
+		t.Fatalf("parseWindowsServiceHostArgs() err = %v", err)
+	}
+}

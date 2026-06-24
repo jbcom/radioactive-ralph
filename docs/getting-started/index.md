@@ -11,8 +11,12 @@ lastUpdated: 2026-04-15
 |---|---|
 | macOS / Linux (Homebrew) | `brew tap jbcom/pkgs https://github.com/jbcom/pkgs && brew install radioactive-ralph` |
 | Windows Scoop | `scoop bucket add jbcom https://github.com/jbcom/pkgs && scoop install radioactive-ralph` |
-| Windows Chocolatey | `choco install radioactive-ralph` |
 | macOS / Linux curl installer | <code>curl -sSL https://jonbogaty.com/radioactive-ralph/install.sh | sh</code> |
+
+The stable install surface is Homebrew, Scoop, and the curl installer.
+Chocolatey is intentionally not advertised for stable releases unless a
+future release explicitly adds that package to the supported install
+surface.
 
 ## Initialize a repo
 

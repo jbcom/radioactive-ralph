@@ -155,6 +155,9 @@ func verifyProviderAvailable(cfg config.File, repo string, p variant.Profile, fr
 	if binding.Config.Binary == "" {
 		return fmt.Errorf("provider %q has no configured binary", binding.Name)
 	}
+	if err := provider.ValidateBinding(binding); err != nil {
+		return err
+	}
 	if _, err := exec.LookPath(binding.Config.Binary); err != nil {
 		return fmt.Errorf("provider binary %q not on PATH", binding.Config.Binary)
 	}

@@ -22,3 +22,14 @@ start, go to [install-first-run](./install-first-run.md).
 Runbooks are kept separate from the guides (`docs/guides/`) because
 they answer "how do I do X" — guides answer "why does X work this
 way."
+
+```{toctree}
+:hidden:
+
+install-first-run
+provider-auth
+service
+approvals-handoffs
+troubleshooting
+platforms
+```

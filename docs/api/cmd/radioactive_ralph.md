@@ -692,7 +692,7 @@ func (c *StopCmd) Run(rc *runContext) error
 Run asks the repo service to shut down gracefully.
 
 <a name="TUICmd"></a>
-## type [TUICmd](<https://github.com/jbcom/radioactive-ralph/blob/main/cmd/radioactive_ralph/tui.go#L32-L35>)
+## type [TUICmd](<https://github.com/jbcom/radioactive-ralph/blob/main/cmd/radioactive_ralph/tui.go#L34-L37>)
 
 
 
@@ -704,7 +704,7 @@ type TUICmd struct {
 ```
 
 <a name="TUICmd.Run"></a>
-### func \(\*TUICmd\) [Run](<https://github.com/jbcom/radioactive-ralph/blob/main/cmd/radioactive_ralph/tui.go#L37>)
+### func \(\*TUICmd\) [Run](<https://github.com/jbcom/radioactive-ralph/blob/main/cmd/radioactive_ralph/tui.go#L39>)
 
 ```go
 func (c *TUICmd) Run(_ *runContext) error

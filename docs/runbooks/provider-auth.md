@@ -50,15 +50,16 @@ lifecycle across task boundaries.
 ### Install
 
 ```sh
-# npm install -g @openai/codex-cli
-# (tracking — verify the current package name on the OpenAI docs)
+npm install -g @openai/codex
 ```
 
 ### Authenticate
 
 ```sh
 export OPENAI_API_KEY=sk-proj-...
+printenv OPENAI_API_KEY | codex login --with-api-key
 codex --version
+codex login status
 ```
 
 ### radioactive-ralph stateless binding

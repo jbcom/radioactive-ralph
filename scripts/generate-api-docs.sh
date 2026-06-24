@@ -27,21 +27,27 @@ fi
 rm -rf "$OUT_DIR"
 mkdir -p "$OUT_DIR"
 
-# Emit one markdown file per Go package into the content tree.
+# Emit one markdown file per Go package into the content tree. Running
+# gomarkdoc over the whole module at once can be memory-heavy on local
+# machines, so enumerate packages and render each one independently.
 # {{.Dir}} expands to the package's directory path relative to the
-# module root (e.g., "internal/variant"); we prepend it with the
-# flattening via sed below.
+# module root (e.g., "internal/variant").
 cd "$REPO_ROOT"
-gomarkdoc \
-  --output "$OUT_DIR/{{.Dir}}.md" \
-  --repository.url "https://github.com/jbcom/radioactive-ralph" \
-  --repository.default-branch main \
-  --repository.path / \
-  ./cmd/... \
-  ./internal/... 2>&1 | sed 's/^/  /' || {
-    echo "gomarkdoc failed" >&2
+package_dirs="$(go list -f '{{.Dir}}' ./cmd/... ./internal/...)"
+while IFS= read -r pkg_dir; do
+  [[ -z "$pkg_dir" ]] && continue
+  rel_pkg="${pkg_dir#$REPO_ROOT/}"
+  pkg="./$rel_pkg"
+  if ! gomarkdoc \
+    --output "$OUT_DIR/{{.Dir}}.md" \
+    --repository.url "https://github.com/jbcom/radioactive-ralph" \
+    --repository.default-branch main \
+    --repository.path / \
+    "$pkg" 2>&1 | sed "s#^#  $pkg: #"; then
+    echo "gomarkdoc failed for $pkg" >&2
     exit 1
-  }
+  fi
+done <<< "$package_dirs"
 
 # gomarkdoc emits raw markdown. Prepend a simple title frontmatter so
 # MyST/Sphinx gets a stable page title even when the generated H1 is

@@ -217,9 +217,10 @@ rather than fully declarative.
    - Gemini CLI behavior under real usage
    - better error/structured-output handling
 
-3. Decide whether session-resume support for Codex/Gemini is in v1 or deferred.
-   - if in v1: implement and test
-   - if deferred: document stateless-turn behavior explicitly
+3. Lock the state model for each shipped provider.
+   - Claude remains stateful through CLI session resume
+   - Codex and Gemini remain documented stateless turn bindings until
+     their CLIs expose stable resume semantics
 
 4. Design the next-step declarative provider binding model.
    - executable
