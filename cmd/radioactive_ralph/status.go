@@ -52,6 +52,19 @@ func (c *StatusCmd) Run(rc *runContext) error {
 	fmt.Printf("active_workers:   %d\n", status.ActiveWorkers)
 	fmt.Printf("running_tasks:    %d\n", status.RunningTasks)
 	fmt.Printf("failed_tasks:     %d\n", status.FailedTasks)
+	if len(status.SessionVariants) > 0 {
+		fmt.Printf("session_variants: %d\n", len(status.SessionVariants))
+		for _, sv := range status.SessionVariants {
+			line := fmt.Sprintf("  %s  %s  %s", sv.VariantName, sv.Status, sv.ID)
+			if sv.PlanSlug != "" {
+				line += "  plan=" + sv.PlanSlug
+			}
+			if sv.TaskID != "" {
+				line += "  task=" + sv.TaskID
+			}
+			fmt.Println(line)
+		}
+	}
 	if !status.LastEventAt.IsZero() {
 		fmt.Printf("last_event:       %s\n", status.LastEventAt.Format(time.RFC3339))
 	}
