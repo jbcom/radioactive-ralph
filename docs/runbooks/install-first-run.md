@@ -53,8 +53,9 @@ This scaffolds `.radioactive-ralph/` with:
 - `local.toml` — machine-local overrides (gitignored)
 - `plans/index.md` — human-readable plan index
 
-Re-runnable. Pass `--yes` for non-interactive (CI) mode, or `--force`
-to overwrite an existing `config.toml`.
+Re-runnable. Pass `--force` to overwrite an existing `config.toml`.
+`--yes` is accepted as a no-op compatibility flag (init is already
+non-interactive) so it stays safe in CI scripts.
 
 ## 3. Verify your environment
 
@@ -84,7 +85,7 @@ In another terminal:
 radioactive_ralph status --json
 ```
 
-Expected: a JSON body with `repo_path`, `pid`, `started_at`, and an
+Expected: a JSON body with `repo_path`, `pid`, `uptime_ns`, and an
 empty `workers` array. If you see `no service socket at <path>`, the
 service isn't running yet — go back to step 4.
 

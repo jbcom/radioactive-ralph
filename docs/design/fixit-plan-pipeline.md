@@ -142,8 +142,9 @@ type IntentSpec struct {
 }
 ```
 
-When invoked non-interactively (CI, --yes, --auto-handoff cascade), Stage 1 fills
-IntentSpec from the CLI flags only — no prompts.
+When invoked non-interactively (CI, `--auto-handoff` cascade, or any
+run where stdin is not a TTY), Stage 1 fills IntentSpec from the CLI
+flags only — no prompts.
 
 When invoked interactively in a terminal, Stage 1 asks the operator three short questions:
 
@@ -153,8 +154,11 @@ When invoked interactively in a terminal, Stage 1 asks the operator three short 
 3. **Time/budget cap?** — one of: "single session", "~1 hour", "1-2 days",
    "1+ week", "no cap". Recorded as IntentSpec.Constraints.
 
-Operator can pass `--non-interactive` to skip; in that case all three are blank
-and Stage 4 prompts compensate by asking the planning provider to be more conservative.
+There is no `--non-interactive` flag; interactivity is auto-detected
+from the TTY. To force non-interactive mode, pipe stdin from a file or
+`/dev/null`, or run under CI where no TTY is present. In that case all
+three prompts are blank and Stage 4 compensates by asking the planning
+provider to be more conservative.
 
 ## Contract: RepoContext (Stage 2 output)
 
@@ -320,6 +324,5 @@ follow-up for the rest of the Ralph lineup.
 - `internal/fixit/analyze.go` — Stage 4 provider turn + JSON parsing
 - `internal/fixit/validate.go` — Stage 5 validation rules
 - `internal/fixit/emit.go` — Stage 6 plan-file writer
-- `internal/fixit/prompts/advisor.tmpl` — Stage 4 prompt template
-- `internal/fixit/prompts/schema.ts` — output schema (referenced by template)
-- `cmd/radioactive_ralph/advisor.go` — wiring, replaces the current state-driven stub
+- `internal/fixit/prompts/advisor.tmpl` — Stage 4 prompt template (embeds the JSON output schema inline)
+- `cmd/radioactive_ralph/advisor.go` — wiring between the `run --variant fixit --advise` CLI and the pipeline

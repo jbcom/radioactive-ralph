@@ -100,9 +100,15 @@ world-breaker require the durable repo service.
 | `radioactive_ralph service start` | Launch the durable repo runtime |
 | `radioactive_ralph service install` | Register the durable repo runtime with launchd, systemd, or Windows SCM |
 | `radioactive_ralph service status` | Report installed service-unit state for the current platform |
+| `radioactive_ralph service list` | List installed repo service units |
+| `radioactive_ralph service uninstall` | Remove an installed repo service unit |
 | `radioactive_ralph status` | Query the running repo service over the local control plane |
 | `radioactive_ralph attach` | Stream repo service events live |
 | `radioactive_ralph tui` | Open the repo service cockpit |
+| `radioactive_ralph plan ls` | List plans in the durable plan store |
+| `radioactive_ralph plan show <plan>` | Show plan details and task summary |
+| `radioactive_ralph plan tasks <plan>` | List tasks in a plan (filter with `--status <status>`) |
+| `radioactive_ralph plan next <plan>` | Show the next ready task in a plan |
 | `radioactive_ralph plan approvals` | List tasks waiting for operator approval |
 | `radioactive_ralph plan blocked` | List tasks blocked on missing context or operator intervention |
 | `radioactive_ralph plan requeue <plan> <task>` | Return a blocked/failed task to the runnable queue |
@@ -110,9 +116,10 @@ world-breaker require the durable repo service.
 | `radioactive_ralph plan handoff <plan> <task> <variant>` | Hand a task to a different Ralph persona |
 | `radioactive_ralph plan fail <plan> <task>` | Force-fail a task from the operator surface |
 | `radioactive_ralph plan approve <plan> <task>` | Approve an approval-gated task |
+| `radioactive_ralph plan mark-done <plan> <task>` | Force-complete a task from the operator surface |
+| `radioactive_ralph plan import <file>` | Import a plan+tasks from a JSON file |
 | `radioactive_ralph plan history <plan> <task>` | Inspect task handoff / approval / completion events |
 | `radioactive_ralph stop` | Shut the repo service down gracefully |
-| `radioactive_ralph plan ls` | List plans in the durable plan store |
 
 ## Current requirements
 

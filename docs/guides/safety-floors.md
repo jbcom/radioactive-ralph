@@ -29,11 +29,18 @@ ensures every destructive op runs against a disposable clone.
 Before certain operations — force-push, `git reset --hard`, deleting
 non-merged branches — the runtime raises a gate that blocks the
 session until the operator confirms. Gates are defined per-variant
-in the variant profile.
+in the variant profile and are surfaced through the operator task
+controls (`plan approvals`, `plan approve`, `plan blocked`,
+`plan requeue`, `plan retry`, `plan handoff`).
 
-**Opt-out:** set `ShellExplicitlyTrusted = true` in the variant
-config *and* supply the matching variant profile tag. Both must be
-present; one-flag overrides fail closed.
+The `ShellExplicitlyTrusted` field on the variant profile is reserved
+for a future "opt-out" path, but the live runtime does not honor it —
+destructive variants are gated exclusively by explicit run-time
+confirmations and spend caps declared either by CLI flag or variant
+config. There is no committed shell-trust block today. When a future
+release wires `ShellExplicitlyTrusted` into the gate logic, both the
+flag and the matching variant profile tag will be required; one-flag
+overrides fail closed.
 
 ### 3. Plans-first discipline
 
@@ -69,10 +76,9 @@ not depending on orphaned background state.
 
 ## Confirmation flow
 
-The live runtime does not use a committed shell-trust block. Destructive
-variants are gated by explicit run-time confirmations and, where applicable,
-spend caps declared either by CLI flag or variant config. Operator intervention
-flows through:
+Destructive variants are gated by explicit run-time confirmations
+and, where applicable, spend caps declared either by CLI flag or
+variant config. Operator intervention flows through:
 
 - `radioactive_ralph plan approvals`
 - `radioactive_ralph plan approve <plan> <task>`
