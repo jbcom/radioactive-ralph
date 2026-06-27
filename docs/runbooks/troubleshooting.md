@@ -22,8 +22,21 @@ clients connect successfully — but nothing is on the other end.
 
 ### Fix
 
+The service process crashed without cleaning its control-plane socket
+and heartbeat file. The socket / named pipe still exists on disk, so
+clients connect successfully — but nothing is on the other end.
+
 ```sh
-radioactive_ralph service clean
+# 1. Stop the service if it's somehow still alive.
+radioactive_ralph stop || pgrep -f "radioactive_ralph service" && kill <pid>
+
+# 2. Remove the stale control-plane endpoint and heartbeat file by hand.
+#    radioactive_ralph does not ship a `service clean` subcommand.
+#    Replace <repo-hash> with the directory under your XDG state root.
+rm -f "$HOME/Library/Application Support/radioactive-ralph/<repo-hash>"/control.sock
+rm -f "$HOME/Library/Application Support/radioactive-ralph/<repo-hash>"/control.alive
+
+# 3. Restart the service.
 radioactive_ralph service start   # or launchctl/systemctl/SCM restart
 ```
 
@@ -33,7 +46,8 @@ Verify:
 radioactive_ralph status --json
 ```
 
-Response should have a fresh `started_at` timestamp.
+Response should have a fresh `uptime_ns` value (small, growing as the
+service runs).
 
 ## Dead socket or pipe
 
@@ -58,8 +72,9 @@ Either the service never started or the OS cleaned the endpoint.
 pgrep -f "radioactive_ralph service"        # Unix
 Get-Process | Where-Object { $_.ProcessName -like "*radioactive*" }   # Windows
 
-# 2a. If yes: the endpoint is stale — clean + restart
-radioactive_ralph service clean
+# 2a. If yes: stop it, then remove the stale endpoint by hand and restart.
+radioactive_ralph stop
+rm -f "<state-root>/<repo-hash>"/control.sock   # Unix; Windows pipes clear on reboot
 radioactive_ralph service start
 
 # 2b. If no: just start it
@@ -255,8 +270,8 @@ Adjust the inputs and re-run `run --variant fixit --advise`.
 Capture state and open an issue:
 
 ```sh
-radioactive_ralph doctor --verbose > /tmp/ralph-doctor.txt
-radioactive_ralph status --json   > /tmp/ralph-status.json
+radioactive_ralph doctor              > /tmp/ralph-doctor.txt
+radioactive_ralph status --json       > /tmp/ralph-status.json
 journalctl --user -u radioactive-ralph-<slug> --since -1h > /tmp/ralph-journal.txt
 ```
 

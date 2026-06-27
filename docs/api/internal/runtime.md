@@ -81,7 +81,7 @@ func (s *Service) Run(ctx context.Context) error
 Run starts the repo runtime and blocks until shutdown or context cancel.
 
 <a name="Service.Shutdown"></a>
-### func \(\*Service\) [Shutdown](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/runtime/service.go#L174>)
+### func \(\*Service\) [Shutdown](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/runtime/service.go#L182>)
 
 ```go
 func (s *Service) Shutdown()

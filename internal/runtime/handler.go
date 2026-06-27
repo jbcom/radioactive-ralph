@@ -42,8 +42,8 @@ func (h *handler) HandleStop(_ context.Context, _ ipc.StopArgs) error {
 	return nil
 }
 
-func (h *handler) HandleReloadConfig(_ context.Context) error {
-	return nil
+func (h *handler) HandleReloadConfig(ctx context.Context) error {
+	return h.svc.reloadConfig(ctx)
 }
 
 func (h *handler) HandleAttach(ctx context.Context, emit func(json.RawMessage) error) error {

@@ -41,7 +41,7 @@ missing before we drop the branch?"*
 | 2827f1c | session cassette-replay VCR | **Present — relocated.** Moved to `internal/provider/claudesession/cassette/` when the provider abstraction landed. |
 | f6d7d38 | PR #31 review feedback | **Present.** All addressed inline in the current `internal/variant/` + hook tree. |
 | 71e9b1c | integration test harness + gated live claude tests | **Present.** `tests/integration/integration_test.go` + `live_test.go`. |
-| d17efaa | kong subcommand tree | **Present — expanded.** `cmd/radioactive_ralph/main.go` has a superset: init, run, status, attach, stop, doctor, service, plan, tui, advisor. |
+| d17efaa | kong subcommand tree | **Present — expanded.** `cmd/radioactive_ralph/main.go` has a superset: init, run, status, attach, stop, doctor, service, plan, tui. Fixit is wired through `run --variant fixit --advise`, not as a top-level command. |
 | 2fb2477 | initcmd capability wizard | **Present.** `internal/initcmd/`. |
 | 498dbf3 | supervisor PID flock + event replay + IPC dispatch | **Present — evolved.** Moved to `internal/runtime/` for the repo-scoped service model; flock lives in `runtime/flock*.go`. |
 | 58f9b4c | launchd + systemd-user installer with safety gates | **Present.** `internal/service/`. |

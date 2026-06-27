@@ -106,3 +106,67 @@ radioactive_ralph plan history <plan> <task>
 
 Output is a chronological list with timestamps, event type, and the
 variant/session that recorded each event.
+
+## Plan inspection
+
+### List plans
+
+```sh
+radioactive_ralph plan ls
+```
+
+Lists every plan in the durable store across all statuses (draft,
+active, paused, done, failed-partial, archived, abandoned). Pass
+`--all` to include archived + abandoned plans, or `--all-repos` to
+widen the view to every repo in the operator state dir.
+
+### Show one plan
+
+```sh
+radioactive_ralph plan show <id-or-slug>
+```
+
+Renders plan metadata (slug, title, primary variant, status, task
+counts by status) and the task list. Accepts a full UUID or the plan
+slug.
+
+### List tasks in a plan
+
+```sh
+radioactive_ralph plan tasks <id-or-slug>
+radioactive_ralph plan tasks <id-or-slug> --status running
+radioactive_ralph plan tasks <id-or-slug> --status blocked --status failed
+```
+
+Lists tasks in status-priority order. `--status` is repeatable; pass
+it once per status you want to include (`pending`, `ready`,
+`ready_pending_approval`, `blocked`, `running`, `done`, `failed`,
+`skipped`, `decomposed`).
+
+### Show the next ready task
+
+```sh
+radioactive_ralph plan next <id-or-slug>
+```
+
+Prints the next task the scheduler would claim for the given plan —
+the head of the ready set after dependency resolution. Useful for
+dry-running "what would the service pick up next?" without starting a
+worker.
+
+## Force-complete a task from the operator surface
+
+When a task is stuck in a non-running state (blocked, failed,
+`ready_pending_approval`, or pending) and the operator wants to mark
+it done without going through a worker session:
+
+```sh
+radioactive_ralph plan mark-done <id-or-slug> <task-id>
+radioactive_ralph plan mark-done <id-or-slug> <task-id> --evidence "manual verification passed"
+```
+
+This is the operator analogue of the worker-side `MarkDone` and emits
+a `completed_operator` event in `task_events`. For a task already in
+`running` state under a live session, the worker-side path applies
+and `mark-done` delegates to it. Downstream tasks become claimable
+once the force-completed task is `done`.

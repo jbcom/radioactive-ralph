@@ -50,6 +50,7 @@ For commands that stream \(attach\), the server sends N \>= 0 frames of \{"event
   - [func \(s \*Server\) Start\(heartbeatInterval time.Duration\) error](<#Server.Start>)
   - [func \(s \*Server\) Stop\(\) error](<#Server.Stop>)
 - [type ServerOptions](<#ServerOptions>)
+- [type SessionVariantInfo](<#SessionVariantInfo>)
 - [type StatusReply](<#StatusReply>)
 - [type StopArgs](<#StopArgs>)
 - [type StreamEvent](<#StreamEvent>)
@@ -187,7 +188,7 @@ func (c *Client) Stop(ctx context.Context, args StopArgs) error
 Stop issues a stop request. The server closes the socket after replying; expect the returned error to be ErrClosed on the next call.
 
 <a name="EnqueueArgs"></a>
-## type [EnqueueArgs](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/protocol.go#L88-L92>)
+## type [EnqueueArgs](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/protocol.go#L105-L109>)
 
 EnqueueArgs is the client's payload when pushing work via CmdEnqueue.
 
@@ -200,7 +201,7 @@ type EnqueueArgs struct {
 ```
 
 <a name="EnqueueReply"></a>
-## type [EnqueueReply](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/protocol.go#L96-L99>)
+## type [EnqueueReply](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/protocol.go#L113-L116>)
 
 EnqueueReply tells the client whether a new task was created or a duplicate was collapsed \(via FTS dedup in the db layer\).
 
@@ -322,31 +323,50 @@ type ServerOptions struct {
 }
 ```
 
+<a name="SessionVariantInfo"></a>
+## type [SessionVariantInfo](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/protocol.go#L83-L92>)
+
+SessionVariantInfo is the status\-facing projection of one session\_variant row. It surfaces workers that the durable runtime has registered but that the in\-process workers map does not yet know about \(e.g. workers spawned by a previous service instance that crashed, or workers owned by a peer service process\).
+
+```go
+type SessionVariantInfo struct {
+    ID            string    `json:"id"`
+    VariantName   string    `json:"variant_name"`
+    Status        string    `json:"status"`
+    PlanSlug      string    `json:"plan_slug,omitempty"`
+    TaskID        string    `json:"task_id,omitempty"`
+    TaskDesc      string    `json:"task_desc,omitempty"`
+    StartedAt     time.Time `json:"started_at,omitempty"`
+    LastHeartbeat time.Time `json:"last_heartbeat,omitempty"`
+}
+```
+
 <a name="StatusReply"></a>
-## type [StatusReply](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/protocol.go#L61-L75>)
+## type [StatusReply](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/protocol.go#L61-L76>)
 
 StatusReply is the data payload for CmdStatus responses.
 
 ```go
 type StatusReply struct {
-    RepoPath      string          `json:"repo_path"`
-    PID           int             `json:"pid"`
-    Uptime        time.Duration   `json:"uptime_ns"`
-    ActiveWorkers int             `json:"active_workers"`
-    ReadyTasks    int             `json:"ready_tasks"`
-    ApprovalTasks int             `json:"approval_tasks"`
-    BlockedTasks  int             `json:"blocked_tasks"`
-    RunningTasks  int             `json:"running_tasks"`
-    FailedTasks   int             `json:"failed_tasks"`
-    ActivePlans   int             `json:"active_plans"`
-    Workers       []WorkerSummary `json:"workers,omitempty"`
-    LastEventAt   time.Time       `json:"last_event_at,omitempty"`
-    HeartbeatAge  time.Duration   `json:"heartbeat_age_ns,omitempty"`
+    RepoPath        string               `json:"repo_path"`
+    PID             int                  `json:"pid"`
+    Uptime          time.Duration        `json:"uptime_ns"`
+    ActiveWorkers   int                  `json:"active_workers"`
+    ReadyTasks      int                  `json:"ready_tasks"`
+    ApprovalTasks   int                  `json:"approval_tasks"`
+    BlockedTasks    int                  `json:"blocked_tasks"`
+    RunningTasks    int                  `json:"running_tasks"`
+    FailedTasks     int                  `json:"failed_tasks"`
+    ActivePlans     int                  `json:"active_plans"`
+    Workers         []WorkerSummary      `json:"workers,omitempty"`
+    SessionVariants []SessionVariantInfo `json:"session_variants,omitempty"`
+    LastEventAt     time.Time            `json:"last_event_at,omitempty"`
+    HeartbeatAge    time.Duration        `json:"heartbeat_age_ns,omitempty"`
 }
 ```
 
 <a name="StopArgs"></a>
-## type [StopArgs](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/protocol.go#L102-L105>)
+## type [StopArgs](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/protocol.go#L119-L122>)
 
 StopArgs controls the termination mode for CmdStop.
 
@@ -369,7 +389,7 @@ type StreamEvent struct {
 ```
 
 <a name="WorkerSummary"></a>
-## type [WorkerSummary](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/protocol.go#L78-L85>)
+## type [WorkerSummary](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/protocol.go#L95-L102>)
 
 WorkerSummary is the runtime\-facing status for one in\-flight worker.
 

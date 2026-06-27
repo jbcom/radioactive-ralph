@@ -15,7 +15,7 @@ This page tracks the live state of the runtime after the repo-service pivot.
 - durable repo-scoped runtime under `radioactive_ralph service start`
 - attached bounded execution under `radioactive_ralph run --variant <name>`
 - socket-backed `status`, `attach`, `stop`, and `tui`
-- operator task controls via `plan tasks`, `plan approvals`, `plan blocked`, `plan approve`, `plan requeue`, `plan retry`, `plan handoff`, `plan fail`, and `plan history`
+- operator task controls via `plan tasks`, `plan approvals`, `plan blocked`, `plan approve`, `plan requeue`, `plan retry`, `plan handoff`, `plan fail`, `plan history`, `plan import`, and `plan mark-done`
 - named provider bindings with a repo-level default provider
 - shipped provider runners for `claude`, `codex`, and `gemini`
 - native Windows durable-service support via SCM + named pipes

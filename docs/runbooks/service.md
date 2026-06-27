@@ -84,39 +84,54 @@ Removes the plist/unit/service registration. The binary + your
 `.radioactive-ralph/` config stay put; only the OS-service hook is
 removed.
 
+## 3b. List + status
+
+```sh
+radioactive_ralph service list      # enumerate installed repo service units
+radioactive_ralph service status    # report the current repo's service-unit state
+```
+
+`service list` enumerates every installed repo service unit on the
+machine. `service status` reports the installed-service state for the
+current repo (loaded/stopped/failed on launchd, active/inactive/failed
+on systemd, Running/Stopped on Windows SCM).
+
 ## 4. Stale state recovery
 
 When `radioactive_ralph status` says the service is running but
-nothing responds:
+nothing responds, the previous service process crashed without
+cleaning its control-plane socket (or named pipe on Windows) and
+heartbeat file.
 
-### 4a. Check the heartbeat
-
-The runtime writes a heartbeat file next to the control-plane socket
-(or named pipe on Windows). If its mtime is older than ~10s, the
-service is dead but left its socket behind.
-
-```sh
-ls -l $(radioactive_ralph status --socket-path 2>&1 | grep heartbeat)
-```
-
-### 4b. Clean the dead socket
-
-```sh
-radioactive_ralph service clean
-```
-
-Removes the stale control-plane endpoint (Unix socket or Windows
-named-pipe reference) and the heartbeat file. Then `service start`
-will succeed again.
-
-### 4c. Verify no orphan process
+### 4a. Verify the service is actually dead
 
 ```sh
 pgrep -f "radioactive_ralph service" || echo "no orphan"
 ```
 
-If `pgrep` shows a PID, the service is still alive — don't `service
-clean`; use `radioactive_ralph stop` (or `kill <pid>`) first.
+If `pgrep` shows a PID, the service is still alive — use
+`radioactive_ralph stop` (or `kill <pid>`) first, then re-check.
+
+### 4b. Remove the stale socket and heartbeat file manually
+
+`radioactive_ralph` does not ship a `service clean` subcommand. The
+stale control-plane endpoint lives next to the heartbeat file under
+your XDG state root. Remove both by hand:
+
+```sh
+# macOS
+rm -f "$HOME/Library/Application Support/radioactive-ralph/<repo-hash>"/control.sock
+rm -f "$HOME/Library/Application Support/radioactive-ralph/<repo-hash>"/control.alive
+
+# Linux / WSL2
+rm -f "${XDG_STATE_HOME:-$HOME/.local/state}/radioactive-ralph/<repo-hash>"/control.sock
+rm -f "${XDG_STATE_HOME:-$HOME/.local/state}/radioactive-ralph/<repo-hash>"/control.alive
+```
+
+On Windows, named pipes are cleaned by reboot; if a reboot is
+impractical, restart the SCM service.
+
+Then `service start` (or the OS service manager) will succeed again.
 
 ## 5. Logs
 

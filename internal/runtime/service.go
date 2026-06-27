@@ -146,7 +146,11 @@ func (s *Service) Run(ctx context.Context) error {
 		"repo": s.opts.RepoPath,
 		"pid":  os.Getpid(),
 	}); err != nil {
-		_ = err
+		// Don't hide the audit-trail failure — the operator needs to
+		// know the event DB is unreachable so they can intervene before
+		// the service runs unobserved. The deferred s.cleanup() on
+		// line 129 handles resource teardown.
+		return fmt.Errorf("runtime: log service.start: %w", err)
 	}
 
 	workerCtx, cancel := context.WithCancel(context.Background())
@@ -163,10 +167,18 @@ func (s *Service) Run(ctx context.Context) error {
 	}
 	cancel()
 	s.wg.Wait()
-	_ = s.logEvent(context.Background(), "service.stop", map[string]any{
+	// Best-effort stop event with a bounded timeout so a locked
+	// event DB can't hang shutdown indefinitely.
+	logCtx, logCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer logCancel()
+	if err := s.logEvent(logCtx, "service.stop", map[string]any{
 		"repo":   s.opts.RepoPath,
 		"uptime": time.Since(s.started).String(),
-	})
+	}); err != nil {
+		// Log to stderr so the operator sees the audit failure even
+		// when the service is shutting down.
+		fmt.Fprintf(os.Stderr, "radioactive_ralph: log service.stop: %v\n", err)
+	}
 	return nil
 }
 
@@ -230,23 +242,113 @@ func (s *Service) loadRepoState() error {
 	return nil
 }
 
-func (s *Service) validateProviderBindings() error {
-	seen := map[string]bool{}
-	for _, profile := range variant.All() {
-		variantCfg := s.cfg.Variants[string(profile.Name)]
-		binding, err := provider.ResolveBinding(s.cfg, s.local, profile, variantCfg)
-		if err != nil {
-			return fmt.Errorf("provider binding for variant %s: %w", profile.Name, err)
-		}
-		if seen[binding.Name] {
-			continue
-		}
-		seen[binding.Name] = true
-		if err := provider.ValidateBinding(binding); err != nil {
-			return err
+// reloadConfig re-reads config.toml and local.toml from disk, applies
+// the built-in provider defaults, re-validates every variant's binding,
+// and swaps the in-memory config under the service mutex. It is the
+// backing implementation for the IPC `reload-config` command.
+func (s *Service) reloadConfig(ctx context.Context) error {
+	cfg, cfgErr := config.Load(s.opts.RepoPath)
+	if cfgErr != nil && !config.IsMissingConfig(cfgErr) {
+		return fmt.Errorf("reload config: %w", cfgErr)
+	}
+	local, localErr := config.LoadLocal(s.opts.RepoPath)
+	if localErr != nil && !config.IsMissingLocal(localErr) {
+		return fmt.Errorf("reload local: %w", localErr)
+	}
+	if cfgErr == nil && cfg.Providers == nil {
+		cfg.Providers = map[string]config.ProviderFile{
+			"claude": config.DefaultClaudeProvider(),
+			"codex":  config.DefaultCodexProvider(),
+			"gemini": config.DefaultGeminiProvider(),
 		}
 	}
+	if cfgErr == nil && cfg.DefaultProvider == "" {
+		cfg.DefaultProvider = "claude"
+	}
+
+	// Validate the candidate bindings BEFORE swapping them into the
+	// service state. If validation fails, the service keeps running
+	// with its previous (valid) config — a failed reload must never
+	// leave the service in an invalid state.
+	validateCandidate := func() error {
+		seen := map[string]bool{}
+		effectiveCfg := cfg
+		if cfgErr != nil {
+			effectiveCfg = s.cfg // config unchanged; validate existing
+		}
+		effectiveLocal := local
+		if localErr != nil {
+			effectiveLocal = s.local // local unchanged
+		}
+		for _, profile := range variant.All() {
+			variantCfg := effectiveCfg.Variants[string(profile.Name)]
+			binding, err := provider.ResolveBinding(effectiveCfg, effectiveLocal, profile, variantCfg)
+			if err != nil {
+				return fmt.Errorf("provider binding for variant %s: %w", profile.Name, err)
+			}
+			if seen[binding.Name] {
+				continue
+			}
+			seen[binding.Name] = true
+			if err := provider.ValidateBinding(binding); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	if err := validateCandidate(); err != nil {
+		_ = s.logEvent(ctx, "service.reload_config_failed", map[string]any{
+			"repo":  s.opts.RepoPath,
+			"error": err.Error(),
+		})
+		return err
+	}
+
+	// Validation passed — now swap the state under the mutex.
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if cfgErr == nil {
+		s.cfg = cfg
+	}
+	if localErr == nil {
+		s.local = local
+	}
+	_ = s.logEvent(ctx, "service.reload_config", map[string]any{
+		"repo": s.opts.RepoPath,
+	})
 	return nil
+}
+
+// validateProviderBindingsLocked returns a closure that validates every
+// registered variant's provider binding against the current s.cfg/s.local.
+// Caller must hold s.mu.
+func (s *Service) validateProviderBindingsLocked() func() error {
+	cfg := s.cfg
+	local := s.local
+	return func() error {
+		seen := map[string]bool{}
+		for _, profile := range variant.All() {
+			variantCfg := cfg.Variants[string(profile.Name)]
+			binding, err := provider.ResolveBinding(cfg, local, profile, variantCfg)
+			if err != nil {
+				return fmt.Errorf("provider binding for variant %s: %w", profile.Name, err)
+			}
+			if seen[binding.Name] {
+				continue
+			}
+			seen[binding.Name] = true
+			if err := provider.ValidateBinding(binding); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+}
+
+func (s *Service) validateProviderBindings() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.validateProviderBindingsLocked()()
 }
 
 func (s *Service) cleanup() {
@@ -654,19 +756,51 @@ func (s *Service) status(ctx context.Context) (ipc.StatusReply, error) {
 		workers = append(workers, summary)
 	}
 	s.mu.Unlock()
+
+	// Surface durable session-variant state from the plan store. This
+	// catches workers the in-process workers map can't see — previous
+	// service instances, peer processes, or crashed workers whose claims
+	// the reaper hasn't swept yet. Status stays best-effort: a store
+	// error here must not fail the whole status call, but we log it so
+	// the operator can debug a "missing durable workers" symptom
+	// instead of silently seeing an empty list.
+	var sessionVariants []ipc.SessionVariantInfo
+	if s.planStore != nil {
+		svs, err := s.planStore.ListActiveSessionVariants(ctx, s.opts.RepoPath, 50)
+		if err != nil {
+			_ = s.logEvent(ctx, "status.session_variants_failed", map[string]any{
+				"repo":  s.opts.RepoPath,
+				"error": err.Error(),
+			})
+		}
+		for _, sv := range svs {
+			sessionVariants = append(sessionVariants, ipc.SessionVariantInfo{
+				ID:            sv.ID,
+				VariantName:   sv.VariantName,
+				Status:        sv.Status,
+				PlanSlug:      sv.PlanSlug,
+				TaskID:        sv.TaskID,
+				TaskDesc:      sv.TaskDesc,
+				StartedAt:     sv.StartedAt,
+				LastHeartbeat: sv.LastHeartbeat,
+			})
+		}
+	}
+
 	return ipc.StatusReply{
-		RepoPath:      s.opts.RepoPath,
-		PID:           os.Getpid(),
-		Uptime:        time.Since(s.started),
-		ActiveWorkers: activeWorkers,
-		ReadyTasks:    ready,
-		ApprovalTasks: approvals,
-		BlockedTasks:  blocked,
-		RunningTasks:  running,
-		FailedTasks:   failed,
-		ActivePlans:   activePlans,
-		Workers:       workers,
-		HeartbeatAge:  0,
+		RepoPath:        s.opts.RepoPath,
+		PID:             os.Getpid(),
+		Uptime:          time.Since(s.started),
+		ActiveWorkers:   activeWorkers,
+		ReadyTasks:      ready,
+		ApprovalTasks:   approvals,
+		BlockedTasks:    blocked,
+		RunningTasks:    running,
+		FailedTasks:     failed,
+		ActivePlans:     activePlans,
+		Workers:         workers,
+		SessionVariants: sessionVariants,
+		HeartbeatAge:    0,
 	}, nil
 }
 

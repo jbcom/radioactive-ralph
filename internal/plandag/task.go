@@ -183,8 +183,8 @@ func (s *Store) wouldCreateCycle(ctx context.Context, planID, task, dep string) 
 }
 
 // Ready returns tasks that are ready to run — every dependency is
-// `done` (or `skipped`). Result is ordered by created_at for
-// stable test output.
+// in a terminal-satisfied state (`done`, `skipped`, or `decomposed`).
+// Result is ordered by created_at for stable test output.
 func (s *Store) Ready(ctx context.Context, planID string) ([]Task, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT id, plan_id, description, COALESCE(complexity,''), COALESCE(effort,''),
@@ -201,7 +201,7 @@ func (s *Store) Ready(ctx context.Context, planID string) ([]Task, error) {
 		     JOIN tasks tdep ON tdep.plan_id = d.plan_id AND tdep.id = d.depends_on
 		    WHERE d.plan_id = tasks.plan_id
 		      AND d.task_id = tasks.id
-		      AND tdep.status NOT IN ('done', 'skipped')
+		      AND tdep.status NOT IN ('done', 'skipped', 'decomposed')
 		  )
 		ORDER BY created_at
 	`, planID)
@@ -238,7 +238,7 @@ func (s *Store) ClaimNextReady(
 		     JOIN tasks tdep ON tdep.plan_id = d.plan_id AND tdep.id = d.depends_on
 		    WHERE d.plan_id = tasks.plan_id
 		      AND d.task_id = tasks.id
-		      AND tdep.status NOT IN ('done', 'skipped')
+		      AND tdep.status NOT IN ('done', 'skipped', 'decomposed')
 		  )
 		ORDER BY
 		  CASE WHEN variant_hint = ? THEN 0
@@ -680,6 +680,132 @@ func (s *Store) OperatorFailTask(ctx context.Context, planID, taskID string, pay
 		VALUES (?, ?, 'failed_terminal', ?)
 	`, planID, taskID, payloadJSON(payload))
 	return err
+}
+
+// OperatorSkipTask transitions a task into the skipped lifecycle state
+// and records the operator action in task history. A skipped task is
+// treated as satisfied by downstream dependency predicates (see Ready),
+// so dependents become claimable — matching the operator intent of
+// "drop this task but unblock the rest of the DAG". The status
+// transition and audit-log insert run in one transaction so the
+// task cannot end up skipped without an audit row.
+func (s *Store) OperatorSkipTask(ctx context.Context, planID, taskID string, payload TaskEventPayload) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	res, err := tx.ExecContext(ctx, `
+		UPDATE tasks
+		SET status = 'skipped',
+		    claimed_by_session = NULL,
+		    claimed_by_variant_id = NULL,
+		    assigned_variant = NULL
+		WHERE plan_id = ? AND id = ?
+		  AND status NOT IN ('done', 'skipped', 'decomposed')
+	`, planID, taskID)
+	if err != nil {
+		return fmt.Errorf("plandag: operator skip task: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return fmt.Errorf("plandag: task %q cannot be skipped (already terminal)", taskID)
+	}
+	payload.OperatorAction = firstNonEmpty(payload.OperatorAction, "skip")
+	_, err = tx.ExecContext(ctx, `
+		INSERT INTO task_events(plan_id, task_id, event_type, payload_json)
+		VALUES (?, ?, 'skipped', ?)
+	`, planID, taskID, payloadJSON(payload))
+	if err != nil {
+		return fmt.Errorf("plandag: log operator skip task: %w", err)
+	}
+	return tx.Commit()
+}
+
+// OperatorDecomposeTask marks a task as decomposed — it has been broken
+// down into child tasks (the caller is responsible for creating those
+// children and wiring task_deps pointing at this task as parent_task_id).
+// A decomposed task is treated as satisfied by downstream dependency
+// predicates so dependents become claimable once the children are done
+// (or skipped). The status transition and audit-log insert run in one
+// transaction so the task cannot end up decomposed without an audit row.
+func (s *Store) OperatorDecomposeTask(ctx context.Context, planID, taskID string, payload TaskEventPayload) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	res, err := tx.ExecContext(ctx, `
+		UPDATE tasks
+		SET status = 'decomposed',
+		    claimed_by_session = NULL,
+		    claimed_by_variant_id = NULL,
+		    assigned_variant = NULL
+		WHERE plan_id = ? AND id = ?
+		  AND status NOT IN ('done', 'skipped', 'decomposed')
+	`, planID, taskID)
+	if err != nil {
+		return fmt.Errorf("plandag: operator decompose task: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return fmt.Errorf("plandag: task %q cannot be decomposed (already terminal)", taskID)
+	}
+	payload.OperatorAction = firstNonEmpty(payload.OperatorAction, "decompose")
+	_, err = tx.ExecContext(ctx, `
+		INSERT INTO task_events(plan_id, task_id, event_type, payload_json)
+		VALUES (?, ?, 'decomposed', ?)
+	`, planID, taskID, payloadJSON(payload))
+	if err != nil {
+		return fmt.Errorf("plandag: log operator decompose task: %w", err)
+	}
+	return tx.Commit()
+}
+
+// OperatorMarkDone force-completes a task from the operator surface,
+// regardless of which session (if any) currently owns it. This is the
+// operator analogue of the worker-side MarkDone and closes the operator
+// quartet (requeue / retry / handoff / fail) into a quintet by adding
+// the "force done" action. It is the backing for `plan mark-done` when
+// the task is in a non-running state (blocked, failed,
+// ready_pending_approval, or pending); for running tasks the worker-
+// side MarkDone path already applies. skipped tasks are treated as
+// terminal and rejected, matching OperatorFailTask's guard clause —
+// un-skipping a task is not allowed.
+func (s *Store) OperatorMarkDone(ctx context.Context, planID, taskID string, payload TaskEventPayload) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	res, err := tx.ExecContext(ctx, `
+		UPDATE tasks
+		SET status = 'done',
+		    claimed_by_session = NULL,
+		    claimed_by_variant_id = NULL,
+		    assigned_variant = NULL
+		WHERE plan_id = ? AND id = ?
+		  AND status NOT IN ('done', 'skipped', 'decomposed')
+	`, planID, taskID)
+	if err != nil {
+		return fmt.Errorf("plandag: operator mark done: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return fmt.Errorf("plandag: task %q cannot be marked done (already done, skipped, or decomposed)", taskID)
+	}
+	payload.OperatorAction = firstNonEmpty(payload.OperatorAction, "mark_done")
+	_, err = tx.ExecContext(ctx, `
+		INSERT INTO task_events(plan_id, task_id, event_type, payload_json)
+		VALUES (?, ?, 'completed_operator', ?)
+	`, planID, taskID, payloadJSON(payload))
+	if err != nil {
+		return fmt.Errorf("plandag: log operator mark done: %w", err)
+	}
+	return tx.Commit()
 }
 
 // MarkBlocked releases a running task into the blocked set so an operator can
