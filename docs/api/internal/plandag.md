@@ -58,10 +58,13 @@ The schema is embedded under schema/\*.sql and applied in lexical order by Migra
   - [func \(s \*Store\) MarkDone\(ctx context.Context, planID, taskID, sessionID string, evidenceJSON string\) \(\[\]Task, error\)](<#Store.MarkDone>)
   - [func \(s \*Store\) MarkFailed\(ctx context.Context, planID, taskID, sessionID, reason string, maxRetries int\) \(retried bool, err error\)](<#Store.MarkFailed>)
   - [func \(s \*Store\) MarkFailedWithPayload\(ctx context.Context, planID, taskID, sessionID string, payload TaskEventPayload, maxRetries int\) \(retried bool, err error\)](<#Store.MarkFailedWithPayload>)
+  - [func \(s \*Store\) OperatorDecomposeTask\(ctx context.Context, planID, taskID string, payload TaskEventPayload\) error](<#Store.OperatorDecomposeTask>)
   - [func \(s \*Store\) OperatorFailTask\(ctx context.Context, planID, taskID string, payload TaskEventPayload\) error](<#Store.OperatorFailTask>)
   - [func \(s \*Store\) OperatorHandoffTask\(ctx context.Context, planID, taskID string, payload TaskEventPayload, variantHint string, requireApproval bool\) error](<#Store.OperatorHandoffTask>)
+  - [func \(s \*Store\) OperatorMarkDone\(ctx context.Context, planID, taskID string, payload TaskEventPayload\) error](<#Store.OperatorMarkDone>)
   - [func \(s \*Store\) OperatorRequeueTask\(ctx context.Context, planID, taskID string, payload TaskEventPayload, variantHint string, requireApproval bool\) error](<#Store.OperatorRequeueTask>)
   - [func \(s \*Store\) OperatorRetryTask\(ctx context.Context, planID, taskID string, payload TaskEventPayload\) error](<#Store.OperatorRetryTask>)
+  - [func \(s \*Store\) OperatorSkipTask\(ctx context.Context, planID, taskID string, payload TaskEventPayload\) error](<#Store.OperatorSkipTask>)
   - [func \(s \*Store\) Ready\(ctx context.Context, planID string\) \(\[\]Task, error\)](<#Store.Ready>)
   - [func \(s \*Store\) RequeueTask\(ctx context.Context, planID, taskID, sessionID, reason, variantHint string, requireApproval bool\) error](<#Store.RequeueTask>)
   - [func \(s \*Store\) RequeueTaskWithPayload\(ctx context.Context, planID, taskID, sessionID string, payload TaskEventPayload, variantHint string, requireApproval bool\) error](<#Store.RequeueTaskWithPayload>)
@@ -523,7 +526,7 @@ func (s *Store) ListTasks(ctx context.Context, planID string, statuses []TaskSta
 ListTasks returns tasks for one plan, optionally filtered by status.
 
 <a name="Store.MarkBlocked"></a>
-### func \(\*Store\) [MarkBlocked](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plandag/task.go#L687>)
+### func \(\*Store\) [MarkBlocked](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plandag/task.go#L792>)
 
 ```go
 func (s *Store) MarkBlocked(ctx context.Context, planID, taskID, sessionID string, payload TaskEventPayload) error
@@ -558,6 +561,15 @@ func (s *Store) MarkFailedWithPayload(ctx context.Context, planID, taskID, sessi
 
 MarkFailedWithPayload transitions a running task to failed or retries while preserving structured payload details in task history.
 
+<a name="Store.OperatorDecomposeTask"></a>
+### func \(\*Store\) [OperatorDecomposeTask](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plandag/task.go#L723>)
+
+```go
+func (s *Store) OperatorDecomposeTask(ctx context.Context, planID, taskID string, payload TaskEventPayload) error
+```
+
+OperatorDecomposeTask marks a task as decomposed — it has been broken down into child tasks \(the caller is responsible for creating those children and wiring task\_deps pointing at this task as parent\_task\_id\). A decomposed task is treated as satisfied by downstream dependency predicates so dependents become claimable once the children are done \(or skipped\). The typed API guarantees the audit\-log row is emitted alongside the transition, matching the discipline of every other operator action.
+
 <a name="Store.OperatorFailTask"></a>
 ### func \(\*Store\) [OperatorFailTask](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plandag/task.go#L660>)
 
@@ -575,6 +587,15 @@ func (s *Store) OperatorHandoffTask(ctx context.Context, planID, taskID string, 
 ```
 
 OperatorHandoffTask returns a task to the runnable queue with a new variant hint supplied by the operator.
+
+<a name="Store.OperatorMarkDone"></a>
+### func \(\*Store\) [OperatorMarkDone](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plandag/task.go#L756>)
+
+```go
+func (s *Store) OperatorMarkDone(ctx context.Context, planID, taskID string, payload TaskEventPayload) error
+```
+
+OperatorMarkDone force\-completes a task from the operator surface, regardless of which session \(if any\) currently owns it. This is the operator analogue of the worker\-side MarkDone and closes the operator quartet \(requeue / retry / handoff / fail\) into a quintet by adding the "force done" action. It is the backing for \`plan mark\-done\` when the task is in a non\-running state \(blocked, failed, ready\_pending\_approval, or pending\); for running tasks the worker\- side MarkDone path already applies.
 
 <a name="Store.OperatorRequeueTask"></a>
 ### func \(\*Store\) [OperatorRequeueTask](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plandag/task.go#L574>)
@@ -594,6 +615,15 @@ func (s *Store) OperatorRetryTask(ctx context.Context, planID, taskID string, pa
 
 OperatorRetryTask increments retry\_count and returns a blocked/failed task to the runnable queue.
 
+<a name="Store.OperatorSkipTask"></a>
+### func \(\*Store\) [OperatorSkipTask](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plandag/task.go#L690>)
+
+```go
+func (s *Store) OperatorSkipTask(ctx context.Context, planID, taskID string, payload TaskEventPayload) error
+```
+
+OperatorSkipTask transitions a task into the skipped lifecycle state and records the operator action in task history. A skipped task is treated as satisfied by downstream dependency predicates \(see Ready\), so dependents become claimable — matching the operator intent of "drop this task but unblock the rest of the DAG".
+
 <a name="Store.Ready"></a>
 ### func \(\*Store\) [Ready](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plandag/task.go#L188>)
 
@@ -601,7 +631,7 @@ OperatorRetryTask increments retry\_count and returns a blocked/failed task to t
 func (s *Store) Ready(ctx context.Context, planID string) ([]Task, error)
 ```
 
-Ready returns tasks that are ready to run — every dependency is \`done\` \(or \`skipped\`\). Result is ordered by created\_at for stable test output.
+Ready returns tasks that are ready to run — every dependency is in a terminal\-satisfied state \(\`done\`, \`skipped\`, or \`decomposed\`\). Result is ordered by created\_at for stable test output.
 
 <a name="Store.RequeueTask"></a>
 ### func \(\*Store\) [RequeueTask](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plandag/task.go#L496>)
