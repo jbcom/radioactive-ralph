@@ -699,11 +699,25 @@ func (c *PlanMarkDoneCmd) Run(rc *runContext) error {
 		return nil
 	}
 
-	// Happy path: task is already running via a real session.
-	if _, err := store.MarkDone(rc.ctx, plan.ID, c.TaskID, task.ClaimedBySession, c.Evidence); err != nil {
+	if task.Status == plandag.TaskStatusRunning {
+		// Happy path: task is already running via a real session.
+		if _, err := store.MarkDone(rc.ctx, plan.ID, c.TaskID, task.ClaimedBySession, c.Evidence); err != nil {
+			return err
+		}
+		fmt.Printf("marked done: %s\n", c.TaskID)
+		return nil
+	}
+
+	// Blocked / failed / approval-gated tasks need the operator-force
+	// path — the worker-side MarkDone only accepts `running`.
+	payload := plandag.TaskEventPayload{
+		Summary: c.Evidence,
+		Reason:  "operator mark-done",
+	}
+	if err := store.OperatorMarkDone(rc.ctx, plan.ID, c.TaskID, payload); err != nil {
 		return err
 	}
-	fmt.Printf("marked done: %s\n", c.TaskID)
+	fmt.Printf("marked done (operator force): %s\n", c.TaskID)
 	return nil
 }
 
