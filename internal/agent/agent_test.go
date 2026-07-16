@@ -90,7 +90,8 @@ func TestKillAfterNaturalExitIsNilError(t *testing.T) {
 		t.Fatalf("Start: %v", err)
 	}
 	// drain output so the process can exit and readLoop can finish
-	for range a.Output() {
+	for line := range a.Output() {
+		_ = line
 	}
 	<-a.Done()
 	if err := a.Kill(); err != nil {
