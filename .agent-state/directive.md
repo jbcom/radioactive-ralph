@@ -11,7 +11,7 @@ docs/superpowers/specs/2026-07-16-supervisor-architecture-design.md.
 
 ## Phase 1 — Foundation: pty-owned agent + never-block watchdog
 - [ ] [WAIT] internal/agent/agent.go + watchdog.go: pty-owned Agent + never-block Watchdog — Sonnet executor building per plan Phase 1; verify checkpoint on return
-- [ ] internal/agent/watchdog.go: never-block Watchdog (Progress/Stall/Prompt/Exited signals) + tests
+- [ ] [WAIT] internal/agent/watchdog.go — folded into the same Phase-1 executor delegation above
 - [ ] Phase 1 checkpoint: go build + go test -race ./internal/agent/ + golangci-lint green; control invariant demonstrable
 
 ## Phase 2 — User store (single XDG SQLite DB)
