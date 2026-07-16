@@ -226,8 +226,6 @@ func builtInBinary(providerType string) string {
 	switch providerType {
 	case "codex":
 		return "codex"
-	case "gemini":
-		return "gemini"
 	default:
 		return "claude"
 	}

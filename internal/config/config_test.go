@@ -69,12 +69,12 @@ type = "codex"
 binary = "codex"
 medium_effort = "medium"
 
-[providers.gemini]
-type = "gemini"
-bin = "gemini"
+[providers.my-cli]
+type = "plain-stdout"
+bin = "my-cli"
 
 [variants.green]
-provider = "gemini"
+provider = "codex"
 
 [variants.red]
 cycle_limit = 2
@@ -103,10 +103,10 @@ spend_cap_usd = 25.0
 	if f.Providers["codex"].Binary != "codex" {
 		t.Errorf("providers.codex.binary = %q", f.Providers["codex"].Binary)
 	}
-	if f.Providers["gemini"].Binary != "gemini" {
-		t.Errorf("providers.gemini.binary = %q, want bin alias to normalize", f.Providers["gemini"].Binary)
+	if f.Providers["my-cli"].Binary != "my-cli" {
+		t.Errorf("providers.my-cli.binary = %q, want bin alias to normalize", f.Providers["my-cli"].Binary)
 	}
-	if f.Variants["green"].Provider != "gemini" {
+	if f.Variants["green"].Provider != "codex" {
 		t.Errorf("variants.green.provider = %q", f.Variants["green"].Provider)
 	}
 	if got := f.Variants["red"].CycleLimit; got == nil || *got != 2 {

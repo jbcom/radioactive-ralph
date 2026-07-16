@@ -231,7 +231,6 @@ func (s *Service) loadRepoState() error {
 		s.cfg.Providers = map[string]config.ProviderFile{
 			"claude": config.DefaultClaudeProvider(),
 			"codex":  config.DefaultCodexProvider(),
-			"gemini": config.DefaultGeminiProvider(),
 		}
 	}
 	if s.cfg.DefaultProvider == "" {
@@ -279,7 +278,6 @@ func (s *Service) reloadConfig(ctx context.Context) error {
 		cfg.Providers = map[string]config.ProviderFile{
 			"claude": config.DefaultClaudeProvider(),
 			"codex":  config.DefaultCodexProvider(),
-			"gemini": config.DefaultGeminiProvider(),
 		}
 	}
 	if cfgErr == nil && cfg.DefaultProvider == "" {

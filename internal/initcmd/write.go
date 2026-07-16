@@ -36,7 +36,6 @@ func buildConfigFile(prior config.File) config.File {
 		providers = map[string]config.ProviderFile{
 			"claude": config.DefaultClaudeProvider(),
 			"codex":  config.DefaultCodexProvider(),
-			"gemini": config.DefaultGeminiProvider(),
 		}
 	}
 	return config.File{

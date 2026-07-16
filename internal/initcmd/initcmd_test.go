@@ -80,7 +80,7 @@ type = "codex"
 binary = "codex"
 
 [variants.green]
-provider = "gemini"
+provider = "codex"
 spend_cap_usd = 12.5
 `
 	if err := os.WriteFile(config.Path(repo), []byte(custom), 0o600); err != nil {
@@ -100,8 +100,8 @@ spend_cap_usd = 12.5
 	if f.Service.DefaultObjectStore != "full" {
 		t.Fatalf("DefaultObjectStore = %q, want full", f.Service.DefaultObjectStore)
 	}
-	if f.Variants["green"].Provider != "gemini" {
-		t.Fatalf("variants.green.provider = %q, want gemini", f.Variants["green"].Provider)
+	if f.Variants["green"].Provider != "codex" {
+		t.Fatalf("variants.green.provider = %q, want codex", f.Variants["green"].Provider)
 	}
 	if f.Variants["green"].SpendCapUSD == nil || *f.Variants["green"].SpendCapUSD != 12.5 {
 		t.Fatalf("variants.green.spend_cap_usd = %v, want 12.5", f.Variants["green"].SpendCapUSD)
@@ -155,7 +155,7 @@ func TestInitConfigFileLoadableByConfigPackage(t *testing.T) {
 	if f.DefaultProvider != "claude" {
 		t.Errorf("DefaultProvider = %q, want claude", f.DefaultProvider)
 	}
-	for _, name := range []string{"claude", "codex", "gemini"} {
+	for _, name := range []string{"claude", "codex"} {
 		if _, ok := f.Providers[name]; !ok {
 			t.Errorf("expected provider %q to be present", name)
 		}

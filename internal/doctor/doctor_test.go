@@ -31,8 +31,6 @@ func fakeRunner(m map[string]struct {
 				return "codex-cli 0.1.0", nil
 			case "codex login status":
 				return "logged in", nil
-			case "gemini --version":
-				return "0.1.0", nil
 			}
 		}
 		if !ok {
@@ -52,7 +50,6 @@ func TestSeverityString(t *testing.T) {
 }
 
 func TestRunAllGreen(t *testing.T) {
-	t.Setenv("GEMINI_API_KEY", "test-token")
 	t.Setenv("OPENAI_API_KEY", "test-token")
 	t.Setenv("ANTHROPIC_API_KEY", "test-token")
 	runner := fakeRunner(map[string]struct {
@@ -74,7 +71,6 @@ func TestRunAllGreen(t *testing.T) {
 }
 
 func TestRunCommandTimeoutOption(t *testing.T) {
-	t.Setenv("GEMINI_API_KEY", "test-token")
 	t.Setenv("OPENAI_API_KEY", "test-token")
 	t.Setenv("ANTHROPIC_API_KEY", "test-token")
 	base := fakeRunner(map[string]struct {

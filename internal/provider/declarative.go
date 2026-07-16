@@ -159,7 +159,7 @@ func runDeclarativeAttempt(ctx context.Context, binding Binding, req Request) (R
 func ValidateBinding(binding Binding) error {
 	cfg := binding.Config
 	// Trust boundary: committed config.toml may only name a shipped
-	// provider binary (claude/codex/gemini). Any other binary — for a
+	// provider binary (claude/codex). Any other binary — for a
 	// built-in or a declarative type — must come from the gitignored
 	// local.toml provider_binary override, so a pull request cannot point
 	// the runtime at /bin/sh or another arbitrary executable.
@@ -167,7 +167,7 @@ func ValidateBinding(binding Binding) error {
 		return err
 	}
 	switch cfg.Type {
-	case "", "claude", "codex", "gemini":
+	case "", "claude", "codex":
 		return nil
 	case declarativePlainStdout, declarativeLastMessageFile, declarativeStreamJSON:
 	default:

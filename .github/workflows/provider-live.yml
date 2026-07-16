@@ -57,7 +57,5 @@ jobs:
           printenv OPENAI_API_KEY | codex login --with-api-key
           codex login status
           echo "CODEX_AUTHENTICATED=1" >> "$GITHUB_ENV"
-      - name: Install Gemini CLI
-        run: npm install -g @google/gemini-cli@latest
       - name: Smoke live providers
-        run: go test ./tests/integration -run 'TestLiveClaudeRoundTrip|TestLiveClaudeModelSanity|TestLiveClaudeRunnerTurn|TestLiveCodexRunnerTurn|TestLiveGeminiRunnerTurn' -v
+        run: go test ./tests/integration -run 'TestLiveClaudeRoundTrip|TestLiveClaudeModelSanity|TestLiveClaudeRunnerTurn|TestLiveCodexRunnerTurn' -v

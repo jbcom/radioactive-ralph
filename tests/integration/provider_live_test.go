@@ -83,37 +83,6 @@ func TestLiveCodexRunnerTurn(t *testing.T) {
 	}
 }
 
-func TestLiveGeminiRunnerTurn(t *testing.T) {
-	requireLiveGemini(t)
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-	defer cancel()
-
-	result, err := provider.GeminiRunner{}.Run(ctx, provider.Binding{
-		Name:   "gemini",
-		Config: config.DefaultGeminiProvider(),
-	}, provider.Request{
-		WorkingDir:   t.TempDir(),
-		SystemPrompt: "Return exactly one compact JSON object and no surrounding prose.",
-		UserPrompt:   `Reply with {"outcome":"done","summary":"live gemini smoke","evidence":["live-gemini"]} and nothing else.`,
-		Model:        variant.ModelSonnet,
-		Effort:       "medium",
-	})
-	if err != nil {
-		t.Fatalf("GeminiRunner.Run: %v", err)
-	}
-
-	var parsed liveWorkerResult
-	if err := json.Unmarshal([]byte(strings.TrimSpace(result.AssistantOutput)), &parsed); err != nil {
-		t.Fatalf("gemini output was not valid JSON: %v\n%s", err, result.AssistantOutput)
-	}
-	if parsed.Outcome != "done" {
-		t.Fatalf("unexpected gemini outcome: %+v", parsed)
-	}
-	if len(parsed.Evidence) == 0 || parsed.Evidence[0] != "live-gemini" {
-		t.Fatalf("unexpected gemini evidence: %+v", parsed)
-	}
-}
-
 func requireLiveCodex(t *testing.T) {
 	t.Helper()
 	if os.Getenv("CODEX_AUTHENTICATED") != "1" {
@@ -138,18 +107,5 @@ func requireLiveClaudeRunner(t *testing.T) {
 	}
 	if _, err := exec.LookPath("claude"); err != nil {
 		t.Skip("claude binary not on PATH")
-	}
-}
-
-func requireLiveGemini(t *testing.T) {
-	t.Helper()
-	if os.Getenv("GEMINI_AUTHENTICATED") != "1" {
-		t.Skip("GEMINI_AUTHENTICATED != 1; skipping live gemini runner smoke test")
-	}
-	if _, err := exec.LookPath("gemini"); err != nil {
-		t.Skip("gemini binary not on PATH")
-	}
-	if os.Getenv("GEMINI_API_KEY") == "" && os.Getenv("GOOGLE_API_KEY") == "" {
-		t.Skip("Gemini live smoke requires GEMINI_API_KEY or GOOGLE_API_KEY")
 	}
 }
