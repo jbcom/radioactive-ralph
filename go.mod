@@ -9,6 +9,7 @@ require (
 	github.com/jonboulle/clockwork v0.5.0
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/viper v1.21.0
+	github.com/yuin/goldmark v1.8.4
 	golang.org/x/sys v0.43.0
 	modernc.org/sqlite v1.48.2
 )
