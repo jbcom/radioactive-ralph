@@ -61,6 +61,17 @@ docs/superpowers/specs/2026-07-16-supervisor-architecture-design.md.
 - [ ] [WAIT-AGENT] real-agent E2E: orchestrator dispatches workers against a real markdown plan under spend cap with live CLI-health observation
 - [ ] [WAIT-AGENT] final: go test ./... -race, golangci-lint, tox -e docs all green; open final PR(s); babysit to squash-merge
 
+## Phase 9 — Docs TOTAL realignment (the whole docs/ tree describes the dead model)
+
+- [ ] DELETE docs/variants/ entirely (11 files — variants are gone; no personas)
+- [ ] DELETE the committed .radioactive-ralph/plans/ dir (violates clean-repo; state lives in the user DB now)
+- [ ] Rewrite README.md + AGENTS.md + CLAUDE.md to the supervisor architecture (one binary, --supervisor + dumb client, one user DB, local-only providers, no variants, markdown plans)
+- [ ] Rewrite docs/getting-started + docs/guides + docs/design + docs/reference to the new model (supervisor/discovery, config virtual-layers, plan engine, orchestrator-verified completion, A2A vocabulary)
+- [ ] Rewrite docs/runbooks (fix the socket-path drift + fabricated RequireOperatorApproval field flagged in review; supervisor install/attach)
+- [ ] Regenerate docs/api/ via gomarkdoc against the NEW packages (agent/store/vconfig/supervisor/provider/agentdetect/plan/orch/a2a)
+- [ ] Remove AI-design-trope / extraneous docs (adjective soup, over-explained obvious, marketing filler); every doc matches code
+- [ ] tox -e docs builds clean; no residual mention of variant/kong/plandag/per-repo-config/durable-daemon
+
 ## Notes
 - [ ] [WAIT-AGENT] Interim multi-dimensional review (code-quality/security/architecture) of committed Phases 1-6a — running; fold Critical findings in immediately, High/Medium into Phase 8.
 - Just-in-time step expansion: expand each phase's TDD micro-steps against the then-current tree at phase start (recorded strategy).
