@@ -6,7 +6,7 @@
 
 **Architecture:** A single Go binary. `--supervisor` runs a long-lived process that owns agent subprocesses via `creack/pty`, watches each for stall/prompt/resource-limit and kills-and-reclaims (never waits), and persists everything to one XDG-located SQLite DB. The plain client refuses to run without a discoverable supervisor (the socket at an XDG runtime path IS the advertisement), and renders a read-only macro/meso/micro Bubble Tea TUI. Providers are local-only (claude/codex/opencode). This is a clean-slate rewrite on `feat/supervisor-architecture`; the old durable-service / per-repo-plandag / committed-config-dir model is removed.
 
-**Tech Stack:** Go 1.26; `creack/pty` (NEW — agent pty ownership); `charmbracelet/bubbletea` + `lipgloss` (TUI, already present); `alecthomas/kong` (CLI, present); `modernc.org/sqlite` (DB, present); `adrg/xdg` + `internal/xdg` (paths, present); `jonboulle/clockwork` (test clock, present).
+**Tech Stack:** Go 1.26; `creack/pty` (NEW — agent pty ownership); `charmbracelet/bubbletea` + `lipgloss` (TUI, present); `spf13/cobra` + `spf13/viper` (NEW — CLI + layered config, replacing `alecthomas/kong`); `yuin/goldmark` (NEW — plan-markdown AST); `a2aproject/a2a-go` (NEW — A2A vocabulary/types, stdlib-only core); `modernc.org/sqlite` (pure-Go, present); `adrg/xdg` + `internal/xdg` (present); `jonboulle/clockwork` (test clock, present). No binary-size constraint — heavier deps are fine; pure-Go SQLite is a build-compat choice only.
 
 ## Global Constraints
 
@@ -15,6 +15,10 @@
 - **One user-level SQLite DB** (XDG data dir) for all projects. No per-repo DB, no committed `.radioactive-ralph/` dir. Repos stay clean by default.
 - **Project identity = accumulated fingerprints** (git heuristics + absolute-path seed), never fragile absolute paths alone.
 - **Config = virtual merge layers** (§5a of the spec): 3 flags (`--config-file`/`-C`, `--user-config-file`, `--project-config-file`), USER layer = DB < `--config-file` < `--user-config-file`, PROJECTS layer = all-DB-projects < user-config `projects:` stanza; change (wizard/`--init`, persisted) vs override (normal mode, runtime-only); supervisor diffs and warns on conflicting user-level `projects:` overrides.
+- **No variants / no personas.** One mutating Ralph; prompts are "you're an agent + task + context", not roleplay. `internal/variant` is deleted, not audited.
+- **Completion is orchestrator-verified**, never agent-asserted and never inferred from termination.
+- **Plans are simple markdown**, decomposed heuristically over the goldmark AST — no LLM, no structured output, no vectors.
+- **CLI = cobra, config = viper** (replacing kong); A2A vocabulary from `a2aproject/a2a-go`.
 - **Every terminal state write is error-checked and logged** (no silent orphaning — the class fixed in PR #63).
 - **TDD:** failing test → run-fail → minimal impl → run-pass → commit, per task.
 - **Green checkpoints:** because the branch is a mid-flight rewrite, each task must leave `go build ./...` + its own tests green even if the whole system isn't wired yet.
@@ -46,16 +50,27 @@ placeholder.
   advertisement, single-instance + stale reclaim, the dumb client's discover-or-
   refuse handshake (repurpose `internal/ipc` + `flock`).
 - **Phase 5 — Providers + detection:** local-only provider bindings
-  (claude/codex/opencode) on the new agent runtime; the `agy` spike; install/
-  first-run detection classifying supported/deprecated/remote CLIs.
-- **Phase 6 — Roles/squads + planning loop:** the variant-lineup audit outcome
-  realized (role primitive), Fixit↔Professor durable self-correcting loop, A2A
-  orchestrator→worker dispatch over the user DB, cost/progress up the chain.
-- **Phase 7 — TUI:** read-only macro/meso/micro Bubble Tea view subscribing to
-  the supervisor's live stream + DB scrollback.
+  (claude/codex/opencode) on the new agent runtime, each a **capability record**
+  (incl. native subagent/workflow/parallelism flag) — no personas; the `agy`
+  spike; install/first-run detection classifying supported/deprecated/remote
+  CLIs.
+- **Phase 6 — Plan engine + orchestration (no variants):** `internal/plan`
+  (goldmark AST + heuristic decomposition — heading=group, unordered=parallel,
+  ordered=sequential, don't descend past a heading with subheadings + format
+  validator); `internal/orch` (team-lead/orchestrator: dispatch next step with
+  plan-scoped context, **orchestrator-verified completion**, enforcement-prompt
+  + kill/restart context discipline, per-agent XDG decision logs absorbed into
+  history); A2A vocabulary via `a2aproject/a2a-go` types over the user DB
+  (`a2a_tasks`/`a2a_messages`). **`internal/variant` is deleted, not audited.**
+- **Phase 7 — TUI + planning genesis:** read-only macro/meso/micro Bubble Tea
+  view subscribing to the supervisor's live stream + DB scrollback; the planning
+  genesis flow (agent-juxtaposition refinement → markdown doc in headless; render
+  + `$EDITOR`/embedded-editor review in TUI; skip-planning path).
 - **Phase 8 — E2E + teardown:** CI-feasible E2E (cassette agents) + local real-
-  agent E2E under a spend cap using the reference fixtures; delete all dead old-
-  model code; docs sweep; CI gating (branch protection + CodeQL-Go).
+  agent E2E under a spend cap using the reference fixtures (the orchestrator
+  dispatching workers against a real plan under CLI-health observation); delete
+  all dead old-model code (incl. `internal/variant`, kong); docs sweep; CI
+  gating (branch protection + CodeQL-Go).
 
 ---
 
@@ -548,8 +563,10 @@ handshake, reusing `internal/ipc` (socket/named-pipe) and
 
 **Key files:** `internal/supervisor/supervisor.go` (lifecycle, owns agents +
 store), `internal/supervisor/discovery.go` (bind = advertise; connect = discover;
-single-instance + stale reclaim), `cmd/radioactive_ralph/main.go` (kong: root
-command routes to supervisor vs client vs `--init`), tests.
+single-instance + stale reclaim), `cmd/radioactive_ralph/main.go` (cobra root
+command + viper config binding: routes to `--supervisor` vs client vs `--init`),
+tests. This phase also performs the kong→cobra/viper migration of the CLI
+surface.
 
 **Interfaces (produced):** `supervisor.Run(ctx, cfg) error`;
 `discovery.Find(xdgRuntime) (*Client, error)` (nil+err if none);
@@ -580,6 +597,9 @@ only if `--print` is confirmed local-surface). Tests + cassettes.
 
 **Interfaces (produced):** `provider.Bind(name, cfg) (agent.Options, error)`;
 `provider.ParseResult(path) (Usage, Outcome, error)`;
+`provider.Profile` — a **capability record** (binary, invocation, result/usage
+parsing, resume, and a `NativeFanout bool` for CLIs with native subagents/
+workflows/parallelism), NOT a persona;
 `agentdetect.Detect() []DetectedCLI` (each with `Status` supported/deprecated/
 remote/unknown + reason).
 
@@ -593,49 +613,68 @@ distinguishes `cursor` (editor) from `cursor-agent`, and labels gemini
 
 ---
 
-## Phase 6 — Roles/squads + planning loop
+## Phase 6 — Plan engine + orchestration (no variants)
 
-**Deliverable:** the variant-lineup audit outcome realized as the role
-primitive; Fixit↔Professor durable self-correcting loop; A2A orchestrator→worker
-dispatch over the user DB; cost/progress propagation.
+**Deliverable:** the heuristic markdown plan engine, and the orchestrator that
+dispatches steps with plan-scoped context and verifies completion. **No variant
+audit** — `internal/variant` is deleted outright (one mutating Ralph).
 
-**Key files:** FIRST a decision doc `docs/design/variant-lineup-2026.md` (the
-audit — keep/merge/drop/reshape per variant against A2A roles, via a Workflow
-fan-out), THEN `internal/role` (the chosen primitive), the Fixit↔Professor loop
-in the dispatch path, cost/progress rollup queries. Tests.
+**Key files:**
+- `internal/plan/parse.go` — goldmark parse + the stop-at-next-heading-level-≤N
+  section grouping; `internal/plan/decompose.go` — heuristic past/present/future
+  (heading order = group dependency; under a leaf heading, unordered list =
+  parallel steps, ordered = sequential; don't descend past a heading with
+  subheadings); `internal/plan/validate.go` — the plan-format validator incl. the
+  list-vs-bare-paragraph disambiguation rule.
+- `internal/orch/orchestrator.go` — the team-lead: pick next step(s) from the
+  decomposition + DB done-state, dispatch worker(s) with the plan slice as
+  context, and transition a task to `done` ONLY after verifying submitted
+  evidence against done-criteria (orchestrator-verified completion).
+- `internal/orch/lifecycle.go` — enforcement-prompt cadence + kill/restart on
+  manual context-end; per-agent XDG decision-log write + team-lead absorption.
+- `internal/a2a/` — thin adoption of `a2aproject/a2a-go` `a2a.Task`/`TaskState`/
+  `Message` vocabulary over the user DB (`a2a_tasks`/`a2a_messages` tables).
+- Tests for each (the decomposition heuristics are pure-Go and highly testable).
 
-**Interfaces:** defined after the audit fixes the primitive. **This phase's
-task list is authored after the audit doc lands** (the audit is its first task).
+**Interfaces (produced):**
+`plan.Parse(md []byte) (*Plan, error)`;
+`plan.Decompose(p *Plan, done map[StepID]bool) (Pending []StepGroup, Next []Step, err error)` where a `StepGroup` carries `Parallel bool`;
+`orch.DispatchNext(ctx, projectID) error`;
+`orch.VerifyAndComplete(ctx, taskID, evidence) (bool, error)`.
 
-**Consumes:** `internal/store`, `internal/supervisor`, `internal/agent`.
+**Consumes:** `internal/store`, `internal/supervisor`, `internal/agent`, `internal/provider` (capability flag for fan-out delegation).
 
-**Notes for step-expansion:** the audit is a Workflow (one executor per variant
-proposing a verdict → synthesis reconciling overlaps against A2A roles); Fixit
-decomposes/recommends → Professor executes+reflects → reflection re-plans; the
-plan-DB slice is each worker's scoped context (no giant dumps); cost/progress
-roll up to the macro TUI.
+**Notes for step-expansion:** decomposition is pure heuristics over the goldmark
+AST — no LLM, no structured output; the plan-DB slice is each worker's scoped
+context (no giant dumps); a parallel step-group may be delegated to a
+fan-out-capable agent (provider capability flag) instead of N Ralph workers;
+cost/progress roll up to the macro TUI; completion is never agent-asserted.
 
 ---
 
-## Phase 7 — Read-only TUI (macro/meso/micro)
+## Phase 7 — Read-only TUI + planning genesis
 
-**Deliverable:** the Bubble Tea client TUI subscribing to the supervisor's live
-stream + DB scrollback; three drill levels.
+**Deliverable:** the Bubble Tea client TUI (read-only macro/meso/micro live
+view) AND the planning-genesis flow that turns a prompt into a reviewed plan.
 
-**Key files:** `internal/tui/` (model/update/view split — NOT one god file;
-the PR-#63 review flagged the old 1,405-line tui.go), `tui/macro.go` (plan +
-hierarchy), `tui/meso.go` (plan drill → PM/team-lead; hierarchy drill → squad/
-singular), `tui/micro.go` (one agent pane / log tail). Tests where logic is
-testable (pane state machine).
+**Key files:** `internal/tui/` (model/update/view split — NOT one god file; the
+PR-#63 review flagged the old 1,405-line tui.go), `tui/macro.go` (plan +
+hierarchy), `tui/meso.go` (plan drill → team-lead conversation; hierarchy drill
+→ squad/singular), `tui/micro.go` (one agent pane / log tail),
+`tui/planreview.go` (render the genesis markdown for scroll + embedded-editor or
+`$EDITOR` review); `internal/genesis/genesis.go` (agent-juxtaposition
+refinement → final markdown; headless emits the doc, TUI routes it to review,
+skip-planning path). Tests where logic is testable.
 
-**Interfaces:** `tui.Run(ctx, client) error` where `client` is a discovery
-client subscribing to supervisor events.
+**Interfaces:** `tui.Run(ctx, client) error`; `genesis.Refine(ctx, input) (markdown []byte, err error)`.
 
-**Consumes:** `internal/supervisor` (events), `internal/store` (scrollback).
+**Consumes:** `internal/supervisor` (events), `internal/store` (scrollback),
+`internal/orch`/`internal/plan` (genesis + validation).
 
-**Notes for step-expansion:** read-only; subscribe + replay; macro→meso→micro
-drill; Lipgloss layout; no direct store writes from the TUI (route through the
-supervisor).
+**Notes for step-expansion:** TUI is read-only (subscribe + replay; no direct
+store writes — route through the supervisor); Lipgloss layout; genesis uses
+agent juxtaposition (not question-extraction) and yields a validated markdown
+plan the user can accept/edit/skip.
 
 ---
 
@@ -647,10 +686,11 @@ sweep, and CI hardening.
 **Key files:** `tests/e2e/` (fixtures from ~/src/reference-codebases/test-repo;
 CI-feasible cassette-agent path + local real-agent path gated by env + spend
 cap); DELETE `internal/plandag`, `internal/runtime` durable-daemon bits,
-`internal/variant` (if the audit replaced it), the committed-config-dir code,
-`internal/rlog` if still unused (or wire it in); `docs/` sweep (drift + AI-trope
-+ extraneous per review Phase-3/4); `.github/workflows` CI-feasible E2E +
-branch protection (admin, via `gh api`) + CodeQL-Go.
+**`internal/variant` (deleted outright — no personas)**, the kong CLI wiring,
+the committed-config-dir code, `internal/rlog` if still unused (or wire it in);
+`docs/` sweep (drift + AI-trope + extraneous per review Phase-3/4);
+`.github/workflows` CI-feasible E2E + branch protection (admin, via `gh api`) +
+CodeQL-Go.
 
 **Interfaces:** `tests/e2e` harness: detect → suggest config → set up temp repo
 from fixtures → run Ralphs in logical order → assert.
@@ -658,18 +698,22 @@ from fixtures → run Ralphs in logical order → assert.
 **Notes for step-expansion:** fold in every remaining review finding
 (reaper→supervisor reclaim [done Phase 2], CI-gating, dispatch test coverage,
 runbook path drift, fabricated `RequireOperatorApproval` field, codex
-turn_timeout, dead rlog); the real-agent E2E demonstrates the Fixit↔Professor
-loop + squad dispatch under a spend cap with live CLI-health observation.
+turn_timeout, dead rlog); the real-agent E2E demonstrates the orchestrator
+dispatching workers against a real markdown plan (heuristic decomposition →
+plan-scoped context → orchestrator-verified completion) under a spend cap with
+live CLI-health observation.
 
 ---
 
 ## Self-review notes
 
 - **Spec coverage:** every spec section maps to a phase — control invariant +
-  substrate (P1), storage/identity (P2), config §5a/§5b (P3), supervisor +
-  discovery §4/§5c (P4), providers §9 (P5), roles/squads §10 (P6), TUI §7 (P7),
-  testing strategy + teardown (P8). Watchdog resource-threshold (§8) lands in
-  P1 (signal kind) + P5 (config-driven thresholds).
+  substrate (§1/§2, P1), storage/identity (§6/§5b, P2), config §5a (P3),
+  supervisor + discovery §4/§5c (P4), providers + capability flag §9 (P5),
+  no-variants + orchestration + plan engine §10/§11 + A2A §12 (P6), TUI §7 +
+  planning genesis §11 (P7), testing strategy + teardown §13 (P8). Watchdog
+  resource-threshold (§8) lands in P1 (signal kind) + P5 (config-driven
+  thresholds).
 - **Just-in-time step expansion (P2–P8)** is a recorded strategy decision, not a
   placeholder: Phase 1 establishes the types/patterns the later phases depend
   on, so authoring their micro-steps now would speculate against unwritten code.
