@@ -52,7 +52,7 @@ type RunnerFactory func(binding provider.Binding) (provider.Runner, error)
 ```
 
 <a name="Service"></a>
-## type [Service](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/runtime/service.go#L55-L73>)
+## type [Service](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/runtime/service.go#L55-L78>)
 
 Service is the durable repo\-scoped runtime authority.
 
@@ -63,7 +63,7 @@ type Service struct {
 ```
 
 <a name="NewService"></a>
-### func [NewService](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/runtime/service.go#L76>)
+### func [NewService](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/runtime/service.go#L81>)
 
 ```go
 func NewService(opts Options) (*Service, error)
@@ -72,7 +72,7 @@ func NewService(opts Options) (*Service, error)
 NewService constructs a repo\-scoped runtime with validated defaults.
 
 <a name="Service.Run"></a>
-### func \(\*Service\) [Run](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/runtime/service.go#L112>)
+### func \(\*Service\) [Run](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/runtime/service.go#L118>)
 
 ```go
 func (s *Service) Run(ctx context.Context) error
@@ -81,7 +81,7 @@ func (s *Service) Run(ctx context.Context) error
 Run starts the repo runtime and blocks until shutdown or context cancel.
 
 <a name="Service.Shutdown"></a>
-### func \(\*Service\) [Shutdown](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/runtime/service.go#L182>)
+### func \(\*Service\) [Shutdown](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/runtime/service.go#L192>)
 
 ```go
 func (s *Service) Shutdown()

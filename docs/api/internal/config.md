@@ -32,6 +32,7 @@ The config package only parses and validates. Applying variant defaults and prov
   - [func Load\(repoRoot string\) \(File, error\)](<#Load>)
 - [type Local](<#Local>)
   - [func LoadLocal\(repoRoot string\) \(Local, error\)](<#LoadLocal>)
+  - [func \(l Local\) DurableVariantConfirmed\(name string\) bool](<#Local.DurableVariantConfirmed>)
 - [type ProviderFile](<#ProviderFile>)
   - [func DefaultClaudeProvider\(\) ProviderFile](<#DefaultClaudeProvider>)
   - [func DefaultCodexProvider\(\) ProviderFile](<#DefaultCodexProvider>)
@@ -79,7 +80,7 @@ var (
 ```
 
 <a name="IsMissingConfig"></a>
-## func [IsMissingConfig](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/config/config.go#L128>)
+## func [IsMissingConfig](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/config/config.go#L146>)
 
 ```go
 func IsMissingConfig(err error) bool
@@ -88,7 +89,7 @@ func IsMissingConfig(err error) bool
 IsMissingConfig reports whether err indicates a missing config.toml.
 
 <a name="IsMissingLocal"></a>
-## func [IsMissingLocal](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/config/config.go#L133>)
+## func [IsMissingLocal](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/config/config.go#L151>)
 
 ```go
 func IsMissingLocal(err error) bool
@@ -97,7 +98,7 @@ func IsMissingLocal(err error) bool
 IsMissingLocal reports whether err indicates a missing local.toml.
 
 <a name="LocalPath"></a>
-## func [LocalPath](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/config/config.go#L263>)
+## func [LocalPath](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/config/config.go#L281>)
 
 ```go
 func LocalPath(repoRoot string) string
@@ -106,7 +107,7 @@ func LocalPath(repoRoot string) string
 LocalPath returns the absolute path to local.toml for repoRoot.
 
 <a name="Path"></a>
-## func [Path](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/config/config.go#L258>)
+## func [Path](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/config/config.go#L276>)
 
 ```go
 func Path(repoRoot string) string
@@ -115,7 +116,7 @@ func Path(repoRoot string) string
 Path returns the absolute path to config.toml for repoRoot.
 
 <a name="File"></a>
-## type [File](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/config/config.go#L43-L48>)
+## type [File](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/config/config.go#L44-L49>)
 
 File represents the shape of config.toml. Every section is optional so that a fresh \`radioactive\_ralph init\` can emit minimal files and iterate.
 
@@ -129,7 +130,7 @@ type File struct {
 ```
 
 <a name="Load"></a>
-### func [Load](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/config/config.go#L139>)
+### func [Load](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/config/config.go#L157>)
 
 ```go
 func Load(repoRoot string) (File, error)
@@ -138,7 +139,7 @@ func Load(repoRoot string) (File, error)
 Load parses the per\-repo config file\(s\) under repoRoot/.radioactive\-ralph/. It returns ErrMissingConfig if config.toml is absent.
 
 <a name="Local"></a>
-## type [Local](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/config/config.go#L110-L113>)
+## type [Local](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/config/config.go#L111-L125>)
 
 Local is the shape of local.toml \(gitignored per\-operator preferences\). Keeping it minimal on purpose — everything else belongs in config.toml.
 
@@ -146,11 +147,22 @@ Local is the shape of local.toml \(gitignored per\-operator preferences\). Keepi
 type Local struct {
     LogLevel       string `toml:"log_level"`
     ProviderBinary string `toml:"provider_binary"`
+
+    // ConfirmDurableVariants lists variant names the operator has
+    // explicitly authorized the durable repo service to schedule despite
+    // their confirmation gate (savage, old-man, world-breaker). The
+    // attached `run` path confirms gates with a per-invocation CLI flag;
+    // the durable service has no interactive step, so authorization lives
+    // here — in the GITIGNORED local.toml, never in committed config.toml.
+    // This is deliberate: a committed file must not be able to
+    // self-authorize a destructive variant, so a malicious PR cannot flip
+    // a plan to world-breaker and have the service run it.
+    ConfirmDurableVariants []string `toml:"confirm_durable_variants"`
 }
 ```
 
 <a name="LoadLocal"></a>
-### func [LoadLocal](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/config/config.go#L187>)
+### func [LoadLocal](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/config/config.go#L205>)
 
 ```go
 func LoadLocal(repoRoot string) (Local, error)
@@ -158,8 +170,17 @@ func LoadLocal(repoRoot string) (Local, error)
 
 LoadLocal parses the local.toml file under repoRoot/.radioactive\-ralph/. Returns ErrMissingLocal if absent; callers can decide whether to treat that as fatal or fall through to committed service defaults.
 
+<a name="Local.DurableVariantConfirmed"></a>
+### func \(Local\) [DurableVariantConfirmed](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/config/config.go#L129>)
+
+```go
+func (l Local) DurableVariantConfirmed(name string) bool
+```
+
+DurableVariantConfirmed reports whether the operator has authorized the durable service to schedule the named variant despite its gate.
+
 <a name="ProviderFile"></a>
-## type [ProviderFile](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/config/config.go#L62-L80>)
+## type [ProviderFile](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/config/config.go#L63-L81>)
 
 ProviderFile declares how one named provider is invoked. The shape is intentionally generic.
 
@@ -186,7 +207,7 @@ type ProviderFile struct {
 ```
 
 <a name="DefaultClaudeProvider"></a>
-### func [DefaultClaudeProvider](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/config/config.go#L206>)
+### func [DefaultClaudeProvider](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/config/config.go#L224>)
 
 ```go
 func DefaultClaudeProvider() ProviderFile
@@ -195,7 +216,7 @@ func DefaultClaudeProvider() ProviderFile
 DefaultClaudeProvider returns the built\-in provider binding that uses the local \`claude\` CLI as the execution backend.
 
 <a name="DefaultCodexProvider"></a>
-### func [DefaultCodexProvider](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/config/config.go#L226>)
+### func [DefaultCodexProvider](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/config/config.go#L244>)
 
 ```go
 func DefaultCodexProvider() ProviderFile
@@ -204,7 +225,7 @@ func DefaultCodexProvider() ProviderFile
 DefaultCodexProvider returns the built\-in provider binding that uses the local \`codex\` CLI as the execution backend.
 
 <a name="DefaultGeminiProvider"></a>
-### func [DefaultGeminiProvider](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/config/config.go#L244>)
+### func [DefaultGeminiProvider](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/config/config.go#L262>)
 
 ```go
 func DefaultGeminiProvider() ProviderFile
@@ -213,7 +234,7 @@ func DefaultGeminiProvider() ProviderFile
 DefaultGeminiProvider returns the built\-in provider binding that uses the local \`gemini\` CLI as the execution backend.
 
 <a name="Service"></a>
-## type [Service](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/config/config.go#L52-L58>)
+## type [Service](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/config/config.go#L53-L59>)
 
 Service holds repo\-wide defaults. Individual variants override these in their own \[variants.\<name\>\] section; safety floors still apply on top.
 
@@ -228,7 +249,7 @@ type Service struct {
 ```
 
 <a name="VariantFile"></a>
-## type [VariantFile](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/config/config.go#L86-L106>)
+## type [VariantFile](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/config/config.go#L87-L107>)
 
 VariantFile is the per\-variant overrides block inside config.toml. Any field left zero\-valued falls through to the variant profile's hardcoded default, which falls through to Service, which falls through to project defaults. Safety floors may override any of these.
 
