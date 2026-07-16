@@ -158,6 +158,14 @@ func runDeclarativeAttempt(ctx context.Context, binding Binding, req Request) (R
 // spawning a provider turn.
 func ValidateBinding(binding Binding) error {
 	cfg := binding.Config
+	// Trust boundary: committed config.toml may only name a shipped
+	// provider binary (claude/codex/gemini). Any other binary — for a
+	// built-in or a declarative type — must come from the gitignored
+	// local.toml provider_binary override, so a pull request cannot point
+	// the runtime at /bin/sh or another arbitrary executable.
+	if err := validateBinaryTrust(binding); err != nil {
+		return err
+	}
 	switch cfg.Type {
 	case "", "claude", "codex", "gemini":
 		return nil
@@ -204,6 +212,34 @@ func ValidateBinding(binding Binding) error {
 		}
 	}
 	return nil
+}
+
+// validateBinaryTrust enforces that a committed config.toml cannot name an
+// arbitrary executable. An empty binary is left to the type-specific
+// checks below. A binary supplied by local.toml (BinaryFromLocal) is
+// trusted — that file is gitignored and operator-owned. Otherwise the
+// binary must be one of the shipped provider names; anything else
+// (absolute paths, /bin/sh, a wrapper script) is refused.
+func validateBinaryTrust(binding Binding) error {
+	bin := binding.Config.Binary
+	if bin == "" || binding.BinaryFromLocal {
+		return nil
+	}
+	if shippedProviderBinaries[bin] {
+		return nil
+	}
+	return fmt.Errorf(
+		"provider %q: committed config.toml may not set binary %q; only %s are allowed in config.toml, put any other binary in the gitignored local.toml provider_binary",
+		binding.Name, bin, shippedProviderList())
+}
+
+func shippedProviderList() string {
+	names := make([]string, 0, len(shippedProviderBinaries))
+	for name := range shippedProviderBinaries {
+		names = append(names, name)
+	}
+	slices.Sort(names)
+	return strings.Join(names, ", ")
 }
 
 func declarativeTokenValues(binding Binding, req Request, promptPath, schemaPath, outputPath string) map[string]string {

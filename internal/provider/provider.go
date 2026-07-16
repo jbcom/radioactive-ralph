@@ -15,6 +15,14 @@ import (
 type Binding struct {
 	Name   string
 	Config config.ProviderFile
+
+	// BinaryFromLocal is true when Config.Binary was set by the gitignored
+	// local.toml provider_binary override rather than by committed
+	// config.toml. Committed config may only name a shipped provider
+	// binary (claude/codex/gemini); an arbitrary binary must come from
+	// local.toml, so a pull request cannot point the runtime at
+	// /bin/sh. ValidateBinding enforces this.
+	BinaryFromLocal bool
 }
 
 // Request is the provider-neutral execution contract for one worker turn.
@@ -59,15 +67,27 @@ func ResolveBinding(cfg config.File, local config.Local, _ variant.Profile, from
 	if providerCfg.Type == "" {
 		providerCfg.Type = name
 	}
+	binaryFromLocal := false
 	if local.ProviderBinary != "" {
 		providerCfg.Binary = local.ProviderBinary
+		binaryFromLocal = true
 	}
 	if providerCfg.Binary == "" {
 		if builtIn, ok := builtInProvider(providerCfg.Type); ok {
 			providerCfg.Binary = builtIn.Binary
 		}
 	}
-	return Binding{Name: name, Config: providerCfg}, nil
+	return Binding{Name: name, Config: providerCfg, BinaryFromLocal: binaryFromLocal}, nil
+}
+
+// shippedProviderBinaries are the executable names the built-in provider
+// types resolve to. A committed config.toml may name one of these; any
+// other binary must come from the gitignored local.toml provider_binary
+// override. Keep in sync with config.Default*Provider.
+var shippedProviderBinaries = map[string]bool{
+	"claude": true,
+	"codex":  true,
+	"gemini": true,
 }
 
 // NewRunner returns the runtime implementation for a provider type.
