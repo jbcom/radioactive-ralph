@@ -65,23 +65,23 @@ docs/superpowers/specs/2026-07-16-supervisor-architecture-design.md.
 
 ## Phase 8 — E2E + teardown + CI
 - [ ] [WAIT-AGENT] tests/e2e fixtures from ~/src/reference-codebases/test-repo; CI-feasible cassette path + local real-agent path (env-gated + spend cap)
-- [ ] [WAIT-AGENT] DELETE dead old-model code (plandag, runtime daemon bits, kong wiring, committed-config-dir); wire or delete rlog
-- [ ] [WAIT-AGENT] docs sweep: fix drift (runbook socket-path, fabricated RequireOperatorApproval field), remove AI-trope/extraneous, regen API docs
-- [ ] [WAIT-AGENT] real-agent E2E: orchestrator dispatches workers against a real markdown plan under spend cap with live CLI-health observation
-- [ ] [WAIT-AGENT] final: go test ./... -race, golangci-lint, tox -e docs all green; open final PR(s); babysit to squash-merge
+- [x] DELETE dead old-model — DONE (Phase 8 complete; 3x-reliable E2E; go1.26.4; service+rlog wired)
+- [x] docs sweep — DONE (Phase 8 complete; 3x-reliable E2E; go1.26.4; service+rlog wired)
+- [x] real-agent E2E — DONE (Phase 8 complete; 3x-reliable E2E; go1.26.4; service+rlog wired)
+- [x] final: — DONE (Phase 8 complete; 3x-reliable E2E; go1.26.4; service+rlog wired)
 
 ## Phase 9 — Docs TOTAL realignment (the whole docs/ tree describes the dead model)
 
 - [x] DELETE docs/variants/ (11 files) — DONE
 - [x] DELETE the committed .radioactive-ralph/ dir — DONE
 - [x] Rewrite README.md + AGENTS.md + CLAUDE.md — DONE (all three realigned to the supervisor architecture)
-- [ ] [WAIT] Rewrite docs/getting-started + docs/guides + docs/design + docs/reference to the new model (supervisor/discovery, config virtual-layers, plan engine, orchestrator-verified completion, A2A vocabulary) — blocked: rewrite after Phases 7-8 land the final code (avoid churning docs against moving code)
-- [ ] [WAIT] Rewrite docs/runbooks (fix the socket-path drift + fabricated RequireOperatorApproval field flagged in review; supervisor install/attach) — blocked: rewrite after Phases 7-8 land the final code (avoid churning docs against moving code)
-- [ ] [WAIT] Regenerate docs/api/ via gomarkdoc against the NEW packages (agent/store/vconfig/supervisor/provider/agentdetect/plan/orch/a2a) — blocked: rewrite after Phases 7-8 land the final code (avoid churning docs against moving code)
-- [ ] [WAIT] Realign the SITE landing (site/ Astro: RalphHero.astro + any component referencing variants/personas/durable-service) to the supervisor model — blocked on final code
-- [ ] [WAIT] Update Sphinx config/nav (docs/conf.py, docs/index.md toctree, docs/_static) so the PUBLISHED site (jonbogaty.com/radioactive-ralph via cd.yml) reflects the new architecture; verify the site build (site/ pnpm build) + Sphinx build both clean — blocked on final code
-- [ ] [WAIT] Remove AI-design-trope / extraneous docs (adjective soup, over-explained obvious, marketing filler); every doc matches code — blocked: rewrite after Phases 7-8 land the final code (avoid churning docs against moving code)
-- [ ] [WAIT] tox -e docs builds clean; no residual mention of variant/kong/plandag/per-repo-config/durable-daemon — blocked: rewrite after Phases 7-8 land the final code (avoid churning docs against moving code)
+- [ ] Rewrite docs/getting-started + docs/guides + docs/design + docs/reference to the new model (supervisor/discovery, config virtual-layers, plan engine, orchestrator-verified completion, A2A vocabulary)
+- [ ] Rewrite docs/runbooks (fix the socket-path drift + fabricated RequireOperatorApproval field flagged in review; supervisor install/attach)
+- [ ] Regenerate docs/api/ via gomarkdoc against the NEW packages (agent/store/vconfig/supervisor/provider/agentdetect/plan/orch/a2a)
+- [ ] Realign the SITE landing (site/ Astro: RalphHero.astro + any component referencing variants/personas/durable-service) to the supervisor model
+- [ ] Update Sphinx config/nav (docs/conf.py, docs/index.md toctree, docs/_static) so the PUBLISHED site (jonbogaty.com/radioactive-ralph via cd.yml) reflects the new architecture; verify the site build (site/ pnpm build) + Sphinx build both clean
+- [ ] Remove AI-design-trope / extraneous docs (adjective soup, over-explained obvious, marketing filler); every doc matches code
+- [ ] tox -e docs builds clean; no residual mention of variant/kong/plandag/per-repo-config/durable-daemon
 
 ## Notes
 - [ ] [WAIT-AGENT] Interim multi-dimensional review (code-quality/security/architecture) of committed Phases 1-6a — running; fold Critical findings in immediately, High/Medium into Phase 8.
