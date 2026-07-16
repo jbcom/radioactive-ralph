@@ -4,6 +4,7 @@ go 1.26.3
 
 require (
 	github.com/Microsoft/go-winio v0.6.2
+	github.com/a2aproject/a2a-go/v2 v2.3.1
 	github.com/creack/pty v1.1.24
 	github.com/google/uuid v1.6.0
 	github.com/jonboulle/clockwork v0.5.0
@@ -15,11 +16,9 @@ require (
 )
 
 require (
-	github.com/a2aproject/a2a-go/v2 v2.3.1 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/fsnotify/fsnotify v1.9.0 // indirect
 	github.com/go-viper/mapstructure/v2 v2.4.0 // indirect
-	github.com/google/go-cmp v0.7.0 // indirect
 	github.com/google/pprof v0.0.0-20260402051712-545e8a4df936 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/mattn/go-isatty v0.0.21 // indirect

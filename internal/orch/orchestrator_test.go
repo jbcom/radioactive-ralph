@@ -6,7 +6,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/jbcom/radioactive-ralph/internal/a2a"
 	"github.com/jbcom/radioactive-ralph/internal/provider"
 	"github.com/jbcom/radioactive-ralph/internal/store"
 )
@@ -306,10 +305,4 @@ func containsAll(s string, subs ...string) bool {
 		}
 	}
 	return true
-}
-
-// evidenceFor is a small helper for verify_test.go and lifecycle_test.go
-// to build Evidence without importing a2a in every test file's noise.
-func evidenceFor(output string) a2a.Evidence {
-	return a2a.Evidence{Output: output}
 }

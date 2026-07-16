@@ -53,11 +53,11 @@ const (
 	StateFailed = a2a.TaskStateFailed
 )
 
-// Message and Part re-export the a2a-go core types used to carry Evidence.
-type (
-	Message = a2a.Message
-	Part    = a2a.Part
-)
+// Message re-exports a2a.Message, the core type used to carry Evidence.
+type Message = a2a.Message
+
+// Part re-exports a2a.Part, one content part of a Message.
+type Part = a2a.Part
 
 // Role constants used when constructing evidence messages.
 const (

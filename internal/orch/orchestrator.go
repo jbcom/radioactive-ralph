@@ -477,7 +477,7 @@ func mustPayloadJSON(p store.EventPayload) string {
 // this layer (e.g. a Runner variant that exposes its *agent.Agent) can
 // additionally react to Prompt-pattern detection mid-turn; today that
 // signal is only available to callers inside the provider package itself.
-func (o *Orchestrator) dispatchWorker(ctx context.Context, projectID, planID string, binding provider.Binding, ds *dispatchedStep, scoped scopedContext) error {
+func (o *Orchestrator) dispatchWorker(ctx context.Context, projectID, planID, sessionID, workerID string, binding provider.Binding, ds *dispatchedStep, scoped scopedContext) error {
 	runner, err := o.newRunner(binding)
 	if err != nil {
 		return fmt.Errorf("orch: resolve runner for %q: %w", binding.Name, err)
@@ -487,29 +487,6 @@ func (o *Orchestrator) dispatchWorker(ctx context.Context, projectID, planID str
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, o.watchdogConfig.StallTimeout)
 		defer cancel()
-	}
-
-	sessionID, err := o.store.CreateSession(ctx, store.SessionOpts{
-		Role:         "worker",
-		PID:          1,
-		PIDStartTime: fmt.Sprintf("%d", o.now().UnixNano()),
-	})
-	if err != nil {
-		return fmt.Errorf("orch: create worker session: %w", err)
-	}
-
-	workerID, err := o.store.CreateWorker(ctx, store.WorkerOpts{
-		SessionID:           sessionID,
-		Provider:            binding.Name,
-		NativeFanout:        binding.Config.NativeFanout,
-		SubprocessPID:       1,
-		SubprocessStartTime: fmt.Sprintf("%d", o.now().UnixNano()),
-	})
-	if err != nil {
-		return fmt.Errorf("orch: create worker: %w", err)
-	}
-	if err := o.store.SetWorkerTask(ctx, workerID, planID, ds.task.ID); err != nil {
-		return fmt.Errorf("orch: set worker task: %w", err)
 	}
 
 	req := provider.Request{
