@@ -43,11 +43,20 @@ docs/superpowers/specs/2026-07-16-supervisor-architecture-design.md.
 
 ## Phase 6 — Plan engine + orchestration (variants deleted)
 - [x] internal/plan: goldmark heuristic decomposition + validator — DONE (25 tests, green)
-- [ ] [WAIT-AGENT] internal/orch: dispatch + orchestrator-verified completion — DESIGN authored (scratchpad/phase6b-orch-design.md); execute after internal/plan lands
-- [ ] [WAIT-AGENT] internal/orch lifecycle: enforcement-prompt cadence + kill/restart on manual context-end; per-agent XDG decision logs absorbed by team-lead
-- [ ] [WAIT-AGENT] internal/a2a: adopt a2aproject/a2a-go a2a.Task/TaskState/Message over user DB (a2a_tasks/a2a_messages)
+- [x] internal/orch: dispatch — DONE (21 tests; verified-completion proven; no grpc)
+- [x] internal/orch lifecycle — DONE (21 tests; verified-completion proven; no grpc)
+- [x] internal/a2a: adopt — DONE (21 tests; verified-completion proven; no grpc)
 - [x] internal/variant deleted (Phase 4) — VERIFIED gone
-- [ ] [WAIT-AGENT] Phase 6 checkpoint green — verify on return
+- [x] Phase 6 checkpoint — DONE (21 tests; verified-completion proven; no grpc)
+
+## Phase 6c — Close tech debt NOW (no deferral — hidden gaps are bad practice)
+
+- [ ] Wire agent.Watch END-TO-END: providers expose the *agent.Agent (or run the watchdog inside Run) so the orchestrator gets real prompt/stall detection + kill-and-reclaim, not just a ctx timeout. The never-block control invariant must be actually enforced, not scaffolded.
+- [ ] Implement NativeFanout delegation: a parallel step-group whose provider has NativeFanout is dispatched to ONE fan-out worker (map its evidence back to the group's tasks) instead of N Ralph workers.
+- [ ] Rework codex runner onto internal/agent (pty ownership) for consistency with claude/opencode; also rework DeclarativeRunner or document why it stays direct-exec.
+- [ ] Wire vconfig.DiffConflicts/AutoRemove into the --init path (the conflict-warn UX has no caller).
+- [ ] Wire supervisor HandleEnqueue -> real agent spawn via orch (supervisor.agents map is currently inert).
+- [ ] Phase 6c checkpoint green
 
 ## Phase 7 — TUI + planning genesis
 - [ ] [WAIT-AGENT] internal/tui: read-only macro/meso/micro (model/update/view split, NOT one god file); subscribe + DB scrollback
@@ -65,7 +74,7 @@ docs/superpowers/specs/2026-07-16-supervisor-architecture-design.md.
 
 - [x] DELETE docs/variants/ (11 files) — DONE
 - [x] DELETE the committed .radioactive-ralph/ dir — DONE
-- [ ] [WAIT] Rewrite README.md + AGENTS.md + CLAUDE.md to the supervisor architecture (one binary, --supervisor + dumb client, one user DB, local-only providers, no variants, markdown plans) — blocked: rewrite after Phases 7-8 land the final code (avoid churning docs against moving code)
+- [ ] Rewrite README.md + AGENTS.md + CLAUDE.md to the supervisor architecture — DOING NOW (agent-context every future executor reads; architecture is settled)
 - [ ] [WAIT] Rewrite docs/getting-started + docs/guides + docs/design + docs/reference to the new model (supervisor/discovery, config virtual-layers, plan engine, orchestrator-verified completion, A2A vocabulary) — blocked: rewrite after Phases 7-8 land the final code (avoid churning docs against moving code)
 - [ ] [WAIT] Rewrite docs/runbooks (fix the socket-path drift + fabricated RequireOperatorApproval field flagged in review; supervisor install/attach) — blocked: rewrite after Phases 7-8 land the final code (avoid churning docs against moving code)
 - [ ] [WAIT] Regenerate docs/api/ via gomarkdoc against the NEW packages (agent/store/vconfig/supervisor/provider/agentdetect/plan/orch/a2a) — blocked: rewrite after Phases 7-8 land the final code (avoid churning docs against moving code)
