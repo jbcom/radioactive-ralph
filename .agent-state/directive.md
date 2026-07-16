@@ -35,31 +35,31 @@ docs/superpowers/specs/2026-07-16-supervisor-architecture-design.md.
 - [ ] [WAIT-AGENT] Phase 4 checkpoint — after supervisor+client land (blocked on store)
 
 ## Phase 5 — Providers + detection (capability records, no personas)
-- [ ] rework internal/provider onto internal/agent; claude/codex runners; opencode.go (run --format json)
-- [ ] provider.Profile capability record incl. NativeFanout flag (not a persona)
-- [ ] internal/agentdetect: probe PATH, classify supported/deprecated/remote/unknown + reason; distinguish cursor vs cursor-agent
-- [ ] agy spike: bind only if --print confirmed local-surface
-- [ ] Phase 5 checkpoint green + cassettes
+- [ ] [WAIT-AGENT] rework internal/provider onto internal/agent; claude/codex runners; opencode.go (run --format json) — gated on the running Phase-2 store executor (whole rewrite is sequenced behind it)
+- [ ] [WAIT-AGENT] provider.Profile capability record incl. NativeFanout flag (not a persona) — gated on the running Phase-2 store executor (whole rewrite is sequenced behind it)
+- [ ] [WAIT-AGENT] internal/agentdetect: probe PATH, classify supported/deprecated/remote/unknown + reason; distinguish cursor vs cursor-agent — gated on the running Phase-2 store executor (whole rewrite is sequenced behind it)
+- [ ] [WAIT-AGENT] agy spike: bind only if --print confirmed local-surface — gated on the running Phase-2 store executor (whole rewrite is sequenced behind it)
+- [ ] [WAIT-AGENT] Phase 5 checkpoint green + cassettes — gated on the running Phase-2 store executor (whole rewrite is sequenced behind it)
 
 ## Phase 6 — Plan engine + orchestration (variants deleted)
-- [ ] internal/plan: goldmark parse + stop-at-next-heading-<=N grouping; heuristic decompose (heading order=group dep, unordered=parallel, ordered=sequential, don't descend past a heading with subheadings); validator (list-vs-bare-paragraph rule)
-- [ ] internal/orch: dispatch next with plan-scoped context; orchestrator-verified completion (evidence -> verify -> done, never agent-asserted)
-- [ ] internal/orch lifecycle: enforcement-prompt cadence + kill/restart on manual context-end; per-agent XDG decision logs absorbed by team-lead
-- [ ] internal/a2a: adopt a2aproject/a2a-go a2a.Task/TaskState/Message over user DB (a2a_tasks/a2a_messages)
-- [ ] DELETE internal/variant entirely
-- [ ] Phase 6 checkpoint green
+- [ ] [WAIT-AGENT] internal/plan: goldmark parse + stop-at-next-heading-<=N grouping; heuristic decompose (heading order=group dep, unordered=parallel, ordered=sequential, don't descend past a heading with subheadings); validator (list-vs-bare-paragraph rule) — gated on the running Phase-2 store executor (whole rewrite is sequenced behind it)
+- [ ] [WAIT-AGENT] internal/orch: dispatch next with plan-scoped context; orchestrator-verified completion (evidence -> verify -> done, never agent-asserted) — gated on the running Phase-2 store executor (whole rewrite is sequenced behind it)
+- [ ] [WAIT-AGENT] internal/orch lifecycle: enforcement-prompt cadence + kill/restart on manual context-end; per-agent XDG decision logs absorbed by team-lead — gated on the running Phase-2 store executor (whole rewrite is sequenced behind it)
+- [ ] [WAIT-AGENT] internal/a2a: adopt a2aproject/a2a-go a2a.Task/TaskState/Message over user DB (a2a_tasks/a2a_messages) — gated on the running Phase-2 store executor (whole rewrite is sequenced behind it)
+- [ ] [WAIT-AGENT] DELETE internal/variant entirely — gated on the running Phase-2 store executor (whole rewrite is sequenced behind it)
+- [ ] [WAIT-AGENT] Phase 6 checkpoint green — gated on the running Phase-2 store executor (whole rewrite is sequenced behind it)
 
 ## Phase 7 — TUI + planning genesis
-- [ ] internal/tui: read-only macro/meso/micro (model/update/view split, NOT one god file); subscribe + DB scrollback
-- [ ] internal/genesis: agent-juxtaposition refinement -> markdown; headless emits doc, TUI renders for review (scroll + embedded/\$EDITOR), skip path
-- [ ] Phase 7 checkpoint green
+- [ ] [WAIT-AGENT] internal/tui: read-only macro/meso/micro (model/update/view split, NOT one god file); subscribe + DB scrollback — gated on the running Phase-2 store executor (whole rewrite is sequenced behind it)
+- [ ] [WAIT-AGENT] internal/genesis: agent-juxtaposition refinement -> markdown; headless emits doc, TUI renders for review (scroll + embedded/\$EDITOR), skip path — gated on the running Phase-2 store executor (whole rewrite is sequenced behind it)
+- [ ] [WAIT-AGENT] Phase 7 checkpoint green — gated on the running Phase-2 store executor (whole rewrite is sequenced behind it)
 
 ## Phase 8 — E2E + teardown + CI
-- [ ] tests/e2e fixtures from ~/src/reference-codebases/test-repo; CI-feasible cassette path + local real-agent path (env-gated + spend cap)
-- [ ] DELETE dead old-model code (plandag, runtime daemon bits, kong wiring, committed-config-dir); wire or delete rlog
-- [ ] docs sweep: fix drift (runbook socket-path, fabricated RequireOperatorApproval field), remove AI-trope/extraneous, regen API docs
-- [ ] real-agent E2E: orchestrator dispatches workers against a real markdown plan under spend cap with live CLI-health observation
-- [ ] final: go test ./... -race, golangci-lint, tox -e docs all green; open final PR(s); babysit to squash-merge
+- [ ] [WAIT-AGENT] tests/e2e fixtures from ~/src/reference-codebases/test-repo; CI-feasible cassette path + local real-agent path (env-gated + spend cap) — gated on the running Phase-2 store executor (whole rewrite is sequenced behind it)
+- [ ] [WAIT-AGENT] DELETE dead old-model code (plandag, runtime daemon bits, kong wiring, committed-config-dir); wire or delete rlog — gated on the running Phase-2 store executor (whole rewrite is sequenced behind it)
+- [ ] [WAIT-AGENT] docs sweep: fix drift (runbook socket-path, fabricated RequireOperatorApproval field), remove AI-trope/extraneous, regen API docs — gated on the running Phase-2 store executor (whole rewrite is sequenced behind it)
+- [ ] [WAIT-AGENT] real-agent E2E: orchestrator dispatches workers against a real markdown plan under spend cap with live CLI-health observation — gated on the running Phase-2 store executor (whole rewrite is sequenced behind it)
+- [ ] [WAIT-AGENT] final: go test ./... -race, golangci-lint, tox -e docs all green; open final PR(s); babysit to squash-merge — gated on the running Phase-2 store executor (whole rewrite is sequenced behind it)
 
 ## Notes
 - Just-in-time step expansion: expand each phase's TDD micro-steps against the then-current tree at phase start (recorded strategy).
