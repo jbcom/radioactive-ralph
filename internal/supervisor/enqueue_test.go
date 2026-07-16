@@ -2,6 +2,7 @@ package supervisor
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -119,5 +120,70 @@ func TestHandleEnqueue_NoActivePlansReturnsNotInserted(t *testing.T) {
 	}
 	if reply.Inserted {
 		t.Error("EnqueueReply.Inserted = true, want false with no active plans")
+	}
+}
+
+// TestHandleEnqueueListPlansErrorSurfaces confirms a ListPlans failure
+// (store already closed, simulating a genuine DB error) surfaces as an
+// error from HandleEnqueue rather than being silently swallowed.
+func TestHandleEnqueueListPlansErrorSurfaces(t *testing.T) {
+	sup := newTestSupervisor(t, nil)
+	_ = sup.store.Close()
+
+	if _, err := sup.HandleEnqueue(context.Background(), ipc.EnqueueArgs{}); err == nil {
+		t.Error("HandleEnqueue with a closed store: want error, got nil")
+	}
+}
+
+// errFailingBindingResolver is returned by a BindingResolver that always
+// fails, exercising orch.DispatchNext's own resolveBinding error path —
+// which propagates as an error return from DispatchNext, in turn
+// exercising HandleEnqueue's "dispatch failed for this plan, log and
+// continue to the next one" branch. (A failing provider.Runner.Run, by
+// contrast, is NOT an error return from DispatchNext at all — orch
+// handles a failed turn via MarkFailed and still reports it dispatched,
+// so it does not reach this branch.)
+var errFailingBindingResolver = errors.New("bindingResolver always fails")
+
+// TestHandleEnqueueContinuesPastADispatchFailure confirms one plan's
+// DispatchNext error does not abort the whole enqueue pass — a second,
+// independently-dispatchable plan still gets a chance, and the failure
+// itself is logged rather than propagated as HandleEnqueue's own error.
+func TestHandleEnqueueContinuesPastADispatchFailure(t *testing.T) {
+	sup := newTestSupervisor(t, nil)
+	ctx := context.Background()
+
+	projectID, err := sup.store.CreateProject(ctx, "enqueue-continue-project", []store.Fingerprint{
+		{Kind: store.FingerprintKindAbsPath, Value: "/tmp/enqueue-continue-project"},
+	})
+	if err != nil {
+		t.Fatalf("CreateProject: %v", err)
+	}
+	// A single ready plan whose binding resolution always fails.
+	planA, err := sup.store.CreatePlan(ctx, store.CreatePlanOpts{
+		ProjectID: projectID, Slug: "plan-a", Title: "A", SourceMarkdown: "# A\n\n1. step a\n",
+	})
+	if err != nil {
+		t.Fatalf("CreatePlan A: %v", err)
+	}
+	if err := sup.store.SetPlanStatus(ctx, planA, store.PlanStatusActive); err != nil {
+		t.Fatalf("SetPlanStatus A: %v", err)
+	}
+
+	sup.orch = orch.New(sup.store,
+		orch.WithBindingResolver(func(context.Context, string, bool) (provider.Binding, error) {
+			return provider.Binding{}, errFailingBindingResolver
+		}),
+	)
+
+	// DispatchNext for plan A fails at resolveBinding, but HandleEnqueue
+	// must still return cleanly (no error) since a per-plan dispatch
+	// failure is logged, not propagated.
+	reply, err := sup.HandleEnqueue(ctx, ipc.EnqueueArgs{})
+	if err != nil {
+		t.Fatalf("HandleEnqueue: want nil error (per-plan failures are logged, not propagated), got %v", err)
+	}
+	if reply.Inserted {
+		t.Error("EnqueueReply.Inserted = true, want false (the only plan's dispatch attempt failed)")
 	}
 }
