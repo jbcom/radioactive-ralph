@@ -428,6 +428,16 @@ func (s *Service) dispatchOnce(ctx context.Context) {
 			if !s.variantAllowed(profile) || !s.hasCapacity(profile) {
 				continue
 			}
+			// Admission control: refuse to spawn a confirmation-gated or
+			// spend-cap-required variant on the durable path unless the
+			// operator has authorized it in local.toml. Without this the
+			// durable service would run destructive gated variants
+			// (savage/old-man/world-breaker) with no confirmation and no
+			// cap — the exact bypass the attached `run` path prevents.
+			if reason, refused := s.durableAdmissionRefusal(profile); refused {
+				s.logAdmissionRefusal(ctx, plan, candidate, profile, reason)
+				continue
+			}
 			sessionVarID, err := s.planStore.CreateSessionVariant(ctx, plandag.SessionVariantOpts{
 				SessionID:           s.sessionID,
 				VariantName:         string(profile.Name),
@@ -705,6 +715,56 @@ func (s *Service) variantAllowed(profile variant.Profile) bool {
 	}
 }
 
+// durableAdmissionRefusal reports whether the durable service must refuse
+// to spawn profile, and why. It mirrors the confirmation-gate and
+// spend-cap checks the attached `run` path enforces (run.go), but for the
+// non-interactive service the authorization comes from local.toml rather
+// than a per-invocation CLI flag. Attached runs already gate at the CLI,
+// so this only fires in durable mode.
+func (s *Service) durableAdmissionRefusal(profile variant.Profile) (string, bool) {
+	if s.opts.SessionMode == plandag.SessionModeAttached {
+		return "", false
+	}
+	s.mu.Lock()
+	local := s.local
+	cfg := s.cfg
+	s.mu.Unlock()
+
+	if profile.HasGate() && !local.DurableVariantConfirmed(string(profile.Name)) {
+		return fmt.Sprintf(
+			"variant %q requires gate %s; authorize it for the durable service by adding %q to confirm_durable_variants in .radioactive-ralph/local.toml",
+			profile.Name, profile.ConfirmationGate, profile.Name), true
+	}
+	if profile.SafetyFloors.RequireSpendCap && resolveSpendCapUSD(cfg, profile) <= 0 {
+		return fmt.Sprintf(
+			"variant %q requires a spend cap; set [variants.%s] spend_cap_usd in .radioactive-ralph/config.toml",
+			profile.Name, profile.Name), true
+	}
+	return "", false
+}
+
+// logAdmissionRefusal records that the scheduler declined to spawn a
+// gated/uncapped variant. The task stays pending (unclaimed) so a later
+// config change can let it run; the event gives the operator the reason
+// instead of a silently stuck task.
+func (s *Service) logAdmissionRefusal(ctx context.Context, plan plandag.Plan, task plandag.Task, profile variant.Profile, reason string) {
+	_ = s.logEvent(ctx, "worker.admission_refused", map[string]any{
+		"plan_id": plan.ID,
+		"task_id": task.ID,
+		"variant": profile.Name,
+		"reason":  reason,
+	})
+}
+
+// resolveSpendCapUSD returns the configured spend cap for a variant, or 0
+// if none is set. Mirrors RunCmd.resolveSpendCapUSD for the durable path.
+func resolveSpendCapUSD(cfg config.File, profile variant.Profile) float64 {
+	if v, ok := cfg.Variants[string(profile.Name)]; ok && v.SpendCapUSD != nil {
+		return *v.SpendCapUSD
+	}
+	return 0
+}
+
 func (s *Service) idle() bool {
 	s.mu.Lock()
 	activeWorkers := len(s.workers)
@@ -730,6 +790,13 @@ func (s *Service) idle() bool {
 				continue
 			}
 			if s.opts.VariantFilter != "" && profile.Name != s.opts.VariantFilter {
+				continue
+			}
+			if _, refused := s.durableAdmissionRefusal(profile); refused {
+				// A gated/uncapped variant the service will never spawn
+				// does not count as pending work — otherwise an
+				// ExitWhenIdle service would spin forever on a task it
+				// refuses to run.
 				continue
 			}
 			if s.variantAllowed(profile) {

@@ -80,8 +80,17 @@ func writeLocalTOML(path string) error {
 # Examples:
 #   log_level       = "info"     # debug | info | warn | error
 #   provider_binary = "/usr/local/bin/codex"
+#
+# Authorize the durable service to schedule confirmation-gated destructive
+# variants. This lives here (never in committed config.toml) so a pull
+# request cannot self-authorize a destructive variant. Each variant still
+# needs its spend cap set in config.toml where it requires one.
+#   confirm_durable_variants = ["savage"]   # savage | old-man | world-breaker
 `
-	return os.WriteFile(path, []byte(content), 0o644) //nolint:gosec // config readable by all
+	// 0o600: local.toml carries the operator's binary override and the
+	// durable-variant authorization list — security-relevant, so it must
+	// not be world-readable like the committed config.
+	return os.WriteFile(path, []byte(content), 0o600)
 }
 
 // scaffoldPlans creates .radioactive-ralph/plans/ with a starter index.md

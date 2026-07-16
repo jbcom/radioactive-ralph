@@ -18,6 +18,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 
 	"github.com/BurntSushi/toml"
 )
@@ -110,6 +111,23 @@ type VariantFile struct {
 type Local struct {
 	LogLevel       string `toml:"log_level"`
 	ProviderBinary string `toml:"provider_binary"`
+
+	// ConfirmDurableVariants lists variant names the operator has
+	// explicitly authorized the durable repo service to schedule despite
+	// their confirmation gate (savage, old-man, world-breaker). The
+	// attached `run` path confirms gates with a per-invocation CLI flag;
+	// the durable service has no interactive step, so authorization lives
+	// here — in the GITIGNORED local.toml, never in committed config.toml.
+	// This is deliberate: a committed file must not be able to
+	// self-authorize a destructive variant, so a malicious PR cannot flip
+	// a plan to world-breaker and have the service run it.
+	ConfirmDurableVariants []string `toml:"confirm_durable_variants"`
+}
+
+// DurableVariantConfirmed reports whether the operator has authorized the
+// durable service to schedule the named variant despite its gate.
+func (l Local) DurableVariantConfirmed(name string) bool {
+	return slices.Contains(l.ConfirmDurableVariants, name)
 }
 
 // Errors returned by the config package.
