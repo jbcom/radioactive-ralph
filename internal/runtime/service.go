@@ -69,7 +69,12 @@ type Service struct {
 	mu       sync.Mutex
 	workers  map[string]workerState
 	managers map[variant.Name]*workspace.Manager
-	wg       sync.WaitGroup
+	// spendByVariant accumulates provider-reported CostUSD per variant for
+	// this service's lifetime. Guarded by mu. Enforced against the
+	// per-variant spend cap so a RequireSpendCap variant stops dispatching
+	// once it burns its cap.
+	spendByVariant map[variant.Name]float64
+	wg             sync.WaitGroup
 }
 
 // NewService constructs a repo-scoped runtime with validated defaults.
@@ -100,11 +105,12 @@ func NewService(opts Options) (*Service, error) {
 		return nil, fmt.Errorf("runtime: resolve paths: %w", err)
 	}
 	return &Service{
-		opts:       opts,
-		paths:      paths,
-		shutdownCh: make(chan struct{}),
-		workers:    map[string]workerState{},
-		managers:   map[variant.Name]*workspace.Manager{},
+		opts:           opts,
+		paths:          paths,
+		shutdownCh:     make(chan struct{}),
+		workers:        map[string]workerState{},
+		managers:       map[variant.Name]*workspace.Manager{},
+		spendByVariant: map[variant.Name]float64{},
 	}, nil
 }
 
@@ -546,6 +552,7 @@ func (s *Service) executeWorker(ctx context.Context, plan plandag.Plan, task pla
 		return
 	}
 	s.recordWorkerProvider(plan.ID, task.ID, binding.Name, result.SessionID)
+	s.recordSpend(ctx, plan, task, profile, binding.Name, result.Usage)
 	parsed, err := parseWorkerResult(result.AssistantOutput)
 	if err != nil {
 		s.markFailed(ctx, plan, task, profile, err.Error(), 0)
@@ -620,6 +627,47 @@ func (s *Service) recordWorkerProvider(planID, taskID, providerName, providerSes
 	worker.Provider = providerName
 	worker.ProviderSessionID = providerSessionID
 	s.workers[key] = worker
+}
+
+// recordSpend accumulates a worker turn's reported cost against its
+// variant and logs the running total. It also emits a spend-cap-exceeded
+// event when a capped variant crosses its ceiling, so the operator sees
+// the moment enforcement kicks in (dispatch of that variant then stops via
+// durableAdmissionRefusal).
+func (s *Service) recordSpend(ctx context.Context, plan plandag.Plan, task plandag.Task, profile variant.Profile, providerName string, usage provider.Usage) {
+	if usage.CostUSD <= 0 {
+		return
+	}
+	s.mu.Lock()
+	s.spendByVariant[profile.Name] += usage.CostUSD
+	total := s.spendByVariant[profile.Name]
+	capUSD := resolveSpendCapUSD(s.cfg, profile)
+	s.mu.Unlock()
+
+	_ = s.logEvent(ctx, "worker.spend", map[string]any{
+		"plan_id":       plan.ID,
+		"task_id":       task.ID,
+		"variant":       profile.Name,
+		"provider":      providerName,
+		"cost_usd":      usage.CostUSD,
+		"variant_total": total,
+		"input_tokens":  usage.InputTokens,
+		"output_tokens": usage.OutputTokens,
+	})
+	if capUSD > 0 && total >= capUSD {
+		_ = s.logEvent(ctx, "worker.spend_cap_exceeded", map[string]any{
+			"variant":       profile.Name,
+			"variant_total": total,
+			"spend_cap_usd": capUSD,
+		})
+	}
+}
+
+// spentForVariant returns the accumulated spend for a variant.
+func (s *Service) spentForVariant(name variant.Name) float64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.spendByVariant[name]
 }
 
 func (s *Service) heartbeatWorkers(ctx context.Context) {
@@ -735,10 +783,18 @@ func (s *Service) durableAdmissionRefusal(profile variant.Profile) (string, bool
 			"variant %q requires gate %s; authorize it for the durable service by adding %q to confirm_durable_variants in .radioactive-ralph/local.toml",
 			profile.Name, profile.ConfirmationGate, profile.Name), true
 	}
-	if profile.SafetyFloors.RequireSpendCap && resolveSpendCapUSD(cfg, profile) <= 0 {
-		return fmt.Sprintf(
-			"variant %q requires a spend cap; set [variants.%s] spend_cap_usd in .radioactive-ralph/config.toml",
-			profile.Name, profile.Name), true
+	if profile.SafetyFloors.RequireSpendCap {
+		capUSD := resolveSpendCapUSD(cfg, profile)
+		if capUSD <= 0 {
+			return fmt.Sprintf(
+				"variant %q requires a spend cap; set [variants.%s] spend_cap_usd in .radioactive-ralph/config.toml",
+				profile.Name, profile.Name), true
+		}
+		if spent := s.spentForVariant(profile.Name); spent >= capUSD {
+			return fmt.Sprintf(
+				"variant %q has reached its spend cap ($%.2f of $%.2f)",
+				profile.Name, spent, capUSD), true
+		}
 	}
 	return "", false
 }

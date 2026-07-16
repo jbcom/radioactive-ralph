@@ -5,6 +5,7 @@ import (
 
 	"github.com/jbcom/radioactive-ralph/internal/config"
 	"github.com/jbcom/radioactive-ralph/internal/plandag"
+	"github.com/jbcom/radioactive-ralph/internal/provider"
 	"github.com/jbcom/radioactive-ralph/internal/variant"
 )
 
@@ -82,6 +83,50 @@ func TestDurableAdmissionAllowsUngatedVariant(t *testing.T) {
 	s := &Service{opts: Options{SessionMode: plandag.SessionModeDurable}}
 	if reason, refused := s.durableAdmissionRefusal(p); refused {
 		t.Errorf("ungated variant %s refused: %s", p.Name, reason)
+	}
+}
+
+// TestSpendCapEnforced proves a capped variant is admitted until its
+// accumulated provider cost reaches the cap, then refused — the fix for
+// the spend cap being validated-for-presence but never enforced.
+func TestSpendCapEnforced(t *testing.T) {
+	gated := mustLookupVariant(t, variant.WorldBreaker)
+	if !gated.SafetyFloors.RequireSpendCap {
+		t.Skipf("%s unexpectedly has no spend-cap floor", gated.Name)
+	}
+	capUSD := 1.00
+	s := &Service{
+		opts:           Options{SessionMode: plandag.SessionModeDurable},
+		spendByVariant: map[variant.Name]float64{},
+		local: config.Local{
+			ConfirmDurableVariants: []string{string(gated.Name)},
+		},
+		cfg: config.File{
+			Variants: map[string]config.VariantFile{
+				string(gated.Name): {SpendCapUSD: &capUSD},
+			},
+		},
+	}
+
+	// Under the cap: admitted.
+	if _, refused := s.durableAdmissionRefusal(gated); refused {
+		t.Fatalf("expected admission below cap")
+	}
+
+	// Burn $0.60, still under $1.00: admitted.
+	s.recordSpend(t.Context(), plandag.Plan{ID: "p"}, plandag.Task{ID: "t"}, gated, "claude", provider.Usage{CostUSD: 0.60})
+	if _, refused := s.durableAdmissionRefusal(gated); refused {
+		t.Fatalf("expected admission at $0.60 of $1.00")
+	}
+
+	// Cross the cap: refused.
+	s.recordSpend(t.Context(), plandag.Plan{ID: "p"}, plandag.Task{ID: "t"}, gated, "claude", provider.Usage{CostUSD: 0.50})
+	reason, refused := s.durableAdmissionRefusal(gated)
+	if !refused {
+		t.Fatalf("expected refusal after crossing cap; total=%.2f", s.spentForVariant(gated.Name))
+	}
+	if reason == "" {
+		t.Error("refusal reason must be non-empty")
 	}
 }
 

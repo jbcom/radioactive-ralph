@@ -36,10 +36,27 @@ type Request struct {
 	AllowedTools []string
 }
 
+// Usage captures the token/cost accounting for one provider turn. Fields
+// are zero when the provider does not report them. Coverage today: the
+// claude runner populates Usage from the stream-json result frame; codex,
+// gemini, and declarative bindings report zero (their CLIs surface usage
+// differently and are not yet parsed). CostUSD is authoritative when
+// non-zero; the runtime accumulates it for spend-cap enforcement, so a
+// capped variant on an unreported provider still requires a cap value but
+// its cost is not yet metered. Extending codex/gemini parsing is the
+// follow-up to close that gap.
+type Usage struct {
+	InputTokens       int
+	OutputTokens      int
+	CachedInputTokens int
+	CostUSD           float64
+}
+
 // Result captures the observable output of one provider turn.
 type Result struct {
 	SessionID       string
 	AssistantOutput string
+	Usage           Usage
 }
 
 // Runner executes one provider turn.

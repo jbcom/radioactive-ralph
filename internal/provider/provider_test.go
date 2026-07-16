@@ -156,6 +156,36 @@ printf '%s\n' '"}'
 	}
 }
 
+func TestParseClaudeUsage(t *testing.T) {
+	raw := []byte(`{"type":"result","subtype":"success","total_cost_usd":0.0421,` +
+		`"usage":{"input_tokens":1200,"output_tokens":800,` +
+		`"cache_read_input_tokens":300,"cache_creation_input_tokens":100}}`)
+	u := parseClaudeUsage(raw)
+	if u.CostUSD != 0.0421 {
+		t.Errorf("CostUSD = %v, want 0.0421", u.CostUSD)
+	}
+	if u.InputTokens != 1200 || u.OutputTokens != 800 {
+		t.Errorf("tokens = %d/%d, want 1200/800", u.InputTokens, u.OutputTokens)
+	}
+	if u.CachedInputTokens != 400 {
+		t.Errorf("CachedInputTokens = %d, want 400 (300+100)", u.CachedInputTokens)
+	}
+}
+
+func TestParseClaudeUsageTolerant(t *testing.T) {
+	// Missing usage/cost and malformed input both yield a zero Usage, not
+	// an error — spend accounting is best-effort.
+	if u := parseClaudeUsage([]byte(`{"type":"result"}`)); u != (Usage{}) {
+		t.Errorf("frame without usage = %+v, want zero", u)
+	}
+	if u := parseClaudeUsage([]byte(`not json`)); u != (Usage{}) {
+		t.Errorf("malformed frame = %+v, want zero", u)
+	}
+	if u := parseClaudeUsage(nil); u != (Usage{}) {
+		t.Errorf("nil frame = %+v, want zero", u)
+	}
+}
+
 func TestRenderArgTemplateDoesNotReprocessTokenValues(t *testing.T) {
 	got, err := renderArgTemplate("prompt={prompt} model={model}", map[string]string{
 		"prompt": "literal {model}",
