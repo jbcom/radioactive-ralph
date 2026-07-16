@@ -109,8 +109,22 @@ type VariantFile struct {
 // Local is the shape of local.toml (gitignored per-operator preferences).
 // Keeping it minimal on purpose — everything else belongs in config.toml.
 type Local struct {
-	LogLevel       string `toml:"log_level"`
+	LogLevel string `toml:"log_level"`
+
+	// ProviderBinary is a legacy single-provider binary override applied
+	// to whichever provider is being resolved. Prefer ProviderBinaries
+	// (per-provider) when a repo mixes providers; a global override would
+	// otherwise clobber every provider's binary. Retained for
+	// backward compatibility as the fallback when no per-provider entry
+	// matches.
 	ProviderBinary string `toml:"provider_binary"`
+
+	// ProviderBinaries maps a provider name to its operator-supplied
+	// binary path, so a repo can authorize a custom binary for one
+	// provider (e.g. a declarative "my-cli") without overriding the
+	// shipped claude/codex/gemini binaries. Entries here take precedence
+	// over the global ProviderBinary.
+	ProviderBinaries map[string]string `toml:"provider_binaries"`
 
 	// ConfirmDurableVariants lists variant names the operator has
 	// explicitly authorized the durable repo service to schedule despite
@@ -128,6 +142,20 @@ type Local struct {
 // durable service to schedule the named variant despite its gate.
 func (l Local) DurableVariantConfirmed(name string) bool {
 	return slices.Contains(l.ConfirmDurableVariants, name)
+}
+
+// BinaryFor returns the operator-supplied binary override for a provider,
+// preferring the per-provider ProviderBinaries entry and falling back to
+// the legacy global ProviderBinary. The bool reports whether any override
+// applied (used as the binary-trust provenance signal).
+func (l Local) BinaryFor(providerName string) (string, bool) {
+	if bin, ok := l.ProviderBinaries[providerName]; ok && bin != "" {
+		return bin, true
+	}
+	if l.ProviderBinary != "" {
+		return l.ProviderBinary, true
+	}
+	return "", false
 }
 
 // Errors returned by the config package.

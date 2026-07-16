@@ -79,6 +79,15 @@ func writeLocalTOML(path string) error {
 #
 # Examples:
 #   log_level       = "info"     # debug | info | warn | error
+#
+# Authorize a custom or non-PATH provider binary. Prefer the per-provider
+# form so authorizing one provider does not override the others:
+#   [provider_binaries]
+#   my-cli = "/usr/local/bin/my-cli"
+#   codex  = "/opt/homebrew/bin/codex"
+#
+# The legacy single global override still works but applies to every
+# provider, so only use it in single-provider repos:
 #   provider_binary = "/usr/local/bin/codex"
 #
 # Authorize the durable service to schedule confirmation-gated destructive

@@ -85,8 +85,8 @@ func ResolveBinding(cfg config.File, local config.Local, _ variant.Profile, from
 		providerCfg.Type = name
 	}
 	binaryFromLocal := false
-	if local.ProviderBinary != "" {
-		providerCfg.Binary = local.ProviderBinary
+	if bin, ok := local.BinaryFor(name); ok {
+		providerCfg.Binary = bin
 		binaryFromLocal = true
 	}
 	if providerCfg.Binary == "" {
