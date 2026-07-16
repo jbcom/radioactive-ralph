@@ -33,7 +33,7 @@ CREATE TABLE projects (
 -- Accumulated identity fingerprints. A directory that is later git-init'ed
 -- gains its git identifier(s) ON TOP of the path identifier, so the same
 -- project stays recognized across the git transition and directory moves.
--- kind: 'abs_path' | 'git_root_commit' | 'git_remote' | 'git_worktree_root'.
+-- kind: 'abs_path' | 'git_root_commit' | 'git_remote'.
 CREATE TABLE project_identifiers (
   project_id  TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
   kind        TEXT NOT NULL,

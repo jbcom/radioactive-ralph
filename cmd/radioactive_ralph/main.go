@@ -6,8 +6,12 @@
 //     reaper. Working directory is irrelevant to it.
 //   - Plain `radioactive_ralph` is a dumb client: it resolves the current
 //     directory's project, finds the running supervisor (or tells the
-//     operator how to start one), and talks to it. It owns no ptys, no DB,
-//     no business logic of its own.
+//     operator how to start one), and talks to it. "Dumb" means it owns no
+//     ptys and no plan orchestration — not that it never touches the DB: it
+//     does open the shared user-level store to resolve/create the project
+//     row (the store's WAL + _txlock=immediate DSN is built for exactly this
+//     multi-process access). Project resolution may later move behind an IPC
+//     endpoint on the supervisor.
 package main
 
 import (

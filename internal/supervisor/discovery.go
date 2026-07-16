@@ -1,8 +1,9 @@
 // Package supervisor implements the `--supervisor` process: the single
 // durable authority described in docs/superpowers/specs/2026-07-16-supervisor-architecture-design.md
 // §4-§6. It owns the one user-level store, all agent ptys, and the IPC
-// endpoint that both discovery and single-instance enforcement key off of
-// (§5c: "the socket is the advertisement").
+// endpoint clients discover (§5c: "the socket is the advertisement").
+// Single-instance is enforced by an exclusive flock on the PID file, not by
+// the socket bind (which happens downstream of that lock).
 package supervisor
 
 import (
@@ -21,9 +22,11 @@ import (
 var ErrNoSupervisor = errors.New("supervisor: no supervisor is listening")
 
 // ErrSupervisorRunning is returned by Acquire when another live supervisor
-// already holds the socket. Binding the socket IS the single-instance
-// mutex (spec §5c); this error surfaces the second bind's failure with a
-// name callers can match via errors.Is.
+// already holds the lock. The actual single-instance mutex is the exclusive
+// non-blocking flock on the PID file (acquirePIDLock); the socket
+// advertisement (§5c) that clients discover is bound downstream of that lock
+// (inside ipc.Server.Start). This error surfaces the second acquire's
+// failure with a name callers can match via errors.Is.
 var ErrSupervisorRunning = errors.New("supervisor: another supervisor is already running")
 
 // dialTimeout bounds how long Find/Acquire wait for a connect to either
@@ -90,11 +93,15 @@ func (l *Listener) Release() error {
 	return err
 }
 
-// Acquire binds the supervisor socket at runtimeDir, which is itself the
-// single-instance mutex (spec §5c): a second live supervisor's bind fails
-// and Acquire returns ErrSupervisorRunning.
+// Acquire takes the single-instance lock for runtimeDir. The actual mutex
+// is the exclusive non-blocking flock on the PID file (acquirePIDLock): a
+// second live supervisor fails to take that lock and Acquire returns
+// ErrSupervisorRunning. The socket clients discover (spec §5c: "the socket
+// is the advertisement") is bound later, in ipc.Server.Start, strictly
+// after Acquire has already won the PID lock — so two processes racing
+// Acquire contend on the flock, never on the socket bind.
 //
-// Before attempting the bind, Acquire checks whether the socket path is a
+// Before taking the lock, Acquire checks whether the socket path is a
 // stale leftover from a crashed supervisor: if a live client can still
 // connect, a supervisor is genuinely running (ErrSupervisorRunning). If
 // nothing answers, Acquire consults the PID lockfile — a dead recorded PID
