@@ -122,7 +122,7 @@ type Local struct {
 	// ProviderBinaries maps a provider name to its operator-supplied
 	// binary path, so a repo can authorize a custom binary for one
 	// provider (e.g. a declarative "my-cli") without overriding the
-	// shipped claude/codex/gemini binaries. Entries here take precedence
+	// shipped claude/codex binaries. Entries here take precedence
 	// over the global ProviderBinary.
 	ProviderBinaries map[string]string `toml:"provider_binaries"`
 
@@ -293,21 +293,6 @@ func DefaultCodexProvider() ProviderFile {
 		HaikuModel:     "gpt-5.4-mini",
 		SonnetModel:    "gpt-5.4",
 		OpusModel:      "gpt-5.4",
-		LowEffort:      "low",
-		MediumEffort:   "medium",
-		HighEffort:     "high",
-		MaxEffort:      "high",
-		SupportsResume: &supportsResume,
-	}
-}
-
-// DefaultGeminiProvider returns the built-in provider binding that uses the
-// local `gemini` CLI as the execution backend.
-func DefaultGeminiProvider() ProviderFile {
-	supportsResume := false
-	return ProviderFile{
-		Type:           "gemini",
-		Binary:         "gemini",
 		LowEffort:      "low",
 		MediumEffort:   "medium",
 		HighEffort:     "high",

@@ -127,8 +127,11 @@ world-breaker require the durable repo service.
 - at least one shipped provider CLI installed and authenticated:
   - `claude`
   - `codex`
-  - `gemini`
 - `gh` recommended for GitHub workflows
 
-The runtime ships provider bindings for Claude, Codex, and Gemini today. Repo
-config picks the default provider and can override it per variant.
+The runtime ships provider bindings for Claude and Codex today. Repo config
+picks the default provider and can override it per variant. Gemini was
+removed as a shipped provider on 2026-06-18, after the Gemini CLI's auth
+endpoint was deprecated (it now returns HTTP 410 Gone). The declarative
+provider path still lets a repo wire up a self-hosted, gemini-compatible CLI
+via `config.toml` if needed.

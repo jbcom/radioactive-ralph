@@ -31,7 +31,6 @@ jobs:
         env:
           HAS_ANTHROPIC: ${{ secrets.ANTHROPIC_API_KEY != '' && '1' || '0' }}
           HAS_OPENAI: ${{ secrets.OPENAI_API_KEY != '' && '1' || '0' }}
-          HAS_GEMINI: ${{ (secrets.GEMINI_API_KEY != '' || secrets.GOOGLE_API_KEY != '') && '1' || '0' }}
         run: |
           missing=0
           if [[ "$HAS_ANTHROPIC" != "1" ]]; then
@@ -40,10 +39,6 @@ jobs:
           fi
           if [[ "$HAS_OPENAI" != "1" ]]; then
             echo "::error::OPENAI_API_KEY is required for the stable provider gate"
-            missing=1
-          fi
-          if [[ "$HAS_GEMINI" != "1" ]]; then
-            echo "::error::GEMINI_API_KEY or GOOGLE_API_KEY is required for the stable provider gate"
             missing=1
           fi
           exit "$missing"
@@ -57,7 +52,5 @@ jobs:
           printenv OPENAI_API_KEY | codex login --with-api-key
           codex login status
           echo "CODEX_AUTHENTICATED=1" >> "$GITHUB_ENV"
-      - name: Install Gemini CLI
-        run: npm install -g @google/gemini-cli@latest
       - name: Smoke live providers
-        run: go test ./tests/integration -run 'TestLiveClaudeRoundTrip|TestLiveClaudeModelSanity|TestLiveClaudeRunnerTurn|TestLiveCodexRunnerTurn|TestLiveGeminiRunnerTurn' -v
+        run: go test ./tests/integration -run 'TestLiveClaudeRoundTrip|TestLiveClaudeModelSanity|TestLiveClaudeRunnerTurn|TestLiveCodexRunnerTurn' -v

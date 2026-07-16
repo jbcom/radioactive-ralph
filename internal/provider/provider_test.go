@@ -19,7 +19,6 @@ func TestNewRunnerSupportsBuiltins(t *testing.T) {
 	}{
 		{name: "claude", typ: "claude"},
 		{name: "codex", typ: "codex"},
-		{name: "gemini", typ: "gemini"},
 		{name: "plain", typ: "plain-stdout"},
 		{name: "file", typ: "last-message-file"},
 		{name: "stream", typ: "stream-json"},
@@ -249,7 +248,7 @@ func TestValidateBindingAllowsLocalOverrideBinary(t *testing.T) {
 
 func TestValidateBindingAllowsShippedBinaryInCommittedConfig(t *testing.T) {
 	// A built-in provider binary in committed config is fine.
-	for _, bin := range []string{"claude", "codex", "gemini"} {
+	for _, bin := range []string{"claude", "codex"} {
 		if err := validateBinaryTrust(Binding{
 			Name:   bin,
 			Config: config.ProviderFile{Type: bin, Binary: bin},
@@ -297,31 +296,6 @@ printf '%s' '{"outcome":"done","summary":"codex ok","evidence":["used codex"]}' 
 	}
 	if !strings.Contains(result.AssistantOutput, `"outcome":"done"`) {
 		t.Fatalf("unexpected codex output: %q", result.AssistantOutput)
-	}
-}
-
-func TestGeminiRunnerReturnsStdout(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("shell-script fake CLI is Unix-only")
-	}
-	bin := writeFakeCLI(t, "fake-gemini.sh", `#!/bin/sh
-printf '%s' '{"outcome":"blocked","summary":"need more context","evidence":[],"reason":"missing release notes","needs_context":["release-notes"]}'
-`)
-	result, err := GeminiRunner{}.Run(context.Background(), Binding{
-		Name:   "gemini",
-		Config: config.ProviderFile{Type: "gemini", Binary: bin},
-	}, Request{
-		WorkingDir:   t.TempDir(),
-		SystemPrompt: "system",
-		UserPrompt:   "user",
-		Model:        variant.ModelSonnet,
-		Effort:       "medium",
-	})
-	if err != nil {
-		t.Fatalf("GeminiRunner.Run: %v", err)
-	}
-	if !strings.Contains(result.AssistantOutput, `"blocked"`) {
-		t.Fatalf("unexpected gemini output: %q", result.AssistantOutput)
 	}
 }
 

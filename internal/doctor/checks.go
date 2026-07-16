@@ -113,29 +113,6 @@ func checkCodexAuth(ctx context.Context, cfg RunOptions) Check {
 	}
 }
 
-func checkGeminiVersion(ctx context.Context, cfg RunOptions) Check {
-	return checkProviderVersion(ctx, cfg, providerVersionCheck{
-		Name:          "gemini",
-		Binary:        "gemini",
-		VersionArgs:   []string{"--version"},
-		MissingLevel:  WARN,
-		MissingDetail: "gemini CLI not found on PATH",
-		MissingFix:    "install Gemini CLI so the `gemini` provider binding is usable",
-	})
-}
-
-func checkGeminiAuth(_ context.Context, _ RunOptions) Check {
-	if os.Getenv("GEMINI_API_KEY") != "" || os.Getenv("GOOGLE_API_KEY") != "" {
-		return Check{Name: "gemini auth", Severity: OK, Detail: "API key present in environment"}
-	}
-	return Check{
-		Name:      "gemini auth",
-		Severity:  WARN,
-		Detail:    "Gemini auth could not be verified automatically",
-		Remediate: "set GEMINI_API_KEY / GOOGLE_API_KEY or complete the Gemini CLI login flow before using the `gemini` provider",
-	}
-}
-
 // checkGhVersion warns when the GitHub CLI is absent — present
 // because most variants use `gh pr ...` internally, but non-fatal so
 // Ralph can still run on machines without it.

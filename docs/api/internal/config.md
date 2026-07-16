@@ -38,7 +38,6 @@ The config package only parses and validates. Applying variant defaults and prov
 - [type ProviderFile](<#ProviderFile>)
   - [func DefaultClaudeProvider\(\) ProviderFile](<#DefaultClaudeProvider>)
   - [func DefaultCodexProvider\(\) ProviderFile](<#DefaultCodexProvider>)
-  - [func DefaultGeminiProvider\(\) ProviderFile](<#DefaultGeminiProvider>)
 - [type Service](<#Service>)
 - [type VariantFile](<#VariantFile>)
 
@@ -100,7 +99,7 @@ func IsMissingLocal(err error) bool
 IsMissingLocal reports whether err indicates a missing local.toml.
 
 <a name="LocalPath"></a>
-## func [LocalPath](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/config/config.go#L325>)
+## func [LocalPath](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/config/config.go#L310>)
 
 ```go
 func LocalPath(repoRoot string) string
@@ -109,7 +108,7 @@ func LocalPath(repoRoot string) string
 LocalPath returns the absolute path to local.toml for repoRoot.
 
 <a name="Path"></a>
-## func [Path](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/config/config.go#L320>)
+## func [Path](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/config/config.go#L305>)
 
 ```go
 func Path(repoRoot string) string
@@ -160,7 +159,7 @@ type Local struct {
     // ProviderBinaries maps a provider name to its operator-supplied
     // binary path, so a repo can authorize a custom binary for one
     // provider (e.g. a declarative "my-cli") without overriding the
-    // shipped claude/codex/gemini binaries. Entries here take precedence
+    // shipped claude/codex binaries. Entries here take precedence
     // over the global ProviderBinary.
     ProviderBinaries map[string]string `toml:"provider_binaries"`
 
@@ -266,15 +265,6 @@ func DefaultCodexProvider() ProviderFile
 ```
 
 DefaultCodexProvider returns the built\-in provider binding that uses the local \`codex\` CLI as the execution backend.
-
-<a name="DefaultGeminiProvider"></a>
-### func [DefaultGeminiProvider](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/config/config.go#L306>)
-
-```go
-func DefaultGeminiProvider() ProviderFile
-```
-
-DefaultGeminiProvider returns the built\-in provider binding that uses the local \`gemini\` CLI as the execution backend.
 
 <a name="Service"></a>
 ## type [Service](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/config/config.go#L53-L59>)

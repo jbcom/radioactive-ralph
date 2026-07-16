@@ -10,7 +10,7 @@ import (
 
 // TestRunCommandSeparatesStderr verifies stderr noise is not folded
 // into the stdout we return as AssistantOutput. Regression guard for
-// the Gemini case where the CLI prints warnings to stderr that we
+// the case where a provider CLI prints warnings to stderr that we
 // were previously concatenating into the result.
 func TestRunCommandSeparatesStderr(t *testing.T) {
 	if runtime.GOOS == "windows" {

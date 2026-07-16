@@ -54,7 +54,6 @@ integration. The remaining real-host checks are:
 - live launchd install/start/stop behavior on macOS
 - live systemd user-unit install/start/stop behavior on Linux
 - live Windows SCM install/start/stop behavior on native Windows
-- credentialed Gemini runner smoke in a real operator environment
 
 The repo now includes an opt-in GitHub Actions workflow,
 `.github/workflows/service-managers.yml`, for native launchd, systemd-user, and
@@ -63,14 +62,17 @@ checks depend on host-manager capabilities that are stronger and noisier than
 the default CI contract.
 
 The repo also includes an opt-in credentialed provider workflow,
-`.github/workflows/provider-live.yml`, that installs the Claude Code, Codex,
-and Gemini CLIs and runs the live provider smoke tests when the corresponding
+`.github/workflows/provider-live.yml`, that installs the Claude Code and
+Codex CLIs and runs the live provider smoke tests when the corresponding
 repository secrets are present. That workflow expects:
 
 - `ANTHROPIC_API_KEY` for Claude live smoke
 - `OPENAI_API_KEY` for Codex live smoke. The workflow uses it to run
   `codex login --with-api-key` before enabling the Codex test.
-- `GEMINI_API_KEY` or `GOOGLE_API_KEY` for Gemini live smoke
+
+Gemini was removed as a shipped provider on 2026-06-18 after the Gemini
+CLI's auth endpoint was deprecated, so there is no live Gemini smoke test
+anymore.
 
 The repo still covers the service and IPC contract in hermetic tests by
 validating service-manager command construction, the persisted Windows config
@@ -97,7 +99,6 @@ Manual live checks require:
   release-gate run:
   - `claude`
   - `codex`
-  - `gemini`
 - `gh` CLI on `PATH`, authenticated
 - a disposable repo or sandbox branch
 
@@ -105,18 +106,15 @@ The live smoke tests are opt-in and gated explicitly:
 
 - `CLAUDE_AUTHENTICATED=1` enables the real Claude session and runner tests
 - `CODEX_AUTHENTICATED=1` enables the real Codex runner test
-- `GEMINI_AUTHENTICATED=1` enables the real Gemini runner test
 
 Claude accepts `ANTHROPIC_API_KEY` in the environment. Current Codex CLI
 releases require a CLI login before `codex exec`; use
 `printenv OPENAI_API_KEY | codex login --with-api-key` for headless API-key
 setup.
 
-Gemini also requires `GEMINI_API_KEY` or `GOOGLE_API_KEY` in the environment.
-
 Default CI stays hermetic and does not depend on a live provider account.
 Release validation is stricter: the manual provider workflow should pass
-without provider skips for all three shipped bindings before a stable tag.
+without provider skips for both shipped bindings before a stable tag.
 
 ## Current test focus
 

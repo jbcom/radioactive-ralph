@@ -131,8 +131,6 @@ func Run(ctx context.Context, opts ...Option) Report {
 		checkClaudeAuth,
 		checkCodexVersion,
 		checkCodexAuth,
-		checkGeminiVersion,
-		checkGeminiAuth,
 		checkGhVersion,
 		checkGhAuth,
 		checkServicePlatform,

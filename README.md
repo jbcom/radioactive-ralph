@@ -28,11 +28,13 @@ acts, and spends effort.
 - Providers are configured in `.radioactive-ralph/config.toml` with a
   repo-level `default_provider` and named `[providers.<name>]` blocks.
 
-The shipped providers are `claude`, `codex`, and `gemini`. The runtime model
-is broader: Ralph personas live in code, and repositories can bind compatible
-CLI providers through declarative `plain-stdout`, `last-message-file`, or
-`stream-json` provider blocks when the prompt/model/effort/output contract is
-defined.
+The shipped providers are `claude` and `codex`. (`gemini` shipped previously
+but was removed after the Gemini CLI's auth endpoint was deprecated on
+2026-06-18.) The runtime model is broader: Ralph personas live in code, and
+repositories can bind compatible CLI providers — including a self-hosted
+gemini-compatible CLI — through declarative `plain-stdout`,
+`last-message-file`, or `stream-json` provider blocks when the
+prompt/model/effort/output contract is defined.
 
 ## Install
 

@@ -126,7 +126,7 @@ func (r Report) Passed() bool
 Passed reports whether the overall doctor run succeeded \(zero FAILs\).
 
 <a name="Report.WriteText"></a>
-### func \(Report\) [WriteText](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/doctor/doctor.go#L168>)
+### func \(Report\) [WriteText](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/doctor/doctor.go#L166>)
 
 ```go
 func (r Report) WriteText(w io.Writer)

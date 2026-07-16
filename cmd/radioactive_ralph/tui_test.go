@@ -170,7 +170,7 @@ func TestTUIVariantAndProviderFiltersApplyToTaskLists(t *testing.T) {
 	m := newTUIModel(t.TempDir(), "unused", "unused", false, "")
 	m.snapshot.ready = []taskSummary{
 		{PlanSlug: "release", TaskID: "docs", VariantHint: "grey", Provider: "codex"},
-		{PlanSlug: "release", TaskID: "smoke", VariantHint: "red", Provider: "gemini"},
+		{PlanSlug: "release", TaskID: "smoke", VariantHint: "red", Provider: "custom-cli"},
 	}
 
 	m.cycleVariantFilter()

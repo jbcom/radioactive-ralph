@@ -19,7 +19,7 @@ type Binding struct {
 	// BinaryFromLocal is true when Config.Binary was set by the gitignored
 	// local.toml provider_binary override rather than by committed
 	// config.toml. Committed config may only name a shipped provider
-	// binary (claude/codex/gemini); an arbitrary binary must come from
+	// binary (claude/codex); an arbitrary binary must come from
 	// local.toml, so a pull request cannot point the runtime at
 	// /bin/sh. ValidateBinding enforces this.
 	BinaryFromLocal bool
@@ -38,13 +38,13 @@ type Request struct {
 
 // Usage captures the token/cost accounting for one provider turn. Fields
 // are zero when the provider does not report them. Coverage today: the
-// claude runner populates Usage from the stream-json result frame; codex,
-// gemini, and declarative bindings report zero (their CLIs surface usage
+// claude runner populates Usage from the stream-json result frame; codex
+// and declarative bindings report zero (their CLIs surface usage
 // differently and are not yet parsed). CostUSD is authoritative when
 // non-zero; the runtime accumulates it for spend-cap enforcement, so a
 // capped variant on an unreported provider still requires a cap value but
-// its cost is not yet metered. Extending codex/gemini parsing is the
-// follow-up to close that gap.
+// its cost is not yet metered. Extending codex parsing is the follow-up
+// to close that gap.
 type Usage struct {
 	InputTokens       int
 	OutputTokens      int
@@ -104,7 +104,6 @@ func ResolveBinding(cfg config.File, local config.Local, _ variant.Profile, from
 var shippedProviderBinaries = map[string]bool{
 	"claude": true,
 	"codex":  true,
-	"gemini": true,
 }
 
 // NewRunner returns the runtime implementation for a provider type.
@@ -114,8 +113,6 @@ func NewRunner(binding Binding) (Runner, error) {
 		return ClaudeRunner{}, nil
 	case "codex":
 		return CodexRunner{}, nil
-	case "gemini":
-		return GeminiRunner{}, nil
 	case declarativePlainStdout, declarativeLastMessageFile, declarativeStreamJSON:
 		return DeclarativeRunner{}, nil
 	default:
@@ -129,8 +126,6 @@ func builtInProvider(name string) (config.ProviderFile, bool) {
 		return config.DefaultClaudeProvider(), true
 	case "codex":
 		return config.DefaultCodexProvider(), true
-	case "gemini":
-		return config.DefaultGeminiProvider(), true
 	default:
 		return config.ProviderFile{}, false
 	}
