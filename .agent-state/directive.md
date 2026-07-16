@@ -15,7 +15,7 @@ docs/superpowers/specs/2026-07-16-supervisor-architecture-design.md.
 - [x] Phase 1 checkpoint: build/test/-race/golangci-lint/gofmt green; control invariant demonstrable — DONE
 
 ## Phase 2 — User store (single XDG SQLite DB)
-- [ ] internal/store: open one XDG SQLite DB; port plandag schema + PR#63 safety fixes — schema/0001_initial.up.sql authored (variants removed, project_identifiers/project_config added, workers replaces session_variants); Go layer next
+- [ ] [WAIT-AGENT] internal/store Go layer (open XDG DB, migration runner, plandag CRUD port with PR#63 safety) — delegated to executor; schema/0001_initial.up.sql already authored
 - [ ] project_identifiers table + fingerprint accumulate/resolve (git heuristics + abs-path seed)
 - [ ] project_config, spend, process_tracking, sessions/roles tables
 - [ ] in-store reaper reclaim query (stale-heartbeat tasks -> requeue) + startup reconcile
