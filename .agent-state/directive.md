@@ -22,17 +22,17 @@ docs/superpowers/specs/2026-07-16-supervisor-architecture-design.md.
 - [x] backup routine — DONE (28 tests, green)
 
 ## Phase 3 — Config resolution (cobra/viper)
-- [ ] [WAIT-AGENT] internal/vconfig: 3 flags via cobra + viper-backed merge (store now available; design in scratchpad/phase3-vconfig-design.md) — delegated to vconfig executor
-- [ ] [WAIT-AGENT] vconfig two virtual layers (USER = DB < --config-file < --user-config-file; PROJECTS = all-DB < user projects:) — delegated to vconfig executor
-- [ ] [WAIT-AGENT] vconfig change (persist) vs override (runtime-only) semantics — delegated to vconfig executor
-- [ ] [WAIT-AGENT] vconfig conflict backwards-diff + auto-remove + merged validation — delegated to vconfig executor
-- [ ] [WAIT-AGENT] Phase 3 checkpoint green — delegated to vconfig executor
+- [x] internal/vconfig — DONE (16 tests, green)
+- [x] vconfig two virtual — DONE (16 tests, green)
+- [x] vconfig change — DONE (16 tests, green)
+- [x] vconfig conflict — DONE (16 tests, green)
+- [x] Phase 3 checkpoint — DONE (16 tests, green)
 
 ## Phase 4 — Supervisor + discovery (cobra CLI, kong removed)
-- [ ] [WAIT-AGENT] internal/supervisor lifecycle — consumes store + agent; blocked on store executor
-- [ ] [WAIT-AGENT] supervisor discovery (socket-at-XDG, single-instance, stale reclaim) — blocked on store executor
-- [ ] [WAIT-AGENT] dumb client + kong->cobra/viper migration — blocked on store+vconfig
-- [ ] [WAIT-AGENT] Phase 4 checkpoint — after supervisor+client land (blocked on store)
+- [ ] [WAIT-AGENT] internal/supervisor lifecycle (owns agents + store) — delegated to Phase-4 executor
+- [ ] [WAIT-AGENT] supervisor discovery (socket-at-XDG, single-instance, stale reclaim) — delegated to Phase-4 executor
+- [ ] [WAIT-AGENT] dumb client discover-or-refuse + kong->cobra/viper CLI migration — delegated to Phase-4 executor
+- [ ] [WAIT-AGENT] Phase 4 checkpoint (client refuses w/o supervisor; 2nd supervisor refuses; stale reclaim) — verify on return
 
 ## Phase 5 — Providers + detection (capability records, no personas)
 - [ ] [WAIT-AGENT] rework internal/provider onto internal/agent; claude/codex runners; opencode.go (run --format json) — gated on the running Phase-2 store executor (whole rewrite is sequenced behind it)
