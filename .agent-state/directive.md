@@ -16,10 +16,10 @@ docs/superpowers/specs/2026-07-16-supervisor-architecture-design.md.
 
 ## Phase 2 — User store (single XDG SQLite DB)
 - [ ] [WAIT-AGENT] internal/store Go layer (open XDG DB, migration runner, plandag CRUD port with PR#63 safety) — delegated to executor; schema/0001_initial.up.sql already authored
-- [ ] project_identifiers table + fingerprint accumulate/resolve (git heuristics + abs-path seed)
-- [ ] project_config, spend, process_tracking, sessions/roles tables
-- [ ] in-store reaper reclaim query (stale-heartbeat tasks -> requeue) + startup reconcile
-- [ ] backup routine + tests; Phase 2 checkpoint green
+- [ ] [WAIT-AGENT] project fingerprint accumulate/resolve (projects.go) — in the store executor delegation
+- [ ] [WAIT-AGENT] project_config/spend/sessions/workers CRUD (config.go, tasks.go) — in the store executor delegation
+- [ ] [WAIT-AGENT] in-store reaper reclaim (reaper.go) — in the store executor delegation
+- [ ] [WAIT-AGENT] backup routine + Phase 2 checkpoint verify — in the store executor delegation; verify on return
 
 ## Phase 3 — Config resolution (cobra/viper)
 - [ ] internal/vconfig: 3 flags (--config-file/-C, --user-config-file, --project-config-file) via cobra; viper-backed merge
