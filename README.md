@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  <em>A helpful little guy with a lot of personalities.</em>
+  <em>A supervised-execution runtime for local AI-agent CLIs.</em>
 </p>
 
 <p align="center">
@@ -14,27 +14,43 @@
   <a href="./LICENSE"><img src="https://img.shields.io/badge/license-MIT-green" alt="MIT License"/></a>
 </p>
 
-radioactive-ralph is a binary-first repo runtime for AI-assisted development.
-It installs one executable, keeps one durable SQLite plan DAG, and lets you
-pick from ten built-in Ralph personas that control how the little guy thinks,
-acts, and spends effort.
+radioactive-ralph runs your local AI-agent CLIs (Claude, Codex, OpenCode) as
+**supervised workers that can never block**. It installs one executable that,
+in supervisor mode, owns each agent's pseudo-terminal, watches every worker for
+stalls and permission-prompts, and kills-and-reclaims instead of ever waiting.
+Work is driven by a simple markdown plan, decomposed with pure heuristics (no
+LLM), and a step is only "done" once the runtime **verifies** it — never
+because an agent said so.
 
-## Product contract
+> **Rewrite in progress.** The project is being rebuilt to this supervisor
+> architecture. The authoritative design is
+> [docs/superpowers/specs/2026-07-16-supervisor-architecture-design.md](./docs/superpowers/specs/2026-07-16-supervisor-architecture-design.md);
+> the decision trail is `.agent-state/decisions.ndjson`.
 
-- `radioactive_ralph service start` is the durable repo runtime.
-- `radioactive_ralph run --variant <name>` is the attached bounded runner.
-- `radioactive_ralph tui` is the socket-backed cockpit.
-- Fixit Ralph is the planning bridge when a repo has no active plan.
-- Providers are configured in `.radioactive-ralph/config.toml` with a
-  repo-level `default_provider` and named `[providers.<name>]` blocks.
+## What it is
 
-The shipped providers are `claude` and `codex`. (`gemini` shipped previously
-but was removed after the Gemini CLI's auth endpoint was deprecated on
-2026-06-18.) The runtime model is broader: Ralph personas live in code, and
-repositories can bind compatible CLI providers — including a self-hosted
-gemini-compatible CLI — through declarative `plain-stdout`,
-`last-message-file`, or `stream-json` provider blocks when the
-prompt/model/effort/output contract is defined.
+- **One binary, two modes.** `radioactive_ralph --supervisor` is the long-lived
+  process that owns every agent's pty and holds all work open. Plain
+  `radioactive_ralph` is a **dumb client**: it discovers the supervisor over a
+  socket at an XDG path and renders a read-only view — it refuses to run without
+  a supervisor.
+- **The control invariant.** An agent CLI can never block the system. Agents run
+  non-interactively under Ralph's pty; a watchdog surfaces any stall or
+  permission-prompt and the runtime kills-and-reclaims. Recovery is cheap
+  because state is durable.
+- **One user-level database.** A single SQLite DB (in your XDG data dir) is
+  durable memory for **all** projects. Repos stay clean — no committed config
+  dir, no per-repo database. Projects are recognized by accumulated fingerprints
+  (git root-commit, remote, path), so identity survives `git init` and moves.
+- **No personas.** There are no variants. One mutating Ralph; behavior comes
+  from the task and its context, not roleplay.
+- **Markdown plans, verified completion.** Plans are plain markdown decomposed
+  heuristically (heading = group, unordered list = parallel steps, ordered =
+  sequential). The orchestrator dispatches steps with scoped context and
+  verifies each against its acceptance criteria before marking it done.
+- **Local-only providers.** `claude`, `codex`, `opencode` — the agent loop and
+  tool execution run locally (hosted model inference is fine). A2A coordination
+  vocabulary comes from the official [`a2aproject/a2a-go`](https://github.com/a2aproject/a2a-go).
 
 ## Install
 
@@ -44,83 +60,46 @@ prompt/model/effort/output contract is defined.
 | Windows Scoop | `scoop bucket add jbcom https://github.com/jbcom/pkgs && scoop install radioactive-ralph` |
 | macOS / Linux curl installer | <code>curl -sSL https://jonbogaty.com/radioactive-ralph/install.sh | sh</code> |
 
-## Start a repo
+## Quick start
 
 ```bash
-radioactive_ralph init
-radioactive_ralph run --variant fixit --advise \
-  --topic stabilize-runtime \
-  --description "stabilize the runtime and queue the next implementation pass"
-radioactive_ralph plan ls
-radioactive_ralph plan approvals
-radioactive_ralph service start
+# 1. Start the supervisor (owns everything; user/XDG-level, directory-independent)
+radioactive_ralph --supervisor        # or install it as a system service
+
+# 2. In a project directory, initialize it (registers the project in the user DB)
+radioactive_ralph --init
+
+# 3. Run the client to see live status / the read-only cockpit
+radioactive_ralph
 ```
 
-If you want a bounded attached run instead of the durable service:
+The client refuses to run unless a supervisor is reachable, and tells you how to
+start one. Nothing is written into your repository.
+
+## CLI surface
 
 ```bash
-radioactive_ralph run --variant blue
-radioactive_ralph run --variant grey
-radioactive_ralph run --variant red
-radioactive_ralph run --variant fixit
-radioactive_ralph run --variant old-man --confirm-no-mercy
+radioactive_ralph --supervisor   # run the supervisor (owns agent ptys + the user DB)
+radioactive_ralph                # dumb client: discover the supervisor, read-only view
+radioactive_ralph --init         # initialize / re-initialize the current project
+radioactive_ralph doctor         # environment checks
 ```
-
-Variants with infinite or long-running behavior require the durable service.
-
-## Current CLI surface
-
-```bash
-radioactive_ralph init
-radioactive_ralph run --variant <name>
-radioactive_ralph status
-radioactive_ralph attach
-radioactive_ralph stop
-radioactive_ralph tui
-radioactive_ralph doctor
-radioactive_ralph service start
-radioactive_ralph service install
-radioactive_ralph service uninstall
-radioactive_ralph service list
-radioactive_ralph service status
-radioactive_ralph plan ls
-radioactive_ralph plan show <id-or-slug>
-radioactive_ralph plan next <id-or-slug>
-radioactive_ralph plan tasks <id-or-slug>
-radioactive_ralph plan approvals
-radioactive_ralph plan blocked
-radioactive_ralph plan requeue <plan> <task>
-radioactive_ralph plan retry <plan> <task>
-radioactive_ralph plan handoff <plan> <task> <variant>
-radioactive_ralph plan fail <plan> <task>
-radioactive_ralph plan approve <id-or-slug> <task-id>
-radioactive_ralph plan history <id-or-slug> <task-id>
-radioactive_ralph plan import <path>
-radioactive_ralph plan mark-done <id-or-slug> <task-id>
-```
-
-## Runtime modes
-
-| Surface | Role |
-|---|---|
-| `service start` | Durable repo-scoped runtime over the local control plane |
-| `run --variant <name>` | Attached bounded execution for safe, finite variants |
-| `tui` | Cockpit that attaches to the repo service or launches it if absent |
 
 ## Docs
 
 - [Getting started](https://jonbogaty.com/radioactive-ralph/getting-started/)
-- [Variants](https://jonbogaty.com/radioactive-ralph/variants/)
 - [Architecture](https://jonbogaty.com/radioactive-ralph/reference/architecture/)
-- [Implementation state](https://jonbogaty.com/radioactive-ralph/reference/state/)
+- [Design spec](./docs/superpowers/specs/2026-07-16-supervisor-architecture-design.md)
 
 ## Contributing
 
-See [AGENTS.md](./AGENTS.md), [STANDARDS.md](./STANDARDS.md), and
-[docs/reference/testing.md](./docs/reference/testing.md).
+See [AGENTS.md](./AGENTS.md) (the canonical agent protocol) and
+[STANDARDS.md](./STANDARDS.md).
 
 ```bash
+go build ./...
 go test ./...
+go test -race ./...
 golangci-lint run
 python3 -m tox -e docs
 ```
