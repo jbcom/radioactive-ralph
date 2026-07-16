@@ -1,15 +1,19 @@
 ---
 title: Provider contract
-description: How the runtime binds to claude, codex, gemini, and (future) arbitrary CLI providers.
+description: How the runtime binds to claude, codex, and (future) arbitrary CLI providers.
 ---
 
 # Provider contract
 
 The runtime is **provider-agnostic**. It dispatches claimed tasks to
-whatever CLI the variant's config binds to — `claude`, `codex`,
-`gemini`, or a future declarative binding. This page documents the
-current (v1) contract and the line between what's code-defined vs
-config-defined.
+whatever CLI the variant's config binds to — `claude`, `codex`, or a
+future declarative binding. This page documents the current (v1)
+contract and the line between what's code-defined vs config-defined.
+
+Gemini shipped as a built-in provider previously but was removed on
+2026-06-18, after the Gemini CLI's auth endpoint was deprecated (every
+invocation now fails with HTTP 410 Gone). A self-hosted, gemini-compatible
+CLI can still be wired in through the declarative binding path below.
 
 ## Contract interface
 
@@ -44,8 +48,8 @@ and returns the assistant's output plus an optional session ID for
 multi-turn resume and a best-effort `Usage` (input/output/cached tokens
 and `CostUSD`). The runtime accumulates `Usage.CostUSD` per variant to
 enforce spend caps. Today the `claude` runner populates `Usage` from the
-stream-json result frame; `codex`, `gemini`, and declarative bindings
-report zero until their usage frames are parsed.
+stream-json result frame; `codex` and declarative bindings report zero
+until their usage frames are parsed.
 
 ## Stateful vs stateless providers
 
@@ -55,7 +59,6 @@ v1 draws a hard line:
 |----------|-------------|---------|
 | `claude` | **Stateful** — session resume via `claude --resume <id>` | `internal/provider/claudesession` holds the session lifecycle |
 | `codex`  | **Stateless** — each turn is independent | `internal/provider/codex.go` |
-| `gemini` | **Stateless** — each turn is independent | `internal/provider/gemini.go` |
 | declarative | Config-defined; stateful only when `session_id_regex` extracts an ID | `internal/provider/declarative.go` |
 
 A stateful binding means the runtime threads `SessionID` through
@@ -63,9 +66,9 @@ A stateful binding means the runtime threads `SessionID` through
 context. Stateless bindings ignore `SessionID`.
 
 For v1, only `claude` is stateful because only the Claude CLI ships
-with session-resume today. If Codex / Gemini CLIs grow session
-semantics, their bindings can promote to stateful in a later release
-without touching the `Runner` interface.
+with session-resume today. If the Codex CLI grows session semantics,
+its binding can promote to stateful in a later release without
+touching the `Runner` interface.
 
 ## Code-defined vs config-defined
 
@@ -74,8 +77,8 @@ without touching the `Runner` interface.
 Things that need to know how to invoke a specific CLI:
 
 - **Argv shape** — e.g. claude uses `claude -p --input-format
-  stream-json`, gemini uses `gemini chat` with a different flag set.
-  Encoded in the binding's Go file.
+  stream-json`, codex uses a different flag set. Encoded in the
+  binding's Go file.
 - **Prompt/output framing** — whether the provider expects
   stream-json, plain stdin, or a structured prompt file.
 - **Session resume semantics** — see above.
@@ -137,7 +140,7 @@ runner under `internal/provider/`.
 `config.toml` is committed, so a pull request can change it. To keep a
 committed change from pointing the runtime at an arbitrary executable
 (`binary = "/bin/sh"` + a hostile `args`), the **committed** `config.toml`
-may only name a shipped provider binary — `claude`, `codex`, or `gemini`.
+may only name a shipped provider binary — `claude` or `codex`.
 Any other binary (a custom declarative CLI, an absolute path, a wrapper)
 must be supplied via the gitignored, operator-owned `local.toml`:
 

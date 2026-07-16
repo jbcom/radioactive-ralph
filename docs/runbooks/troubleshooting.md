@@ -116,7 +116,7 @@ claude
 radioactive_ralph doctor
 ```
 
-If you're not using claude/codex/gemini, remove the variant's
+If you're not using claude/codex, remove the variant's
 `provider = ...` line from `config.toml` instead of installing a
 provider you won't use.
 

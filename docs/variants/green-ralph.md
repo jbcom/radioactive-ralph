@@ -58,7 +58,7 @@ radioactive_ralph service start
 ### Current runtime notes
 
 - Green is selected through `radioactive_ralph run --variant green`.
-- Green can run through any configured provider binding; `claude`, `codex`, and `gemini` ship today.
+- Green can run through any configured provider binding; `claude` and `codex` ship today.
 - Green is a durable-service persona, not an attached one-shot run.
 
 ### Arguments

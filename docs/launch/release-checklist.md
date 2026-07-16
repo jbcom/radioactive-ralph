@@ -126,10 +126,14 @@ behavior.
 
 ### Live provider smoke
 
-Requires all shipped-provider secrets at repo level:
-`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, and either `GEMINI_API_KEY` or
-`GOOGLE_API_KEY`. For Codex, the workflow converts `OPENAI_API_KEY`
-into a headless `codex login` before enabling the live smoke.
+Requires both shipped-provider secrets at repo level:
+`ANTHROPIC_API_KEY` and `OPENAI_API_KEY`. For Codex, the workflow
+converts `OPENAI_API_KEY` into a headless `codex login` before
+enabling the live smoke.
+
+(Gemini was removed as a shipped provider on 2026-06-18 after the
+Gemini CLI's auth endpoint was deprecated, so there is no Gemini
+smoke step anymore.)
 
 ```sh
 gh workflow run provider-live.yml --ref v<MAJ>.<MIN>.<PATCH>
@@ -138,7 +142,6 @@ gh workflow run provider-live.yml --ref v<MAJ>.<MIN>.<PATCH>
 - [ ] Claude round-trip + model-sanity + runner-turn tests pass
 - [ ] Codex runner-turn passes; the headless `codex login` preflight
       must succeed
-- [ ] Gemini runner-turn passes
 
 Provider skips are acceptable for local development, but not for the
 stable-release gate.

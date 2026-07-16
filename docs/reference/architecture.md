@@ -88,8 +88,10 @@ one generic loop.
 
 ## Provider layer
 
-Today the runtime ships provider bindings for the `claude`, `codex`, and
-`gemini` CLIs.
+Today the runtime ships provider bindings for the `claude` and `codex`
+CLIs. (A third built-in, `gemini`, was removed on 2026-06-18 after the
+Gemini CLI's auth endpoint was deprecated; the declarative provider path
+still allows binding a self-hosted gemini-compatible CLI.)
 The repo config now carries:
 
 - `default_provider`

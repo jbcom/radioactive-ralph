@@ -13,7 +13,7 @@ import "github.com/jbcom/radioactive-ralph/cmd/radioactive_ralph"
 
 Command radioactive\_ralph is the radioactive\-ralph CLI entry point.
 
-Ralph is a per\-repo runtime binary with multiple built\-in personas. The runtime ships provider bindings for claude, codex, and gemini today, while keeping the product contract provider\-oriented rather than provider\-branded. See https://github.com/jbcom/radioactive-ralph for the full rationale and architecture plan.
+Ralph is a per\-repo runtime binary with multiple built\-in personas. The runtime ships provider bindings for claude and codex today, while keeping the product contract provider\-oriented rather than provider\-branded. See https://github.com/jbcom/radioactive-ralph for the full rationale and architecture plan.
 
 ## Index
 

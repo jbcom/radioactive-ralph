@@ -14,8 +14,8 @@ bite in practice.
 radioactive-ralph installs a **LaunchAgent** (per-user), not a
 LaunchDaemon (system-wide). Agents run at login under your user and
 can access your keychain — which means they can invoke `claude` /
-`codex` / `gemini` CLIs that authenticated under your account.
-Daemons run as root and would need separate auth.
+`codex` CLIs that authenticated under your account. Daemons run as
+root and would need separate auth.
 
 ### Plist location
 

@@ -59,6 +59,8 @@ defines:
 - how to pass the operator/user prompt
 - what structured output format the runtime should parse
 
-Claude, Codex, and Gemini ship today. More providers should fit the same
-binding contract rather than forcing the product to reinvent itself around
-each vendor.
+Claude and Codex ship today. (Gemini shipped previously but was removed on
+2026-06-18 after the Gemini CLI's auth endpoint was deprecated; the
+declarative path still lets a repo bind a self-hosted gemini-compatible
+CLI.) More providers should fit the same binding contract rather than
+forcing the product to reinvent itself around each vendor.

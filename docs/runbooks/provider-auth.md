@@ -1,12 +1,20 @@
 ---
 title: Provider auth + setup
-description: Get claude, codex, and gemini CLIs authenticated so the runtime can drive them.
+description: Get the claude and codex CLIs authenticated so the runtime can drive them.
 ---
 
 radioactive-ralph is provider-agnostic. The runtime dispatches
 claimed tasks to whichever provider CLI the variant's config binds
-to. All three shipped providers — `claude`, `codex`, `gemini` — are
-external CLIs that must be installed and authenticated separately.
+to. Both shipped providers — `claude`, `codex` — are external CLIs
+that must be installed and authenticated separately.
+
+Gemini shipped as a built-in provider previously but was removed on
+2026-06-18, when the Gemini CLI's auth endpoint was deprecated (it
+now returns HTTP 410 Gone on every invocation). The declarative
+provider path (see
+[Declarative provider bindings](/design/declarative-provider-bindings/))
+still lets a repo bind a self-hosted, gemini-compatible CLI through
+`config.toml` if one becomes available again.
 
 ## Claude (Anthropic)
 
@@ -68,26 +76,6 @@ Codex is bound stateless in v1 — each turn is independent. If the
 OpenAI CLI grows session-resume, the binding can promote to stateful
 in a later release.
 
-## Gemini (Google)
-
-### Install
-
-```sh
-# Install the Google CLI (tracking — verify current name)
-gemini --version
-```
-
-### Authenticate
-
-```sh
-export GOOGLE_API_KEY=AIza...
-gemini --version
-```
-
-### radioactive-ralph stateless binding
-
-Same as Codex — stateless binding in v1.
-
 ## Choosing a provider per variant
 
 Provider selection is per-variant, configured in
@@ -101,9 +89,6 @@ plan_effort = "high"
 
 [variants.grey]
 provider = "codex"
-
-[variants.red]
-provider = "gemini"
 ```
 
 If no provider is set, the runtime falls back to `claude`. Passing an
@@ -111,7 +96,7 @@ unknown provider fails loudly at `service start`.
 
 ## Verify end-to-end
 
-After all three are installed and authenticated:
+After both are installed and authenticated:
 
 ```sh
 radioactive_ralph doctor
@@ -122,7 +107,6 @@ Expected:
 ```
 [OK] claude       — claude X.Y.Z
 [OK] codex        — codex X.Y.Z
-[OK] gemini       — gemini X.Y.Z
 ```
 
 If any provider is missing but you don't plan to use it, that's fine

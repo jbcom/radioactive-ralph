@@ -24,8 +24,6 @@ Package provider adapts configured CLI backends into radioactive\_ralph's provid
   - [func \(CodexRunner\) Run\(ctx context.Context, binding Binding, req Request\) \(Result, error\)](<#CodexRunner.Run>)
 - [type DeclarativeRunner](<#DeclarativeRunner>)
   - [func \(DeclarativeRunner\) Run\(ctx context.Context, binding Binding, req Request\) \(Result, error\)](<#DeclarativeRunner.Run>)
-- [type GeminiRunner](<#GeminiRunner>)
-  - [func \(GeminiRunner\) Run\(ctx context.Context, binding Binding, req Request\) \(Result, error\)](<#GeminiRunner.Run>)
 - [type Request](<#Request>)
 - [type Result](<#Result>)
 - [type Runner](<#Runner>)
@@ -55,7 +53,7 @@ type Binding struct {
     // BinaryFromLocal is true when Config.Binary was set by the gitignored
     // local.toml provider_binary override rather than by committed
     // config.toml. Committed config may only name a shipped provider
-    // binary (claude/codex/gemini); an arbitrary binary must come from
+    // binary (claude/codex); an arbitrary binary must come from
     // local.toml, so a pull request cannot point the runtime at
     // /bin/sh. ValidateBinding enforces this.
     BinaryFromLocal bool
@@ -125,24 +123,6 @@ func (DeclarativeRunner) Run(ctx context.Context, binding Binding, req Request) 
 
 Run executes one declarative provider turn.
 
-<a name="GeminiRunner"></a>
-## type [GeminiRunner](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/gemini.go#L8>)
-
-GeminiRunner executes a single \`gemini \-p\` turn.
-
-```go
-type GeminiRunner struct{}
-```
-
-<a name="GeminiRunner.Run"></a>
-### func \(GeminiRunner\) [Run](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/gemini.go#L11>)
-
-```go
-func (GeminiRunner) Run(ctx context.Context, binding Binding, req Request) (Result, error)
-```
-
-Run executes one non\-interactive Gemini turn.
-
 <a name="Request"></a>
 ## type [Request](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/provider.go#L29-L37>)
 
@@ -185,7 +165,7 @@ type Runner interface {
 ```
 
 <a name="NewRunner"></a>
-### func [NewRunner](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/provider.go#L111>)
+### func [NewRunner](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/provider.go#L110>)
 
 ```go
 func NewRunner(binding Binding) (Runner, error)
@@ -196,7 +176,7 @@ NewRunner returns the runtime implementation for a provider type.
 <a name="Usage"></a>
 ## type [Usage](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/provider.go#L48-L53>)
 
-Usage captures the token/cost accounting for one provider turn. Fields are zero when the provider does not report them. Coverage today: the claude runner populates Usage from the stream\-json result frame; codex, gemini, and declarative bindings report zero \(their CLIs surface usage differently and are not yet parsed\). CostUSD is authoritative when non\-zero; the runtime accumulates it for spend\-cap enforcement, so a capped variant on an unreported provider still requires a cap value but its cost is not yet metered. Extending codex/gemini parsing is the follow\-up to close that gap.
+Usage captures the token/cost accounting for one provider turn. Fields are zero when the provider does not report them. Coverage today: the claude runner populates Usage from the stream\-json result frame; codex and declarative bindings report zero \(their CLIs surface usage differently and are not yet parsed\). CostUSD is authoritative when non\-zero; the runtime accumulates it for spend\-cap enforcement, so a capped variant on an unreported provider still requires a cap value but its cost is not yet metered. Extending codex parsing is the follow\-up to close that gap.
 
 ```go
 type Usage struct {

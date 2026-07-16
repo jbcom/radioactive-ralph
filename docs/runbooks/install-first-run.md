@@ -63,8 +63,8 @@ non-interactive) so it stays safe in CI scripts.
 radioactive_ralph doctor
 ```
 
-Expected OK lines: `git`, your provider CLI (`claude`, `codex`, or
-`gemini`), optional service-manager hook (launchd on macOS, systemd on
+Expected OK lines: `git`, your provider CLI (`claude` or `codex`),
+optional service-manager hook (launchd on macOS, systemd on
 Linux, SCM on Windows). See
 [Provider auth](./provider-auth.md) if a provider check fails.
 
@@ -115,8 +115,8 @@ radioactive_ralph run --variant grey
 ```
 
 The runner polls the DAG for ready tasks, dispatches each to the
-provider subprocess (your configured Claude / Codex / Gemini), and
-marks tasks done/failed based on acceptance criteria.
+provider subprocess (your configured Claude / Codex), and marks
+tasks done/failed based on acceptance criteria.
 
 ## 7. Open the cockpit
 

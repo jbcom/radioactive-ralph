@@ -17,7 +17,8 @@ This page tracks the live state of the runtime after the repo-service pivot.
 - socket-backed `status`, `attach`, `stop`, and `tui`
 - operator task controls via `plan tasks`, `plan approvals`, `plan blocked`, `plan approve`, `plan requeue`, `plan retry`, `plan handoff`, `plan fail`, `plan history`, `plan import`, and `plan mark-done`
 - named provider bindings with a repo-level default provider
-- shipped provider runners for `claude`, `codex`, and `gemini`
+- shipped provider runners for `claude` and `codex` (`gemini` was removed
+  2026-06-18 after the Gemini CLI's auth endpoint was deprecated)
 - native Windows durable-service support via SCM + named pipes
 - repo-root Sphinx docs
 - generated Go API reference under `docs/api/`

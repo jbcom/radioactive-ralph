@@ -57,8 +57,11 @@ Never store runtime state under `.claude/`.
 
 ## Provider direction
 
-Today the runtime ships provider bindings for `claude`, `codex`, and `gemini`.
-That is the current implementation, not the permanent identity of the system.
+Today the runtime ships provider bindings for `claude` and `codex`. (Gemini
+shipped previously but was removed on 2026-06-18 after the Gemini CLI's auth
+endpoint was deprecated; the declarative provider path still allows binding a
+self-hosted gemini-compatible CLI.) That is the current implementation, not
+the permanent identity of the system.
 
 The long-term shape is:
 

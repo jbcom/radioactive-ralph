@@ -7,14 +7,19 @@ description: Config-only path for adding a compatible CLI provider without writi
 
 radioactive-ralph supports config-only provider bindings for CLIs
 that fit one of the supported I/O framings. The built-ins
-(`claude`, `codex`, `gemini`) still use hand-written Go runners for
-their edge cases, but additional compatible CLIs no longer require a
-new `internal/provider/<name>.go` file.
+(`claude`, `codex`) still use hand-written Go runners for their edge
+cases, but additional compatible CLIs no longer require a new
+`internal/provider/<name>.go` file.
+
+(A third built-in, `gemini`, shipped previously but was removed on
+2026-06-18 after the Gemini CLI's auth endpoint was deprecated. A
+self-hosted, gemini-compatible CLI can still be wired in through the
+declarative path described here.)
 
 ## Why declarative bindings
 
 The current shape requires `internal/provider/<name>.go` + a factory
-entry for every new provider. That's fine while the list is three
+entry for every new provider. That's fine while the list is small
 and growing slowly, but it pushes every CLI-compatibility effort
 through a code review cycle. Operators who want to try a new CLI —
 Claude Desktop's `claude mcp` sessions, a local `llama-cli`, a
@@ -84,7 +89,8 @@ there's a prelude (warnings, progress), the runner extracts the
 JSON block via `{...}` matching when `OutputSchema` is set, or
 returns stdout verbatim.
 
-This is the gemini shape.
+This was the gemini CLI's shape (before that provider was removed);
+a self-hosted gemini-compatible CLI would use it today.
 
 ### `last-message-file`
 
@@ -116,8 +122,8 @@ are left alone.
 The implementation lives in `internal/provider/declarative.go`.
 `NewRunner` returns the declarative runner for the three supported
 framing types. The built-ins keep their hand-written runners because
-they handle provider-specific edge cases — session resume for Claude,
-schema-file handling for Codex, and Gemini's current CLI flags.
+they handle provider-specific edge cases — session resume for Claude
+and schema-file handling for Codex.
 
 ## Non-goals
 
@@ -150,5 +156,5 @@ schema-file handling for Codex, and Gemini's current CLI flags.
 
 - Current contract: [`provider-contract.md`](./provider-contract.md)
 - Go interface: `internal/provider/provider.go::Runner`
-- Built-in bindings: `internal/provider/{claude,codex,gemini}.go`
+- Built-in bindings: `internal/provider/{claude,codex}.go`
 - Implementation: `internal/provider/declarative.go`
