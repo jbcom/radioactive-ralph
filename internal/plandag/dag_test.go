@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -135,11 +136,16 @@ func TestDSNPragmas(t *testing.T) {
 }
 
 // TestDSNPathEscaping confirms a path with URI-significant characters is
-// percent-encoded so it isn't misparsed as query syntax, and that a store
-// actually opens at such a path.
+// percent-encoded so it isn't misparsed as query syntax. The string
+// assertion runs everywhere; the real DB open under such a path runs only
+// where '?' is a legal filename character (i.e. not Windows).
 func TestDSNPathEscaping(t *testing.T) {
 	if got := DSN("/tmp/a?b#c%d.db"); !strings.Contains(got, "/tmp/a%3Fb%23c%25d.db") {
 		t.Errorf("DSN did not escape path: %q", got)
+	}
+
+	if runtime.GOOS == "windows" {
+		t.Skip("'?' is not a legal filename character on Windows")
 	}
 
 	// A directory name containing '?' and '%' must still open correctly.
