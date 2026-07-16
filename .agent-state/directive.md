@@ -42,11 +42,11 @@ docs/superpowers/specs/2026-07-16-supervisor-architecture-design.md.
 - [x] Phase 5 checkpoint — DONE (green; agy=not-local, deferred codex rework noted)
 
 ## Phase 6 — Plan engine + orchestration (variants deleted)
-- [ ] [WAIT-AGENT] internal/plan: goldmark parse + stop-at-next-heading-<=N grouping; heuristic decompose (heading order=group dep, unordered=parallel, ordered=sequential, don't descend past a heading with subheadings); validator (list-vs-bare-paragraph rule)
+- [x] internal/plan: goldmark heuristic decomposition + validator — DONE (25 tests, green)
 - [ ] [WAIT-AGENT] internal/orch: dispatch + orchestrator-verified completion — DESIGN authored (scratchpad/phase6b-orch-design.md); execute after internal/plan lands
 - [ ] [WAIT-AGENT] internal/orch lifecycle: enforcement-prompt cadence + kill/restart on manual context-end; per-agent XDG decision logs absorbed by team-lead
 - [ ] [WAIT-AGENT] internal/a2a: adopt a2aproject/a2a-go a2a.Task/TaskState/Message over user DB (a2a_tasks/a2a_messages)
-- [ ] [WAIT-AGENT] internal/variant already deleted (Phase 4) — verify
+- [x] internal/variant deleted (Phase 4) — VERIFIED gone
 - [ ] [WAIT-AGENT] Phase 6 checkpoint green — verify on return
 
 ## Phase 7 — TUI + planning genesis
