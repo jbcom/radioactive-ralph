@@ -22,7 +22,7 @@ docs/superpowers/specs/2026-07-16-supervisor-architecture-design.md.
 - [ ] [WAIT-AGENT] backup routine + Phase 2 checkpoint verify — in the store executor delegation; verify on return
 
 ## Phase 3 — Config resolution (cobra/viper)
-- [ ] internal/vconfig: 3 flags (--config-file/-C, --user-config-file, --project-config-file) via cobra; viper-backed merge
+- [ ] internal/vconfig: 3 flags via cobra + viper-backed merge — design prepped (scratchpad/phase3-vconfig-design.md); cobra/viper added to go.mod (held uncommitted to avoid go.mod race with store executor); author after store lands
 - [ ] two virtual layers (USER = DB < --config-file < --user-config-file; PROJECTS = all-DB-projects < user projects: stanza)
 - [ ] change (wizard/--init, persist) vs override (normal, runtime-only) semantics
 - [ ] conflict backwards-diff + auto-remove offer; merged validation with actionable missing-field errors
