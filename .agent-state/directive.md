@@ -65,12 +65,12 @@ docs/superpowers/specs/2026-07-16-supervisor-architecture-design.md.
 
 - [x] DELETE docs/variants/ (11 files) — DONE
 - [x] DELETE the committed .radioactive-ralph/ dir — DONE
-- [ ] Rewrite README.md + AGENTS.md + CLAUDE.md to the supervisor architecture (one binary, --supervisor + dumb client, one user DB, local-only providers, no variants, markdown plans)
-- [ ] Rewrite docs/getting-started + docs/guides + docs/design + docs/reference to the new model (supervisor/discovery, config virtual-layers, plan engine, orchestrator-verified completion, A2A vocabulary)
-- [ ] Rewrite docs/runbooks (fix the socket-path drift + fabricated RequireOperatorApproval field flagged in review; supervisor install/attach)
-- [ ] Regenerate docs/api/ via gomarkdoc against the NEW packages (agent/store/vconfig/supervisor/provider/agentdetect/plan/orch/a2a)
-- [ ] Remove AI-design-trope / extraneous docs (adjective soup, over-explained obvious, marketing filler); every doc matches code
-- [ ] tox -e docs builds clean; no residual mention of variant/kong/plandag/per-repo-config/durable-daemon
+- [ ] [WAIT] Rewrite README.md + AGENTS.md + CLAUDE.md to the supervisor architecture (one binary, --supervisor + dumb client, one user DB, local-only providers, no variants, markdown plans) — blocked: rewrite after Phases 7-8 land the final code (avoid churning docs against moving code)
+- [ ] [WAIT] Rewrite docs/getting-started + docs/guides + docs/design + docs/reference to the new model (supervisor/discovery, config virtual-layers, plan engine, orchestrator-verified completion, A2A vocabulary) — blocked: rewrite after Phases 7-8 land the final code (avoid churning docs against moving code)
+- [ ] [WAIT] Rewrite docs/runbooks (fix the socket-path drift + fabricated RequireOperatorApproval field flagged in review; supervisor install/attach) — blocked: rewrite after Phases 7-8 land the final code (avoid churning docs against moving code)
+- [ ] [WAIT] Regenerate docs/api/ via gomarkdoc against the NEW packages (agent/store/vconfig/supervisor/provider/agentdetect/plan/orch/a2a) — blocked: rewrite after Phases 7-8 land the final code (avoid churning docs against moving code)
+- [ ] [WAIT] Remove AI-design-trope / extraneous docs (adjective soup, over-explained obvious, marketing filler); every doc matches code — blocked: rewrite after Phases 7-8 land the final code (avoid churning docs against moving code)
+- [ ] [WAIT] tox -e docs builds clean; no residual mention of variant/kong/plandag/per-repo-config/durable-daemon — blocked: rewrite after Phases 7-8 land the final code (avoid churning docs against moving code)
 
 ## Notes
 - [ ] [WAIT-AGENT] Interim multi-dimensional review (code-quality/security/architecture) of committed Phases 1-6a — running; fold Critical findings in immediately, High/Medium into Phase 8.
