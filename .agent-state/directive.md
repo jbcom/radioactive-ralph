@@ -62,5 +62,6 @@ docs/superpowers/specs/2026-07-16-supervisor-architecture-design.md.
 - [ ] [WAIT-AGENT] final: go test ./... -race, golangci-lint, tox -e docs all green; open final PR(s); babysit to squash-merge
 
 ## Notes
+- [ ] [WAIT-AGENT] Interim multi-dimensional review (code-quality/security/architecture) of committed Phases 1-6a — running; fold Critical findings in immediately, High/Medium into Phase 8.
 - Just-in-time step expansion: expand each phase's TDD micro-steps against the then-current tree at phase start (recorded strategy).
 - CodeQL-go fix belongs upstream in gh-fleet-sync (codeql.yml is centrally managed); branch protection already set on main.
