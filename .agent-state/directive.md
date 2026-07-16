@@ -10,12 +10,12 @@ Full decision trail: .agent-state/decisions.ndjson. Spec:
 docs/superpowers/specs/2026-07-16-supervisor-architecture-design.md.
 
 ## Phase 1 — Foundation: pty-owned agent + never-block watchdog
-- [ ] [WAIT] internal/agent/agent.go + watchdog.go: pty-owned Agent + never-block Watchdog — Sonnet executor building per plan Phase 1; verify checkpoint on return
-- [ ] [WAIT] internal/agent/watchdog.go — folded into the same Phase-1 executor delegation above
-- [ ] Phase 1 checkpoint: go build + go test -race ./internal/agent/ + golangci-lint green; control invariant demonstrable
+- [x] internal/agent/agent.go: pty-owned Agent (Start/Output/Kill/Wait/PID/Done) + tests — DONE (creack/pty direct dep)
+- [x] internal/agent/watchdog.go: never-block Watchdog (Progress/Stall/Prompt/Exited) + tests — DONE
+- [x] Phase 1 checkpoint: build/test/-race/golangci-lint/gofmt green; control invariant demonstrable — DONE
 
 ## Phase 2 — User store (single XDG SQLite DB)
-- [ ] internal/store: open one XDG SQLite DB; port plandag schema + PR#63 safety fixes (immediate-tx DSN, checked RowsAffected, error-logged writes)
+- [ ] internal/store: open one XDG SQLite DB; port plandag schema + PR#63 safety fixes — schema/0001_initial.up.sql authored (variants removed, project_identifiers/project_config added, workers replaces session_variants); Go layer next
 - [ ] project_identifiers table + fingerprint accumulate/resolve (git heuristics + abs-path seed)
 - [ ] project_config, spend, process_tracking, sessions/roles tables
 - [ ] in-store reaper reclaim query (stale-heartbeat tasks -> requeue) + startup reconcile
