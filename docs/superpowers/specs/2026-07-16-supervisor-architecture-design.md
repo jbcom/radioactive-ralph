@@ -63,11 +63,51 @@ A single `radioactive_ralph` binary:
   unless a supervisor is listening (offering to start one). It renders the
   read-only TUI (§7). It owns no ptys, no DB, no business logic.
 
-Both modes share the **same initialization logic** — a wizard TUI, or flags, or
-an existing config passed by path — the client for project config, the
-supervisor for user-level config.
+Both modes share the **same initialization pipeline** — a **wizard TUI**, or
+**headless flags**, or a **config passed by path** — the client for
+project-level config, the supervisor for user-level config. See §5a for how
+config is merged and validated, and §5b for how a project is identified.
 
-## 5. Supervisor discovery (the socket is the advertisement)
+- **`radioactive_ralph --init`** explicitly initializes (or re-initializes) a
+  project.
+- Plain **`radioactive_ralph`** in a directory: if the directory is not yet a
+  known project in the user DB, it **auto-routes to init**; otherwise it runs.
+- **`--supervisor`** makes the working directory irrelevant (it operates at the
+  user/XDG level).
+
+## 5a. Config: one virtual merge layer, one validation
+
+There is **no separate "optional project config file" concept**. Configuration
+is resolved into a single **virtual config** by merging, in increasing
+precedence:
+
+1. loaded **user** config (from the user DB / XDG),
+2. loaded **project** config (DB-resident, keyed by project identity),
+3. a config **passed explicitly by path** (in either mode) — highest
+   precedence, layered on top as overrides.
+
+**Validation runs against the merged virtual layer.** If required pieces are
+missing after the merge, Ralph **exits with an error that reports exactly what
+must be defined** — the same mechanism regardless of whether config came from
+flags, the wizard, or a passed file. A documented path exists to author a
+project-level config file, but it is an **override source**, never a required
+committed artifact.
+
+## 5b. Project identity: accumulated fingerprints, not paths
+
+Absolute-path identity is fragile (moves and renames break it). A project is
+instead identified by **accumulated fingerprints** stored in the user DB:
+
+- **Git directory**: fingerprint via git heuristics (e.g. root-commit sha,
+  remote, repo-root markers).
+- **Non-git directory**: seed with the absolute path as an identifier.
+
+Identifiers **accumulate**: a non-git directory that is later `git init`-ed
+transparently gains its git identifier(s) *on top of* the path identifier, so
+the same project stays recognized across the git transition and across
+directory moves.
+
+## 5c. Supervisor discovery (the socket is the advertisement)
 
 The supervisor binds a socket at a well-known **XDG runtime path**: a Unix
 domain socket on macOS/Linux, a named pipe on Windows (the existing
@@ -88,20 +128,20 @@ There are **no per-project SQLite databases** and **no committed
 `.radioactive-ralph/` directory**. Instead:
 
 - **One user-level SQLite database** (XDG data dir) is the durable memory for
-  **all** projects: the plan DAG state, per-project **config**, process
-  tracking, spend accounting, and session/role history. Because the supervisor
-  always runs first and always, it always knows "what's next" in every
-  project's plan.
+  **all** projects: the plan DAG state, DB-resident project config (§5a),
+  project identity fingerprints (§5b), process tracking, spend accounting, and
+  session/role history. Because the supervisor always runs first and always, it
+  always knows "what's next" in every project's plan.
 - The supervisor takes **regular backups** of this DB.
 - **Repos stay clean** — zero committed directories by default. A user *may*
-  opt in by pointing config/DB at an in-repo path, or git-track their user
-  config (documented), but it is never the default. This eliminates the
-  collision/merge-conflict/repo-litter problems of file-based per-repo state.
+  opt in by authoring a project-level override config and pointing at it by
+  path, or git-track their user config (documented), but it is never the
+  default. This eliminates the collision/merge-conflict/repo-litter problems of
+  file-based per-repo state.
 - This is explicitly **not** the current `.agent-state`-skill pattern.
 
-A "project" is identified by its repo path (a key in the user DB), not by a
-marker directory. The XDG user-level config recommends **resource thresholds**
-(memory/CPU) derived from the host's configuration.
+The XDG user-level config recommends **resource thresholds** (memory/CPU)
+derived from the host's configuration.
 
 ## 7. TUI: read-only, macro → meso → micro
 
