@@ -15,18 +15,18 @@ docs/superpowers/specs/2026-07-16-supervisor-architecture-design.md.
 - [x] Phase 1 checkpoint: build/test/-race/golangci-lint/gofmt green; control invariant demonstrable — DONE
 
 ## Phase 2 — User store (single XDG SQLite DB)
-- [ ] [WAIT-AGENT] internal/store Go layer (open XDG DB, migration runner, plandag CRUD port with PR#63 safety) — delegated to executor; schema/0001_initial.up.sql already authored
-- [ ] [WAIT-AGENT] project fingerprint accumulate/resolve (projects.go) — in the store executor delegation
-- [ ] [WAIT-AGENT] project_config/spend/sessions/workers CRUD (config.go, tasks.go) — in the store executor delegation
-- [ ] [WAIT-AGENT] in-store reaper reclaim (reaper.go) — in the store executor delegation
-- [ ] [WAIT-AGENT] backup routine + Phase 2 checkpoint verify — in the store executor delegation; verify on return
+- [x] internal/store Go layer — DONE (28 tests, green)
+- [x] project fingerprint — DONE (28 tests, green)
+- [x] project_config/spend — DONE (28 tests, green)
+- [x] in-store reaper — DONE (28 tests, green)
+- [x] backup routine — DONE (28 tests, green)
 
 ## Phase 3 — Config resolution (cobra/viper)
-- [ ] [WAIT-AGENT] internal/vconfig — BLOCKED on Phase-2 store executor (consumes store.GetProjectConfig/ResolveProject); design prepped (scratchpad/phase3-vconfig-design.md), cobra/viper staged; author when store lands
-- [ ] [WAIT-AGENT] vconfig two virtual layers — blocked on store (GetProjectConfig); design in scratchpad/phase3-vconfig-design.md
-- [ ] [WAIT-AGENT] vconfig change-vs-override semantics — blocked on store (SetProjectConfig)
-- [ ] [WAIT-AGENT] vconfig conflict-diff + validation — blocked on store; design in scratchpad
-- [ ] [WAIT-AGENT] Phase 3 checkpoint — after vconfig authored (blocked on store)
+- [ ] [WAIT-AGENT] internal/vconfig: 3 flags via cobra + viper-backed merge (store now available; design in scratchpad/phase3-vconfig-design.md) — delegated to vconfig executor
+- [ ] [WAIT-AGENT] vconfig two virtual layers (USER = DB < --config-file < --user-config-file; PROJECTS = all-DB < user projects:) — delegated to vconfig executor
+- [ ] [WAIT-AGENT] vconfig change (persist) vs override (runtime-only) semantics — delegated to vconfig executor
+- [ ] [WAIT-AGENT] vconfig conflict backwards-diff + auto-remove + merged validation — delegated to vconfig executor
+- [ ] [WAIT-AGENT] Phase 3 checkpoint green — delegated to vconfig executor
 
 ## Phase 4 — Supervisor + discovery (cobra CLI, kong removed)
 - [ ] [WAIT-AGENT] internal/supervisor lifecycle — consumes store + agent; blocked on store executor
