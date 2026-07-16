@@ -18,10 +18,31 @@ type Store struct {
 	uuid  func() string
 }
 
+// DSN builds the canonical modernc.org/sqlite DSN for a plandag database
+// at dbPath. Every process that opens plans.db (the durable service, the
+// TUI, and the CLI) MUST use this so they share identical locking and
+// durability semantics.
+//
+// _txlock=immediate makes every transaction take the write lock up front,
+// so a SELECT-then-UPDATE (e.g. ClaimNextReady, the operator transitions)
+// can never race another process into SQLITE_BUSY_SNAPSHOT — which
+// busy_timeout does NOT retry. busy_timeout then actually serializes the
+// concurrent writers instead of failing them immediately. synchronous=NORMAL
+// is the documented-safe pairing with WAL and avoids an fsync on every
+// heartbeat/tick write.
+func DSN(dbPath string) string {
+	return "file:" + dbPath +
+		"?_txlock=immediate" +
+		"&_pragma=foreign_keys(1)" +
+		"&_pragma=journal_mode(WAL)" +
+		"&_pragma=busy_timeout(5000)" +
+		"&_pragma=synchronous(NORMAL)"
+}
+
 // Options configures Open.
 type Options struct {
-	// DSN is a modernc.org/sqlite DSN, e.g.
-	// "file:/path/to/plans.db?_pragma=foreign_keys(1)&_pragma=journal_mode(WAL)"
+	// DSN is a modernc.org/sqlite DSN. Prefer building it with DSN() so
+	// every opener shares identical locking/durability pragmas.
 	DSN string
 
 	// Clock is swappable for tests. Nil defaults to clockwork.NewRealClock().

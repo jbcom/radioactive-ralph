@@ -1,0 +1,16 @@
+{
+  "target": "entire radioactive-ralph repository (Go runtime, CLI, CI, docs)",
+  "status": "in_progress",
+  "flags": {
+    "security_focus": false,
+    "performance_critical": false,
+    "strict_mode": false,
+    "framework": "go-cli-daemon"
+  },
+  "current_step": "checkpoint-1",
+  "current_phase": 2,
+  "completed_steps": [0, "1A", "1B", "2A", "2B"],
+  "files_created": ["00-scope.md", "raw-1a-code-quality.md", "raw-1b-architecture.md", "01-quality-architecture.md", "raw-2a-security.md", "raw-2b-performance.md", "02-security-performance.md"],
+  "started_at": "2026-07-16T15:58:25Z",
+  "last_updated": "2026-07-16T16:10:00Z"
+}

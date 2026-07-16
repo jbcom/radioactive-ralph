@@ -5,6 +5,7 @@ import (
 	"errors"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -110,6 +111,99 @@ func TestDAGRoundTrip(t *testing.T) {
 	}
 	if len(newReady) != 1 || newReady[0].ID != "c" {
 		t.Errorf("after completing a+b, ready set = %+v, want only c", newReady)
+	}
+}
+
+// TestDSNPragmas confirms the canonical DSN pins immediate transaction
+// locking and NORMAL synchronous mode — the settings that keep concurrent
+// cross-process writers from failing with BUSY_SNAPSHOT.
+func TestDSNPragmas(t *testing.T) {
+	dsn := DSN("/var/lib/plans.db")
+	for _, want := range []string{
+		"file:/var/lib/plans.db",
+		"_txlock=immediate",
+		"journal_mode(WAL)",
+		"busy_timeout(5000)",
+		"synchronous(NORMAL)",
+	} {
+		if !strings.Contains(dsn, want) {
+			t.Errorf("DSN() = %q, missing %q", dsn, want)
+		}
+	}
+}
+
+// TestConcurrentClaimUnique hammers ClaimNextReady from many goroutines
+// against a single ready task and asserts exactly one claim succeeds. This
+// exercises the RowsAffected backstop: without it, a claimer that loses the
+// UPDATE race would still commit and return the task, letting two workers
+// run it.
+func TestConcurrentClaimUnique(t *testing.T) {
+	ctx := context.Background()
+	s, err := Open(ctx, Options{DSN: DSN(filepath.Join(t.TempDir(), "plans.db"))})
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer func() { _ = s.Close() }()
+
+	planID, err := s.CreatePlan(ctx, CreatePlanOpts{Slug: "race", Title: "race", RepoPath: "/tmp/repo"})
+	if err != nil {
+		t.Fatalf("CreatePlan: %v", err)
+	}
+	if err := s.CreateTask(ctx, CreateTaskOpts{PlanID: planID, ID: "solo", Description: "solo"}); err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+	sessID, err := s.CreateSession(ctx, SessionOpts{
+		Mode: SessionModeAttached, Transport: SessionTransportStdio,
+		PID: 1, PIDStartTime: "2026-04-15T00:00:00Z",
+	})
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+
+	const claimers = 8
+	svIDs := make([]string, claimers)
+	for i := range svIDs {
+		svID, err := s.CreateSessionVariant(ctx, SessionVariantOpts{
+			SessionID: sessID, VariantName: "green",
+			SubprocessPID: 2000 + i, SubprocessStartTime: "2026-04-15T00:00:00Z",
+		})
+		if err != nil {
+			t.Fatalf("CreateSessionVariant %d: %v", i, err)
+		}
+		svIDs[i] = svID
+	}
+
+	var (
+		wg        sync.WaitGroup
+		mu        sync.Mutex
+		succeeded int
+	)
+	start := make(chan struct{})
+	for i := range claimers {
+		wg.Add(1)
+		go func(svID string) {
+			defer wg.Done()
+			<-start
+			task, err := s.ClaimNextReady(ctx, planID, "green", sessID, svID)
+			if err != nil {
+				if !errors.Is(err, ErrNoReadyTask) {
+					t.Errorf("unexpected claim error: %v", err)
+				}
+				return
+			}
+			if task.ID != "solo" {
+				t.Errorf("claimed unexpected task %q", task.ID)
+			}
+			mu.Lock()
+			succeeded++
+			mu.Unlock()
+		}(svIDs[i])
+	}
+	close(start)
+	wg.Wait()
+
+	if succeeded != 1 {
+		t.Errorf("concurrent claims succeeded = %d, want exactly 1", succeeded)
 	}
 }
 

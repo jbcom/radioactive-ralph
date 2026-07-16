@@ -453,7 +453,7 @@ func (s *Service) dispatchOnce(ctx context.Context) {
 func (s *Service) startWorker(ctx context.Context, plan plandag.Plan, task plandag.Task, profile variant.Profile, sessionVariantID string) {
 	worktree, mgr, err := s.acquireWorkspace(ctx, profile)
 	if err != nil {
-		_, _ = s.planStore.MarkFailed(ctx, plan.ID, task.ID, s.sessionID, err.Error(), 0)
+		s.markFailed(ctx, plan, task, profile, err.Error(), 0)
 		return
 	}
 	key := workerKey(plan.ID, task.ID)
@@ -493,15 +493,21 @@ func (s *Service) finishWorker(ctx context.Context, key string, mgr *workspace.M
 }
 
 func (s *Service) executeWorker(ctx context.Context, plan plandag.Plan, task plandag.Task, profile variant.Profile, wt *workspace.Worktree) {
-	variantCfg := s.cfg.Variants[string(profile.Name)]
-	binding, err := provider.ResolveBinding(s.cfg, s.local, profile, variantCfg)
+	// Snapshot config under the mutex: reloadConfig swaps s.cfg/s.local
+	// (which hold maps) concurrently with this worker goroutine, so an
+	// unlocked read is a genuine data race, not just staleness.
+	s.mu.Lock()
+	cfg, local := s.cfg, s.local
+	s.mu.Unlock()
+	variantCfg := cfg.Variants[string(profile.Name)]
+	binding, err := provider.ResolveBinding(cfg, local, profile, variantCfg)
 	if err != nil {
-		_, _ = s.planStore.MarkFailed(ctx, plan.ID, task.ID, s.sessionID, err.Error(), 0)
+		s.markFailed(ctx, plan, task, profile, err.Error(), 0)
 		return
 	}
 	runner, err := s.opts.RunnerFactory(binding)
 	if err != nil {
-		_, _ = s.planStore.MarkFailed(ctx, plan.ID, task.ID, s.sessionID, err.Error(), 0)
+		s.markFailed(ctx, plan, task, profile, err.Error(), 0)
 		return
 	}
 	workDir := s.opts.RepoPath
@@ -519,7 +525,7 @@ func (s *Service) executeWorker(ctx context.Context, plan plandag.Plan, task pla
 	}
 	result, err := runner.Run(ctx, binding, request)
 	if err != nil {
-		_, _ = s.planStore.MarkFailed(ctx, plan.ID, task.ID, s.sessionID, err.Error(), 2)
+		s.markFailed(ctx, plan, task, profile, err.Error(), 2)
 		_ = s.logEvent(ctx, "worker.error", map[string]any{
 			"plan_id":  plan.ID,
 			"task_id":  task.ID,
@@ -532,7 +538,7 @@ func (s *Service) executeWorker(ctx context.Context, plan plandag.Plan, task pla
 	s.recordWorkerProvider(plan.ID, task.ID, binding.Name, result.SessionID)
 	parsed, err := parseWorkerResult(result.AssistantOutput)
 	if err != nil {
-		_, _ = s.planStore.MarkFailed(ctx, plan.ID, task.ID, s.sessionID, err.Error(), 0)
+		s.markFailed(ctx, plan, task, profile, err.Error(), 0)
 		return
 	}
 
@@ -550,20 +556,33 @@ func (s *Service) executeWorker(ctx context.Context, plan plandag.Plan, task pla
 	}
 	switch parsed.Outcome {
 	case "done":
-		_, _ = s.planStore.MarkDone(ctx, plan.ID, task.ID, s.sessionID, string(payload))
+		_, err = s.planStore.MarkDone(ctx, plan.ID, task.ID, s.sessionID, string(payload))
 	case "handoff":
-		_ = s.planStore.RequeueTaskWithPayload(ctx, plan.ID, task.ID, s.sessionID, taskPayload, parsed.HandoffTo, parsed.ApprovalRequired)
+		err = s.planStore.RequeueTaskWithPayload(ctx, plan.ID, task.ID, s.sessionID, taskPayload, parsed.HandoffTo, parsed.ApprovalRequired)
 	case "need_operator":
 		taskPayload.ApprovalRequired = true
-		_ = s.planStore.RequeueTaskWithPayload(ctx, plan.ID, task.ID, s.sessionID, taskPayload, parsed.HandoffTo, true)
+		err = s.planStore.RequeueTaskWithPayload(ctx, plan.ID, task.ID, s.sessionID, taskPayload, parsed.HandoffTo, true)
 	case "blocked", "need_context":
-		_ = s.planStore.MarkBlocked(ctx, plan.ID, task.ID, s.sessionID, taskPayload)
+		err = s.planStore.MarkBlocked(ctx, plan.ID, task.ID, s.sessionID, taskPayload)
 	default:
 		maxRetries := 0
 		if parsed.Retryable {
 			maxRetries = task.RetryCount + 1
 		}
-		_, _ = s.planStore.MarkFailedWithPayload(ctx, plan.ID, task.ID, s.sessionID, taskPayload, maxRetries)
+		_, err = s.planStore.MarkFailedWithPayload(ctx, plan.ID, task.ID, s.sessionID, taskPayload, maxRetries)
+	}
+	// A failed terminal write leaves the task claimed/running with no
+	// durable record of its outcome — the exact silent-orphan failure the
+	// event log exists to make visible. Surface it so the reaper (or an
+	// operator) can reclaim the task instead of it hanging forever.
+	if err != nil {
+		_ = s.logEvent(ctx, "worker.persist_failed", map[string]any{
+			"plan_id": plan.ID,
+			"task_id": task.ID,
+			"variant": profile.Name,
+			"outcome": parsed.Outcome,
+			"error":   err.Error(),
+		})
 	}
 	_ = s.logEvent(ctx, "worker.result", map[string]any{
 		"plan_id":             plan.ID,
@@ -804,6 +823,22 @@ func (s *Service) status(ctx context.Context) (ipc.StatusReply, error) {
 	}, nil
 }
 
+// markFailed records a task failure and surfaces a persist failure
+// through the event log rather than discarding it. Every worker
+// early-exit path routes through here so a locked/errored plan store
+// can never silently orphan a claimed task.
+func (s *Service) markFailed(ctx context.Context, plan plandag.Plan, task plandag.Task, profile variant.Profile, reason string, maxRetries int) {
+	if _, err := s.planStore.MarkFailed(ctx, plan.ID, task.ID, s.sessionID, reason, maxRetries); err != nil {
+		_ = s.logEvent(ctx, "worker.persist_failed", map[string]any{
+			"plan_id": plan.ID,
+			"task_id": task.ID,
+			"variant": profile.Name,
+			"outcome": "failed",
+			"error":   err.Error(),
+		})
+	}
+}
+
 func (s *Service) logEvent(ctx context.Context, kind string, payload any) error {
 	if s.eventDB == nil {
 		return nil
@@ -856,8 +891,7 @@ func openPlanStore(ctx context.Context) (*plandag.Store, error) {
 	if err := os.MkdirAll(filepath.Dir(dbPath), 0o750); err != nil {
 		return nil, err
 	}
-	dsn := "file:" + dbPath + "?_pragma=foreign_keys(1)&_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)"
-	return plandag.Open(ctx, plandag.Options{DSN: dsn})
+	return plandag.Open(ctx, plandag.Options{DSN: plandag.DSN(dbPath)})
 }
 
 func hostnameOrLocal() string {
