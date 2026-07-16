@@ -8,6 +8,7 @@ import (
 	"context"
 	"os"
 	"os/exec"
+	"sync"
 
 	"github.com/creack/pty"
 )
@@ -28,6 +29,10 @@ type Agent struct {
 	out  chan []byte
 	done chan struct{}
 	opts Options
+
+	// closeOnce guards ptmx.Close so the readLoop's natural-exit close and
+	// a caller's Kill can't double-close (which would return os.ErrClosed).
+	closeOnce sync.Once
 }
 
 // Start launches opts.Command under a pty and begins streaming its output.
@@ -68,7 +73,23 @@ func (a *Agent) readLoop() {
 		}
 	}
 	_ = a.cmd.Wait()
-	_ = a.ptmx.Close()
+	a.closePTY()
+}
+
+// closePTY closes the pty exactly once, whether from the readLoop's
+// natural exit or from Kill.
+func (a *Agent) closePTY() {
+	a.closeOnce.Do(func() { _ = a.ptmx.Close() })
+}
+
+// exited reports whether the process has already exited (readLoop finished).
+func (a *Agent) exited() bool {
+	select {
+	case <-a.done:
+		return true
+	default:
+		return false
+	}
 }
 
 // Output is the line-oriented output stream; closed when the process exits.
@@ -88,12 +109,20 @@ func (a *Agent) WriteInput(b []byte) error {
 // Done is closed when the process exits.
 func (a *Agent) Done() <-chan struct{} { return a.done }
 
-// Kill terminates the process immediately and releases the pty.
+// Kill terminates the process immediately and releases the pty. Killing an
+// agent that already exited on its own is a no-op success — a normal
+// shutdown that races an agent finishing its task must not surface a
+// spurious "already closed" error.
 func (a *Agent) Kill() error {
+	if a.exited() {
+		a.closePTY() // idempotent; the readLoop already closed it
+		return nil
+	}
 	if a.cmd.Process != nil {
 		_ = a.cmd.Process.Kill()
 	}
-	return a.ptmx.Close()
+	a.closePTY()
+	return nil
 }
 
 // Wait blocks until the process exits.

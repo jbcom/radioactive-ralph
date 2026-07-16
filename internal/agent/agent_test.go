@@ -79,3 +79,25 @@ func TestAgentKillTerminates(t *testing.T) {
 		t.Fatal("agent did not exit after Kill")
 	}
 }
+
+// TestKillAfterNaturalExitIsNilError reproduces the review finding: an agent
+// that finished on its own, then gets Kill()'d (e.g. during a normal
+// supervisor shutdown that raced the agent completing), must not return a
+// spurious "already closed" error.
+func TestKillAfterNaturalExitIsNilError(t *testing.T) {
+	a, err := Start(context.Background(), Options{Command: "sh", Args: []string{"-c", "printf 'done\\n'"}})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	// drain output so the process can exit and readLoop can finish
+	for range a.Output() {
+	}
+	<-a.Done()
+	if err := a.Kill(); err != nil {
+		t.Fatalf("Kill after natural exit = %v, want nil", err)
+	}
+	// second Kill is also a nil no-op
+	if err := a.Kill(); err != nil {
+		t.Fatalf("second Kill = %v, want nil", err)
+	}
+}
