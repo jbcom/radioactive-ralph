@@ -24,7 +24,7 @@ Package runtime owns the durable repo service engine and its local process coord
 
 
 <a name="Options"></a>
-## type [Options](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/runtime/service.go#L32-L42>)
+## type [Options](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/runtime/service.go#L33-L43>)
 
 Options configures one repo\-scoped runtime instance.
 
@@ -43,7 +43,7 @@ type Options struct {
 ```
 
 <a name="RunnerFactory"></a>
-## type [RunnerFactory](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/runtime/service.go#L29>)
+## type [RunnerFactory](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/runtime/service.go#L30>)
 
 RunnerFactory resolves a configured provider binding into a runnable backend.
 
@@ -52,7 +52,7 @@ type RunnerFactory func(binding provider.Binding) (provider.Runner, error)
 ```
 
 <a name="Service"></a>
-## type [Service](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/runtime/service.go#L55-L78>)
+## type [Service](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/runtime/service.go#L56-L84>)
 
 Service is the durable repo\-scoped runtime authority.
 
@@ -63,7 +63,7 @@ type Service struct {
 ```
 
 <a name="NewService"></a>
-### func [NewService](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/runtime/service.go#L81>)
+### func [NewService](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/runtime/service.go#L87>)
 
 ```go
 func NewService(opts Options) (*Service, error)
@@ -72,7 +72,7 @@ func NewService(opts Options) (*Service, error)
 NewService constructs a repo\-scoped runtime with validated defaults.
 
 <a name="Service.Run"></a>
-### func \(\*Service\) [Run](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/runtime/service.go#L118>)
+### func \(\*Service\) [Run](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/runtime/service.go#L125>)
 
 ```go
 func (s *Service) Run(ctx context.Context) error
@@ -81,7 +81,7 @@ func (s *Service) Run(ctx context.Context) error
 Run starts the repo runtime and blocks until shutdown or context cancel.
 
 <a name="Service.Shutdown"></a>
-### func \(\*Service\) [Shutdown](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/runtime/service.go#L192>)
+### func \(\*Service\) [Shutdown](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/runtime/service.go#L199>)
 
 ```go
 func (s *Service) Shutdown()

@@ -32,6 +32,7 @@ The config package only parses and validates. Applying variant defaults and prov
   - [func Load\(repoRoot string\) \(File, error\)](<#Load>)
 - [type Local](<#Local>)
   - [func LoadLocal\(repoRoot string\) \(Local, error\)](<#LoadLocal>)
+  - [func \(l Local\) BinaryFor\(providerName string\) \(string, bool\)](<#Local.BinaryFor>)
   - [func \(l Local\) DurableVariantConfirmed\(name string\) bool](<#Local.DurableVariantConfirmed>)
 - [type ProviderFile](<#ProviderFile>)
   - [func DefaultClaudeProvider\(\) ProviderFile](<#DefaultClaudeProvider>)
@@ -80,7 +81,7 @@ var (
 ```
 
 <a name="IsMissingConfig"></a>
-## func [IsMissingConfig](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/config/config.go#L146>)
+## func [IsMissingConfig](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/config/config.go#L174>)
 
 ```go
 func IsMissingConfig(err error) bool
@@ -89,7 +90,7 @@ func IsMissingConfig(err error) bool
 IsMissingConfig reports whether err indicates a missing config.toml.
 
 <a name="IsMissingLocal"></a>
-## func [IsMissingLocal](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/config/config.go#L151>)
+## func [IsMissingLocal](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/config/config.go#L179>)
 
 ```go
 func IsMissingLocal(err error) bool
@@ -98,7 +99,7 @@ func IsMissingLocal(err error) bool
 IsMissingLocal reports whether err indicates a missing local.toml.
 
 <a name="LocalPath"></a>
-## func [LocalPath](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/config/config.go#L281>)
+## func [LocalPath](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/config/config.go#L309>)
 
 ```go
 func LocalPath(repoRoot string) string
@@ -107,7 +108,7 @@ func LocalPath(repoRoot string) string
 LocalPath returns the absolute path to local.toml for repoRoot.
 
 <a name="Path"></a>
-## func [Path](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/config/config.go#L276>)
+## func [Path](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/config/config.go#L304>)
 
 ```go
 func Path(repoRoot string) string
@@ -130,7 +131,7 @@ type File struct {
 ```
 
 <a name="Load"></a>
-### func [Load](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/config/config.go#L157>)
+### func [Load](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/config/config.go#L185>)
 
 ```go
 func Load(repoRoot string) (File, error)
@@ -139,14 +140,28 @@ func Load(repoRoot string) (File, error)
 Load parses the per\-repo config file\(s\) under repoRoot/.radioactive\-ralph/. It returns ErrMissingConfig if config.toml is absent.
 
 <a name="Local"></a>
-## type [Local](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/config/config.go#L111-L125>)
+## type [Local](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/config/config.go#L111-L139>)
 
 Local is the shape of local.toml \(gitignored per\-operator preferences\). Keeping it minimal on purpose — everything else belongs in config.toml.
 
 ```go
 type Local struct {
-    LogLevel       string `toml:"log_level"`
+    LogLevel string `toml:"log_level"`
+
+    // ProviderBinary is a legacy single-provider binary override applied
+    // to whichever provider is being resolved. Prefer ProviderBinaries
+    // (per-provider) when a repo mixes providers; a global override would
+    // otherwise clobber every provider's binary. Retained for
+    // backward compatibility as the fallback when no per-provider entry
+    // matches.
     ProviderBinary string `toml:"provider_binary"`
+
+    // ProviderBinaries maps a provider name to its operator-supplied
+    // binary path, so a repo can authorize a custom binary for one
+    // provider (e.g. a declarative "my-cli") without overriding the
+    // shipped claude/codex/gemini binaries. Entries here take precedence
+    // over the global ProviderBinary.
+    ProviderBinaries map[string]string `toml:"provider_binaries"`
 
     // ConfirmDurableVariants lists variant names the operator has
     // explicitly authorized the durable repo service to schedule despite
@@ -162,7 +177,7 @@ type Local struct {
 ```
 
 <a name="LoadLocal"></a>
-### func [LoadLocal](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/config/config.go#L205>)
+### func [LoadLocal](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/config/config.go#L233>)
 
 ```go
 func LoadLocal(repoRoot string) (Local, error)
@@ -170,8 +185,17 @@ func LoadLocal(repoRoot string) (Local, error)
 
 LoadLocal parses the local.toml file under repoRoot/.radioactive\-ralph/. Returns ErrMissingLocal if absent; callers can decide whether to treat that as fatal or fall through to committed service defaults.
 
+<a name="Local.BinaryFor"></a>
+### func \(Local\) [BinaryFor](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/config/config.go#L151>)
+
+```go
+func (l Local) BinaryFor(providerName string) (string, bool)
+```
+
+BinaryFor returns the operator\-supplied binary override for a provider, preferring the per\-provider ProviderBinaries entry and falling back to the legacy global ProviderBinary. The bool reports whether any override applied \(used as the binary\-trust provenance signal\).
+
 <a name="Local.DurableVariantConfirmed"></a>
-### func \(Local\) [DurableVariantConfirmed](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/config/config.go#L129>)
+### func \(Local\) [DurableVariantConfirmed](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/config/config.go#L143>)
 
 ```go
 func (l Local) DurableVariantConfirmed(name string) bool
@@ -207,7 +231,7 @@ type ProviderFile struct {
 ```
 
 <a name="DefaultClaudeProvider"></a>
-### func [DefaultClaudeProvider](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/config/config.go#L224>)
+### func [DefaultClaudeProvider](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/config/config.go#L252>)
 
 ```go
 func DefaultClaudeProvider() ProviderFile
@@ -216,7 +240,7 @@ func DefaultClaudeProvider() ProviderFile
 DefaultClaudeProvider returns the built\-in provider binding that uses the local \`claude\` CLI as the execution backend.
 
 <a name="DefaultCodexProvider"></a>
-### func [DefaultCodexProvider](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/config/config.go#L244>)
+### func [DefaultCodexProvider](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/config/config.go#L272>)
 
 ```go
 func DefaultCodexProvider() ProviderFile
@@ -225,7 +249,7 @@ func DefaultCodexProvider() ProviderFile
 DefaultCodexProvider returns the built\-in provider binding that uses the local \`codex\` CLI as the execution backend.
 
 <a name="DefaultGeminiProvider"></a>
-### func [DefaultGeminiProvider](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/config/config.go#L262>)
+### func [DefaultGeminiProvider](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/config/config.go#L290>)
 
 ```go
 func DefaultGeminiProvider() ProviderFile
