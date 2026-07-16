@@ -55,8 +55,9 @@ func run() int {
 // rootFlags collects the root-level flags that decide which of the two
 // modes (§4) this invocation runs in.
 type rootFlags struct {
-	supervisor bool
-	initFlag   bool
+	supervisor    bool
+	initFlag      bool
+	forceOverride bool
 }
 
 func newRootCmd(ctx context.Context) *cobra.Command {
@@ -85,6 +86,8 @@ func newRootCmd(ctx context.Context) *cobra.Command {
 		"run as the durable supervisor process (spec §4); working directory is irrelevant in this mode")
 	root.Flags().BoolVar(&flags.initFlag, "init", false,
 		"initialize (or re-initialize) the current directory as a known project")
+	root.Flags().BoolVar(&flags.forceOverride, "force-override", false,
+		"with --init, allow an incoming --project-config-file to override existing stored project config keys instead of refusing on conflict")
 
 	root.AddCommand(newDoctorCmd())
 

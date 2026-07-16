@@ -5,9 +5,25 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"github.com/jbcom/radioactive-ralph/internal/agent"
 )
 
 // CodexRunner executes a single `codex exec` turn.
+//
+// codex, like claude/opencode, now runs under Ralph's own pty via
+// internal/agent so its pane/stream goes through the same
+// superviseAgent-enforced watchdog (spec §1's never-block control
+// invariant): a stalled or (despite
+// --dangerously-bypass-approvals-and-sandbox) unexpectedly interactive
+// codex process is killed rather than left to hang, exactly like
+// claude/opencode. codex's own native result channel — the
+// --output-last-message file — is unaffected: it is still the
+// authoritative source for AssistantOutput, read back from disk after the
+// process exits. The pty pane output itself carries no structured result
+// for codex (unlike claude/opencode's stream-json), so onLine here has
+// nothing to parse; it exists purely so superviseAgent's watchdog has
+// output to observe for stall/prompt detection.
 type CodexRunner struct{}
 
 // Run executes one non-interactive Codex turn.
@@ -45,9 +61,27 @@ func (CodexRunner) Run(ctx context.Context, binding Binding, req Request) (Resul
 	args = append(args, binding.Config.Args...)
 	args = append(args, combinePrompt(req))
 
-	if _, err := runCommand(ctx, req.WorkingDir, binding.Config.Binary, args); err != nil {
-		return Result{}, err
+	a, err := agent.Start(ctx, agent.Options{
+		Command:    binding.Config.Binary,
+		Args:       args,
+		Dir:        req.WorkingDir,
+		ResultPath: outPath,
+	})
+	if err != nil {
+		return Result{}, fmt.Errorf("provider: start codex agent: %w", err)
 	}
+	defer func() { _ = a.Kill() }()
+
+	// codex's pane carries no structured per-line result (unlike
+	// claude/opencode's stream-json), so onLine is nil: superviseAgent
+	// still runs agent.Watch over the pane for stall/prompt detection, it
+	// just has nothing extra to extract per line. superviseAgent returns
+	// once a.Output() closes (codex exited on its own) or kills+errors on
+	// a detected prompt/stall.
+	if err := superviseAgent(ctx, a, DefaultWatchdogConfig(), nil); err != nil {
+		return Result{}, fmt.Errorf("provider: codex run: %w", err)
+	}
+
 	raw, err := os.ReadFile(outPath) //nolint:gosec // temporary file owned by this process
 	if err != nil {
 		return Result{}, fmt.Errorf("provider: read codex output: %w", err)

@@ -49,7 +49,7 @@ func TestOpenRunsMigrations(t *testing.T) {
 	wanted := []string{
 		"projects", "project_identifiers", "project_config",
 		"plans", "tasks", "task_deps", "events",
-		"sessions", "workers", "spend",
+		"sessions", "workers", "spend", "a2a_messages",
 	}
 	for _, name := range wanted {
 		var seen string

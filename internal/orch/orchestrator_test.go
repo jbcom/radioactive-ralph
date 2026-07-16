@@ -83,6 +83,13 @@ const twoStepParallelPlan = `# Fan out
 - task beta
 `
 
+const threeStepParallelPlan = `# Fan out wide
+
+- task alpha
+- task beta
+- task gamma
+`
+
 func fakeBindingResolver(name string, nativeFanout bool) BindingResolver {
 	return func(_ context.Context, _ string, _ bool) (provider.Binding, error) {
 		return provider.Binding{

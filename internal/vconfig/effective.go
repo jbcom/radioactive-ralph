@@ -32,11 +32,24 @@ func EffectiveProject(ctx context.Context, st *store.Store, projectsCfg ProjectC
 		return projectsCfg, nil
 	}
 
-	overlay, err := loadFileValues(projectConfigFile)
+	overlay, err := LoadFileValues(projectConfigFile)
 	if err != nil {
 		return ProjectConfig{}, fmt.Errorf("vconfig: load project-config-file %s: %w", projectConfigFile, err)
 	}
 
+	return EffectiveProjectFromValues(ctx, st, projectsCfg, projectID, overlay, mode)
+}
+
+// EffectiveProjectFromValues is EffectiveProject's core: merge (and, under
+// ModeChange, persist) overlay directly, without going through a file on
+// disk. Exported so a caller that has already computed the overlay it
+// wants applied — e.g. the --init path's conflict UX, which may want to
+// apply an vconfig.AutoRemove-filtered subset of an incoming
+// --project-config-file rather than the file's values verbatim — can reuse
+// the exact same merge/persist semantics EffectiveProject uses, instead of
+// round-tripping the filtered map back through a TOML file just to satisfy
+// EffectiveProject's file-path signature.
+func EffectiveProjectFromValues(ctx context.Context, st *store.Store, projectsCfg ProjectConfig, projectID string, overlay map[string]any, mode Mode) (ProjectConfig, error) {
 	merged := cloneMap(projectsCfg.Values)
 	mergeMapInto(merged, overlay)
 
@@ -58,9 +71,13 @@ func EffectiveProject(ctx context.Context, st *store.Store, projectsCfg ProjectC
 	return ProjectConfig{Values: merged}, nil
 }
 
-// loadFileValues loads a standalone TOML file (a --project-config-file) and
-// returns its top-level settings as a flat map[string]any.
-func loadFileValues(path string) (map[string]any, error) {
+// LoadFileValues loads a standalone TOML file (a --project-config-file) and
+// returns its top-level settings as a flat map[string]any. Exported so
+// callers that need the incoming values BEFORE deciding whether to call
+// EffectiveProject — e.g. the --init path's DiffConflicts pre-check
+// against the stored project config — can load the same file the same way
+// without duplicating viper setup.
+func LoadFileValues(path string) (map[string]any, error) {
 	v := viper.New()
 	v.SetConfigType("toml")
 	if err := mergeFileInto(v, path); err != nil {

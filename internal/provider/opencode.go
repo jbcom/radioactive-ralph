@@ -73,34 +73,32 @@ func (OpencodeRunner) Run(ctx context.Context, binding Binding, req Request) (Re
 	var sessionID string
 	var usage Usage
 	var sawFinish bool
-loop:
-	for {
-		select {
-		case line, ok := <-a.Output():
-			if !ok {
-				break loop
-			}
-			ev, ok := parseOpencodeEvent(line)
-			if !ok {
-				continue // pty echo / non-JSON pane noise
-			}
-			_, _ = resultFile.Write(line)
-			if ev.SessionID != "" {
-				sessionID = ev.SessionID
-			}
-			switch ev.Type {
-			case "text":
-				assistant.WriteString(ev.Part.Text)
-			case "step_finish":
-				usage = ev.Part.usage()
-				sawFinish = true
-			}
-		case <-ctx.Done():
-			return Result{}, ctx.Err()
+
+	// As in ClaudeRunner, every line is routed through superviseAgent so a
+	// hung/prompting opencode CLI is killed per the control invariant
+	// (spec §1) instead of hanging this Run call forever.
+	onLine := func(line []byte) bool {
+		ev, ok := parseOpencodeEvent(line)
+		if !ok {
+			return false // pty echo / non-JSON pane noise
 		}
-		if sawFinish {
-			break
+		_, _ = resultFile.Write(line)
+		if ev.SessionID != "" {
+			sessionID = ev.SessionID
 		}
+		switch ev.Type {
+		case "text":
+			assistant.WriteString(ev.Part.Text)
+		case "step_finish":
+			usage = ev.Part.usage()
+			sawFinish = true
+			return true // terminal frame seen; stop supervising this turn
+		}
+		return false
+	}
+
+	if err := superviseAgent(ctx, a, DefaultWatchdogConfig(), onLine); err != nil {
+		return Result{}, fmt.Errorf("provider: opencode run: %w", err)
 	}
 	if !sawFinish {
 		return Result{}, fmt.Errorf("provider: opencode exited without a step_finish frame")

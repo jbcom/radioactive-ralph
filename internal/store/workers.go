@@ -134,6 +134,19 @@ func (s *Store) HeartbeatWorker(ctx context.Context, workerID string) error {
 	return nil
 }
 
+// CountRunningWorkers returns how many worker rows are currently
+// status='running' — i.e. actively assigned a task, not idle/terminated/
+// crashed. Used by the supervisor's HandleStatus to report a real
+// ActiveWorkers count sourced from the store rather than an in-process
+// map that only the dispatcher owning the pty could ever populate.
+func (s *Store) CountRunningWorkers(ctx context.Context) (int, error) {
+	var n int
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM workers WHERE status = 'running'`).Scan(&n); err != nil {
+		return 0, fmt.Errorf("store: count running workers: %w", err)
+	}
+	return n, nil
+}
+
 // ClearWorkerTask clears the active task from one worker row and marks it
 // idle or terminated (status defaults to "idle" when empty).
 func (s *Store) ClearWorkerTask(ctx context.Context, workerID, status string) error {

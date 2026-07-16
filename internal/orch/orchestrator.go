@@ -171,6 +171,39 @@ func (c scopedContext) prompt() string {
 	return b.String()
 }
 
+// fanoutScopedContext is the plan-scoped context handed to a SINGLE
+// fan-out-capable worker standing in for an entire parallel step-group
+// (see dispatchFanoutGroup): every ready step's text/detail is listed
+// together (each tagged by its stable task id) so the worker knows to fan
+// the work out itself, but the prompt still never includes the whole plan
+// document — only this one group, exactly like scopedContext for the
+// single-step case.
+type fanoutScopedContext struct {
+	PlanTitle    string
+	GroupHeading string
+	Steps        []dispatchedStep
+}
+
+// prompt renders the fan-out group's scoped context as the worker's user
+// prompt: the plan/group heading, then every ready step in the group
+// labeled by its stable task id, with an explicit instruction that the
+// worker's own CLI/API is expected to fan this list out across its native
+// subagent/parallelism support rather than handling steps one at a time.
+func (c fanoutScopedContext) prompt() string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "Plan: %s\n", c.PlanTitle)
+	fmt.Fprintf(&b, "Group: %s\n\n", c.GroupHeading)
+	b.WriteString("This provider supports native fan-out. The following steps in this group are independent and ready to run in parallel — use your own subagent/parallel-workflow support to work them concurrently, and report on each one individually by its task id.\n\n")
+	for _, ds := range c.Steps {
+		fmt.Fprintf(&b, "[%s] %s", ds.task.ID, ds.step.Text)
+		if ds.step.Detail != "" {
+			fmt.Fprintf(&b, "\n%s", ds.step.Detail)
+		}
+		b.WriteString("\n\n")
+	}
+	return strings.TrimRight(b.String(), "\n") + "\n"
+}
+
 // dispatchedStep pairs a ready plan.Step with the store task created for
 // it, for bookkeeping across DispatchNext's per-step dispatch loop.
 type dispatchedStep struct {
@@ -226,15 +259,29 @@ func (o *Orchestrator) DispatchNext(ctx context.Context, projectID, planID strin
 		limit = o.maxParallel
 	}
 
-	// TODO(fan-out): when parallel is true AND the resolved binding for
-	// this group has NativeFanout, a single fan-out-capable worker could
-	// take the WHOLE group in one invocation (the CLI/API manages its own
-	// sub-agents) instead of Ralph spawning N workers here. That path is
-	// not implemented yet — every ready step below is dispatched as its
-	// own Ralph-managed worker regardless of NativeFanout. Wiring the
-	// fan-out delegation requires deciding how a single worker's Evidence
-	// maps back onto N distinct store tasks for VerifyAndComplete, which
-	// is a separate design question from this dispatch loop.
+	// Fan-out delegation: when the ready group is Parallel AND the binding
+	// resolved for it declares NativeFanout, one fan-out-capable worker
+	// takes the WHOLE group in a single invocation (the CLI/API manages
+	// its own sub-agents/parallelism internally) instead of Ralph spawning
+	// N Ralph-managed workers. This must be decided BEFORE the per-step
+	// dispatch loop below, since it dispatches differently (one worker
+	// claiming every ready task in the group, one provider turn, one
+	// evidence submission mapped back onto every task) rather than one
+	// worker per step.
+	if parallel && limit > 1 {
+		binding, err := o.resolveBinding(ctx, projectID, parallel)
+		if err != nil {
+			return dispatched, fmt.Errorf("orch: resolve binding: %w", err)
+		}
+		if binding.Config.NativeFanout {
+			n, err := o.dispatchFanoutGroup(ctx, projectID, planID, parsedPlan, storedPlan.Title, groupHeading, binding, readySteps[:limit], refs[:limit])
+			if err != nil {
+				return dispatched, err
+			}
+			return n, nil
+		}
+	}
+
 	for i := 0; i < limit; i++ {
 		binding, err := o.resolveBinding(ctx, projectID, parallel)
 		if err != nil {
@@ -543,4 +590,158 @@ func (o *Orchestrator) dispatchWorker(ctx context.Context, projectID, planID, se
 	}
 	_ = o.store.ClearWorkerTask(ctx, workerID, "idle")
 	return nil
+}
+
+// dispatchFanoutGroup delegates an entire ready parallel step-group to ONE
+// fan-out-capable worker instead of Ralph spawning one worker per step (see
+// the NativeFanout check in DispatchNext). It claims every step's task
+// under a single shared session/worker pair, runs exactly one provider
+// turn whose prompt lists the whole group (fanoutScopedContext), and then
+// maps that single turn's evidence back onto EVERY task in the group:
+// each task is independently verified against its own acceptance criteria
+// via VerifyAndComplete (mirroring dispatchWorker's per-step verification,
+// just fanned out over N tasks instead of one), so one worker's run can
+// still leave some steps done and others rejected/retryable exactly as if
+// they'd been dispatched individually.
+//
+// Admission (spend-cap) is checked once for the whole group, since only
+// one provider turn is actually run — a group that can't be admitted
+// dispatches nothing and returns 0 rather than partially claiming tasks.
+func (o *Orchestrator) dispatchFanoutGroup(ctx context.Context, projectID, planID string, parsedPlan *plan.Plan, storeTitle, groupHeading string, binding provider.Binding, steps []plan.Step, refs []plan.StepRef) (dispatched int, err error) {
+	if err := o.checkSpendCap(ctx, projectID, binding.Name); err != nil {
+		_ = o.store.Emit(ctx, store.EmitOpts{
+			ProjectID: projectID,
+			PlanID:    planID,
+			Kind:      "worker.admission_refused",
+			Stream:    "service",
+			PayloadJSON: mustPayloadJSON(store.EventPayload{
+				Reason: err.Error(),
+			}),
+		})
+		return 0, nil
+	}
+
+	sessionID, workerID, err := o.spawnWorkerRows(ctx, binding)
+	if err != nil {
+		return 0, err
+	}
+
+	claimed := make([]*dispatchedStep, 0, len(steps))
+	for i, ref := range refs {
+		ds, err := o.claimStepTask(ctx, planID, parsedPlan, ref, steps[i], sessionID, workerID)
+		if err != nil {
+			return 0, err
+		}
+		if ds == nil {
+			// Lost the claim race on this particular step (another
+			// dispatcher got there first) — fine, just fan out over
+			// whatever this worker DID manage to claim.
+			continue
+		}
+		claimed = append(claimed, ds)
+	}
+	if len(claimed) == 0 {
+		// Every step in the group was claimed by someone else between
+		// DecomposeRefs computing readiness and this call landing its
+		// claims. Release the worker row; nothing to dispatch.
+		_ = o.store.ClearWorkerTask(ctx, workerID, "idle")
+		return 0, nil
+	}
+	if err := o.store.SetWorkerTask(ctx, workerID, planID, claimed[0].task.ID); err != nil {
+		return 0, fmt.Errorf("orch: set worker task: %w", err)
+	}
+
+	scoped := fanoutScopedContext{
+		PlanTitle:    planTitle(parsedPlan, storeTitle),
+		GroupHeading: groupHeading,
+		Steps:        derefSteps(claimed),
+	}
+
+	runner, err := o.newRunner(binding)
+	if err != nil {
+		return 0, fmt.Errorf("orch: resolve runner for %q: %w", binding.Name, err)
+	}
+
+	runCtx := ctx
+	if o.watchdogConfig.StallTimeout > 0 {
+		var cancel context.CancelFunc
+		runCtx, cancel = context.WithTimeout(ctx, o.watchdogConfig.StallTimeout)
+		defer cancel()
+	}
+
+	req := provider.Request{
+		WorkingDir: ".",
+		UserPrompt: scoped.prompt(),
+	}
+	result, runErr := runner.Run(runCtx, binding, req)
+
+	// Spend is real the moment tokens were billed, independent of
+	// per-task verification outcome — record it once for the group's one
+	// provider turn.
+	if err := o.recordUsage(ctx, projectID, workerID, binding.Name, string(req.Model), result.Usage); err != nil {
+		return 0, fmt.Errorf("orch: record usage: %w", err)
+	}
+
+	ev := a2a.Evidence{
+		Ran:    fmt.Sprintf("fan-out group %q (%d steps)", groupHeading, len(claimed)),
+		Output: result.AssistantOutput,
+	}
+	if runErr != nil {
+		ev.ExitCode = 1
+		ev.Output = runErr.Error()
+	}
+
+	// The single evidence message is logged once per task, since
+	// a2a_messages is keyed by task id and each claimed task deserves its
+	// own audit trail entry for what evidence it was verified against.
+	for _, ds := range claimed {
+		msg := a2a.NewEvidenceMessage(a2a.RoleAgent, ds.task.ID, planID, ev)
+		msgJSON, err := jsonMarshalMessage(msg)
+		if err != nil {
+			return 0, fmt.Errorf("orch: marshal evidence message: %w", err)
+		}
+		if err := o.store.AppendMessage(ctx, store.AppendMessageOpts{
+			WorkerID:    workerID,
+			PlanID:      planID,
+			TaskID:      ds.task.ID,
+			Role:        string(a2a.RoleAgent),
+			ContentJSON: msgJSON,
+		}); err != nil {
+			return 0, fmt.Errorf("orch: append evidence message: %w", err)
+		}
+	}
+
+	if runErr != nil {
+		for _, ds := range claimed {
+			if _, err := o.store.MarkFailed(ctx, planID, ds.task.ID, sessionID, runErr.Error(), 3); err != nil {
+				return 0, fmt.Errorf("orch: mark failed after run error: %w", err)
+			}
+		}
+		_ = o.store.ClearWorkerTask(ctx, workerID, "crashed")
+		return len(claimed), nil
+	}
+
+	// Map the ONE turn's evidence back onto EVERY claimed task: each is
+	// independently verified against its own acceptance criteria, exactly
+	// as dispatchWorker does for a single step. A worker terminating is
+	// never completion for any of them — VerifyAndComplete still
+	// mechanically re-checks (or falls back to non-empty-evidence
+	// judgment) per task.
+	for _, ds := range claimed {
+		if _, err := o.VerifyAndComplete(ctx, planID, ds.task.ID, ev); err != nil {
+			return 0, fmt.Errorf("orch: verify and complete %s: %w", ds.task.ID, err)
+		}
+	}
+	_ = o.store.ClearWorkerTask(ctx, workerID, "idle")
+	return len(claimed), nil
+}
+
+// derefSteps extracts the dispatchedStep values (not pointers) for
+// fanoutScopedContext.Steps, preserving claim order.
+func derefSteps(claimed []*dispatchedStep) []dispatchedStep {
+	out := make([]dispatchedStep, len(claimed))
+	for i, ds := range claimed {
+		out[i] = *ds
+	}
+	return out
 }

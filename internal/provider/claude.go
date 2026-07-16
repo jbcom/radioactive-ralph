@@ -91,40 +91,43 @@ func (ClaudeRunner) Run(ctx context.Context, binding Binding, req Request) (Resu
 	var assistant bytes.Buffer
 	var sawResult bool
 	var frame claudeResultFrame
-loop:
-	for {
-		select {
-		case line, ok := <-a.Output():
-			if !ok {
-				break loop
-			}
-			// The pty echoes our own stdin write (stdin/stdout share one
-			// fd under a pty, unlike a plain pipe), and claude may print
-			// non-JSON banner/warning lines. Only stream-json frames with
-			// a recognized top-level "type" are structured data;
-			// everything else is pane noise that must not land in
-			// ResultPath (the "never scrape/never pollute the structured
-			// result file" invariant).
-			kind, text, isResult, f := parseClaudeStreamLine(line)
-			if kind == "" {
-				continue
-			}
-			// Tee the raw pane line into ResultPath — this is the
-			// structured-data path; the same bytes remain available to
-			// a.Output() consumers (pane/watchdog) for observation.
-			_, _ = resultFile.Write(line)
 
-			if text != "" {
-				assistant.WriteString(text)
-			}
-			if isResult {
-				sawResult = true
-				frame = f
-				break loop
-			}
-		case <-ctx.Done():
-			return Result{}, ctx.Err()
+	// Every line first passes through superviseAgent, which runs
+	// agent.Watch concurrently over a.Output() per the control invariant
+	// (spec §1): a permission/clarification prompt or a stall KILLS claude
+	// and returns ErrAgentBlocked instead of hanging. Only lines
+	// superviseAgent itself classifies as ordinary progress (never a
+	// detected prompt) reach onLine, so the JSON stream-framing below is
+	// unchanged from the pre-watchdog read loop except for its source.
+	onLine := func(line []byte) bool {
+		// The pty echoes our own stdin write (stdin/stdout share one fd
+		// under a pty, unlike a plain pipe), and claude may print non-JSON
+		// banner/warning lines. Only stream-json frames with a recognized
+		// top-level "type" are structured data; everything else is pane
+		// noise that must not land in ResultPath (the "never
+		// scrape/never pollute the structured result file" invariant).
+		kind, text, isResult, f := parseClaudeStreamLine(line)
+		if kind == "" {
+			return false
 		}
+		// Tee the raw pane line into ResultPath — this is the structured
+		// -data path; the same bytes remain available to a.Output()
+		// consumers (pane/watchdog) for observation.
+		_, _ = resultFile.Write(line)
+
+		if text != "" {
+			assistant.WriteString(text)
+		}
+		if isResult {
+			sawResult = true
+			frame = f
+			return true // terminal frame seen; stop supervising this turn
+		}
+		return false
+	}
+
+	if err := superviseAgent(ctx, a, DefaultWatchdogConfig(), onLine); err != nil {
+		return Result{}, fmt.Errorf("provider: claude run: %w", err)
 	}
 	if !sawResult {
 		return Result{}, fmt.Errorf("provider: claude exited without a result frame")

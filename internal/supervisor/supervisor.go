@@ -8,8 +8,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/jbcom/radioactive-ralph/internal/agent"
 	"github.com/jbcom/radioactive-ralph/internal/ipc"
+	"github.com/jbcom/radioactive-ralph/internal/orch"
 	"github.com/jbcom/radioactive-ralph/internal/store"
 )
 
@@ -38,23 +38,32 @@ type Options struct {
 	// store opened with a fake clock.
 	Store *store.Store
 
+	// Orchestrator dispatches plan/task work (Phase 6). Optional: nil
+	// defaults to orch.New(Store) — a real provider.NewRunner-backed
+	// orchestrator. Tests inject one built with a fake RunnerFactory so
+	// HandleEnqueue's dispatch wiring can be proven without a real
+	// provider CLI.
+	Orchestrator *orch.Orchestrator
+
 	// Logger receives lifecycle messages. Optional.
 	Logger func(msg string, args ...any)
 }
 
 // Supervisor is the small, boring control-plane process described in spec
-// §4/§13: pty ownership + IPC + store + reaper. It deliberately does NOT
-// do plan orchestration yet (that lands in Phase 6) — HandleStatus and
-// HandleStop are the only commands it answers today.
+// §4/§13: pty ownership + IPC + store + reaper, PLUS (as of Phase 6c) real
+// plan dispatch: HandleEnqueue drives internal/orch's DispatchNext instead
+// of returning "not implemented". Orch itself — via the provider runners
+// it dispatches onto internal/agent — owns every agent subprocess's
+// lifetime (start, watchdog supervision, kill), so the supervisor holds no
+// separate pty-tracking map of its own; there is nothing left for the
+// supervisor to additionally track or drain at shutdown.
 type Supervisor struct {
 	opts      Options
 	store     *store.Store
+	orch      *orch.Orchestrator
 	server    *ipc.Server
 	listener  *Listener
 	sessionID string
-
-	mu     sync.Mutex
-	agents map[string]*agent.Agent
 
 	startedAt time.Time
 	log       func(msg string, args ...any)
@@ -66,8 +75,9 @@ type Supervisor struct {
 // Run acquires the supervisor socket (failing with ErrSupervisorRunning if
 // another instance already holds it), registers a supervisor session in
 // the store, serves IPC until ctx is cancelled or a client sends CmdStop,
-// and then shuts down cleanly: agents killed, IPC server stopped, socket
-// released, session closed.
+// and then shuts down cleanly: any in-flight dispatch is bounded by orch's
+// own watchdog config, the IPC server is stopped, the socket released, the
+// session closed.
 func Run(ctx context.Context, opts Options) error {
 	if opts.RuntimeDir == "" {
 		return fmt.Errorf("supervisor: RuntimeDir required")
@@ -85,11 +95,16 @@ func Run(ctx context.Context, opts Options) error {
 		return err
 	}
 
+	orchestrator := opts.Orchestrator
+	if orchestrator == nil {
+		orchestrator = orch.New(opts.Store)
+	}
+
 	sup := &Supervisor{
 		opts:      opts,
 		store:     opts.Store,
+		orch:      orchestrator,
 		listener:  listener,
-		agents:    make(map[string]*agent.Agent),
 		startedAt: time.Now(),
 		log:       logf,
 		stopCh:    make(chan struct{}),
@@ -168,25 +183,15 @@ func (s *Supervisor) tick(ctx context.Context) {
 	}
 }
 
-// shutdown kills every tracked agent, stops the IPC server (which also
-// unlinks the socket file), closes the supervisor's session row, and
-// releases the PID lock. Errors are collected and joined so one failure
-// doesn't skip the rest of teardown.
+// shutdown stops the IPC server (which also unlinks the socket file),
+// closes the supervisor's session row, and releases the PID lock. There is
+// no separate agent-draining step: every agent subprocess dispatched via
+// s.orch is owned end-to-end (started, watchdog-supervised, killed) by the
+// provider runner orch dispatched it through — see Supervisor's doc
+// comment — so shutdown has nothing of its own left to kill. Errors are
+// collected and joined so one failure doesn't skip the rest of teardown.
 func (s *Supervisor) shutdown(ctx context.Context) error {
-	s.mu.Lock()
-	agents := make([]*agent.Agent, 0, len(s.agents))
-	for id, a := range s.agents {
-		agents = append(agents, a)
-		delete(s.agents, id)
-	}
-	s.mu.Unlock()
-
 	var errs []error
-	for _, a := range agents {
-		if err := a.Kill(); err != nil {
-			errs = append(errs, fmt.Errorf("kill agent: %w", err))
-		}
-	}
 	if err := s.server.Stop(); err != nil {
 		errs = append(errs, fmt.Errorf("stop ipc server: %w", err))
 	}
@@ -209,14 +214,19 @@ func (s *Supervisor) shutdown(ctx context.Context) error {
 
 // --- ipc.Handler ---
 
-// HandleStatus reports supervisor-level liveness. Plan/task/worker counts
-// are intentionally zeroed for now — plan orchestration is Phase 6, so
-// there is nothing yet to count; wiring those fields to real queries is
-// noted as follow-up in the phase report, not silently faked here.
-func (s *Supervisor) HandleStatus(_ context.Context) (ipc.StatusReply, error) {
-	s.mu.Lock()
-	active := len(s.agents)
-	s.mu.Unlock()
+// HandleStatus reports supervisor-level liveness. ActiveWorkers is sourced
+// from the store's real worker rows (store.CountRunningWorkers) rather
+// than an in-process map: no in-process structure could ever reflect this
+// count anyway, since agent subprocess lifetime is fully owned by whichever
+// provider runner orch dispatched, not by the supervisor itself. A query
+// failure degrades to 0 rather than failing the whole status reply — a
+// transient count-query error should never make `status` itself fail.
+func (s *Supervisor) HandleStatus(ctx context.Context) (ipc.StatusReply, error) {
+	active, err := s.store.CountRunningWorkers(ctx)
+	if err != nil {
+		s.log("count running workers failed", "err", err)
+		active = 0
+	}
 
 	return ipc.StatusReply{
 		PID:           os.Getpid(),
@@ -225,13 +235,59 @@ func (s *Supervisor) HandleStatus(_ context.Context) (ipc.StatusReply, error) {
 	}, nil
 }
 
-// HandleEnqueue is not yet implemented — plan/task orchestration is Phase
-// 6. Returning an explicit error here (rather than a silent no-op) means a
-// client that tries this today gets a clear "not supported yet" rather
-// than a false-positive success.
-func (s *Supervisor) HandleEnqueue(_ context.Context, _ ipc.EnqueueArgs) (ipc.EnqueueReply, error) {
-	return ipc.EnqueueReply{}, fmt.Errorf("supervisor: enqueue not implemented yet (plan orchestration lands in a later phase)")
+// HandleEnqueue drives one real dispatch pass via internal/orch instead of
+// returning "not implemented": it lists every currently active/paused plan
+// store-wide (spec: the supervisor is project-agnostic — it has no notion
+// of "the current project", so this checks every project's active work,
+// not just one) and calls DispatchNext on each, in plan order, until
+// either every plan has been tried or maxEnqueueDispatchPlans is reached
+// (a bound so one enqueue call can never scan an unbounded number of
+// plans). It is NOT a blocking wait for any of that work to finish —
+// DispatchNext itself is synchronous per dispatched step but bounded by
+// orch's own watchdog config (agent.WatchdogConfig.StallTimeout), so a
+// stalled/prompting provider still returns (killed) rather than hanging
+// this IPC call.
+//
+// args.Description/args.TaskID name the work the caller wanted enqueued,
+// but a store task cannot be created without a plan_id (tasks.plan_id is a
+// NOT NULL foreign key) and EnqueueArgs carries no plan reference — so
+// HandleEnqueue's job today is exactly "wake up dispatch for whatever is
+// already ready", the same effect an enqueue is meant to have (make
+// already-known work actually run), not "materialize a new ad hoc task
+// with no plan to belong to". EnqueueReply.Inserted reports whether
+// anything was actually dispatched; TaskID echoes args.TaskID (or, if
+// unset, the number of steps dispatched, best-effort) so a caller has some
+// return value acknowledging its enqueue signal was acted upon.
+func (s *Supervisor) HandleEnqueue(ctx context.Context, args ipc.EnqueueArgs) (ipc.EnqueueReply, error) {
+	plans, err := s.store.ListPlans(ctx, "", nil)
+	if err != nil {
+		return ipc.EnqueueReply{}, fmt.Errorf("supervisor: list active plans: %w", err)
+	}
+
+	total := 0
+	for i, p := range plans {
+		if i >= maxEnqueueDispatchPlans {
+			break
+		}
+		n, err := s.orch.DispatchNext(ctx, p.ProjectID, p.ID)
+		if err != nil {
+			s.log("dispatch failed", "plan", p.ID, "err", err)
+			continue
+		}
+		total += n
+	}
+
+	taskID := args.TaskID
+	if taskID == "" {
+		taskID = fmt.Sprintf("dispatched=%d", total)
+	}
+	return ipc.EnqueueReply{TaskID: taskID, Inserted: total > 0}, nil
 }
+
+// maxEnqueueDispatchPlans bounds how many active plans a single
+// HandleEnqueue call will scan/dispatch against, so one IPC call can never
+// iterate an unbounded number of plans store-wide.
+const maxEnqueueDispatchPlans = 50
 
 // HandleStop breaks Run's select loop, which triggers shutdown. Graceful
 // vs. immediate is not yet differentiated (no in-flight plan work exists
