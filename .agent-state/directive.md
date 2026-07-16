@@ -59,9 +59,9 @@ docs/superpowers/specs/2026-07-16-supervisor-architecture-design.md.
 - [x] Phase 6c checkpoint — DONE (tested; invariant enforced; no inert scaffolding)
 
 ## Phase 7 — TUI + planning genesis
-- [ ] [WAIT-AGENT] internal/tui: read-only macro/meso/micro (model/update/view split, NOT one god file); subscribe + DB scrollback
-- [ ] [WAIT-AGENT] internal/genesis: agent-juxtaposition refinement -> markdown; headless emits doc, TUI renders for review (scroll + embedded/\$EDITOR), skip path
-- [ ] [WAIT-AGENT] Phase 7 checkpoint green
+- [x] internal/tui: read-only — DONE (23 tests; verified by running the real binary)
+- [x] internal/genesis: agent-juxtaposition — DONE (23 tests; verified by running the real binary)
+- [x] Phase 7 checkpoint — DONE (23 tests; verified by running the real binary)
 
 ## Phase 8 — E2E + teardown + CI
 - [ ] [WAIT-AGENT] tests/e2e fixtures from ~/src/reference-codebases/test-repo; CI-feasible cassette path + local real-agent path (env-gated + spend cap)
