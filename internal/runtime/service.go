@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"sync"
@@ -69,7 +70,17 @@ type Service struct {
 	mu       sync.Mutex
 	workers  map[string]workerState
 	managers map[variant.Name]*workspace.Manager
-	wg       sync.WaitGroup
+	// spendByVariant accumulates provider-reported CostUSD per variant,
+	// restored from the event log at boot so the cap survives restarts.
+	// Guarded by mu. Enforced against the per-variant spend cap so a
+	// RequireSpendCap variant stops dispatching once it burns its cap.
+	spendByVariant map[variant.Name]float64
+	// lastRefusal records the last admission-refusal reason logged per
+	// task, so the 1s scheduler tick doesn't append an identical
+	// worker.admission_refused event every second for a task that stays
+	// pending. Guarded by mu.
+	lastRefusal map[string]string
+	wg          sync.WaitGroup
 }
 
 // NewService constructs a repo-scoped runtime with validated defaults.
@@ -100,11 +111,13 @@ func NewService(opts Options) (*Service, error) {
 		return nil, fmt.Errorf("runtime: resolve paths: %w", err)
 	}
 	return &Service{
-		opts:       opts,
-		paths:      paths,
-		shutdownCh: make(chan struct{}),
-		workers:    map[string]workerState{},
-		managers:   map[variant.Name]*workspace.Manager{},
+		opts:           opts,
+		paths:          paths,
+		shutdownCh:     make(chan struct{}),
+		workers:        map[string]workerState{},
+		managers:       map[variant.Name]*workspace.Manager{},
+		spendByVariant: map[variant.Name]float64{},
+		lastRefusal:    map[string]string{},
 	}, nil
 }
 
@@ -226,6 +239,13 @@ func (s *Service) loadRepoState() error {
 	}
 	if err := s.validateProviderBindings(); err != nil {
 		return err
+	}
+
+	// Restore per-variant spend from the event log so a spend cap survives
+	// service restarts. Without this, a crash/upgrade/restart would zero
+	// the totals and let a capped variant spend the full cap again.
+	if err := s.restoreSpend(context.Background()); err != nil {
+		return fmt.Errorf("restore spend: %w", err)
 	}
 
 	sessionID, err := s.planStore.CreateSession(context.Background(), plandag.SessionOpts{
@@ -428,6 +448,16 @@ func (s *Service) dispatchOnce(ctx context.Context) {
 			if !s.variantAllowed(profile) || !s.hasCapacity(profile) {
 				continue
 			}
+			// Admission control: refuse to spawn a confirmation-gated or
+			// spend-cap-required variant on the durable path unless the
+			// operator has authorized it in local.toml. Without this the
+			// durable service would run destructive gated variants
+			// (savage/old-man/world-breaker) with no confirmation and no
+			// cap — the exact bypass the attached `run` path prevents.
+			if reason, refused := s.durableAdmissionRefusal(profile); refused {
+				s.logAdmissionRefusal(ctx, plan, candidate, profile, reason)
+				continue
+			}
 			sessionVarID, err := s.planStore.CreateSessionVariant(ctx, plandag.SessionVariantOpts{
 				SessionID:           s.sessionID,
 				VariantName:         string(profile.Name),
@@ -453,7 +483,7 @@ func (s *Service) dispatchOnce(ctx context.Context) {
 func (s *Service) startWorker(ctx context.Context, plan plandag.Plan, task plandag.Task, profile variant.Profile, sessionVariantID string) {
 	worktree, mgr, err := s.acquireWorkspace(ctx, profile)
 	if err != nil {
-		_, _ = s.planStore.MarkFailed(ctx, plan.ID, task.ID, s.sessionID, err.Error(), 0)
+		s.markFailed(ctx, plan, task, profile, err.Error(), 0)
 		return
 	}
 	key := workerKey(plan.ID, task.ID)
@@ -493,15 +523,21 @@ func (s *Service) finishWorker(ctx context.Context, key string, mgr *workspace.M
 }
 
 func (s *Service) executeWorker(ctx context.Context, plan plandag.Plan, task plandag.Task, profile variant.Profile, wt *workspace.Worktree) {
-	variantCfg := s.cfg.Variants[string(profile.Name)]
-	binding, err := provider.ResolveBinding(s.cfg, s.local, profile, variantCfg)
+	// Snapshot config under the mutex: reloadConfig swaps s.cfg/s.local
+	// (which hold maps) concurrently with this worker goroutine, so an
+	// unlocked read is a genuine data race, not just staleness.
+	s.mu.Lock()
+	cfg, local := s.cfg, s.local
+	s.mu.Unlock()
+	variantCfg := cfg.Variants[string(profile.Name)]
+	binding, err := provider.ResolveBinding(cfg, local, profile, variantCfg)
 	if err != nil {
-		_, _ = s.planStore.MarkFailed(ctx, plan.ID, task.ID, s.sessionID, err.Error(), 0)
+		s.markFailed(ctx, plan, task, profile, err.Error(), 0)
 		return
 	}
 	runner, err := s.opts.RunnerFactory(binding)
 	if err != nil {
-		_, _ = s.planStore.MarkFailed(ctx, plan.ID, task.ID, s.sessionID, err.Error(), 0)
+		s.markFailed(ctx, plan, task, profile, err.Error(), 0)
 		return
 	}
 	workDir := s.opts.RepoPath
@@ -519,20 +555,23 @@ func (s *Service) executeWorker(ctx context.Context, plan plandag.Plan, task pla
 	}
 	result, err := runner.Run(ctx, binding, request)
 	if err != nil {
-		_, _ = s.planStore.MarkFailed(ctx, plan.ID, task.ID, s.sessionID, err.Error(), 2)
-		_ = s.logEvent(ctx, "worker.error", map[string]any{
+		s.markFailed(ctx, plan, task, profile, err.Error(), 2)
+		ectx, cancelErr := persistCtx()
+		_ = s.logEvent(ectx, "worker.error", map[string]any{
 			"plan_id":  plan.ID,
 			"task_id":  task.ID,
 			"variant":  profile.Name,
 			"provider": binding.Name,
 			"error":    err.Error(),
 		})
+		cancelErr()
 		return
 	}
 	s.recordWorkerProvider(plan.ID, task.ID, binding.Name, result.SessionID)
+	s.recordSpend(ctx, plan, task, profile, binding.Name, result.Usage)
 	parsed, err := parseWorkerResult(result.AssistantOutput)
 	if err != nil {
-		_, _ = s.planStore.MarkFailed(ctx, plan.ID, task.ID, s.sessionID, err.Error(), 0)
+		s.markFailed(ctx, plan, task, profile, err.Error(), 0)
 		return
 	}
 
@@ -548,24 +587,43 @@ func (s *Service) executeWorker(ctx context.Context, plan plandag.Plan, task pla
 		Provider:          binding.Name,
 		ProviderSessionID: result.SessionID,
 	}
+	// Terminal-state writes use a bounded persistence context, not the
+	// worker context: a run that finished as the service was shutting down
+	// must still record its outcome instead of failing on a canceled ctx
+	// and orphaning the claimed task.
+	pctx, cancelPersist := persistCtx()
+	defer cancelPersist()
 	switch parsed.Outcome {
 	case "done":
-		_, _ = s.planStore.MarkDone(ctx, plan.ID, task.ID, s.sessionID, string(payload))
+		_, err = s.planStore.MarkDone(pctx, plan.ID, task.ID, s.sessionID, string(payload))
 	case "handoff":
-		_ = s.planStore.RequeueTaskWithPayload(ctx, plan.ID, task.ID, s.sessionID, taskPayload, parsed.HandoffTo, parsed.ApprovalRequired)
+		err = s.planStore.RequeueTaskWithPayload(pctx, plan.ID, task.ID, s.sessionID, taskPayload, parsed.HandoffTo, parsed.ApprovalRequired)
 	case "need_operator":
 		taskPayload.ApprovalRequired = true
-		_ = s.planStore.RequeueTaskWithPayload(ctx, plan.ID, task.ID, s.sessionID, taskPayload, parsed.HandoffTo, true)
+		err = s.planStore.RequeueTaskWithPayload(pctx, plan.ID, task.ID, s.sessionID, taskPayload, parsed.HandoffTo, true)
 	case "blocked", "need_context":
-		_ = s.planStore.MarkBlocked(ctx, plan.ID, task.ID, s.sessionID, taskPayload)
+		err = s.planStore.MarkBlocked(pctx, plan.ID, task.ID, s.sessionID, taskPayload)
 	default:
 		maxRetries := 0
 		if parsed.Retryable {
 			maxRetries = task.RetryCount + 1
 		}
-		_, _ = s.planStore.MarkFailedWithPayload(ctx, plan.ID, task.ID, s.sessionID, taskPayload, maxRetries)
+		_, err = s.planStore.MarkFailedWithPayload(pctx, plan.ID, task.ID, s.sessionID, taskPayload, maxRetries)
 	}
-	_ = s.logEvent(ctx, "worker.result", map[string]any{
+	// A failed terminal write leaves the task claimed/running with no
+	// durable record of its outcome — the exact silent-orphan failure the
+	// event log exists to make visible. Surface it so the reaper (or an
+	// operator) can reclaim the task instead of it hanging forever.
+	if err != nil {
+		_ = s.logEvent(pctx, "worker.persist_failed", map[string]any{
+			"plan_id": plan.ID,
+			"task_id": task.ID,
+			"variant": profile.Name,
+			"outcome": parsed.Outcome,
+			"error":   err.Error(),
+		})
+	}
+	_ = s.logEvent(pctx, "worker.result", map[string]any{
 		"plan_id":             plan.ID,
 		"task_id":             task.ID,
 		"variant":             profile.Name,
@@ -591,6 +649,81 @@ func (s *Service) recordWorkerProvider(planID, taskID, providerName, providerSes
 	worker.Provider = providerName
 	worker.ProviderSessionID = providerSessionID
 	s.workers[key] = worker
+}
+
+// recordSpend accumulates a worker turn's reported cost against its
+// variant and logs the running total. It also emits a spend-cap-exceeded
+// event when a capped variant crosses its ceiling, so the operator sees
+// the moment enforcement kicks in (dispatch of that variant then stops via
+// durableAdmissionRefusal).
+func (s *Service) recordSpend(ctx context.Context, plan plandag.Plan, task plandag.Task, profile variant.Profile, providerName string, usage provider.Usage) {
+	if usage.CostUSD <= 0 {
+		return
+	}
+	s.mu.Lock()
+	s.spendByVariant[profile.Name] += usage.CostUSD
+	total := s.spendByVariant[profile.Name]
+	capUSD := resolveSpendCapUSD(s.cfg, s.local, profile)
+	s.mu.Unlock()
+
+	_ = s.logEvent(ctx, "worker.spend", map[string]any{
+		"plan_id":       plan.ID,
+		"task_id":       task.ID,
+		"variant":       profile.Name,
+		"provider":      providerName,
+		"cost_usd":      usage.CostUSD,
+		"variant_total": total,
+		"input_tokens":  usage.InputTokens,
+		"output_tokens": usage.OutputTokens,
+	})
+	if capUSD > 0 && total >= capUSD {
+		_ = s.logEvent(ctx, "worker.spend_cap_exceeded", map[string]any{
+			"variant":       profile.Name,
+			"variant_total": total,
+			"spend_cap_usd": capUSD,
+		})
+	}
+}
+
+// spentForVariant returns the accumulated spend for a variant.
+func (s *Service) spentForVariant(name variant.Name) float64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.spendByVariant[name]
+}
+
+// restoreSpend rebuilds spendByVariant by replaying the repo's event log
+// and summing prior worker.spend events. This makes a spend cap durable
+// across restarts: a capped variant that already burned its cap stays
+// refused after a crash or upgrade instead of resetting to zero.
+func (s *Service) restoreSpend(ctx context.Context) error {
+	if s.eventDB == nil {
+		return nil
+	}
+	totals := map[variant.Name]float64{}
+	err := s.eventDB.Replay(ctx, 0, func(e db.Event) error {
+		if e.Kind != "worker.spend" || len(e.PayloadRaw) == 0 {
+			return nil
+		}
+		var p struct {
+			Variant string  `json:"variant"`
+			CostUSD float64 `json:"cost_usd"`
+		}
+		if err := json.Unmarshal(e.PayloadRaw, &p); err != nil {
+			return nil // best-effort: a malformed row must not block boot
+		}
+		if p.Variant != "" {
+			totals[variant.Name(p.Variant)] += p.CostUSD
+		}
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	s.mu.Lock()
+	maps.Copy(s.spendByVariant, totals)
+	s.mu.Unlock()
+	return nil
 }
 
 func (s *Service) heartbeatWorkers(ctx context.Context) {
@@ -668,6 +801,20 @@ func (s *Service) hasCapacity(profile variant.Profile) bool {
 	return active < limit
 }
 
+// activeWorkerCount returns how many workers of a variant are currently
+// in-flight (dispatched but not yet finished).
+func (s *Service) activeWorkerCount(name variant.Name) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	n := 0
+	for _, worker := range s.workers {
+		if worker.Variant == name {
+			n++
+		}
+	}
+	return n
+}
+
 func firstNonEmptyString(values ...string) string {
 	for _, value := range values {
 		if value != "" {
@@ -684,6 +831,94 @@ func (s *Service) variantAllowed(profile variant.Profile) bool {
 	default:
 		return profile.DurableAllowed
 	}
+}
+
+// durableAdmissionRefusal reports whether the durable service must refuse
+// to spawn profile, and why. It mirrors the confirmation-gate and
+// spend-cap checks the attached `run` path enforces (run.go), but for the
+// non-interactive service the authorization comes from local.toml rather
+// than a per-invocation CLI flag. Attached runs already gate at the CLI,
+// so this only fires in durable mode.
+func (s *Service) durableAdmissionRefusal(profile variant.Profile) (string, bool) {
+	if s.opts.SessionMode == plandag.SessionModeAttached {
+		return "", false
+	}
+	s.mu.Lock()
+	local := s.local
+	cfg := s.cfg
+	s.mu.Unlock()
+
+	if profile.HasGate() && !local.DurableVariantConfirmed(string(profile.Name)) {
+		return fmt.Sprintf(
+			"variant %q requires gate %s; authorize it for the durable service by adding %q to confirm_durable_variants in .radioactive-ralph/local.toml",
+			profile.Name, profile.ConfirmationGate, profile.Name), true
+	}
+	if profile.SafetyFloors.RequireSpendCap {
+		capUSD := resolveSpendCapUSD(cfg, local, profile)
+		if capUSD <= 0 {
+			return fmt.Sprintf(
+				"variant %q requires a spend cap; set [spend_cap_usd] %s in .radioactive-ralph/local.toml (or [variants.%s] spend_cap_usd in config.toml)",
+				profile.Name, profile.Name, profile.Name), true
+		}
+		if spent := s.spentForVariant(profile.Name); spent >= capUSD {
+			return fmt.Sprintf(
+				"variant %q has reached its spend cap ($%.2f of $%.2f)",
+				profile.Name, spent, capUSD), true
+		}
+		// Reserve in-flight budget: a capped variant's cost is only known
+		// after runner.Run returns, so admitting a second turn while one is
+		// still running could blow past a small cap by the variant's full
+		// parallelism (savage/world-breaker allow 10). Serialize capped
+		// variants to one in-flight turn so each turn's spend is observed
+		// against the cap before the next is dispatched.
+		if s.activeWorkerCount(profile.Name) > 0 {
+			return fmt.Sprintf(
+				"variant %q has a spend-capped turn in flight; waiting for its cost before dispatching another",
+				profile.Name), true
+		}
+	}
+	return "", false
+}
+
+// logAdmissionRefusal records that the scheduler declined to spawn a
+// gated/uncapped variant. The task stays pending (unclaimed) so a later
+// config change can let it run; the event gives the operator the reason
+// instead of a silently stuck task. It deduplicates by (task, reason): the
+// 1s scheduler tick re-reaches this branch every second for a pending
+// refused task, so logging unconditionally would append ~86k identical
+// rows/day. Only a first refusal or a changed reason is logged.
+func (s *Service) logAdmissionRefusal(ctx context.Context, plan plandag.Plan, task plandag.Task, profile variant.Profile, reason string) {
+	key := workerKey(plan.ID, task.ID)
+	s.mu.Lock()
+	changed := s.lastRefusal[key] != reason
+	if changed {
+		s.lastRefusal[key] = reason
+	}
+	s.mu.Unlock()
+	if !changed {
+		return
+	}
+	_ = s.logEvent(ctx, "worker.admission_refused", map[string]any{
+		"plan_id": plan.ID,
+		"task_id": task.ID,
+		"variant": profile.Name,
+		"reason":  reason,
+	})
+}
+
+// resolveSpendCapUSD returns the durable spend cap for a variant, or 0 if
+// none is set. It prefers the operator-owned local.toml value so a
+// committed config.toml (or a config reload) cannot raise an
+// already-authorized destructive variant's ceiling; it falls back to the
+// committed [variants.X] spend_cap_usd when no local entry exists.
+func resolveSpendCapUSD(cfg config.File, local config.Local, profile variant.Profile) float64 {
+	if v, ok := local.DurableSpendCapUSD(string(profile.Name)); ok {
+		return v
+	}
+	if v, ok := cfg.Variants[string(profile.Name)]; ok && v.SpendCapUSD != nil {
+		return *v.SpendCapUSD
+	}
+	return 0
 }
 
 func (s *Service) idle() bool {
@@ -711,6 +946,13 @@ func (s *Service) idle() bool {
 				continue
 			}
 			if s.opts.VariantFilter != "" && profile.Name != s.opts.VariantFilter {
+				continue
+			}
+			if _, refused := s.durableAdmissionRefusal(profile); refused {
+				// A gated/uncapped variant the service will never spawn
+				// does not count as pending work — otherwise an
+				// ExitWhenIdle service would spin forever on a task it
+				// refuses to run.
 				continue
 			}
 			if s.variantAllowed(profile) {
@@ -804,6 +1046,39 @@ func (s *Service) status(ctx context.Context) (ipc.StatusReply, error) {
 	}, nil
 }
 
+// persistWriteTimeout bounds a recovery/terminal state write so a locked
+// DB can't hang, while detaching it from the worker context so a canceled
+// run can still record its outcome.
+const persistWriteTimeout = 10 * time.Second
+
+// persistCtx returns a bounded context for terminal state writes that must
+// succeed even when the worker's context was canceled (service shutdown,
+// per-task cancellation). Reusing the canceled worker context would make
+// MarkFailed/MarkDone fail immediately and orphan the claimed task — the
+// exact silent-orphan failure this whole path guards against.
+func persistCtx() (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.Background(), persistWriteTimeout)
+}
+
+// markFailed records a task failure and surfaces a persist failure
+// through the event log rather than discarding it. Every worker
+// early-exit path routes through here so a locked/errored plan store
+// can never silently orphan a claimed task. It uses a bounded persistence
+// context so a canceled worker run still records its failure.
+func (s *Service) markFailed(_ context.Context, plan plandag.Plan, task plandag.Task, profile variant.Profile, reason string, maxRetries int) {
+	pctx, cancel := persistCtx()
+	defer cancel()
+	if _, err := s.planStore.MarkFailed(pctx, plan.ID, task.ID, s.sessionID, reason, maxRetries); err != nil {
+		_ = s.logEvent(pctx, "worker.persist_failed", map[string]any{
+			"plan_id": plan.ID,
+			"task_id": task.ID,
+			"variant": profile.Name,
+			"outcome": "failed",
+			"error":   err.Error(),
+		})
+	}
+}
+
 func (s *Service) logEvent(ctx context.Context, kind string, payload any) error {
 	if s.eventDB == nil {
 		return nil
@@ -856,8 +1131,7 @@ func openPlanStore(ctx context.Context) (*plandag.Store, error) {
 	if err := os.MkdirAll(filepath.Dir(dbPath), 0o750); err != nil {
 		return nil, err
 	}
-	dsn := "file:" + dbPath + "?_pragma=foreign_keys(1)&_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)"
-	return plandag.Open(ctx, plandag.Options{DSN: dsn})
+	return plandag.Open(ctx, plandag.Options{DSN: plandag.DSN(dbPath)})
 }
 
 func hostnameOrLocal() string {

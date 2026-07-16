@@ -45,6 +45,9 @@ pytest-results-*.xml
 # Claude Code task-batch runtime state (scratch per-session)
 .claude/state/
 
+# comprehensive-review orchestrator scratch output
+.full-review/
+
 # Astro / site build artifacts
 site/dist/
 site/node_modules/

@@ -33,6 +33,7 @@ type Request struct {
 type Result struct {
     SessionID       string
     AssistantOutput string
+    Usage           Usage // token/cost accounting; zero when unreported
 }
 ```
 
@@ -40,7 +41,11 @@ One `Runner.Run` call = one "turn." The runtime gives the runner a
 fully-resolved request (system prompt, user prompt, working dir,
 allowed tools); the runner invokes the provider CLI, captures stdout,
 and returns the assistant's output plus an optional session ID for
-multi-turn resume.
+multi-turn resume and a best-effort `Usage` (input/output/cached tokens
+and `CostUSD`). The runtime accumulates `Usage.CostUSD` per variant to
+enforce spend caps. Today the `claude` runner populates `Usage` from the
+stream-json result frame; `codex`, `gemini`, and declarative bindings
+report zero until their usage frames are parsed.
 
 ## Stateful vs stateless providers
 
@@ -119,7 +124,6 @@ Supported framings are `plain-stdout`, `last-message-file`, and
 ```toml
 [providers.my-custom-cli]
 type         = "stream-json"         # how to frame I/O
-binary       = "mycli"
 args         = ["chat", "--stream"]  # argv template
 ```
 
@@ -127,6 +131,24 @@ Any CLI that speaks one of the supported framing modes can be wired in
 without writing a new Go file. CLIs that need bespoke streaming,
 authentication, or output recovery still belong in a hand-written
 runner under `internal/provider/`.
+
+### Binary trust boundary
+
+`config.toml` is committed, so a pull request can change it. To keep a
+committed change from pointing the runtime at an arbitrary executable
+(`binary = "/bin/sh"` + a hostile `args`), the **committed** `config.toml`
+may only name a shipped provider binary — `claude`, `codex`, or `gemini`.
+Any other binary (a custom declarative CLI, an absolute path, a wrapper)
+must be supplied via the gitignored, operator-owned `local.toml`:
+
+```toml
+# .radioactive-ralph/local.toml  (gitignored)
+provider_binary = "/usr/local/bin/mycli"
+```
+
+`ValidateBinding` enforces this at service start and before each turn, so a
+committed binary override that is neither shipped nor locally-supplied is
+refused with an actionable error.
 
 ## Adding a new built-in provider
 

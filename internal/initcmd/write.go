@@ -79,9 +79,37 @@ func writeLocalTOML(path string) error {
 #
 # Examples:
 #   log_level       = "info"     # debug | info | warn | error
+#
+# Authorize a custom or non-PATH provider binary. Prefer the per-provider
+# form so authorizing one provider does not override the others:
+#   [provider_binaries]
+#   my-cli = "/usr/local/bin/my-cli"
+#   codex  = "/opt/homebrew/bin/codex"
+#
+# The legacy single global override still works but applies to every
+# provider, so only use it in single-provider repos:
 #   provider_binary = "/usr/local/bin/codex"
+#
+# Authorize the durable service to schedule confirmation-gated destructive
+# variants. This lives here (never in committed config.toml) so a pull
+# request cannot self-authorize a destructive variant.
+#   confirm_durable_variants = ["savage"]   # savage | old-man | world-breaker
+#
+# Operator-owned durable spend ceilings. Kept here (not config.toml) so a
+# committed change or reload cannot raise an authorized variant's cap.
+# Falls back to [variants.X] spend_cap_usd in config.toml when unset.
+#   [spend_cap_usd]
+#   savage = 25.0
 `
-	return os.WriteFile(path, []byte(content), 0o644) //nolint:gosec // config readable by all
+	// 0o600: local.toml carries the operator's binary override and the
+	// durable-variant authorization list — security-relevant, so it must
+	// not be world-readable like the committed config. os.WriteFile keeps
+	// an existing file's mode, so Chmod explicitly to tighten a local.toml
+	// that a prior version created 0o644.
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		return err
+	}
+	return os.Chmod(path, 0o600)
 }
 
 // scaffoldPlans creates .radioactive-ralph/plans/ with a starter index.md

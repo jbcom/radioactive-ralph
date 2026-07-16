@@ -108,8 +108,11 @@ args = ["{modl}"]
 	runCtx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 	err = svc.Run(runCtx)
-	if err == nil || !strings.Contains(err.Error(), "unknown template token") {
-		t.Fatalf("Run error = %v, want unknown template token", err)
+	// A committed config naming an arbitrary binary is refused at
+	// binding-validation time — the config.toml RCE guard — before the
+	// invalid template token is ever reached.
+	if err == nil || !strings.Contains(err.Error(), "may not set binary") {
+		t.Fatalf("Run error = %v, want committed-binary rejection", err)
 	}
 }
 

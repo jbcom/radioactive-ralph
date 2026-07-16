@@ -178,6 +178,50 @@ log_level       = "debug"
 	}
 }
 
+func TestBinaryForPrefersPerProvider(t *testing.T) {
+	l := Local{
+		ProviderBinary:   "/global/fallback",
+		ProviderBinaries: map[string]string{"my-cli": "/opt/my-cli"},
+	}
+	// Per-provider entry wins for its provider.
+	if bin, ok := l.BinaryFor("my-cli"); !ok || bin != "/opt/my-cli" {
+		t.Errorf("BinaryFor(my-cli) = %q,%v; want /opt/my-cli,true", bin, ok)
+	}
+	// A provider with no per-provider entry falls back to the global —
+	// this preserves the legacy single-override behavior.
+	if bin, ok := l.BinaryFor("codex"); !ok || bin != "/global/fallback" {
+		t.Errorf("BinaryFor(codex) = %q,%v; want /global/fallback,true", bin, ok)
+	}
+}
+
+func TestBinaryForPerProviderDoesNotClobberOthers(t *testing.T) {
+	// The mixed-config case from the review: authorizing one custom binary
+	// must not override the shipped providers.
+	l := Local{ProviderBinaries: map[string]string{"my-cli": "/opt/my-cli"}}
+	if _, ok := l.BinaryFor("claude"); ok {
+		t.Error("BinaryFor(claude) applied a per-provider override for a different provider")
+	}
+}
+
+func TestBinaryForNone(t *testing.T) {
+	if _, ok := (Local{}).BinaryFor("claude"); ok {
+		t.Error("empty Local returned an override")
+	}
+}
+
+func TestDurableSpendCapUSD(t *testing.T) {
+	l := Local{SpendCapUSD: map[string]float64{"savage": 5.0}}
+	if v, ok := l.DurableSpendCapUSD("savage"); !ok || v != 5.0 {
+		t.Errorf("DurableSpendCapUSD(savage) = %v,%v; want 5,true", v, ok)
+	}
+	if _, ok := l.DurableSpendCapUSD("world-breaker"); ok {
+		t.Error("unset variant returned a cap")
+	}
+	if _, ok := (Local{}).DurableSpendCapUSD("savage"); ok {
+		t.Error("empty Local returned a cap")
+	}
+}
+
 func TestPath(t *testing.T) {
 	got := Path("/path/to/repo")
 	want := filepath.Join("/path/to/repo", Dir, ConfigFile)

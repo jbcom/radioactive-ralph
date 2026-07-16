@@ -257,7 +257,7 @@ func (s *Store) ClaimNextReady(
 
 	// Atomic claim: set status=running, assigned_variant,
 	// claimed_by_session, claimed_by_variant_id.
-	_, err = tx.ExecContext(ctx, `
+	res, err := tx.ExecContext(ctx, `
 		UPDATE tasks
 		SET status = 'running',
 		    assigned_variant = ?,
@@ -267,6 +267,19 @@ func (s *Store) ClaimNextReady(
 	`, variant, sessionID, sessionVariantID, planID, taskID)
 	if err != nil {
 		return nil, fmt.Errorf("plandag: claim update: %w", err)
+	}
+	// Verify the claim actually landed. With _txlock=immediate this tx
+	// holds the write lock, so a concurrent claimer cannot have flipped
+	// the row out from under us between the SELECT and this UPDATE — but
+	// checking RowsAffected is the correctness backstop that guarantees
+	// we never return a task we did not claim (which would let two
+	// workers run the same task).
+	claimed, err := res.RowsAffected()
+	if err != nil {
+		return nil, fmt.Errorf("plandag: claim rows affected: %w", err)
+	}
+	if claimed == 0 {
+		return nil, ErrNoReadyTask
 	}
 
 	// Emit event for audit log.

@@ -2,9 +2,13 @@ package plandag
 
 import (
 	"context"
+	"database/sql"
 	"errors"
+	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -110,6 +114,151 @@ func TestDAGRoundTrip(t *testing.T) {
 	}
 	if len(newReady) != 1 || newReady[0].ID != "c" {
 		t.Errorf("after completing a+b, ready set = %+v, want only c", newReady)
+	}
+}
+
+// TestDSNPragmas confirms the canonical DSN pins immediate transaction
+// locking and NORMAL synchronous mode — the settings that keep concurrent
+// cross-process writers from failing with BUSY_SNAPSHOT.
+func TestDSNPragmas(t *testing.T) {
+	dsn := DSN("/var/lib/plans.db")
+	for _, want := range []string{
+		"file:/var/lib/plans.db",
+		"_txlock=immediate",
+		"journal_mode(WAL)",
+		"busy_timeout(5000)",
+		"synchronous(NORMAL)",
+	} {
+		if !strings.Contains(dsn, want) {
+			t.Errorf("DSN() = %q, missing %q", dsn, want)
+		}
+	}
+}
+
+// TestDSNPathEscaping confirms a path with URI-significant characters is
+// percent-encoded so it isn't misparsed as query syntax. The string
+// assertion runs everywhere; the real DB open under such a path runs only
+// where '?' is a legal filename character (i.e. not Windows).
+func TestDSNPathEscaping(t *testing.T) {
+	if got := DSN("/tmp/a?b#c%d.db"); !strings.Contains(got, "/tmp/a%3Fb%23c%25d.db") {
+		t.Errorf("DSN did not escape path: %q", got)
+	}
+
+	if runtime.GOOS == "windows" {
+		t.Skip("'?' is not a legal filename character on Windows")
+	}
+
+	// A directory name containing '?' and '%' must still open correctly.
+	dir := filepath.Join(t.TempDir(), "weird?dir%name")
+	if err := os.MkdirAll(dir, 0o750); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	s, err := Open(context.Background(), Options{DSN: DSN(filepath.Join(dir, "plans.db"))})
+	if err != nil {
+		t.Fatalf("Open with URI-significant path: %v", err)
+	}
+	defer func() { _ = s.Close() }()
+	if _, err := s.CreatePlan(context.Background(), CreatePlanOpts{Slug: "x", Title: "x"}); err != nil {
+		t.Fatalf("CreatePlan on escaped-path db: %v", err)
+	}
+}
+
+// TestTxlockHonoredByDriver guards against a driver swap or version bump
+// silently dropping _txlock support, which would defeat the immediate-lock
+// concurrency fix. modernc.org/sqlite parses _txlock and rejects unknown
+// values — a driver that ignored the param would accept "bogus".
+func TestTxlockHonoredByDriver(t *testing.T) {
+	bad, err := sql.Open("sqlite", "file:"+filepath.Join(t.TempDir(), "b.db")+"?_txlock=bogus")
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer func() { _ = bad.Close() }()
+	if err := bad.Ping(); err == nil {
+		t.Fatal("driver accepted _txlock=bogus; _txlock is being ignored, not honored")
+	}
+
+	good, err := sql.Open("sqlite", DSN(filepath.Join(t.TempDir(), "g.db")))
+	if err != nil {
+		t.Fatalf("open immediate: %v", err)
+	}
+	defer func() { _ = good.Close() }()
+	if err := good.Ping(); err != nil {
+		t.Fatalf("_txlock=immediate ping: %v", err)
+	}
+}
+
+// TestConcurrentClaimUnique hammers ClaimNextReady from many goroutines
+// against a single ready task and asserts exactly one claim succeeds. This
+// exercises the RowsAffected backstop: without it, a claimer that loses the
+// UPDATE race would still commit and return the task, letting two workers
+// run it.
+func TestConcurrentClaimUnique(t *testing.T) {
+	ctx := context.Background()
+	s, err := Open(ctx, Options{DSN: DSN(filepath.Join(t.TempDir(), "plans.db"))})
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer func() { _ = s.Close() }()
+
+	planID, err := s.CreatePlan(ctx, CreatePlanOpts{Slug: "race", Title: "race", RepoPath: "/tmp/repo"})
+	if err != nil {
+		t.Fatalf("CreatePlan: %v", err)
+	}
+	if err := s.CreateTask(ctx, CreateTaskOpts{PlanID: planID, ID: "solo", Description: "solo"}); err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+	sessID, err := s.CreateSession(ctx, SessionOpts{
+		Mode: SessionModeAttached, Transport: SessionTransportStdio,
+		PID: 1, PIDStartTime: "2026-04-15T00:00:00Z",
+	})
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+
+	const claimers = 8
+	svIDs := make([]string, claimers)
+	for i := range svIDs {
+		svID, err := s.CreateSessionVariant(ctx, SessionVariantOpts{
+			SessionID: sessID, VariantName: "green",
+			SubprocessPID: 2000 + i, SubprocessStartTime: "2026-04-15T00:00:00Z",
+		})
+		if err != nil {
+			t.Fatalf("CreateSessionVariant %d: %v", i, err)
+		}
+		svIDs[i] = svID
+	}
+
+	var (
+		wg        sync.WaitGroup
+		mu        sync.Mutex
+		succeeded int
+	)
+	start := make(chan struct{})
+	for i := range claimers {
+		wg.Add(1)
+		go func(svID string) {
+			defer wg.Done()
+			<-start
+			task, err := s.ClaimNextReady(ctx, planID, "green", sessID, svID)
+			if err != nil {
+				if !errors.Is(err, ErrNoReadyTask) {
+					t.Errorf("unexpected claim error: %v", err)
+				}
+				return
+			}
+			if task.ID != "solo" {
+				t.Errorf("claimed unexpected task %q", task.ID)
+			}
+			mu.Lock()
+			succeeded++
+			mu.Unlock()
+		}(svIDs[i])
+	}
+	close(start)
+	wg.Wait()
+
+	if succeeded != 1 {
+		t.Errorf("concurrent claims succeeded = %d, want exactly 1", succeeded)
 	}
 }
 

@@ -738,9 +738,7 @@ func openPlanStore(ctx context.Context) (*plandag.Store, error) {
 	if err := os.MkdirAll(filepath.Dir(stateDir), 0o755); err != nil { //nolint:gosec // operator state dir
 		return nil, fmt.Errorf("mkdir %s: %w", filepath.Dir(stateDir), err)
 	}
-	dsn := "file:" + stateDir +
-		"?_pragma=foreign_keys(1)&_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)"
-	return plandag.Open(ctx, plandag.Options{DSN: dsn})
+	return plandag.Open(ctx, plandag.Options{DSN: plandag.DSN(stateDir)})
 }
 
 // resolvePlan accepts either a full UUID or a slug and returns the

@@ -18,6 +18,7 @@ The schema is embedded under schema/\*.sql and applied in lexical order by Migra
 ## Index
 
 - [Variables](<#variables>)
+- [func DSN\(dbPath string\) string](<#DSN>)
 - [func Migrate\(db \*sql.DB\) error](<#Migrate>)
 - [type CreatePlanOpts](<#CreatePlanOpts>)
 - [type CreateTaskOpts](<#CreateTaskOpts>)
@@ -93,6 +94,19 @@ var ErrDuplicateSlug = errors.New("plandag: plan with slug already exists in thi
 var ErrNoReadyTask = errors.New("plandag: no ready task")
 ```
 
+<a name="DSN"></a>
+## func [DSN](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plandag/store.go#L38>)
+
+```go
+func DSN(dbPath string) string
+```
+
+DSN builds the canonical modernc.org/sqlite DSN for a plandag database at dbPath. Every process that opens plans.db \(the durable service, the TUI, and the CLI\) MUST use this so they share identical locking and durability semantics.
+
+\_txlock=immediate makes every transaction take the write lock up front, so a SELECT\-then\-UPDATE \(e.g. ClaimNextReady, the operator transitions\) can never race another process into SQLITE\_BUSY\_SNAPSHOT — which busy\_timeout does NOT retry. busy\_timeout then actually serializes the concurrent writers instead of failing them immediately. synchronous=NORMAL is the documented\-safe pairing with WAL and avoids an fsync on every heartbeat/tick write.
+
+The path is percent\-encoded per the SQLite file: URI rules so a dbPath containing '?', '\#', or '%' is not misparsed as URI syntax and pointed at the wrong database.
+
 <a name="Migrate"></a>
 ## func [Migrate](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plandag/migrate.go#L30>)
 
@@ -141,14 +155,14 @@ type CreateTaskOpts struct {
 ```
 
 <a name="Options"></a>
-## type [Options](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plandag/store.go#L22-L32>)
+## type [Options](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plandag/store.go#L58-L68>)
 
 Options configures Open.
 
 ```go
 type Options struct {
-    // DSN is a modernc.org/sqlite DSN, e.g.
-    // "file:/path/to/plans.db?_pragma=foreign_keys(1)&_pragma=journal_mode(WAL)"
+    // DSN is a modernc.org/sqlite DSN. Prefer building it with DSN() so
+    // every opener shares identical locking/durability pragmas.
     DSN string
 
     // Clock is swappable for tests. Nil defaults to clockwork.NewRealClock().
@@ -308,7 +322,7 @@ type SessionVariantSummary struct {
 ```
 
 <a name="Store"></a>
-## type [Store](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plandag/store.go#L15-L19>)
+## type [Store](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plandag/store.go#L16-L20>)
 
 Store is the plandag handle. It wraps a \*sql.DB plus deterministic clock \+ UUID provider \(test\-swappable\).
 
@@ -319,7 +333,7 @@ type Store struct {
 ```
 
 <a name="Open"></a>
-### func [Open](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plandag/store.go#L35>)
+### func [Open](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plandag/store.go#L71>)
 
 ```go
 func Open(ctx context.Context, opts Options) (*Store, error)
@@ -337,7 +351,7 @@ func (s *Store) AddDep(ctx context.Context, planID, taskID, dependsOn string) er
 AddDep wires task → depends\_on for the same plan. Rejects cycles.
 
 <a name="Store.ApproveTask"></a>
-### func \(\*Store\) [ApproveTask](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plandag/task.go#L546>)
+### func \(\*Store\) [ApproveTask](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plandag/task.go#L559>)
 
 ```go
 func (s *Store) ApproveTask(ctx context.Context, planID, taskID string) error
@@ -346,7 +360,7 @@ func (s *Store) ApproveTask(ctx context.Context, planID, taskID string) error
 ApproveTask transitions a task waiting for operator approval back into the pending set.
 
 <a name="Store.ApproveTaskWithPayload"></a>
-### func \(\*Store\) [ApproveTaskWithPayload](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plandag/task.go#L552>)
+### func \(\*Store\) [ApproveTaskWithPayload](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plandag/task.go#L565>)
 
 ```go
 func (s *Store) ApproveTaskWithPayload(ctx context.Context, planID, taskID string, payload TaskEventPayload) error
@@ -382,7 +396,7 @@ func (s *Store) ClearSessionVariantTask(ctx context.Context, sessionVariantID, s
 ClearSessionVariantTask clears the active task from one worker row and marks it idle or terminated.
 
 <a name="Store.Close"></a>
-### func \(\*Store\) [Close](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plandag/store.go#L76>)
+### func \(\*Store\) [Close](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plandag/store.go#L112>)
 
 ```go
 func (s *Store) Close() error
@@ -436,7 +450,7 @@ func (s *Store) CreateTask(ctx context.Context, o CreateTaskOpts) error
 CreateTask inserts a pending task. Callers wire dependencies via AddDep.
 
 <a name="Store.DB"></a>
-### func \(\*Store\) [DB](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plandag/store.go#L82>)
+### func \(\*Store\) [DB](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plandag/store.go#L118>)
 
 ```go
 func (s *Store) DB() *sql.DB
@@ -454,7 +468,7 @@ func (s *Store) GetPlan(ctx context.Context, id string) (*Plan, error)
 GetPlan loads a plan by id.
 
 <a name="Store.GetTask"></a>
-### func \(\*Store\) [GetTask](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plandag/task.go#L293>)
+### func \(\*Store\) [GetTask](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plandag/task.go#L306>)
 
 ```go
 func (s *Store) GetTask(ctx context.Context, planID, id string) (*Task, error)
@@ -508,7 +522,7 @@ func (s *Store) ListRepoTaskSummaries(ctx context.Context, repoPath string, stat
 ListRepoTaskSummaries returns tasks for one repo with enough plan/event context for operator UIs.
 
 <a name="Store.ListTaskEvents"></a>
-### func \(\*Store\) [ListTaskEvents](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plandag/task.go#L357>)
+### func \(\*Store\) [ListTaskEvents](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plandag/task.go#L370>)
 
 ```go
 func (s *Store) ListTaskEvents(ctx context.Context, planID, taskID string, limit int) ([]TaskEvent, error)
@@ -517,7 +531,7 @@ func (s *Store) ListTaskEvents(ctx context.Context, planID, taskID string, limit
 ListTaskEvents returns the most recent task events first.
 
 <a name="Store.ListTasks"></a>
-### func \(\*Store\) [ListTasks](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plandag/task.go#L315>)
+### func \(\*Store\) [ListTasks](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plandag/task.go#L328>)
 
 ```go
 func (s *Store) ListTasks(ctx context.Context, planID string, statuses []TaskStatus) ([]Task, error)
@@ -526,7 +540,7 @@ func (s *Store) ListTasks(ctx context.Context, planID string, statuses []TaskSta
 ListTasks returns tasks for one plan, optionally filtered by status.
 
 <a name="Store.MarkBlocked"></a>
-### func \(\*Store\) [MarkBlocked](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plandag/task.go#L792>)
+### func \(\*Store\) [MarkBlocked](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plandag/task.go#L826>)
 
 ```go
 func (s *Store) MarkBlocked(ctx context.Context, planID, taskID, sessionID string, payload TaskEventPayload) error
@@ -535,7 +549,7 @@ func (s *Store) MarkBlocked(ctx context.Context, planID, taskID, sessionID strin
 MarkBlocked releases a running task into the blocked set so an operator can later requeue or otherwise intervene.
 
 <a name="Store.MarkDone"></a>
-### func \(\*Store\) [MarkDone](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plandag/task.go#L392>)
+### func \(\*Store\) [MarkDone](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plandag/task.go#L405>)
 
 ```go
 func (s *Store) MarkDone(ctx context.Context, planID, taskID, sessionID string, evidenceJSON string) ([]Task, error)
@@ -544,7 +558,7 @@ func (s *Store) MarkDone(ctx context.Context, planID, taskID, sessionID string, 
 MarkDone transitions a running task to done, logs the event, and returns the set of newly\-ready downstream tasks.
 
 <a name="Store.MarkFailed"></a>
-### func \(\*Store\) [MarkFailed](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plandag/task.go#L431>)
+### func \(\*Store\) [MarkFailed](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plandag/task.go#L444>)
 
 ```go
 func (s *Store) MarkFailed(ctx context.Context, planID, taskID, sessionID, reason string, maxRetries int) (retried bool, err error)
@@ -553,7 +567,7 @@ func (s *Store) MarkFailed(ctx context.Context, planID, taskID, sessionID, reaso
 MarkFailed transitions a running task to failed or retries.
 
 <a name="Store.MarkFailedWithPayload"></a>
-### func \(\*Store\) [MarkFailedWithPayload](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plandag/task.go#L437>)
+### func \(\*Store\) [MarkFailedWithPayload](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plandag/task.go#L450>)
 
 ```go
 func (s *Store) MarkFailedWithPayload(ctx context.Context, planID, taskID, sessionID string, payload TaskEventPayload, maxRetries int) (retried bool, err error)
@@ -562,16 +576,16 @@ func (s *Store) MarkFailedWithPayload(ctx context.Context, planID, taskID, sessi
 MarkFailedWithPayload transitions a running task to failed or retries while preserving structured payload details in task history.
 
 <a name="Store.OperatorDecomposeTask"></a>
-### func \(\*Store\) [OperatorDecomposeTask](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plandag/task.go#L723>)
+### func \(\*Store\) [OperatorDecomposeTask](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plandag/task.go#L746>)
 
 ```go
 func (s *Store) OperatorDecomposeTask(ctx context.Context, planID, taskID string, payload TaskEventPayload) error
 ```
 
-OperatorDecomposeTask marks a task as decomposed — it has been broken down into child tasks \(the caller is responsible for creating those children and wiring task\_deps pointing at this task as parent\_task\_id\). A decomposed task is treated as satisfied by downstream dependency predicates so dependents become claimable once the children are done \(or skipped\). The typed API guarantees the audit\-log row is emitted alongside the transition, matching the discipline of every other operator action.
+OperatorDecomposeTask marks a task as decomposed — it has been broken down into child tasks \(the caller is responsible for creating those children and wiring task\_deps pointing at this task as parent\_task\_id\). A decomposed task is treated as satisfied by downstream dependency predicates so dependents become claimable once the children are done \(or skipped\). The status transition and audit\-log insert run in one transaction so the task cannot end up decomposed without an audit row.
 
 <a name="Store.OperatorFailTask"></a>
-### func \(\*Store\) [OperatorFailTask](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plandag/task.go#L660>)
+### func \(\*Store\) [OperatorFailTask](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plandag/task.go#L673>)
 
 ```go
 func (s *Store) OperatorFailTask(ctx context.Context, planID, taskID string, payload TaskEventPayload) error
@@ -580,7 +594,7 @@ func (s *Store) OperatorFailTask(ctx context.Context, planID, taskID string, pay
 OperatorFailTask force\-fails a task and records an operator action.
 
 <a name="Store.OperatorHandoffTask"></a>
-### func \(\*Store\) [OperatorHandoffTask](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plandag/task.go#L653>)
+### func \(\*Store\) [OperatorHandoffTask](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plandag/task.go#L666>)
 
 ```go
 func (s *Store) OperatorHandoffTask(ctx context.Context, planID, taskID string, payload TaskEventPayload, variantHint string, requireApproval bool) error
@@ -589,16 +603,16 @@ func (s *Store) OperatorHandoffTask(ctx context.Context, planID, taskID string, 
 OperatorHandoffTask returns a task to the runnable queue with a new variant hint supplied by the operator.
 
 <a name="Store.OperatorMarkDone"></a>
-### func \(\*Store\) [OperatorMarkDone](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plandag/task.go#L756>)
+### func \(\*Store\) [OperatorMarkDone](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plandag/task.go#L790>)
 
 ```go
 func (s *Store) OperatorMarkDone(ctx context.Context, planID, taskID string, payload TaskEventPayload) error
 ```
 
-OperatorMarkDone force\-completes a task from the operator surface, regardless of which session \(if any\) currently owns it. This is the operator analogue of the worker\-side MarkDone and closes the operator quartet \(requeue / retry / handoff / fail\) into a quintet by adding the "force done" action. It is the backing for \`plan mark\-done\` when the task is in a non\-running state \(blocked, failed, ready\_pending\_approval, or pending\); for running tasks the worker\- side MarkDone path already applies.
+OperatorMarkDone force\-completes a task from the operator surface, regardless of which session \(if any\) currently owns it. This is the operator analogue of the worker\-side MarkDone and closes the operator quartet \(requeue / retry / handoff / fail\) into a quintet by adding the "force done" action. It is the backing for \`plan mark\-done\` when the task is in a non\-running state \(blocked, failed, ready\_pending\_approval, or pending\); for running tasks the worker\- side MarkDone path already applies. skipped tasks are treated as terminal and rejected, matching OperatorFailTask's guard clause — un\-skipping a task is not allowed.
 
 <a name="Store.OperatorRequeueTask"></a>
-### func \(\*Store\) [OperatorRequeueTask](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plandag/task.go#L574>)
+### func \(\*Store\) [OperatorRequeueTask](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plandag/task.go#L587>)
 
 ```go
 func (s *Store) OperatorRequeueTask(ctx context.Context, planID, taskID string, payload TaskEventPayload, variantHint string, requireApproval bool) error
@@ -607,7 +621,7 @@ func (s *Store) OperatorRequeueTask(ctx context.Context, planID, taskID string, 
 OperatorRequeueTask returns a blocked/failed/approval\-gated task to the runnable queue and records the operator action in task history.
 
 <a name="Store.OperatorRetryTask"></a>
-### func \(\*Store\) [OperatorRetryTask](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plandag/task.go#L615>)
+### func \(\*Store\) [OperatorRetryTask](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plandag/task.go#L628>)
 
 ```go
 func (s *Store) OperatorRetryTask(ctx context.Context, planID, taskID string, payload TaskEventPayload) error
@@ -616,13 +630,13 @@ func (s *Store) OperatorRetryTask(ctx context.Context, planID, taskID string, pa
 OperatorRetryTask increments retry\_count and returns a blocked/failed task to the runnable queue.
 
 <a name="Store.OperatorSkipTask"></a>
-### func \(\*Store\) [OperatorSkipTask](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plandag/task.go#L690>)
+### func \(\*Store\) [OperatorSkipTask](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plandag/task.go#L705>)
 
 ```go
 func (s *Store) OperatorSkipTask(ctx context.Context, planID, taskID string, payload TaskEventPayload) error
 ```
 
-OperatorSkipTask transitions a task into the skipped lifecycle state and records the operator action in task history. A skipped task is treated as satisfied by downstream dependency predicates \(see Ready\), so dependents become claimable — matching the operator intent of "drop this task but unblock the rest of the DAG".
+OperatorSkipTask transitions a task into the skipped lifecycle state and records the operator action in task history. A skipped task is treated as satisfied by downstream dependency predicates \(see Ready\), so dependents become claimable — matching the operator intent of "drop this task but unblock the rest of the DAG". The status transition and audit\-log insert run in one transaction so the task cannot end up skipped without an audit row.
 
 <a name="Store.Ready"></a>
 ### func \(\*Store\) [Ready](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plandag/task.go#L188>)
@@ -634,7 +648,7 @@ func (s *Store) Ready(ctx context.Context, planID string) ([]Task, error)
 Ready returns tasks that are ready to run — every dependency is in a terminal\-satisfied state \(\`done\`, \`skipped\`, or \`decomposed\`\). Result is ordered by created\_at for stable test output.
 
 <a name="Store.RequeueTask"></a>
-### func \(\*Store\) [RequeueTask](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plandag/task.go#L496>)
+### func \(\*Store\) [RequeueTask](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plandag/task.go#L509>)
 
 ```go
 func (s *Store) RequeueTask(ctx context.Context, planID, taskID, sessionID, reason, variantHint string, requireApproval bool) error
@@ -643,7 +657,7 @@ func (s *Store) RequeueTask(ctx context.Context, planID, taskID, sessionID, reas
 RequeueTask releases a running task back into the DAG, optionally changing the variant hint and/or requiring operator approval before it becomes runnable again.
 
 <a name="Store.RequeueTaskWithPayload"></a>
-### func \(\*Store\) [RequeueTaskWithPayload](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plandag/task.go#L506>)
+### func \(\*Store\) [RequeueTaskWithPayload](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plandag/task.go#L519>)
 
 ```go
 func (s *Store) RequeueTaskWithPayload(ctx context.Context, planID, taskID, sessionID string, payload TaskEventPayload, variantHint string, requireApproval bool) error

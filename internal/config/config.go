@@ -18,6 +18,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 
 	"github.com/BurntSushi/toml"
 )
@@ -108,8 +109,69 @@ type VariantFile struct {
 // Local is the shape of local.toml (gitignored per-operator preferences).
 // Keeping it minimal on purpose — everything else belongs in config.toml.
 type Local struct {
-	LogLevel       string `toml:"log_level"`
+	LogLevel string `toml:"log_level"`
+
+	// ProviderBinary is a legacy single-provider binary override applied
+	// to whichever provider is being resolved. Prefer ProviderBinaries
+	// (per-provider) when a repo mixes providers; a global override would
+	// otherwise clobber every provider's binary. Retained for
+	// backward compatibility as the fallback when no per-provider entry
+	// matches.
 	ProviderBinary string `toml:"provider_binary"`
+
+	// ProviderBinaries maps a provider name to its operator-supplied
+	// binary path, so a repo can authorize a custom binary for one
+	// provider (e.g. a declarative "my-cli") without overriding the
+	// shipped claude/codex/gemini binaries. Entries here take precedence
+	// over the global ProviderBinary.
+	ProviderBinaries map[string]string `toml:"provider_binaries"`
+
+	// ConfirmDurableVariants lists variant names the operator has
+	// explicitly authorized the durable repo service to schedule despite
+	// their confirmation gate (savage, old-man, world-breaker). The
+	// attached `run` path confirms gates with a per-invocation CLI flag;
+	// the durable service has no interactive step, so authorization lives
+	// here — in the GITIGNORED local.toml, never in committed config.toml.
+	// This is deliberate: a committed file must not be able to
+	// self-authorize a destructive variant, so a malicious PR cannot flip
+	// a plan to world-breaker and have the service run it.
+	ConfirmDurableVariants []string `toml:"confirm_durable_variants"`
+
+	// SpendCapUSD maps a variant name to its operator-owned spend ceiling
+	// for the durable service. This lives in local.toml alongside the gate
+	// confirmation so the operator who authorizes a destructive variant
+	// also owns its cap — a committed config.toml (or a config reload) must
+	// not be able to raise an already-authorized variant's ceiling. When
+	// no local entry exists, the durable cap falls back to the committed
+	// [variants.X] spend_cap_usd.
+	SpendCapUSD map[string]float64 `toml:"spend_cap_usd"`
+}
+
+// DurableSpendCapUSD returns the operator-owned durable spend cap for a
+// variant from local.toml, and whether one was set.
+func (l Local) DurableSpendCapUSD(variantName string) (float64, bool) {
+	v, ok := l.SpendCapUSD[variantName]
+	return v, ok
+}
+
+// DurableVariantConfirmed reports whether the operator has authorized the
+// durable service to schedule the named variant despite its gate.
+func (l Local) DurableVariantConfirmed(name string) bool {
+	return slices.Contains(l.ConfirmDurableVariants, name)
+}
+
+// BinaryFor returns the operator-supplied binary override for a provider,
+// preferring the per-provider ProviderBinaries entry and falling back to
+// the legacy global ProviderBinary. The bool reports whether any override
+// applied (used as the binary-trust provenance signal).
+func (l Local) BinaryFor(providerName string) (string, bool) {
+	if bin, ok := l.ProviderBinaries[providerName]; ok && bin != "" {
+		return bin, true
+	}
+	if l.ProviderBinary != "" {
+		return l.ProviderBinary, true
+	}
+	return "", false
 }
 
 // Errors returned by the config package.

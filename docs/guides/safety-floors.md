@@ -33,6 +33,27 @@ in the variant profile and are surfaced through the operator task
 controls (`plan approvals`, `plan approve`, `plan blocked`,
 `plan requeue`, `plan retry`, `plan handoff`).
 
+Gate confirmation differs by execution path:
+
+- **Attached (`radioactive_ralph run --variant X`)** — the operator passes
+  the per-invocation flag (`--confirm-burn-budget`, `--confirm-no-mercy`,
+  `--confirm-burn-everything`). The run refuses to start without it.
+- **Durable (`radioactive_ralph service start`)** — the service is
+  non-interactive, so authorization lives in the gitignored `local.toml`:
+
+  ```toml
+  # .radioactive-ralph/local.toml  (gitignored)
+  confirm_durable_variants = ["savage"]   # savage | old-man | world-breaker
+  ```
+
+  Authorization lives in `local.toml` and **never** in committed
+  `config.toml` — a pull request must not be able to flip a plan to a
+  destructive variant and have the service run it. The durable scheduler
+  refuses to dispatch a gated variant that is not listed (and a
+  spend-cap-required variant with no cap), emitting a
+  `worker.admission_refused` event with the reason; the task stays pending
+  until the operator authorizes it.
+
 The `ShellExplicitlyTrusted` field on the variant profile is reserved
 for a future "opt-out" path, but the live runtime does not honor it —
 destructive variants are gated exclusively by explicit run-time
@@ -73,6 +94,17 @@ subprocess execution. Attached runs are bounded specifically so the operator is
 not depending on orphaned background state.
 
 **Why:** the runtime should be the only authority over durable execution.
+
+## Spend caps
+
+Variants whose profile declares `RequireSpendCap` (savage, world-breaker)
+must have a cap set — `--spend-cap-usd` on the attached path, or
+`[variants.<name>] spend_cap_usd` in `config.toml` for the durable service.
+The durable runtime accumulates the provider-reported cost per variant and
+stops dispatching that variant once its running total reaches the cap,
+recording `worker.spend` and `worker.spend_cap_exceeded` events. Cost
+metering is populated by the `claude` runner today; other providers require
+a cap value but are not yet cost-metered.
 
 ## Confirmation flow
 

@@ -37,6 +37,7 @@ func (ClaudeRunner) Run(ctx context.Context, binding Binding, req Request) (Resu
 	defer func() { _ = s.Close() }()
 
 	var assistant bytes.Buffer
+	var usage Usage
 	done := make(chan error, 1)
 	go func() {
 		for ev := range s.Events() {
@@ -50,6 +51,7 @@ func (ClaudeRunner) Run(ctx context.Context, binding Binding, req Request) (Resu
 					assistant.WriteString(text)
 				}
 			case "result":
+				usage = parseClaudeUsage(ev.Inbound.Raw)
 				done <- nil
 				return
 			}
@@ -66,7 +68,36 @@ func (ClaudeRunner) Run(ctx context.Context, binding Binding, req Request) (Resu
 	return Result{
 		SessionID:       s.SessionID(),
 		AssistantOutput: normalizeStructuredOutput(assistant.String(), req),
+		Usage:           usage,
 	}, nil
+}
+
+// parseClaudeUsage extracts token/cost accounting from a stream-json
+// `result` frame. Claude Code emits total_cost_usd and a usage object on
+// the terminal result line; both are best-effort — a frame without them
+// yields a zero Usage rather than an error.
+func parseClaudeUsage(raw []byte) Usage {
+	if len(raw) == 0 {
+		return Usage{}
+	}
+	var frame struct {
+		TotalCostUSD float64 `json:"total_cost_usd"`
+		Usage        struct {
+			InputTokens              int `json:"input_tokens"`
+			OutputTokens             int `json:"output_tokens"`
+			CacheReadInputTokens     int `json:"cache_read_input_tokens"`
+			CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
+		} `json:"usage"`
+	}
+	if err := json.Unmarshal(raw, &frame); err != nil {
+		return Usage{}
+	}
+	return Usage{
+		InputTokens:       frame.Usage.InputTokens,
+		OutputTokens:      frame.Usage.OutputTokens,
+		CachedInputTokens: frame.Usage.CacheReadInputTokens + frame.Usage.CacheCreationInputTokens,
+		CostUSD:           frame.TotalCostUSD,
+	}
 }
 
 func resolveModel(cfg bindingConfig, model variant.Model) string {

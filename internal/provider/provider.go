@@ -15,6 +15,14 @@ import (
 type Binding struct {
 	Name   string
 	Config config.ProviderFile
+
+	// BinaryFromLocal is true when Config.Binary was set by the gitignored
+	// local.toml provider_binary override rather than by committed
+	// config.toml. Committed config may only name a shipped provider
+	// binary (claude/codex/gemini); an arbitrary binary must come from
+	// local.toml, so a pull request cannot point the runtime at
+	// /bin/sh. ValidateBinding enforces this.
+	BinaryFromLocal bool
 }
 
 // Request is the provider-neutral execution contract for one worker turn.
@@ -28,10 +36,27 @@ type Request struct {
 	AllowedTools []string
 }
 
+// Usage captures the token/cost accounting for one provider turn. Fields
+// are zero when the provider does not report them. Coverage today: the
+// claude runner populates Usage from the stream-json result frame; codex,
+// gemini, and declarative bindings report zero (their CLIs surface usage
+// differently and are not yet parsed). CostUSD is authoritative when
+// non-zero; the runtime accumulates it for spend-cap enforcement, so a
+// capped variant on an unreported provider still requires a cap value but
+// its cost is not yet metered. Extending codex/gemini parsing is the
+// follow-up to close that gap.
+type Usage struct {
+	InputTokens       int
+	OutputTokens      int
+	CachedInputTokens int
+	CostUSD           float64
+}
+
 // Result captures the observable output of one provider turn.
 type Result struct {
 	SessionID       string
 	AssistantOutput string
+	Usage           Usage
 }
 
 // Runner executes one provider turn.
@@ -59,15 +84,27 @@ func ResolveBinding(cfg config.File, local config.Local, _ variant.Profile, from
 	if providerCfg.Type == "" {
 		providerCfg.Type = name
 	}
-	if local.ProviderBinary != "" {
-		providerCfg.Binary = local.ProviderBinary
+	binaryFromLocal := false
+	if bin, ok := local.BinaryFor(name); ok {
+		providerCfg.Binary = bin
+		binaryFromLocal = true
 	}
 	if providerCfg.Binary == "" {
 		if builtIn, ok := builtInProvider(providerCfg.Type); ok {
 			providerCfg.Binary = builtIn.Binary
 		}
 	}
-	return Binding{Name: name, Config: providerCfg}, nil
+	return Binding{Name: name, Config: providerCfg, BinaryFromLocal: binaryFromLocal}, nil
+}
+
+// shippedProviderBinaries are the executable names the built-in provider
+// types resolve to. A committed config.toml may name one of these; any
+// other binary must come from the gitignored local.toml provider_binary
+// override. Keep in sync with config.Default*Provider.
+var shippedProviderBinaries = map[string]bool{
+	"claude": true,
+	"codex":  true,
+	"gemini": true,
 }
 
 // NewRunner returns the runtime implementation for a provider type.
