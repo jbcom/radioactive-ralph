@@ -13,6 +13,13 @@ shipped. That means historical sections may still mention MCP, plugins,
 supervisors, or the archived Python implementation even though those are no
 longer part of the live contract.
 
+## [0.9.0](https://github.com/jbcom/radioactive-ralph/compare/v0.8.3...v0.9.0) (2026-07-16)
+
+
+### Features
+
+* **provider:** remove gemini as a shipped provider (deprecated 2026-06-18) ([#66](https://github.com/jbcom/radioactive-ralph/issues/66)) ([26a433e](https://github.com/jbcom/radioactive-ralph/commit/26a433e423a5d90c946f92b18fbdc326ab9bfa32))
+
 ## [0.8.3](https://github.com/jbcom/radioactive-ralph/compare/v0.8.2...v0.8.3) (2026-07-16)
 
 
