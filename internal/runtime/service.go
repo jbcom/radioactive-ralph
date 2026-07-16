@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"sync"
@@ -69,12 +70,17 @@ type Service struct {
 	mu       sync.Mutex
 	workers  map[string]workerState
 	managers map[variant.Name]*workspace.Manager
-	// spendByVariant accumulates provider-reported CostUSD per variant for
-	// this service's lifetime. Guarded by mu. Enforced against the
-	// per-variant spend cap so a RequireSpendCap variant stops dispatching
-	// once it burns its cap.
+	// spendByVariant accumulates provider-reported CostUSD per variant,
+	// restored from the event log at boot so the cap survives restarts.
+	// Guarded by mu. Enforced against the per-variant spend cap so a
+	// RequireSpendCap variant stops dispatching once it burns its cap.
 	spendByVariant map[variant.Name]float64
-	wg             sync.WaitGroup
+	// lastRefusal records the last admission-refusal reason logged per
+	// task, so the 1s scheduler tick doesn't append an identical
+	// worker.admission_refused event every second for a task that stays
+	// pending. Guarded by mu.
+	lastRefusal map[string]string
+	wg          sync.WaitGroup
 }
 
 // NewService constructs a repo-scoped runtime with validated defaults.
@@ -111,6 +117,7 @@ func NewService(opts Options) (*Service, error) {
 		workers:        map[string]workerState{},
 		managers:       map[variant.Name]*workspace.Manager{},
 		spendByVariant: map[variant.Name]float64{},
+		lastRefusal:    map[string]string{},
 	}, nil
 }
 
@@ -232,6 +239,13 @@ func (s *Service) loadRepoState() error {
 	}
 	if err := s.validateProviderBindings(); err != nil {
 		return err
+	}
+
+	// Restore per-variant spend from the event log so a spend cap survives
+	// service restarts. Without this, a crash/upgrade/restart would zero
+	// the totals and let a capped variant spend the full cap again.
+	if err := s.restoreSpend(context.Background()); err != nil {
+		return fmt.Errorf("restore spend: %w", err)
 	}
 
 	sessionID, err := s.planStore.CreateSession(context.Background(), plandag.SessionOpts{
@@ -670,6 +684,40 @@ func (s *Service) spentForVariant(name variant.Name) float64 {
 	return s.spendByVariant[name]
 }
 
+// restoreSpend rebuilds spendByVariant by replaying the repo's event log
+// and summing prior worker.spend events. This makes a spend cap durable
+// across restarts: a capped variant that already burned its cap stays
+// refused after a crash or upgrade instead of resetting to zero.
+func (s *Service) restoreSpend(ctx context.Context) error {
+	if s.eventDB == nil {
+		return nil
+	}
+	totals := map[variant.Name]float64{}
+	err := s.eventDB.Replay(ctx, 0, func(e db.Event) error {
+		if e.Kind != "worker.spend" || len(e.PayloadRaw) == 0 {
+			return nil
+		}
+		var p struct {
+			Variant string  `json:"variant"`
+			CostUSD float64 `json:"cost_usd"`
+		}
+		if err := json.Unmarshal(e.PayloadRaw, &p); err != nil {
+			return nil // best-effort: a malformed row must not block boot
+		}
+		if p.Variant != "" {
+			totals[variant.Name(p.Variant)] += p.CostUSD
+		}
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	s.mu.Lock()
+	maps.Copy(s.spendByVariant, totals)
+	s.mu.Unlock()
+	return nil
+}
+
 func (s *Service) heartbeatWorkers(ctx context.Context) {
 	if s.planStore == nil {
 		return
@@ -745,6 +793,20 @@ func (s *Service) hasCapacity(profile variant.Profile) bool {
 	return active < limit
 }
 
+// activeWorkerCount returns how many workers of a variant are currently
+// in-flight (dispatched but not yet finished).
+func (s *Service) activeWorkerCount(name variant.Name) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	n := 0
+	for _, worker := range s.workers {
+		if worker.Variant == name {
+			n++
+		}
+	}
+	return n
+}
+
 func firstNonEmptyString(values ...string) string {
 	for _, value := range values {
 		if value != "" {
@@ -795,6 +857,17 @@ func (s *Service) durableAdmissionRefusal(profile variant.Profile) (string, bool
 				"variant %q has reached its spend cap ($%.2f of $%.2f)",
 				profile.Name, spent, capUSD), true
 		}
+		// Reserve in-flight budget: a capped variant's cost is only known
+		// after runner.Run returns, so admitting a second turn while one is
+		// still running could blow past a small cap by the variant's full
+		// parallelism (savage/world-breaker allow 10). Serialize capped
+		// variants to one in-flight turn so each turn's spend is observed
+		// against the cap before the next is dispatched.
+		if s.activeWorkerCount(profile.Name) > 0 {
+			return fmt.Sprintf(
+				"variant %q has a spend-capped turn in flight; waiting for its cost before dispatching another",
+				profile.Name), true
+		}
 	}
 	return "", false
 }
@@ -802,8 +875,21 @@ func (s *Service) durableAdmissionRefusal(profile variant.Profile) (string, bool
 // logAdmissionRefusal records that the scheduler declined to spawn a
 // gated/uncapped variant. The task stays pending (unclaimed) so a later
 // config change can let it run; the event gives the operator the reason
-// instead of a silently stuck task.
+// instead of a silently stuck task. It deduplicates by (task, reason): the
+// 1s scheduler tick re-reaches this branch every second for a pending
+// refused task, so logging unconditionally would append ~86k identical
+// rows/day. Only a first refusal or a changed reason is logged.
 func (s *Service) logAdmissionRefusal(ctx context.Context, plan plandag.Plan, task plandag.Task, profile variant.Profile, reason string) {
+	key := workerKey(plan.ID, task.ID)
+	s.mu.Lock()
+	changed := s.lastRefusal[key] != reason
+	if changed {
+		s.lastRefusal[key] = reason
+	}
+	s.mu.Unlock()
+	if !changed {
+		return
+	}
 	_ = s.logEvent(ctx, "worker.admission_refused", map[string]any{
 		"plan_id": plan.ID,
 		"task_id": task.ID,
