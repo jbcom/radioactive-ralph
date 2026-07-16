@@ -97,10 +97,13 @@ func ResolveBinding(cfg File, local Local, fromConfig VariantFile) (Binding, err
 // shippedProviderBinaries are the executable names the built-in provider
 // types resolve to. A committed config.toml may name one of these; any
 // other binary must come from the gitignored local.toml provider_binary
-// override. Keep in sync with config.Default*Provider.
+// override. Keep in sync with builtInProvider. agy is deliberately absent:
+// the spike in agy.go found it is not local-only, so no runner is
+// registered for it and it must never be reachable from committed config.
 var shippedProviderBinaries = map[string]bool{
-	"claude": true,
-	"codex":  true,
+	"claude":   true,
+	"codex":    true,
+	"opencode": true,
 }
 
 // NewRunner returns the runtime implementation for a provider type.
@@ -110,6 +113,8 @@ func NewRunner(binding Binding) (Runner, error) {
 		return ClaudeRunner{}, nil
 	case "codex":
 		return CodexRunner{}, nil
+	case "opencode":
+		return OpencodeRunner{}, nil
 	case declarativePlainStdout, declarativeLastMessageFile, declarativeStreamJSON:
 		return DeclarativeRunner{}, nil
 	default:
@@ -123,6 +128,8 @@ func builtInProvider(name string) (BindingConfig, bool) {
 		return defaultClaudeProvider(), true
 	case "codex":
 		return defaultCodexProvider(), true
+	case "opencode":
+		return defaultOpencodeProvider(), true
 	default:
 		return BindingConfig{}, false
 	}

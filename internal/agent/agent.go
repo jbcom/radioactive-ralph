@@ -74,6 +74,17 @@ func (a *Agent) readLoop() {
 // Output is the line-oriented output stream; closed when the process exits.
 func (a *Agent) Output() <-chan []byte { return a.out }
 
+// WriteInput writes raw bytes to the agent's pty stdin. Per spec §1, agents
+// run non-interactively and need little/no input; this exists for the
+// providers that drive a CLI's stdin-based protocol (e.g. `claude -p
+// --input-format stream-json`, which reads one JSON-line user message per
+// turn) rather than passing the whole prompt as an argv/file. Direct
+// Write() to the ptmx, per spec §2.
+func (a *Agent) WriteInput(b []byte) error {
+	_, err := a.ptmx.Write(b)
+	return err
+}
+
 // Done is closed when the process exits.
 func (a *Agent) Done() <-chan struct{} { return a.done }
 
