@@ -29,17 +29,17 @@ docs/superpowers/specs/2026-07-16-supervisor-architecture-design.md.
 - [x] Phase 3 checkpoint — DONE (16 tests, green)
 
 ## Phase 4 — Supervisor + discovery (cobra CLI, kong removed)
-- [ ] [WAIT-AGENT] internal/supervisor lifecycle (owns agents + store) — delegated to Phase-4 executor
-- [ ] [WAIT-AGENT] supervisor discovery (socket-at-XDG, single-instance, stale reclaim) — delegated to Phase-4 executor
-- [ ] [WAIT-AGENT] dumb client discover-or-refuse + kong->cobra/viper CLI migration — delegated to Phase-4 executor
-- [ ] [WAIT-AGENT] Phase 4 checkpoint (client refuses w/o supervisor; 2nd supervisor refuses; stale reclaim) — verify on return
+- [x] internal/supervisor lifecycle — DONE (9 tests; old model torn out; whole repo green)
+- [x] supervisor discovery — DONE (9 tests; old model torn out; whole repo green)
+- [x] dumb client — DONE (9 tests; old model torn out; whole repo green)
+- [x] Phase 4 checkpoint — DONE (9 tests; old model torn out; whole repo green)
 
 ## Phase 5 — Providers + detection (capability records, no personas)
-- [ ] [WAIT-AGENT] rework internal/provider onto internal/agent; claude/codex runners; opencode.go (run --format json) — gated on the running Phase-2 store executor (whole rewrite is sequenced behind it)
-- [ ] [WAIT-AGENT] provider.Profile capability record incl. NativeFanout flag (not a persona) — gated on the running Phase-2 store executor (whole rewrite is sequenced behind it)
-- [ ] [WAIT-AGENT] internal/agentdetect: probe PATH, classify supported/deprecated/remote/unknown + reason; distinguish cursor vs cursor-agent — gated on the running Phase-2 store executor (whole rewrite is sequenced behind it)
-- [ ] [WAIT-AGENT] agy spike: bind only if --print confirmed local-surface — gated on the running Phase-2 store executor (whole rewrite is sequenced behind it)
-- [ ] [WAIT-AGENT] Phase 5 checkpoint green + cassettes — gated on the running Phase-2 store executor (whole rewrite is sequenced behind it)
+- [ ] [WAIT-AGENT] rework internal/provider onto internal/agent + vconfig; claude/codex/opencode runners — delegated to Phase-5 executor
+- [ ] [WAIT-AGENT] provider capability record (BindingConfig + NativeFanout, no persona) — delegated to Phase-5 executor
+- [ ] [WAIT-AGENT] internal/agentdetect: probe PATH, classify supported/deprecated/remote/unknown + reason — delegated to Phase-5 executor
+- [ ] [WAIT-AGENT] agy spike: bind only if --print confirmed local-surface — delegated to Phase-5 executor
+- [ ] [WAIT-AGENT] Phase 5 checkpoint green + cassettes — verify on return
 
 ## Phase 6 — Plan engine + orchestration (variants deleted)
 - [ ] [WAIT-AGENT] internal/plan: goldmark parse + stop-at-next-heading-<=N grouping; heuristic decompose (heading order=group dep, unordered=parallel, ordered=sequential, don't descend past a heading with subheadings); validator (list-vs-bare-paragraph rule) — gated on the running Phase-2 store executor (whole rewrite is sequenced behind it)
