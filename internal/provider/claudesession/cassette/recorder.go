@@ -66,6 +66,12 @@ func NewRecorder(ctx context.Context, cassettePath, bin string, args []string) (
 		clientStdin:  clientStdinW,
 		clientStdout: clientStdoutR,
 		args:         append([]string(nil), args...),
+		// Stamp the start time BEFORE launching the pump goroutines below.
+		// They read r.started (via time.Since) concurrently, so setting it
+		// in Start() after the goroutines are already running is a data
+		// race. The recorded frame timestamps measure from construction,
+		// which is within microseconds of the subprocess Start() anyway.
+		started: time.Now(),
 	}
 
 	// Goroutine 1: client writes → tee to cassette + forward to claude.
@@ -78,7 +84,6 @@ func NewRecorder(ctx context.Context, cassettePath, bin string, args []string) (
 
 // Start spawns the claude subprocess. Returns any exec error.
 func (r *Recorder) Start() error {
-	r.started = time.Now()
 	return r.cmd.Start()
 }
 
