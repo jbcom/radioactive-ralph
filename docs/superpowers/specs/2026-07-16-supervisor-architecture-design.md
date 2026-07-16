@@ -9,6 +9,16 @@ interdependent and cannot be split without designing the seams twice.
 
 Rationale for every decision below is in `.agent-state/decisions.ndjson`.
 
+**Tech stack** (no binary-size constraint; heavier deps are fine): Go 1.26;
+`creack/pty` (agent pty ownership); `charmbracelet/bubbletea` + `lipgloss`
+(TUI); `spf13/cobra` + `spf13/viper` (CLI + layered config — replacing kong);
+`modernc.org/sqlite` (pure-Go, no CGO — the single user DB); `yuin/goldmark`
+(pure-Go plan-markdown AST); `a2aproject/a2a-go` (official A2A vocabulary/types,
+stdlib-only core); `adrg/xdg` + `internal/xdg` (paths). The pure-Go SQLite
+choice is a **build-compatibility** decision (C loadable extensions can't load
+into modernc; CGO would lose no-CGO cross-compile), *not* a size rule — it does
+not restrict cobra/viper/grpc/etc.
+
 ## 1. The control invariant (non-negotiable)
 
 An underlying agent CLI must **never** block the system — no permission
@@ -119,6 +129,12 @@ once computed, the supervisor **offers to remove them automatically**.
 missing after the merge, Ralph **exits with an error reporting exactly what must
 be defined** — one mechanism regardless of source (flags, wizard, or file).
 
+**Implementation note:** `viper` does the mechanical merge (defaults < file <
+env < flags) under these rules; we own the DB layer, the two-layer USER→PROJECTS
+composition, the `projects:` stanza handling, the change-vs-override distinction,
+and the conflict-diff. `cobra` provides the flags (`--config-file`/`-C`,
+`--user-config-file`, `--project-config-file`).
+
 ## 5b. Project identity: accumulated fingerprints, not paths
 
 Absolute-path identity is fragile (moves and renames break it). A project is
@@ -197,37 +213,121 @@ calling a hosted model API for inference is fine. `gemini` removed (deprecated
 2026-06-18, backend 410 Gone). `cursor-agent` excluded (delegates the session
 to Cursor's cloud). `opencode` bound via its local `run` path only.
 
-## 10. Roles / squads / the coordination layer (designed here, this branch)
+Each provider profile is a **capability record**, not a persona: the binary,
+how it is invoked non-interactively, how its structured result and usage/cost
+are read (§3), how it resumes, and crucially whether the CLI/API **natively
+supports subagents / workflows / parallelism** — a flag the orchestrator uses to
+decide whether to delegate a parallel step-group to one fan-out-capable agent
+rather than spawning N Ralph-managed workers (§10). Adding a provider is a
+contributor-friendly, documented, table-driven registration.
 
-The conflated "variant" is reconsidered as part of this work. The layering is
-hierarchical (industry-standard **A2A orchestrator↔worker**, not the invented
-"mayor protocol"): the supervisor dispatches from the plan DAG to a **PM /
-team-lead** role, which coordinates **worker** roles (archetypes such as
-technical-writer, frontend-dev) that Ralph can **clone and mutate into squads**
-with path/worktree-based isolation. The **plan DB is the scoped context** each
-worker reads — a durable, execution-scoped slice, not a giant context dump
-(the A2A insight: a task is id + lifecycle + updatable state, which the plan
-model already matches). **Fixit ↔ Professor** form the durable, self-correcting
-planning loop (Fixit decomposes/recommends → Professor executes with reflection
-→ reflection re-plans). Cost transparency and progress propagate **up** this
-chain to the macro TUI.
+## 10. No variants — one mutating Ralph; orchestrator-verified completion
 
-**Open, resolved during implementation on this branch (not before):** the exact
-role/squad primitive — whether "variant" is replaced by a role×profile split,
-and the concrete squad clone/mutate mechanics — is deliberately deferred to the
-first-principles **variant-lineup audit** (a directive work-unit), because the
-audit determines the lineup that this layer is built on. The layering *shape*
-above (supervisor → PM/team-lead → workers, plan-DB-as-scoped-context, Fixit↔
-Professor loop) is settled; the primitive it's expressed in is the audit's
-output.
+**Variants are removed entirely.** There is no blue/green/savage lineup, no
+persona roleplay, no `internal/variant` registry. `radioactive_ralph` is **one
+persisting, flexible, mutating agent** that becomes whatever a task needs.
+Parallelism and posture are **judgment calls** (headless heuristics or TUI
+choices) driven by the plan's structure (§12), not by baked personas. Prompts
+are minimal and situational: *"you are an agent; here is your task; here is the
+necessary context"* — never *"you are an expert NodeJS developer."* This removes
+the entire persona surface and simplifies every system/user prompt.
 
-## 11. What survives, what changes
+**Layering (A2A orchestrator↔worker).** By necessity a top-most Ralph — the
+**team-lead / orchestrator** — runs alongside the supervisor. It reads the plan,
+decides what is next (§12's heuristic decomposition), dispatches worker Ralphs
+with their **plan-scoped context** (the relevant plan slice, not a giant dump),
+and — critically — **verifies completion.**
+
+**Completion is orchestrator-verified, never agent-asserted.** A step is *not*
+done because a worker says so, and **especially not because a worker
+terminated** (termination may be an error/crash). A worker submits **evidence of
+completion** (what it ran, exit codes, output, diff); only the orchestrator
+transitions the task to a terminal `done` state, after checking that evidence
+against the plan's actual done-criteria. This is the correctness backbone and
+the reason the A2A `TaskState` transitions (§13) are driven by *us*, not by the
+worker.
+
+**Context/liveness discipline.** Rather than detecting an agent's automatic
+context compaction (hard, unreliable), the supervisor sends **periodic
+enforcement prompts** ("stay on task; if you can spawn subagents/workflows, do;
+otherwise self-check at the next convenient point") and **kills-and-restarts
+fresh** when an agent manually hits its context end. Each worker writes its own
+**decision-log markdown** in an XDG path; the team-lead **absorbs** those into
+project history to inform what runs next.
+
+**Squads (optional, capability-aware).** For a parallelizable step-group (§12),
+the orchestrator may fan out multiple worker Ralphs with path/worktree isolation
+— *or*, when the bound agent CLI natively supports subagents/workflows/
+parallelism (a **capability flag** on the provider profile, §9), delegate the
+fan-out to that agent instead of spawning N Ralph-managed workers. Cost and
+progress propagate **up** the chain to the macro TUI.
+
+## 11. Plan engine — simple markdown, heuristic decomposition (no LLM)
+
+Plans are **markdown so simple no agent can break it**, parsed with **goldmark**
+(pure-Go, MIT) into an AST and decomposed **heuristically** — no LLM, no
+structured-output, no vectors (rejected as brittle *and* CGO-incompatible).
+
+Grammar (validated by a plan-format validator):
+
+- **A heading of level N is a nesting group.** Its "section" runs from the
+  heading to the next heading of level ≤ N (goldmark headings are flat siblings;
+  we own this stop-at-next-heading scan).
+- **Heading order encodes group dependency**: `# Do first` then `# Do next`
+  means the first group completes before the second.
+- **Under a leaf heading** (one with no child subheadings): an **unordered
+  list** = parallelizable steps; an **ordered list** = sequential steps; a step
+  may carry paragraphs of detail (bullets/paragraphs together = one step with
+  detail).
+- **Do not descend past a heading that has child subheadings** — the subheadings
+  carry the ordering.
+- **Disambiguation rule** (validator-enforced): a list under a heading makes it a
+  step-group; a bare paragraph with no list is narrative/notes, not a step.
+
+The orchestrator computes **past / present / future** purely from the AST + the
+DB's done-state: what is pending at the current group, whether it decomposes
+into subgroups or parallel/sequential steps, and what to dispatch next. An
+optional **plan config** (virtual-merged like §5a, dot-notation coordinates such
+as `s1.1: {parallel: false}`) can assist translating user intent, but the
+markdown + list-type convention covers the common case unaided.
+
+**Planning genesis.** Turning a vague prompt into a full plan is the one
+"vaguely interactive" moment, and we sidestep "how to extract questions": a team
+of agents **juxtapose and challenge** each other to refine the input (inline
+prompt *or* a full markdown doc) until it covers the work end-to-end. **Headless
+mode → emits the final markdown plan.** **TUI mode → renders that markdown for
+review** (scroll, an embedded editor, or open-in-`$EDITOR` — both offered).
+Users may also **skip planning** and run their input as-is. The refined markdown
+document *is* the review surface — no question-extraction machinery.
+
+## 12. A2A coordination vocabulary (official SDK)
+
+Agent-to-agent coordination uses the **official `a2aproject/a2a-go` SDK**
+(Apache-2.0) for its **vocabulary and types** — `a2a.Task`, `a2a.TaskState`
+(`Submitted`/`Working`/`InputRequired`/`Completed`/`Failed`/…), `a2a.Message`,
+`a2a.AgentCard`. The `a2a/` core-types package is stdlib-only (no grpc/CGO), so
+it imports cleanly into the pure-Go build; the heavier `a2asrv`/`a2agrpc`/
+`a2apb` packages are pulled in only if we later expose a real network-facing A2A
+surface. `a2asrv` is a set of **interfaces we implement** (`AgentExecutor`,
+`AgentCardProducer`), not a server we are forced to run.
+
+We keep **durability** (the one SQLite DB — new `a2a_tasks`/`a2a_messages`
+tables, not a second store) and the **completion trust model** (§10) as ours:
+`TaskStateInputRequired` is exactly the never-block signal (a worker needing
+input is a *task state the orchestrator handles*, not a blocked pty), and only
+the orchestrator drives the transition to `Completed`. The third-party
+`a2abridge` was rejected (its packages are `internal/`-only and its tool design
+lets an agent self-complete — the opposite of our trust model).
+
+## 13. What survives, what changes
 
 - **Survives / is vindicated**: `internal/ipc` (repurposed: attach → discover),
   `internal/runtime/flock.go` (PID lock), `internal/service` (supervisor
-  distribution), `internal/xdg`, `internal/provider` (minus gemini), the plan
-  DAG *model* (moves into the single user DB), Bubble Tea TUI.
-- **Changes / is removed**: per-repo `plans.db` and the committed
+  distribution), `internal/xdg`, `internal/provider` (minus gemini, plus a
+  capability flag and the new agent runtime), the plan DAG *model* (moves into
+  the single user DB), Bubble Tea TUI.
+- **Changes / is removed**: `internal/variant` (deleted — no personas); the
+  **kong** CLI (→ **cobra** + **viper**); per-repo `plans.db` and the committed
   `.radioactive-ralph/` config dir → one user-level DB; the open-ended
   "configure a CLI however" provider model → constrained supervised execution;
   the "attach to a detached daemon" framing → supervisor-holds-everything +
