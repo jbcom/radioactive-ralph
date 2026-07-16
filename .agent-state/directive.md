@@ -78,6 +78,8 @@ docs/superpowers/specs/2026-07-16-supervisor-architecture-design.md.
 - [ ] [WAIT] Rewrite docs/getting-started + docs/guides + docs/design + docs/reference to the new model (supervisor/discovery, config virtual-layers, plan engine, orchestrator-verified completion, A2A vocabulary) — blocked: rewrite after Phases 7-8 land the final code (avoid churning docs against moving code)
 - [ ] [WAIT] Rewrite docs/runbooks (fix the socket-path drift + fabricated RequireOperatorApproval field flagged in review; supervisor install/attach) — blocked: rewrite after Phases 7-8 land the final code (avoid churning docs against moving code)
 - [ ] [WAIT] Regenerate docs/api/ via gomarkdoc against the NEW packages (agent/store/vconfig/supervisor/provider/agentdetect/plan/orch/a2a) — blocked: rewrite after Phases 7-8 land the final code (avoid churning docs against moving code)
+- [ ] [WAIT] Realign the SITE landing (site/ Astro: RalphHero.astro + any component referencing variants/personas/durable-service) to the supervisor model — blocked on final code
+- [ ] [WAIT] Update Sphinx config/nav (docs/conf.py, docs/index.md toctree, docs/_static) so the PUBLISHED site (jonbogaty.com/radioactive-ralph via cd.yml) reflects the new architecture; verify the site build (site/ pnpm build) + Sphinx build both clean — blocked on final code
 - [ ] [WAIT] Remove AI-design-trope / extraneous docs (adjective soup, over-explained obvious, marketing filler); every doc matches code — blocked: rewrite after Phases 7-8 land the final code (avoid churning docs against moving code)
 - [ ] [WAIT] tox -e docs builds clean; no residual mention of variant/kong/plandag/per-repo-config/durable-daemon — blocked: rewrite after Phases 7-8 land the final code (avoid churning docs against moving code)
 
