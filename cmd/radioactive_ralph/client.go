@@ -47,6 +47,13 @@ func runClientMode(ctx context.Context, cmd *cobra.Command) error {
 		return err
 	}
 
+	// Fail fast with a clear, actionable message if no supervisor is
+	// listening at all, before opening the store or launching the TUI.
+	// This connection is used ONLY for that check (and, on the non-tty
+	// path, the one status print) — it is NOT held open across the TUI's
+	// lifetime: ipc.Client connections are one-shot (see
+	// internal/tui/live.go's liveDataSource doc comment), so a live TUI
+	// session redials per call instead of reusing this one.
 	client, err := supervisor.Find(stateRoot)
 	if err != nil {
 		if errors.Is(err, supervisor.ErrNoSupervisor) {
@@ -56,11 +63,12 @@ func runClientMode(ctx context.Context, cmd *cobra.Command) error {
 		}
 		return fmt.Errorf("find supervisor: %w", err)
 	}
-	defer func() { _ = client.Close() }()
 
 	if !tui.IsTerminal() {
+		defer func() { _ = client.Close() }()
 		return printStatus(ctx, client)
 	}
+	_ = client.Close()
 
 	st, err := store.Open(ctx, store.Options{DSN: store.DSN(storeDBPath(stateRoot))})
 	if err != nil {
@@ -68,7 +76,7 @@ func runClientMode(ctx context.Context, cmd *cobra.Command) error {
 	}
 	defer func() { _ = st.Close() }()
 
-	source := tui.NewLiveDataSource(client, st, projectID)
+	source := tui.NewLiveDataSource(stateRoot, st, projectID)
 	return tui.Run(ctx, source, tui.Options{ProjectID: projectID})
 }
 

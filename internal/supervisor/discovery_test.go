@@ -168,3 +168,25 @@ func deadPIDForTest(t *testing.T) int {
 	time.Sleep(50 * time.Millisecond)
 	return pid
 }
+
+func TestAcquireRequiresRuntimeDir(t *testing.T) {
+	if _, err := Acquire(""); err == nil {
+		t.Error("Acquire with empty runtimeDir: want error, got nil")
+	}
+}
+
+func TestListenerReleaseIsIdempotent(t *testing.T) {
+	runtimeDir := t.TempDir()
+	l, err := Acquire(runtimeDir)
+	if err != nil {
+		t.Fatalf("Acquire: %v", err)
+	}
+	if err := l.Release(); err != nil {
+		t.Fatalf("first Release: %v", err)
+	}
+	// A second Release on an already-released Listener must be a clean
+	// no-op (pidLock is nil), not an error or a panic on a closed file.
+	if err := l.Release(); err != nil {
+		t.Errorf("second Release: want nil, got %v", err)
+	}
+}

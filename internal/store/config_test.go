@@ -55,3 +55,28 @@ func TestSetProjectConfigUpsert(t *testing.T) {
 		t.Errorf("project_config row count = %d, want 1 (upsert, not insert)", count)
 	}
 }
+
+func TestSetProjectConfigRequiresProjectIDAndKey(t *testing.T) {
+	ctx := context.Background()
+	s := openTestStore(t)
+	projectID := mustCreateProject(t, s, "required-fields-project")
+
+	if err := s.SetProjectConfig(ctx, "", "key", "value"); err == nil {
+		t.Error("SetProjectConfig with empty projectID: want error, got nil")
+	}
+	if err := s.SetProjectConfig(ctx, projectID, "", "value"); err == nil {
+		t.Error("SetProjectConfig with empty key: want error, got nil")
+	}
+}
+
+func TestGetProjectConfigEmptyForUnknownProject(t *testing.T) {
+	ctx := context.Background()
+	s := openTestStore(t)
+	cfg, err := s.GetProjectConfig(ctx, "does-not-exist")
+	if err != nil {
+		t.Fatalf("GetProjectConfig: %v", err)
+	}
+	if len(cfg) != 0 {
+		t.Errorf("GetProjectConfig for unknown project = %+v, want empty map", cfg)
+	}
+}

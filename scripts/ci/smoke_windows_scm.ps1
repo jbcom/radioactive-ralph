@@ -10,10 +10,16 @@ if (-not (Test-Path $Bin)) {
   throw "binary not found: $Bin"
 }
 
+# The rewritten runtime is a single PER-USER supervisor keyed off the XDG
+# state root — there is no per-repo service instance anymore (see
+# internal/service's package doc comment). This smoke installs it as a
+# native Windows SCM service (with RALPH_STATE_DIR pointed at an isolated
+# dir via --env), starts it, confirms the plain client sees a live
+# supervisor, stops it, and confirms the client reports it gone.
 $tmp = Join-Path $env:RUNNER_TEMP ("ralph-scm-" + [guid]::NewGuid().ToString("N"))
-$repo = Join-Path $tmp "repo"
+$project = Join-Path $tmp "project"
 $state = Join-Path $tmp "state"
-New-Item -ItemType Directory -Force -Path $repo, $state | Out-Null
+New-Item -ItemType Directory -Force -Path $project, $state | Out-Null
 
 $serviceName = $null
 $configPath = $null
@@ -50,51 +56,61 @@ function Cleanup {
     sc.exe stop $serviceName *> $null
     sc.exe delete $serviceName *> $null
   }
-  if (Test-Path $repo) {
-    & $Bin service uninstall --repo-root $repo *> $null
-  }
+  & $Bin service uninstall *> $null
   if (Test-Path $tmp) {
     Remove-Item -Recurse -Force $tmp
   }
 }
 
+function Test-SupervisorUp {
+  Push-Location $project
+  try {
+    $env:RALPH_STATE_DIR = $state
+    $out = & $Bin 2>$null
+    return ($LASTEXITCODE -eq 0) -and ($out -join "`n") -match "supervisor is up"
+  } catch {
+    return $false
+  } finally {
+    Pop-Location
+  }
+}
+
 try {
-  $env:RALPH_STATE_DIR = $state
-  & $Bin init --repo-root $repo --yes | Out-Null
-  $installLine = & $Bin service install --repo-root $repo --radioactive_ralph-bin $Bin --env "RALPH_STATE_DIR=$state"
-  $configPath = ($installLine -split '\s+', 2)[1]
-  if (-not $configPath) {
+  Push-Location $project
+  try {
+    $env:RALPH_STATE_DIR = $state
+    & $Bin --init | Out-Null
+  } finally {
+    Pop-Location
+  }
+
+  $installLine = & $Bin service install --radioactive_ralph-bin $Bin --env "RALPH_STATE_DIR=$state"
+  $configPath = ($installLine -split '\s+')[-1]
+  if (-not (Test-Path $configPath)) {
     throw "failed to parse install path from: $installLine"
   }
-  & $Bin service list | Select-String -SimpleMatch $configPath | Out-Null
 
   $serviceName = [System.IO.Path]::GetFileNameWithoutExtension($configPath)
   sc.exe start $serviceName | Out-Null
 
   $ready = $false
   for ($i = 0; $i -lt 30; $i++) {
-    try {
-      $status = & $Bin status --repo-root $repo --json 2>$null | ConvertFrom-Json
-      if ($status.repo_path) {
-        $ready = $true
-        break
-      }
-    } catch {
+    if (Test-SupervisorUp) {
+      $ready = $true
+      break
     }
     Start-Sleep -Seconds 1
   }
   if (-not $ready) {
     Write-Diagnostics "service did not become ready"
-    throw "windows scm service never became ready"
+    throw "windows scm-managed supervisor never became ready"
   }
 
-  & $Bin service status --repo-root $repo | Out-Null
   sc.exe stop $serviceName | Out-Null
 
   $stopped = $false
   for ($i = 0; $i -lt 30; $i++) {
-    & $Bin status --repo-root $repo *> $null
-    if ($LASTEXITCODE -ne 0) {
+    if (-not (Test-SupervisorUp)) {
       $stopped = $true
       break
     }
@@ -102,7 +118,7 @@ try {
   }
   if (-not $stopped) {
     Write-Diagnostics "service did not stop after stop request"
-    throw "windows scm service never stopped"
+    throw "windows scm-managed supervisor never stopped"
   }
 
   Write-Output "windows scm smoke: ok"

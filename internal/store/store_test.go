@@ -200,3 +200,23 @@ func TestDSNEscaping(t *testing.T) {
 		t.Errorf("DSN did not escape '%%': got %q", dsn)
 	}
 }
+
+// TestOpenRequiresDSN confirms Open refuses an empty DSN rather than
+// opening some ambient default database.
+func TestOpenRequiresDSN(t *testing.T) {
+	if _, err := Open(context.Background(), Options{}); err == nil {
+		t.Error("Open with empty DSN: want error, got nil")
+	}
+}
+
+// TestOpenRejectsUnopenableDSN confirms a malformed/unopenable DSN surfaces
+// an error from Open rather than a panic or a lazily-failing handle.
+func TestOpenRejectsUnopenableDSN(t *testing.T) {
+	// A DSN pointing at a directory (not a file) can't be opened as a
+	// SQLite database file.
+	dir := t.TempDir()
+	_, err := Open(context.Background(), Options{DSN: DSN(dir)})
+	if err == nil {
+		t.Error("Open with a directory as the DB path: want error, got nil")
+	}
+}

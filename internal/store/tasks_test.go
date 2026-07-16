@@ -326,3 +326,79 @@ func TestListTasksFiltersByStatus(t *testing.T) {
 		t.Fatalf("ListTasks(nil) = %+v, want 2", all)
 	}
 }
+
+func TestGetTaskNotFound(t *testing.T) {
+	ctx := context.Background()
+	s := openTestStore(t)
+	projectID := mustCreateProject(t, s, "gettask-notfound-project")
+	planID := mustCreatePlan(t, s, projectID, "gettask-notfound-plan")
+
+	if _, err := s.GetTask(ctx, planID, "does-not-exist"); err == nil {
+		t.Error("GetTask for missing task: want error, got nil")
+	}
+}
+
+func TestGetTaskFound(t *testing.T) {
+	ctx := context.Background()
+	s := openTestStore(t)
+	projectID := mustCreateProject(t, s, "gettask-found-project")
+	planID := mustCreatePlan(t, s, projectID, "gettask-found-plan")
+	if err := s.CreateTask(ctx, CreateTaskOpts{PlanID: planID, ID: "a", Description: "first"}); err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+
+	got, err := s.GetTask(ctx, planID, "a")
+	if err != nil {
+		t.Fatalf("GetTask: %v", err)
+	}
+	if got.Description != "first" {
+		t.Errorf("Description = %q, want first", got.Description)
+	}
+	if got.Status != TaskStatusPending {
+		t.Errorf("Status = %q, want pending", got.Status)
+	}
+}
+
+// TestClaimNextReadyHonorsSequenceOrdinal confirms two independently-ready
+// tasks (no dep relationship) are claimed in sequence_ordinal order, not
+// creation order, when both have an explicit ordinal set.
+func TestClaimNextReadyHonorsSequenceOrdinal(t *testing.T) {
+	ctx := context.Background()
+	s := openTestStore(t)
+	projectID := mustCreateProject(t, s, "seqord-project")
+	planID := mustCreatePlan(t, s, projectID, "seqord-plan")
+	sessionID, workerID := mustCreateSessionAndWorker(t, s, "1")
+
+	second := int64(2)
+	first := int64(1)
+	// Created in "b, a" order but sequence_ordinal says a (1) then b (2).
+	if err := s.CreateTask(ctx, CreateTaskOpts{PlanID: planID, ID: "b", Description: "second", SequenceOrdinal: &second}); err != nil {
+		t.Fatalf("CreateTask b: %v", err)
+	}
+	if err := s.CreateTask(ctx, CreateTaskOpts{PlanID: planID, ID: "a", Description: "first", SequenceOrdinal: &first}); err != nil {
+		t.Fatalf("CreateTask a: %v", err)
+	}
+
+	task, err := s.ClaimNextReady(ctx, planID, sessionID, workerID)
+	if err != nil {
+		t.Fatalf("ClaimNextReady: %v", err)
+	}
+	if task.ID != "a" {
+		t.Fatalf("ClaimNextReady claimed %q, want a (sequence_ordinal=1 before 2)", task.ID)
+	}
+}
+
+// TestClaimNextReadyNoTasksInPlan confirms claiming against a plan with no
+// tasks at all returns ErrNoReadyTask cleanly (the SELECT's zero-row case,
+// distinct from "tasks exist but none are ready").
+func TestClaimNextReadyNoTasksInPlan(t *testing.T) {
+	ctx := context.Background()
+	s := openTestStore(t)
+	projectID := mustCreateProject(t, s, "empty-plan-project")
+	planID := mustCreatePlan(t, s, projectID, "empty-plan")
+	sessionID, workerID := mustCreateSessionAndWorker(t, s, "1")
+
+	if _, err := s.ClaimNextReady(ctx, planID, sessionID, workerID); !errors.Is(err, ErrNoReadyTask) {
+		t.Errorf("ClaimNextReady on empty plan: err = %v, want ErrNoReadyTask", err)
+	}
+}

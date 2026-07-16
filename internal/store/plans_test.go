@@ -105,3 +105,29 @@ func TestSetPlanStatusNotFound(t *testing.T) {
 		t.Error("SetPlanStatus on missing plan: want error, got nil")
 	}
 }
+
+func TestGetPlanNotFound(t *testing.T) {
+	ctx := context.Background()
+	s := openTestStore(t)
+	if _, err := s.GetPlan(ctx, "does-not-exist"); err == nil {
+		t.Error("GetPlan for missing plan: want error, got nil")
+	}
+}
+
+func TestGetPlanFound(t *testing.T) {
+	ctx := context.Background()
+	s := openTestStore(t)
+	projectID := mustCreateProject(t, s, "getplan-found-project")
+	planID := mustCreatePlan(t, s, projectID, "getplan-found-plan")
+
+	got, err := s.GetPlan(ctx, planID)
+	if err != nil {
+		t.Fatalf("GetPlan: %v", err)
+	}
+	if got.ID != planID {
+		t.Errorf("ID = %q, want %q", got.ID, planID)
+	}
+	if got.ProjectID != projectID {
+		t.Errorf("ProjectID = %q, want %q", got.ProjectID, projectID)
+	}
+}

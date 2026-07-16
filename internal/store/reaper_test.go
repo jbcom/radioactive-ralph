@@ -173,3 +173,79 @@ func TestReclaimStaleDeletesOldWorkersAndSessions(t *testing.T) {
 		t.Errorf("session still present after long staleness, want deleted")
 	}
 }
+
+// TestReclaimStaleRequeuesOrphanedTask confirms a 'running' task whose
+// claimed_by_worker_id has ALREADY been cascaded to NULL (the worker row
+// was deleted by some other path — e.g. an operator force-closing a
+// session — independent of ReclaimStale's own step 2) is still reclaimed
+// immediately, rather than being invisible to the reclaim WHERE clause
+// forever. This is the exact "crash so hard the process never got an
+// FK-cascaded cleanup" scenario ReclaimStale's doc comment describes: a
+// task can end up 'running' with claimed_by_worker_id already NULL, and
+// without this branch it would never be picked up by ANY future reaper
+// pass, no matter how stale — a permanent-stall regression this test
+// guards against.
+func TestReclaimStaleRequeuesOrphanedTask(t *testing.T) {
+	ctx := context.Background()
+	clock := clockwork.NewFakeClockAt(mustParseTime(t, "2026-07-16T00:00:00Z"))
+	s := openTestStoreWithClock(t, clock)
+
+	projectID := mustCreateProject(t, s, "orphan-project")
+	planID := mustCreatePlan(t, s, projectID, "orphan-plan")
+	if err := s.CreateTask(ctx, CreateTaskOpts{PlanID: planID, ID: "a", Description: "first"}); err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+
+	sessionID, err := s.CreateSession(ctx, SessionOpts{Role: "supervisor", PID: 1, PIDStartTime: "t0"})
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	workerID, err := s.CreateWorker(ctx, WorkerOpts{
+		SessionID: sessionID, Provider: "claude", SubprocessPID: 100, SubprocessStartTime: "t0",
+	})
+	if err != nil {
+		t.Fatalf("CreateWorker: %v", err)
+	}
+	if _, err := s.ClaimNextReady(ctx, planID, sessionID, workerID); err != nil {
+		t.Fatalf("ClaimNextReady: %v", err)
+	}
+
+	// Simulate the worker row disappearing via a path OTHER than
+	// ReclaimStale's own step 2 (e.g. CloseSession/operator intervention
+	// cascading workers.session_id ON DELETE CASCADE) — this cascades
+	// tasks.claimed_by_worker_id to NULL but does NOT touch tasks.status,
+	// leaving the task 'running' with no claiming worker at all.
+	if _, err := s.DB().ExecContext(ctx, "DELETE FROM workers WHERE id = ?", workerID); err != nil {
+		t.Fatalf("delete worker: %v", err)
+	}
+
+	got, err := s.GetTask(ctx, planID, "a")
+	if err != nil {
+		t.Fatalf("GetTask (pre-reclaim sanity check): %v", err)
+	}
+	if got.Status != TaskStatusRunning || got.ClaimedByWorkerID != "" {
+		t.Fatalf("pre-reclaim state = status=%q claimed_by_worker_id=%q, want running/empty (orphaned)", got.Status, got.ClaimedByWorkerID)
+	}
+
+	// No time advance needed: the orphaned-claim branch reclaims
+	// regardless of staleness, since there is definitionally no worker
+	// left to eventually heartbeat.
+	reclaimed, err := s.ReclaimStale(ctx, 5*time.Minute)
+	if err != nil {
+		t.Fatalf("ReclaimStale: %v", err)
+	}
+	if reclaimed != 1 {
+		t.Fatalf("ReclaimStale reclaimed = %d, want 1 (orphaned task)", reclaimed)
+	}
+
+	got, err = s.GetTask(ctx, planID, "a")
+	if err != nil {
+		t.Fatalf("GetTask: %v", err)
+	}
+	if got.Status != TaskStatusPending {
+		t.Errorf("task status = %q, want pending after reclaiming an orphaned claim", got.Status)
+	}
+	if got.ReclaimCount != 1 {
+		t.Errorf("reclaim_count = %d, want 1", got.ReclaimCount)
+	}
+}

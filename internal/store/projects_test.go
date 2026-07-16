@@ -253,3 +253,56 @@ func TestFingerprintsGitDirNoRemote(t *testing.T) {
 		}
 	}
 }
+
+func TestTouchProjectLastSeen(t *testing.T) {
+	ctx := context.Background()
+	s := openTestStore(t)
+
+	id, err := s.CreateProject(ctx, "touch-project", []Fingerprint{
+		{Kind: FingerprintKindAbsPath, Value: "/tmp/touch-project"},
+	})
+	if err != nil {
+		t.Fatalf("CreateProject: %v", err)
+	}
+
+	var before string
+	if err := s.DB().QueryRowContext(ctx, "SELECT COALESCE(last_seen_at,'') FROM projects WHERE id = ?", id).Scan(&before); err != nil {
+		t.Fatalf("read last_seen_at before touch: %v", err)
+	}
+
+	if err := s.TouchProjectLastSeen(ctx, id); err != nil {
+		t.Fatalf("TouchProjectLastSeen: %v", err)
+	}
+
+	var after string
+	if err := s.DB().QueryRowContext(ctx, "SELECT COALESCE(last_seen_at,'') FROM projects WHERE id = ?", id).Scan(&after); err != nil {
+		t.Fatalf("read last_seen_at after touch: %v", err)
+	}
+	if after == "" {
+		t.Error("last_seen_at empty after TouchProjectLastSeen")
+	}
+}
+
+// TestTouchProjectLastSeenMissingProjectIsNotAnError confirms touching a
+// nonexistent project id does not error — TouchProjectLastSeen has no
+// RowsAffected check, unlike SetPlanStatus, so a zero-row UPDATE is
+// currently a silent no-op rather than a reported failure. This test
+// documents that behavior explicitly.
+func TestTouchProjectLastSeenMissingProjectIsNotAnError(t *testing.T) {
+	ctx := context.Background()
+	s := openTestStore(t)
+	if err := s.TouchProjectLastSeen(ctx, "does-not-exist"); err != nil {
+		t.Errorf("TouchProjectLastSeen on missing project: want nil, got %v", err)
+	}
+}
+
+func TestAddProjectIdentifiersMissingProject(t *testing.T) {
+	ctx := context.Background()
+	s := openTestStore(t)
+	err := s.AddProjectIdentifiers(ctx, "does-not-exist", []Fingerprint{
+		{Kind: FingerprintKindAbsPath, Value: "/tmp/whatever"},
+	})
+	if err == nil {
+		t.Error("AddProjectIdentifiers against a missing project: want error (FK violation), got nil")
+	}
+}

@@ -58,6 +58,7 @@ type rootFlags struct {
 	supervisor    bool
 	initFlag      bool
 	forceOverride bool
+	logFormat     string
 }
 
 func newRootCmd(ctx context.Context) *cobra.Command {
@@ -88,8 +89,11 @@ func newRootCmd(ctx context.Context) *cobra.Command {
 		"initialize (or re-initialize) the current directory as a known project")
 	root.Flags().BoolVar(&flags.forceOverride, "force-override", false,
 		"with --init, allow an incoming --project-config-file to override existing stored project config keys instead of refusing on conflict")
+	root.Flags().StringVar(&flags.logFormat, "log-format", "text",
+		"supervisor log output format: text (human-readable) or json (stream-json shaped, one record per line)")
 
 	root.AddCommand(newDoctorCmd())
+	root.AddCommand(newServiceCmd())
 
 	return root
 }
@@ -101,7 +105,7 @@ func newRootCmd(ctx context.Context) *cobra.Command {
 // a third mode.
 func dispatchRoot(ctx context.Context, cmd *cobra.Command, flags rootFlags) error {
 	if flags.supervisor {
-		return runSupervisorMode(ctx)
+		return runSupervisorMode(ctx, flags.logFormat)
 	}
 	if flags.initFlag {
 		return runInitMode(ctx, cmd)

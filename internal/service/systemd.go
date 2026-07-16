@@ -5,26 +5,22 @@ import (
 	"strings"
 )
 
-// renderSystemdUser returns a systemd user .service unit for the given
-// repo-scoped runtime.
+// renderSystemdUser returns a systemd user .service unit for the per-user
+// radioactive_ralph supervisor.
 //
-// The unit runs `radioactive_ralph service start --foreground --repo-root <repo>` with
-// Restart=on-failure and systemd's own journal for stdout/stderr.
-// INVOCATION_ID is automatically set by systemd — no need to inject.
+// The unit runs `<ralphBin> --supervisor` with Restart=on-failure and
+// systemd's own journal for stdout/stderr. INVOCATION_ID is automatically
+// set by systemd — no need to inject.
 func renderSystemdUser(opts InstallOptions) string {
 	var sb strings.Builder
 	sb.WriteString("[Unit]\n")
-	fmt.Fprintf(&sb, "Description=radioactive-ralph durable runtime (%s)\n",
-		UnitName(BackendSystemdUser, opts.RepoPath))
+	fmt.Fprintf(&sb, "Description=radioactive-ralph durable supervisor (%s)\n",
+		UnitName(BackendSystemdUser))
 	sb.WriteString("After=network-online.target\n\n")
 
 	sb.WriteString("[Service]\n")
 	sb.WriteString("Type=simple\n")
-	fmt.Fprintf(&sb, "ExecStart=%s service start --foreground --repo-root %s\n",
-		opts.RalphBin, opts.RepoPath)
-	if opts.RepoPath != "" {
-		fmt.Fprintf(&sb, "WorkingDirectory=%s\n", opts.RepoPath)
-	}
+	fmt.Fprintf(&sb, "ExecStart=%s --supervisor\n", opts.RalphBin)
 	sb.WriteString("Restart=on-failure\n")
 	sb.WriteString("RestartSec=10\n")
 

@@ -35,11 +35,21 @@ func (s *Store) ReclaimStale(ctx context.Context, staleAfter time.Duration) (rec
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	// Step 1: requeue tasks claimed by a worker whose heartbeat is stale.
-	// A task is reclaimable if it is 'running' and its claiming worker's
-	// last_heartbeat predates staleCutoff (or the worker row itself no
-	// longer exists — a crash so hard the process never got an FK-cascaded
-	// cleanup, e.g. supervisor restart under a fresh session).
+	// Step 1: requeue tasks claimed by a worker whose heartbeat is stale,
+	// OR already orphaned outright. A task is reclaimable if it is
+	// 'running' and either:
+	//
+	//   (a) its claiming worker's last_heartbeat predates staleCutoff, or
+	//   (b) claimed_by_worker_id is already NULL — the worker row is
+	//       gone (e.g. workers.session_id ON DELETE CASCADE already ran
+	//       from some OTHER path, such as a session being force-closed),
+	//       so tasks.claimed_by_worker_id was cascaded to NULL but
+	//       tasks.status was never independently transitioned back to
+	//       'pending'. Without branch (b) such a task is invisible to
+	//       this WHERE clause forever (claimed_by_worker_id IS NOT NULL
+	//       excludes it) and stays wedged in 'running' with no claiming
+	//       worker for good — exactly the permanently-stuck-task failure
+	//       mode the reaper exists to prevent.
 	res, err := tx.ExecContext(ctx, `
 		UPDATE tasks
 		SET status = 'pending',
@@ -47,9 +57,11 @@ func (s *Store) ReclaimStale(ctx context.Context, staleAfter time.Duration) (rec
 		    claimed_by_session = NULL,
 		    claimed_by_worker_id = NULL
 		WHERE status = 'running'
-		  AND claimed_by_worker_id IS NOT NULL
-		  AND claimed_by_worker_id IN (
-		    SELECT id FROM workers WHERE last_heartbeat < ?
+		  AND (
+		    claimed_by_worker_id IS NULL
+		    OR claimed_by_worker_id IN (
+		      SELECT id FROM workers WHERE last_heartbeat < ?
+		    )
 		  )
 	`, staleCutoff)
 	if err != nil {

@@ -3,9 +3,9 @@ package main
 import (
 	"context"
 	"fmt"
-	"log/slog"
 	"os"
 
+	"github.com/jbcom/radioactive-ralph/internal/rlog"
 	"github.com/jbcom/radioactive-ralph/internal/store"
 	"github.com/jbcom/radioactive-ralph/internal/supervisor"
 	"github.com/jbcom/radioactive-ralph/internal/xdg"
@@ -15,7 +15,14 @@ import (
 // the supervisor until ctx is cancelled or a client asks it to stop. The
 // working directory is irrelevant here — everything is keyed off the XDG
 // state root, never the caller's cwd (spec §4).
-func runSupervisorMode(ctx context.Context) error {
+//
+// logFormat selects internal/rlog's output shape ("text" or "json"):
+// structured JSON logging matters here because the supervisor is the one
+// long-lived process an operator or the E2E harness needs to observe from
+// outside (tailing stderr, grepping for a lifecycle event) — a stream-json
+// line per lifecycle/reaper event is far easier to assert on than an
+// ad-hoc fmt.Fprintf line shape.
+func runSupervisorMode(ctx context.Context, logFormat string) error {
 	stateRoot, err := xdg.StateRoot()
 	if err != nil {
 		return fmt.Errorf("resolve state root: %w", err)
@@ -30,9 +37,13 @@ func runSupervisorMode(ctx context.Context) error {
 	}
 	defer func() { _ = st.Close() }()
 
-	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
+	mode := rlog.ModeText
+	if logFormat == "json" {
+		mode = rlog.ModeJSON
+	}
+	logger := rlog.New(mode, os.Stderr)
 
-	fmt.Fprintf(os.Stderr, "radioactive_ralph: supervisor starting (state root %s)\n", stateRoot)
+	logger.Info("supervisor.starting", "state_root", stateRoot)
 	err = supervisor.Run(ctx, supervisor.Options{
 		RuntimeDir: stateRoot,
 		Store:      st,
