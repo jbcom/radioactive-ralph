@@ -43,7 +43,7 @@ docs/superpowers/specs/2026-07-16-supervisor-architecture-design.md.
 
 ## Phase 6 — Plan engine + orchestration (variants deleted)
 - [ ] [WAIT-AGENT] internal/plan: goldmark parse + stop-at-next-heading-<=N grouping; heuristic decompose (heading order=group dep, unordered=parallel, ordered=sequential, don't descend past a heading with subheadings); validator (list-vs-bare-paragraph rule)
-- [ ] [WAIT-AGENT] internal/orch: dispatch next with plan-scoped context; orchestrator-verified completion (evidence -> verify -> done, never agent-asserted)
+- [ ] [WAIT-AGENT] internal/orch: dispatch + orchestrator-verified completion — DESIGN authored (scratchpad/phase6b-orch-design.md); execute after internal/plan lands
 - [ ] [WAIT-AGENT] internal/orch lifecycle: enforcement-prompt cadence + kill/restart on manual context-end; per-agent XDG decision logs absorbed by team-lead
 - [ ] [WAIT-AGENT] internal/a2a: adopt a2aproject/a2a-go a2a.Task/TaskState/Message over user DB (a2a_tasks/a2a_messages)
 - [ ] [WAIT-AGENT] internal/variant already deleted (Phase 4) — verify
