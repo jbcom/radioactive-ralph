@@ -10,8 +10,7 @@ Full decision trail: .agent-state/decisions.ndjson. Spec:
 docs/superpowers/specs/2026-07-16-supervisor-architecture-design.md.
 
 ## Phase 1 — Foundation: pty-owned agent + never-block watchdog
-- [ ] Add creack/pty dependency (go get, go mod tidy, build green)
-- [ ] internal/agent/agent.go: pty-owned Agent (Start/Output/Kill/Wait/PID/Done) + tests
+- [ ] [WAIT] internal/agent/agent.go + watchdog.go: pty-owned Agent + never-block Watchdog — Sonnet executor building per plan Phase 1; verify checkpoint on return
 - [ ] internal/agent/watchdog.go: never-block Watchdog (Progress/Stall/Prompt/Exited signals) + tests
 - [ ] Phase 1 checkpoint: go build + go test -race ./internal/agent/ + golangci-lint green; control invariant demonstrable
 
