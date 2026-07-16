@@ -51,12 +51,12 @@ docs/superpowers/specs/2026-07-16-supervisor-architecture-design.md.
 
 ## Phase 6c — Close tech debt NOW (no deferral — hidden gaps are bad practice)
 
-- [ ] Wire agent.Watch END-TO-END: providers expose the *agent.Agent (or run the watchdog inside Run) so the orchestrator gets real prompt/stall detection + kill-and-reclaim, not just a ctx timeout. The never-block control invariant must be actually enforced, not scaffolded.
-- [ ] Implement NativeFanout delegation: a parallel step-group whose provider has NativeFanout is dispatched to ONE fan-out worker (map its evidence back to the group's tasks) instead of N Ralph workers.
-- [ ] Rework codex runner onto internal/agent (pty ownership) for consistency with claude/opencode; also rework DeclarativeRunner or document why it stays direct-exec.
-- [ ] Wire vconfig.DiffConflicts/AutoRemove into the --init path (the conflict-warn UX has no caller).
-- [ ] Wire supervisor HandleEnqueue -> real agent spawn via orch (supervisor.agents map is currently inert).
-- [ ] Phase 6c checkpoint green
+- [ ] [WAIT-AGENT] Wire agent.Watch END-TO-END: providers expose the *agent.Agent (or run the watchdog inside Run) so the orchestrator gets real prompt/stall detection + kill-and-reclaim, not just a ctx timeout. The never-block control invariant must be actually enforced, not scaffolded.
+- [ ] [WAIT-AGENT] Implement NativeFanout delegation: a parallel step-group whose provider has NativeFanout is dispatched to ONE fan-out worker (map its evidence back to the group's tasks) instead of N Ralph workers.
+- [ ] [WAIT-AGENT] Rework codex runner onto internal/agent (pty ownership) for consistency with claude/opencode; also rework DeclarativeRunner or document why it stays direct-exec.
+- [ ] [WAIT-AGENT] Wire vconfig.DiffConflicts/AutoRemove into the --init path (the conflict-warn UX has no caller).
+- [ ] [WAIT-AGENT] Wire supervisor HandleEnqueue -> real agent spawn via orch (supervisor.agents map is currently inert).
+- [ ] [WAIT-AGENT] Phase 6c checkpoint green
 
 ## Phase 7 — TUI + planning genesis
 - [ ] [WAIT-AGENT] internal/tui: read-only macro/meso/micro (model/update/view split, NOT one god file); subscribe + DB scrollback
