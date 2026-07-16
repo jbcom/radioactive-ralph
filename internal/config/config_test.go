@@ -209,6 +209,19 @@ func TestBinaryForNone(t *testing.T) {
 	}
 }
 
+func TestDurableSpendCapUSD(t *testing.T) {
+	l := Local{SpendCapUSD: map[string]float64{"savage": 5.0}}
+	if v, ok := l.DurableSpendCapUSD("savage"); !ok || v != 5.0 {
+		t.Errorf("DurableSpendCapUSD(savage) = %v,%v; want 5,true", v, ok)
+	}
+	if _, ok := l.DurableSpendCapUSD("world-breaker"); ok {
+		t.Error("unset variant returned a cap")
+	}
+	if _, ok := (Local{}).DurableSpendCapUSD("savage"); ok {
+		t.Error("empty Local returned a cap")
+	}
+}
+
 func TestPath(t *testing.T) {
 	got := Path("/path/to/repo")
 	want := filepath.Join("/path/to/repo", Dir, ConfigFile)

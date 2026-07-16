@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -130,6 +131,29 @@ func TestDSNPragmas(t *testing.T) {
 		if !strings.Contains(dsn, want) {
 			t.Errorf("DSN() = %q, missing %q", dsn, want)
 		}
+	}
+}
+
+// TestDSNPathEscaping confirms a path with URI-significant characters is
+// percent-encoded so it isn't misparsed as query syntax, and that a store
+// actually opens at such a path.
+func TestDSNPathEscaping(t *testing.T) {
+	if got := DSN("/tmp/a?b#c%d.db"); !strings.Contains(got, "/tmp/a%3Fb%23c%25d.db") {
+		t.Errorf("DSN did not escape path: %q", got)
+	}
+
+	// A directory name containing '?' and '%' must still open correctly.
+	dir := filepath.Join(t.TempDir(), "weird?dir%name")
+	if err := os.MkdirAll(dir, 0o750); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	s, err := Open(context.Background(), Options{DSN: DSN(filepath.Join(dir, "plans.db"))})
+	if err != nil {
+		t.Fatalf("Open with URI-significant path: %v", err)
+	}
+	defer func() { _ = s.Close() }()
+	if _, err := s.CreatePlan(context.Background(), CreatePlanOpts{Slug: "x", Title: "x"}); err != nil {
+		t.Fatalf("CreatePlan on escaped-path db: %v", err)
 	}
 }
 

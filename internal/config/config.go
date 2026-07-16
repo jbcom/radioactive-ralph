@@ -136,6 +136,22 @@ type Local struct {
 	// self-authorize a destructive variant, so a malicious PR cannot flip
 	// a plan to world-breaker and have the service run it.
 	ConfirmDurableVariants []string `toml:"confirm_durable_variants"`
+
+	// SpendCapUSD maps a variant name to its operator-owned spend ceiling
+	// for the durable service. This lives in local.toml alongside the gate
+	// confirmation so the operator who authorizes a destructive variant
+	// also owns its cap — a committed config.toml (or a config reload) must
+	// not be able to raise an already-authorized variant's ceiling. When
+	// no local entry exists, the durable cap falls back to the committed
+	// [variants.X] spend_cap_usd.
+	SpendCapUSD map[string]float64 `toml:"spend_cap_usd"`
+}
+
+// DurableSpendCapUSD returns the operator-owned durable spend cap for a
+// variant from local.toml, and whether one was set.
+func (l Local) DurableSpendCapUSD(variantName string) (float64, bool) {
+	v, ok := l.SpendCapUSD[variantName]
+	return v, ok
 }
 
 // DurableVariantConfirmed reports whether the operator has authorized the

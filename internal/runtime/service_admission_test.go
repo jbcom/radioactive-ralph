@@ -222,6 +222,31 @@ func TestRestoreSpendFromEventLog(t *testing.T) {
 	_ = eventDB.Close()
 }
 
+// TestLocalSpendCapTakesPrecedence proves the durable cap resolves from
+// operator-owned local.toml over committed config.toml, so a committed
+// change cannot raise an authorized variant's ceiling.
+func TestLocalSpendCapTakesPrecedence(t *testing.T) {
+	gated := mustLookupVariant(t, variant.WorldBreaker)
+	committed := 1000.0 // committed config.toml tries a huge cap
+	localCap := 1.0     // operator pins a small one in local.toml
+	cfg := config.File{
+		Variants: map[string]config.VariantFile{
+			string(gated.Name): {SpendCapUSD: &committed},
+		},
+	}
+	local := config.Local{
+		SpendCapUSD: map[string]float64{string(gated.Name): localCap},
+	}
+	if got := resolveSpendCapUSD(cfg, local, gated); got != localCap {
+		t.Fatalf("resolveSpendCapUSD = %.2f, want the local %.2f (not the committed %.2f)", got, localCap, committed)
+	}
+
+	// With no local entry, fall back to the committed value.
+	if got := resolveSpendCapUSD(cfg, config.Local{}, gated); got != committed {
+		t.Fatalf("fallback resolveSpendCapUSD = %.2f, want committed %.2f", got, committed)
+	}
+}
+
 func mustLookupVariant(t *testing.T, name variant.Name) variant.Profile {
 	t.Helper()
 	p, err := variant.Lookup(string(name))

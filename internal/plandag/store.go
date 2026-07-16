@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
 
 	"github.com/google/uuid"
 	"github.com/jonboulle/clockwork"
@@ -30,13 +31,27 @@ type Store struct {
 // concurrent writers instead of failing them immediately. synchronous=NORMAL
 // is the documented-safe pairing with WAL and avoids an fsync on every
 // heartbeat/tick write.
+//
+// The path is percent-encoded per the SQLite file: URI rules so a dbPath
+// containing '?', '#', or '%' is not misparsed as URI syntax and pointed
+// at the wrong database.
 func DSN(dbPath string) string {
-	return "file:" + dbPath +
+	return "file:" + escapeDSNPath(dbPath) +
 		"?_txlock=immediate" +
 		"&_pragma=foreign_keys(1)" +
 		"&_pragma=journal_mode(WAL)" +
 		"&_pragma=busy_timeout(5000)" +
 		"&_pragma=synchronous(NORMAL)"
+}
+
+// escapeDSNPath percent-encodes the characters that carry meaning in a
+// file: URI so a filesystem path is preserved verbatim. '%' is encoded
+// first so the encoding is not applied twice.
+func escapeDSNPath(p string) string {
+	p = strings.ReplaceAll(p, "%", "%25")
+	p = strings.ReplaceAll(p, "?", "%3F")
+	p = strings.ReplaceAll(p, "#", "%23")
+	return p
 }
 
 // Options configures Open.

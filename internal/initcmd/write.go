@@ -92,14 +92,24 @@ func writeLocalTOML(path string) error {
 #
 # Authorize the durable service to schedule confirmation-gated destructive
 # variants. This lives here (never in committed config.toml) so a pull
-# request cannot self-authorize a destructive variant. Each variant still
-# needs its spend cap set in config.toml where it requires one.
+# request cannot self-authorize a destructive variant.
 #   confirm_durable_variants = ["savage"]   # savage | old-man | world-breaker
+#
+# Operator-owned durable spend ceilings. Kept here (not config.toml) so a
+# committed change or reload cannot raise an authorized variant's cap.
+# Falls back to [variants.X] spend_cap_usd in config.toml when unset.
+#   [spend_cap_usd]
+#   savage = 25.0
 `
 	// 0o600: local.toml carries the operator's binary override and the
 	// durable-variant authorization list — security-relevant, so it must
-	// not be world-readable like the committed config.
-	return os.WriteFile(path, []byte(content), 0o600)
+	// not be world-readable like the committed config. os.WriteFile keeps
+	// an existing file's mode, so Chmod explicitly to tighten a local.toml
+	// that a prior version created 0o644.
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		return err
+	}
+	return os.Chmod(path, 0o600)
 }
 
 // scaffoldPlans creates .radioactive-ralph/plans/ with a starter index.md

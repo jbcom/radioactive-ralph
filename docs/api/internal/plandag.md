@@ -95,7 +95,7 @@ var ErrNoReadyTask = errors.New("plandag: no ready task")
 ```
 
 <a name="DSN"></a>
-## func [DSN](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plandag/store.go#L33>)
+## func [DSN](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plandag/store.go#L38>)
 
 ```go
 func DSN(dbPath string) string
@@ -104,6 +104,8 @@ func DSN(dbPath string) string
 DSN builds the canonical modernc.org/sqlite DSN for a plandag database at dbPath. Every process that opens plans.db \(the durable service, the TUI, and the CLI\) MUST use this so they share identical locking and durability semantics.
 
 \_txlock=immediate makes every transaction take the write lock up front, so a SELECT\-then\-UPDATE \(e.g. ClaimNextReady, the operator transitions\) can never race another process into SQLITE\_BUSY\_SNAPSHOT — which busy\_timeout does NOT retry. busy\_timeout then actually serializes the concurrent writers instead of failing them immediately. synchronous=NORMAL is the documented\-safe pairing with WAL and avoids an fsync on every heartbeat/tick write.
+
+The path is percent\-encoded per the SQLite file: URI rules so a dbPath containing '?', '\#', or '%' is not misparsed as URI syntax and pointed at the wrong database.
 
 <a name="Migrate"></a>
 ## func [Migrate](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plandag/migrate.go#L30>)
@@ -153,7 +155,7 @@ type CreateTaskOpts struct {
 ```
 
 <a name="Options"></a>
-## type [Options](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plandag/store.go#L43-L53>)
+## type [Options](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plandag/store.go#L58-L68>)
 
 Options configures Open.
 
@@ -320,7 +322,7 @@ type SessionVariantSummary struct {
 ```
 
 <a name="Store"></a>
-## type [Store](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plandag/store.go#L15-L19>)
+## type [Store](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plandag/store.go#L16-L20>)
 
 Store is the plandag handle. It wraps a \*sql.DB plus deterministic clock \+ UUID provider \(test\-swappable\).
 
@@ -331,7 +333,7 @@ type Store struct {
 ```
 
 <a name="Open"></a>
-### func [Open](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plandag/store.go#L56>)
+### func [Open](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plandag/store.go#L71>)
 
 ```go
 func Open(ctx context.Context, opts Options) (*Store, error)
@@ -394,7 +396,7 @@ func (s *Store) ClearSessionVariantTask(ctx context.Context, sessionVariantID, s
 ClearSessionVariantTask clears the active task from one worker row and marks it idle or terminated.
 
 <a name="Store.Close"></a>
-### func \(\*Store\) [Close](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plandag/store.go#L97>)
+### func \(\*Store\) [Close](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plandag/store.go#L112>)
 
 ```go
 func (s *Store) Close() error
@@ -448,7 +450,7 @@ func (s *Store) CreateTask(ctx context.Context, o CreateTaskOpts) error
 CreateTask inserts a pending task. Callers wire dependencies via AddDep.
 
 <a name="Store.DB"></a>
-### func \(\*Store\) [DB](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plandag/store.go#L103>)
+### func \(\*Store\) [DB](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plandag/store.go#L118>)
 
 ```go
 func (s *Store) DB() *sql.DB
