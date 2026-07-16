@@ -15,7 +15,7 @@
     "@astrojs/starlight": "^0.38.3",
     "@fontsource/fuzzy-bubbles": "^5.2.5",
     "@fontsource/schoolbell": "^5.2.5",
-    "astro": "^6.0.1",
+    "astro": "^6.4.6",
     "sharp": "^0.34.2"
   },
   "engines": {
