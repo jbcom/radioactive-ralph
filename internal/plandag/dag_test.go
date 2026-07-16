@@ -2,6 +2,7 @@ package plandag
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"path/filepath"
 	"strings"
@@ -129,6 +130,30 @@ func TestDSNPragmas(t *testing.T) {
 		if !strings.Contains(dsn, want) {
 			t.Errorf("DSN() = %q, missing %q", dsn, want)
 		}
+	}
+}
+
+// TestTxlockHonoredByDriver guards against a driver swap or version bump
+// silently dropping _txlock support, which would defeat the immediate-lock
+// concurrency fix. modernc.org/sqlite parses _txlock and rejects unknown
+// values — a driver that ignored the param would accept "bogus".
+func TestTxlockHonoredByDriver(t *testing.T) {
+	bad, err := sql.Open("sqlite", "file:"+filepath.Join(t.TempDir(), "b.db")+"?_txlock=bogus")
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer func() { _ = bad.Close() }()
+	if err := bad.Ping(); err == nil {
+		t.Fatal("driver accepted _txlock=bogus; _txlock is being ignored, not honored")
+	}
+
+	good, err := sql.Open("sqlite", DSN(filepath.Join(t.TempDir(), "g.db")))
+	if err != nil {
+		t.Fatalf("open immediate: %v", err)
+	}
+	defer func() { _ = good.Close() }()
+	if err := good.Ping(); err != nil {
+		t.Fatalf("_txlock=immediate ping: %v", err)
 	}
 }
 
