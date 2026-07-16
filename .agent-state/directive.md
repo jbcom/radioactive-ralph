@@ -29,10 +29,10 @@ docs/superpowers/specs/2026-07-16-supervisor-architecture-design.md.
 - [ ] [WAIT-AGENT] Phase 3 checkpoint — after vconfig authored (blocked on store)
 
 ## Phase 4 — Supervisor + discovery (cobra CLI, kong removed)
-- [ ] internal/supervisor: --supervisor lifecycle owning agents + store
-- [ ] discovery: socket-at-XDG = advertisement; connect = discover; single-instance + stale-PID reclaim (reuse internal/ipc + flock)
-- [ ] dumb client: discover-or-refuse handshake; --init routing; kong->cobra/viper migration of the CLI surface
-- [ ] Phase 4 checkpoint green (client refuses without supervisor; 2nd supervisor refuses; stale socket reclaimed)
+- [ ] [WAIT-AGENT] internal/supervisor lifecycle — consumes store + agent; blocked on store executor
+- [ ] [WAIT-AGENT] supervisor discovery (socket-at-XDG, single-instance, stale reclaim) — blocked on store executor
+- [ ] [WAIT-AGENT] dumb client + kong->cobra/viper migration — blocked on store+vconfig
+- [ ] [WAIT-AGENT] Phase 4 checkpoint — after supervisor+client land (blocked on store)
 
 ## Phase 5 — Providers + detection (capability records, no personas)
 - [ ] rework internal/provider onto internal/agent; claude/codex runners; opencode.go (run --format json)
