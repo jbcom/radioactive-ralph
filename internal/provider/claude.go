@@ -7,9 +7,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/jbcom/radioactive-ralph/internal/config"
 	claudesession "github.com/jbcom/radioactive-ralph/internal/provider/claudesession"
-	"github.com/jbcom/radioactive-ralph/internal/variant"
 )
 
 // ClaudeRunner executes a single `claude -p` turn.
@@ -100,13 +98,13 @@ func parseClaudeUsage(raw []byte) Usage {
 	}
 }
 
-func resolveModel(cfg bindingConfig, model variant.Model) string {
+func resolveModel(cfg BindingConfig, model Model) string {
 	switch model {
-	case variant.ModelHaiku:
+	case ModelHaiku:
 		if cfg.HaikuModel != "" {
 			return cfg.HaikuModel
 		}
-	case variant.ModelOpus:
+	case ModelOpus:
 		if cfg.OpusModel != "" {
 			return cfg.OpusModel
 		}
@@ -126,7 +124,7 @@ func resolveModel(cfg bindingConfig, model variant.Model) string {
 	}
 }
 
-func resolveEffort(cfg bindingConfig, effort string) string {
+func resolveEffort(cfg BindingConfig, effort string) string {
 	switch effort {
 	case "low":
 		if cfg.LowEffort != "" {
@@ -147,8 +145,6 @@ func resolveEffort(cfg bindingConfig, effort string) string {
 	}
 	return effort
 }
-
-type bindingConfig = config.ProviderFile
 
 func extractAssistantText(raw json.RawMessage) string {
 	if len(raw) == 0 {

