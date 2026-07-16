@@ -74,7 +74,7 @@ docs/superpowers/specs/2026-07-16-supervisor-architecture-design.md.
 
 - [x] DELETE docs/variants/ (11 files) — DONE
 - [x] DELETE the committed .radioactive-ralph/ dir — DONE
-- [ ] Rewrite README.md + AGENTS.md + CLAUDE.md to the supervisor architecture — DOING NOW (agent-context every future executor reads; architecture is settled)
+- [x] Rewrite README.md + AGENTS.md + CLAUDE.md — DONE (all three realigned to the supervisor architecture)
 - [ ] [WAIT] Rewrite docs/getting-started + docs/guides + docs/design + docs/reference to the new model (supervisor/discovery, config virtual-layers, plan engine, orchestrator-verified completion, A2A vocabulary) — blocked: rewrite after Phases 7-8 land the final code (avoid churning docs against moving code)
 - [ ] [WAIT] Rewrite docs/runbooks (fix the socket-path drift + fabricated RequireOperatorApproval field flagged in review; supervisor install/attach) — blocked: rewrite after Phases 7-8 land the final code (avoid churning docs against moving code)
 - [ ] [WAIT] Regenerate docs/api/ via gomarkdoc against the NEW packages (agent/store/vconfig/supervisor/provider/agentdetect/plan/orch/a2a) — blocked: rewrite after Phases 7-8 land the final code (avoid churning docs against moving code)
