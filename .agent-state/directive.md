@@ -63,8 +63,8 @@ docs/superpowers/specs/2026-07-16-supervisor-architecture-design.md.
 
 ## Phase 9 — Docs TOTAL realignment (the whole docs/ tree describes the dead model)
 
-- [ ] DELETE docs/variants/ entirely (11 files — variants are gone; no personas)
-- [ ] DELETE the committed .radioactive-ralph/plans/ dir (violates clean-repo; state lives in the user DB now)
+- [x] DELETE docs/variants/ (11 files) — DONE
+- [x] DELETE the committed .radioactive-ralph/ dir — DONE
 - [ ] Rewrite README.md + AGENTS.md + CLAUDE.md to the supervisor architecture (one binary, --supervisor + dumb client, one user DB, local-only providers, no variants, markdown plans)
 - [ ] Rewrite docs/getting-started + docs/guides + docs/design + docs/reference to the new model (supervisor/discovery, config virtual-layers, plan engine, orchestrator-verified completion, A2A vocabulary)
 - [ ] Rewrite docs/runbooks (fix the socket-path drift + fabricated RequireOperatorApproval field flagged in review; supervisor install/attach)
