@@ -40,8 +40,7 @@ func runSupervisorMode(ctx context.Context) error {
 			logger.Info(msg, args...)
 		},
 	})
-	if err != nil {
-		return fmt.Errorf("supervisor: %w", err)
-	}
-	return nil
+	// supervisor.Run's errors already carry the "supervisor:" prefix; don't
+	// double it.
+	return err
 }
