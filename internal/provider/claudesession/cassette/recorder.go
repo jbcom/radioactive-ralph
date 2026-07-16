@@ -25,7 +25,13 @@ import (
 type Recorder struct {
 	cassettePath string
 	cmd          *exec.Cmd
-	started      time.Time
+
+	// startedMu guards started. The pump goroutines read it (via elapsed())
+	// concurrently with Start() writing it, so it must be synchronized;
+	// started stays anchored to subprocess Start() so frame timestamps and
+	// RecordedAt reflect the real session, not construction.
+	startedMu sync.Mutex
+	started   time.Time
 
 	// User-facing pipes:
 	clientStdin  io.WriteCloser // what the client writes into
@@ -76,10 +82,31 @@ func NewRecorder(ctx context.Context, cassettePath, bin string, args []string) (
 	return r, nil
 }
 
-// Start spawns the claude subprocess. Returns any exec error.
+// Start spawns the claude subprocess. Returns any exec error. The start
+// time is stamped here (under startedMu) so frame timestamps anchor to the
+// real session start, not construction.
 func (r *Recorder) Start() error {
+	r.startedMu.Lock()
 	r.started = time.Now()
+	r.startedMu.Unlock()
 	return r.cmd.Start()
+}
+
+// startedAt returns the recorded start time under the lock.
+func (r *Recorder) startedAt() time.Time {
+	r.startedMu.Lock()
+	defer r.startedMu.Unlock()
+	return r.started
+}
+
+// elapsed returns the duration since Start() under the lock. If Start()
+// has not run yet (started is zero), it returns 0.
+func (r *Recorder) elapsed() time.Duration {
+	t := r.startedAt()
+	if t.IsZero() {
+		return 0
+	}
+	return time.Since(t)
 }
 
 // Stdin returns the client-side writer. Anything written here is
@@ -102,7 +129,7 @@ func (r *Recorder) Close() error {
 	}
 	c := &Cassette{
 		Version:    CurrentVersion,
-		RecordedAt: r.started.UTC(),
+		RecordedAt: r.startedAt().UTC(),
 		Args:       r.args,
 		Frames:     r.frames,
 	}
@@ -119,7 +146,7 @@ func (r *Recorder) pumpStdin(clientSide io.Reader, realSide io.Writer) {
 		line := append([]byte(nil), scanner.Bytes()...)
 		r.append(Frame{
 			Direction: "in",
-			At:        time.Since(r.started),
+			At:        r.elapsed(),
 			Line:      line,
 		})
 		_, _ = realSide.Write(line)
@@ -137,7 +164,7 @@ func (r *Recorder) pumpStdout(realSide io.Reader, clientSide io.Writer) {
 		line := append([]byte(nil), scanner.Bytes()...)
 		r.append(Frame{
 			Direction: "out",
-			At:        time.Since(r.started),
+			At:        r.elapsed(),
 			Line:      line,
 		})
 		_, _ = clientSide.Write(line)
