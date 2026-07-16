@@ -75,23 +75,49 @@ config is merged and validated, and §5b for how a project is identified.
 - **`--supervisor`** makes the working directory irrelevant (it operates at the
   user/XDG level).
 
-## 5a. Config: one virtual merge layer, one validation
+## 5a. Config: virtual layers, change-vs-override, conflict diffing
 
-There is **no separate "optional project config file" concept**. Configuration
-is resolved into a single **virtual config** by merging, in increasing
-precedence:
+Configuration is never a single committed file; it resolves through virtual
+layers built by the supervisor. Three override flags feed it, each a distinct
+role:
 
-1. loaded **user** config (from the user DB / XDG),
-2. loaded **project** config (DB-resident, keyed by project identity),
-3. a config **passed explicitly by path** (in either mode) — highest
-   precedence, layered on top as overrides.
+- **`--config-file` / `-C`** — a joint config file; may contain a `projects:`
+  stanza. The tidy single-file form.
+- **`--user-config-file`** — a user-specific config file; may *also* carry a
+  `projects:` stanza; loaded the same way.
+- **`--project-config-file`** — config for one specific project; **ignored in
+  `--supervisor` mode**.
+
+**Two virtual layers, built in order:**
+
+1. **Virtual USER config** (low → high precedence):
+   `DB config` < `--config-file` < `--user-config-file`.
+2. **Virtual PROJECTS config** (in the supervisor, per project):
+   `all projects from the DB` < `projects:` stanza from the virtual USER config.
+
+**Change vs. override — the load-bearing distinction.** When the client talks to
+the supervisor it signals its **heuristics** (project fingerprints, §5b) and any
+project-config **changes**:
+
+- **CHANGES** occur via the headless/TUI wizard **or** an explicit
+  **`--init`** (new or redone initialization). In this mode a
+  `--project-config-file` is treated as changes: it is **both** merged on top of
+  the virtual `user.projects` config for that project **and stored to the DB**.
+- **OVERRIDES** occur in **normal client mode** (non-init). A passed
+  `--project-config-file` signals overrides, not changes: the project keeps its
+  stored initialization unmodified, and the file merges on top of the virtual
+  `user.projects` config for that project **at runtime only** (not persisted).
+
+**Supervisor conflict warning.** If project config arriving via `--config-file`
+or a `--user-config-file` `projects:` stanza would **override** a stored
+project's settings, the supervisor does **backwards-looking diffing** and warns
+explicitly: the user must either keep passing that config as
+`--project-config-file`, or remove the conflicts — and since removal is trivial
+once computed, the supervisor **offers to remove them automatically**.
 
 **Validation runs against the merged virtual layer.** If required pieces are
-missing after the merge, Ralph **exits with an error that reports exactly what
-must be defined** — the same mechanism regardless of whether config came from
-flags, the wizard, or a passed file. A documented path exists to author a
-project-level config file, but it is an **override source**, never a required
-committed artifact.
+missing after the merge, Ralph **exits with an error reporting exactly what must
+be defined** — one mechanism regardless of source (flags, wizard, or file).
 
 ## 5b. Project identity: accumulated fingerprints, not paths
 
