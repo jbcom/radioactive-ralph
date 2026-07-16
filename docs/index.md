@@ -12,7 +12,6 @@ lastUpdated: 2026-04-15
     <p class="rr-lead">A helpful little guy with many personalities: one binary, one plan DAG, one durable repo service, and one cockpit.</p>
     <div class="rr-actions">
       <a class="rr-button rr-button--primary" href="getting-started/">Get started</a>
-      <a class="rr-button rr-button--secondary" href="variants/">Meet the Ralphs</a>
       <a class="rr-button rr-button--secondary" href="reference/">Reference</a>
     </div>
   </div>
@@ -54,7 +53,6 @@ guides/index
 runbooks/index
 launch/index
 design/index
-variants/index
 reference/index
 api/index
 ```

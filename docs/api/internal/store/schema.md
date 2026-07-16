@@ -1,5 +1,5 @@
 ---
-title: internal/plandag/schema
+title: internal/store/schema
 description: Go API reference for the schema package.
 ---
 
@@ -8,12 +8,12 @@ description: Go API reference for the schema package.
 # schema
 
 ```go
-import "github.com/jbcom/radioactive-ralph/internal/plandag/schema"
+import "github.com/jbcom/radioactive-ralph/internal/store/schema"
 ```
 
-Package schema embeds the plandag SQL migrations.
+Package schema embeds the user\-level store SQL migrations.
 
-Migrations are versioned files named NNNN\_description.\{up,down\}.sql. The Runner in the parent plandag package applies them in order.
+Migrations are versioned files named NNNN\_description.\{up,down\}.sql. The Migrate function in the parent store package applies them in lexical order.
 
 ## Index
 

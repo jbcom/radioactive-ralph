@@ -17,18 +17,26 @@ Package provider adapts configured CLI backends into radioactive\_ralph's provid
 
 - [func ValidateBinding\(binding Binding\) error](<#ValidateBinding>)
 - [type Binding](<#Binding>)
-  - [func ResolveBinding\(cfg config.File, local config.Local, \_ variant.Profile, fromConfig config.VariantFile\) \(Binding, error\)](<#ResolveBinding>)
+  - [func ResolveBinding\(cfg File, local Local, fromConfig VariantFile\) \(Binding, error\)](<#ResolveBinding>)
+- [type BindingConfig](<#BindingConfig>)
 - [type ClaudeRunner](<#ClaudeRunner>)
   - [func \(ClaudeRunner\) Run\(ctx context.Context, binding Binding, req Request\) \(Result, error\)](<#ClaudeRunner.Run>)
 - [type CodexRunner](<#CodexRunner>)
   - [func \(CodexRunner\) Run\(ctx context.Context, binding Binding, req Request\) \(Result, error\)](<#CodexRunner.Run>)
 - [type DeclarativeRunner](<#DeclarativeRunner>)
   - [func \(DeclarativeRunner\) Run\(ctx context.Context, binding Binding, req Request\) \(Result, error\)](<#DeclarativeRunner.Run>)
+- [type File](<#File>)
+- [type Local](<#Local>)
+  - [func \(l Local\) BinaryFor\(providerName string\) \(string, bool\)](<#Local.BinaryFor>)
+- [type Model](<#Model>)
+- [type OpencodeRunner](<#OpencodeRunner>)
+  - [func \(OpencodeRunner\) Run\(ctx context.Context, binding Binding, req Request\) \(Result, error\)](<#OpencodeRunner.Run>)
 - [type Request](<#Request>)
 - [type Result](<#Result>)
 - [type Runner](<#Runner>)
   - [func NewRunner\(binding Binding\) \(Runner, error\)](<#NewRunner>)
 - [type Usage](<#Usage>)
+- [type VariantFile](<#VariantFile>)
 
 
 <a name="ValidateBinding"></a>
@@ -41,14 +49,14 @@ func ValidateBinding(binding Binding) error
 ValidateBinding validates the parts of a binding that can be checked without spawning a provider turn.
 
 <a name="Binding"></a>
-## type [Binding](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/provider.go#L15-L26>)
+## type [Binding](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/provider.go#L12-L23>)
 
 Binding is one resolved provider selection after repo config, local overrides, and per\-variant overrides have been applied.
 
 ```go
 type Binding struct {
     Name   string
-    Config config.ProviderFile
+    Config BindingConfig
 
     // BinaryFromLocal is true when Config.Binary was set by the gitignored
     // local.toml provider_binary override rather than by committed
@@ -61,31 +69,80 @@ type Binding struct {
 ```
 
 <a name="ResolveBinding"></a>
-### func [ResolveBinding](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/provider.go#L68>)
+### func [ResolveBinding](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/provider.go#L65>)
 
 ```go
-func ResolveBinding(cfg config.File, local config.Local, _ variant.Profile, fromConfig config.VariantFile) (Binding, error)
+func ResolveBinding(cfg File, local Local, fromConfig VariantFile) (Binding, error)
 ```
 
 ResolveBinding picks the provider for one variant.
 
-<a name="ClaudeRunner"></a>
-## type [ClaudeRunner](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/claude.go#L16>)
+<a name="BindingConfig"></a>
+## type [BindingConfig](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/binding.go#L37-L73>)
 
-ClaudeRunner executes a single \`claude \-p\` turn.
+BindingConfig is one provider's capability record: what binary to run, how to invoke it non\-interactively, how to read back its structured result and resume a session, and whether it can fan out work itself.
+
+This is NOT a persona/variant — variants are removed entirely per spec §10. A BindingConfig describes only what the underlying CLI/API can do.
+
+```go
+type BindingConfig struct {
+    Type   string   `toml:"type"`
+    Bin    string   `toml:"bin"`
+    Binary string   `toml:"binary"`
+    Args   []string `toml:"args"`
+
+    // OutputFile is a declarative-runner args token target (see
+    // declarative.go); it is unrelated to the agent.Options.ResultPath
+    // hybrid-I/O path used by the claude/codex/opencode runners.
+    OutputFile string `toml:"output_file"`
+
+    TurnTimeout    string `toml:"turn_timeout"`
+    MaxRetries     int    `toml:"max_retries"`
+    SessionIDRegex string `toml:"session_id_regex"`
+
+    HaikuModel  string `toml:"haiku_model"`
+    SonnetModel string `toml:"sonnet_model"`
+    OpusModel   string `toml:"opus_model"`
+
+    LowEffort    string `toml:"low_effort"`
+    MediumEffort string `toml:"medium_effort"`
+    HighEffort   string `toml:"high_effort"`
+    MaxEffort    string `toml:"max_effort"`
+
+    SupportsResume        *bool `toml:"supports_resume"`
+    UseAppendSystemPrompt *bool `toml:"use_append_system_prompt"`
+
+    // NativeFanout is true when the bound CLI/API can itself fan out
+    // subagents, workflows, or parallel work — spec §9/§10: the
+    // orchestrator uses this to decide whether to delegate a parallel
+    // step-group to one fan-out-capable agent rather than spawning N
+    // Ralph-managed workers. Evidence per provider is documented next to
+    // each Default*Provider constructor below. Providers with unverified
+    // or absent fan-out support default to false — the flag must never
+    // be optimistically set.
+    NativeFanout bool `toml:"native_fanout"`
+}
+```
+
+<a name="ClaudeRunner"></a>
+## type [ClaudeRunner](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/claude.go#L30>)
+
+ClaudeRunner executes a single \`claude \-p\` turn under Ralph's own pty via internal/agent, per spec §2/§3: Ralph owns the pty \(agent.Start\), the pane/output stream is for human/watchdog observation, and the structured result is read back from a file Ralph passes to the CLI — never scraped from the rendered pane.
+
+claude has no native "write result to a file" flag \(verified against \`claude \-\-help\` on the installed 2.1.211 CLI: \-\-output\-format json/stream\-json both write to stdout only\). So the ResultPath file here is Ralph\-side, not CLI\-native: the runner tees every stdout line \(which IS the stream\-json frames — the same content a human pane would show\) into req's ResultPath file as it arrives, then parses that file's accumulated content for the terminal result frame. This keeps the "never scrape the rendered pane for data" invariant: ResultPath holds the same raw JSON lines the CLI emitted, not a re\-rendered terminal.
 
 ```go
 type ClaudeRunner struct{}
 ```
 
 <a name="ClaudeRunner.Run"></a>
-### func \(ClaudeRunner\) [Run](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/claude.go#L20>)
+### func \(ClaudeRunner\) [Run](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/claude.go#L37>)
 
 ```go
 func (ClaudeRunner) Run(ctx context.Context, binding Binding, req Request) (Result, error)
 ```
 
-Run shells out to the configured Claude CLI binding and returns the assistant text that accumulated before the result frame.
+Run spawns \`claude \-p \-\-input\-format stream\-json \-\-output\-format stream\-json\` under agent.Start, feeds req.UserPrompt on stdin via a one\-shot input file \(claude in \-\-input\-format stream\-json mode reads a JSON\-line user message from stdin\), tees stdout into a ResultPath file, and parses the terminal result frame from that file for Usage.
 
 <a name="CodexRunner"></a>
 ## type [CodexRunner](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/codex.go#L11>)
@@ -123,8 +180,82 @@ func (DeclarativeRunner) Run(ctx context.Context, binding Binding, req Request) 
 
 Run executes one declarative provider turn.
 
+<a name="File"></a>
+## type [File](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/binding.go#L80-L83>)
+
+File is the provider package's own minimal config surface: enough for ResolveBinding to read DefaultProvider and look up a named provider's BindingConfig. A later phase may replace this with a direct internal/vconfig\-backed decode; the shape here matches what committed config.toml historically expressed for the equivalent keys.
+
+```go
+type File struct {
+    DefaultProvider string
+    Providers       map[string]BindingConfig
+}
+```
+
+<a name="Local"></a>
+## type [Local](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/binding.go#L88-L91>)
+
+Local is the provider package's local\-override surface: just enough for ResolveBinding's local\-binary\-override lookup \(the gitignored local.toml escape hatch for pointing a provider at a non\-shipped binary\).
+
+```go
+type Local struct {
+    ProviderBinary   string
+    ProviderBinaries map[string]string
+}
+```
+
+<a name="Local.BinaryFor"></a>
+### func \(Local\) [BinaryFor](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/binding.go#L96>)
+
+```go
+func (l Local) BinaryFor(providerName string) (string, bool)
+```
+
+BinaryFor resolves the local\-override binary for providerName. A per\-provider override takes precedence over the single legacy ProviderBinary field.
+
+<a name="Model"></a>
+## type [Model](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/binding.go#L20>)
+
+Model is a provider\-neutral model\-tier selector.
+
+```go
+type Model string
+```
+
+<a name="ModelHaiku"></a>Model tiers. Values match the retired variant.Model constants so existing provider config \(haiku\_model/sonnet\_model/opus\_model keys\) keeps meaning the same thing.
+
+```go
+const (
+    ModelHaiku  Model = "haiku"
+    ModelSonnet Model = "sonnet"
+    ModelOpus   Model = "opus"
+)
+```
+
+<a name="OpencodeRunner"></a>
+## type [OpencodeRunner](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/opencode.go#L31>)
+
+OpencodeRunner executes a single \`opencode run \-\-format json\` turn under Ralph's own pty via internal/agent, per spec §9 \("opencode bound via its local \`run\` path only"\) and §3 \(hybrid I/O\).
+
+Verified against the installed \`opencode\` 1.18.3 CLI on 2026\-07\-16: \`opencode run \[message..\] \-\-format json\` emits one JSON object per line on stdout \(never a file — there is no output\-file flag\), each with a top\-level "type": "step\_start" | "text" | "step\_finish" | others. The assistant reply lives in \`type":"text"\` frames' part.text; token/cost usage lives in the \`type":"step\_finish"\` frame's part.tokens \(input/output/cache.read\) and part.cost. \`\-\-session\`/\`\-\-continue\` resumes a session, \`\-\-variant\` sets reasoning effort, \`\-\-dir\` sets the working directory, \`\-\-model\` takes \`provider/model\`.
+
+Like ClaudeRunner, there is no CLI\-native result\-file flag, so ResultPath is Ralph\-side: the runner tees recognized JSON frames from the pty's Output\(\) into the ResultPath file as they arrive, then parses the accumulated file for the terminal step\_finish frame's usage.
+
+```go
+type OpencodeRunner struct{}
+```
+
+<a name="OpencodeRunner.Run"></a>
+### func \(OpencodeRunner\) [Run](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/opencode.go#L35>)
+
+```go
+func (OpencodeRunner) Run(ctx context.Context, binding Binding, req Request) (Result, error)
+```
+
+Run spawns \`opencode run \<prompt\> \-\-format json\` and blocks until the step\_finish frame \(or process exit\) closes the turn.
+
 <a name="Request"></a>
-## type [Request](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/provider.go#L29-L37>)
+## type [Request](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/provider.go#L26-L34>)
 
 Request is the provider\-neutral execution contract for one worker turn.
 
@@ -134,14 +265,14 @@ type Request struct {
     SystemPrompt string
     UserPrompt   string
     OutputSchema string
-    Model        variant.Model
+    Model        Model
     Effort       string
     AllowedTools []string
 }
 ```
 
 <a name="Result"></a>
-## type [Result](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/provider.go#L56-L60>)
+## type [Result](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/provider.go#L53-L57>)
 
 Result captures the observable output of one provider turn.
 
@@ -154,7 +285,7 @@ type Result struct {
 ```
 
 <a name="Runner"></a>
-## type [Runner](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/provider.go#L63-L65>)
+## type [Runner](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/provider.go#L60-L62>)
 
 Runner executes one provider turn.
 
@@ -174,7 +305,7 @@ func NewRunner(binding Binding) (Runner, error)
 NewRunner returns the runtime implementation for a provider type.
 
 <a name="Usage"></a>
-## type [Usage](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/provider.go#L48-L53>)
+## type [Usage](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/provider.go#L45-L50>)
 
 Usage captures the token/cost accounting for one provider turn. Fields are zero when the provider does not report them. Coverage today: the claude runner populates Usage from the stream\-json result frame; codex and declarative bindings report zero \(their CLIs surface usage differently and are not yet parsed\). CostUSD is authoritative when non\-zero; the runtime accumulates it for spend\-cap enforcement, so a capped variant on an unreported provider still requires a cap value but its cost is not yet metered. Extending codex parsing is the follow\-up to close that gap.
 
@@ -184,6 +315,17 @@ type Usage struct {
     OutputTokens      int
     CachedInputTokens int
     CostUSD           float64
+}
+```
+
+<a name="VariantFile"></a>
+## type [VariantFile](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/binding.go#L110-L112>)
+
+VariantFile is the provider package's per\-binding\-request input — despite the name \(kept for config\-key compatibility with existing committed config.toml files\), it carries no persona: it is just the provider override for one binding request.
+
+```go
+type VariantFile struct {
+    Provider string
 }
 ```
 

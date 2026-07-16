@@ -13,7 +13,7 @@ import (
 
 // currentSchemaVersion is bumped whenever a new NNNN_*.up.sql ships.
 // The binary refuses to open a DB whose user_version exceeds this.
-const currentSchemaVersion = 1
+const currentSchemaVersion = 2
 
 // Migrate brings db up to currentSchemaVersion by applying any pending
 // *.up.sql migrations in lexical order.
