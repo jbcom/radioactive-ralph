@@ -23,10 +23,10 @@ docs/superpowers/specs/2026-07-16-supervisor-architecture-design.md.
 
 ## Phase 3 — Config resolution (cobra/viper)
 - [ ] [WAIT-AGENT] internal/vconfig — BLOCKED on Phase-2 store executor (consumes store.GetProjectConfig/ResolveProject); design prepped (scratchpad/phase3-vconfig-design.md), cobra/viper staged; author when store lands
-- [ ] two virtual layers (USER = DB < --config-file < --user-config-file; PROJECTS = all-DB-projects < user projects: stanza)
-- [ ] change (wizard/--init, persist) vs override (normal, runtime-only) semantics
-- [ ] conflict backwards-diff + auto-remove offer; merged validation with actionable missing-field errors
-- [ ] Phase 3 checkpoint green
+- [ ] [WAIT-AGENT] vconfig two virtual layers — blocked on store (GetProjectConfig); design in scratchpad/phase3-vconfig-design.md
+- [ ] [WAIT-AGENT] vconfig change-vs-override semantics — blocked on store (SetProjectConfig)
+- [ ] [WAIT-AGENT] vconfig conflict-diff + validation — blocked on store; design in scratchpad
+- [ ] [WAIT-AGENT] Phase 3 checkpoint — after vconfig authored (blocked on store)
 
 ## Phase 4 — Supervisor + discovery (cobra CLI, kong removed)
 - [ ] internal/supervisor: --supervisor lifecycle owning agents + store
