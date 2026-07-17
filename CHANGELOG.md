@@ -13,6 +13,34 @@ shipped. That means historical sections may still mention MCP, plugins,
 supervisors, or the archived Python implementation even though those are no
 longer part of the live contract.
 
+## [0.22.0](https://github.com/jbcom/radioactive-ralph/compare/v0.21.6...v0.22.0) (2026-07-17)
+
+
+### Features
+
+* apply attach deltas — the live view goes push-live ([#173](https://github.com/jbcom/radioactive-ralph/issues/173)) ([594dfd5](https://github.com/jbcom/radioactive-ralph/commit/594dfd50609693ad2107a15cf42d0225e8029ba2))
+* **cli:** add 'radioactive_ralph events' — headless live event tail ([#178](https://github.com/jbcom/radioactive-ralph/issues/178)) ([4211ee2](https://github.com/jbcom/radioactive-ralph/commit/4211ee2d7db3acfb1a9ec14b45f39824775612e3))
+* **plan:** gate a step behind operator approval with the [approval] marker ([#154](https://github.com/jbcom/radioactive-ralph/issues/154)) ([ad72877](https://github.com/jbcom/radioactive-ralph/commit/ad7287749ada47118d3aa75f512475e34c6c3ff3))
+* stream events over Attach — turn the observe half live ([#169](https://github.com/jbcom/radioactive-ralph/issues/169)) ([71c205b](https://github.com/jbcom/radioactive-ralph/commit/71c205b288b65340bf28bd243d34e5424608aa85))
+* **tui:** cursor-aware reconnect — no macro event missed across a blip ([#184](https://github.com/jbcom/radioactive-ralph/issues/184)) ([1cf3e2c](https://github.com/jbcom/radioactive-ralph/commit/1cf3e2c64979c71cd5c940b6450bac9246193fef))
+* **tui:** live macro plan-PROGRESS deltas ([#188](https://github.com/jbcom/radioactive-ralph/issues/188)) ([a25ed2e](https://github.com/jbcom/radioactive-ralph/commit/a25ed2e0139e23e77664fde8213a560cfa5fff09))
+* **tui:** session-long live event tail — macro/meso go push-live ([#182](https://github.com/jbcom/radioactive-ralph/issues/182)) ([7e4004a](https://github.com/jbcom/radioactive-ralph/commit/7e4004adf52f0f8494738fa1dab81fe77848e217))
+
+
+### Bug Fixes
+
+* **agent:** kill via exec's coordinated Cancel; no spurious stall on zero timeout ([#156](https://github.com/jbcom/radioactive-ralph/issues/156)) ([82592a3](https://github.com/jbcom/radioactive-ralph/commit/82592a3a302ff94b9b579e68703ae99acd620895))
+* **gui:** reconnect the live event stream instead of dying after one end ([#164](https://github.com/jbcom/radioactive-ralph/issues/164)) ([58ab5ab](https://github.com/jbcom/radioactive-ralph/commit/58ab5abc8c1f6b130fc896dfa0e2568fb198103b))
+* **ipc:** bound reads/writes + close conns on Stop so a bad client can't wedge the server ([#160](https://github.com/jbcom/radioactive-ralph/issues/160)) ([68df639](https://github.com/jbcom/radioactive-ralph/commit/68df639c718d55bfd882c1cf6b5c21f34fffe485))
+* **ipc:** detect Attach client disconnect so its handler doesn't leak ([#165](https://github.com/jbcom/radioactive-ralph/issues/165)) ([457930f](https://github.com/jbcom/radioactive-ralph/commit/457930f15c7f00eebd2b0d464dee07f717785fb8))
+* **orch:** contain a panicking dispatch turn instead of crashing the supervisor ([#146](https://github.com/jbcom/radioactive-ralph/issues/146)) ([66a780c](https://github.com/jbcom/radioactive-ralph/commit/66a780c96ae1666c1fcb9ee240754d7bbf16d588))
+* **provider:** fail a codex turn when the CLI exits nonzero ([#152](https://github.com/jbcom/radioactive-ralph/issues/152)) ([0fb53f1](https://github.com/jbcom/radioactive-ralph/commit/0fb53f12b4ae5973af06b05bff0945651181bdf2))
+* **provider:** salvage declarative output past an oversized stream-json line ([#144](https://github.com/jbcom/radioactive-ralph/issues/144)) ([ab5faa9](https://github.com/jbcom/radioactive-ralph/commit/ab5faa9c7328abf3a54a6ec18a6051f6f4d7a139))
+* **store:** make an approved 'ready' task claimable (close the approval-gate dead-end) ([#147](https://github.com/jbcom/radioactive-ralph/issues/147)) ([dba8192](https://github.com/jbcom/radioactive-ralph/commit/dba8192bda4f86004f234fe7f165407fe29aaedc))
+* **store:** make payload_json always valid JSON structurally ([#175](https://github.com/jbcom/radioactive-ralph/issues/175)) ([c438d1a](https://github.com/jbcom/radioactive-ralph/commit/c438d1a83b476636da4adc04468875f0a4a1394c))
+* **store:** stop the reaper double-executing a long-running worker's task ([#149](https://github.com/jbcom/radioactive-ralph/issues/149)) ([bb2d624](https://github.com/jbcom/radioactive-ralph/commit/bb2d624862bdd66356e9458a8309f6f83816e861))
+* **tui:** preserve selected entity across refreshes; track all gathers ([#157](https://github.com/jbcom/radioactive-ralph/issues/157)) ([f01764a](https://github.com/jbcom/radioactive-ralph/commit/f01764a6cf262fe382a69dafa9d1957956ce15aa))
+
 ## [0.21.6](https://github.com/jbcom/radioactive-ralph/compare/v0.21.5...v0.21.6) (2026-07-17)
 
 
