@@ -204,6 +204,25 @@ func TestRender_DoesNotStealFocusOnSameViewRefresh(t *testing.T) {
 	}
 }
 
+func TestRender_ScrollsToTopOnDrill(t *testing.T) {
+	// Drilling to a new view should reset the scroll offset — arriving scrolled to
+	// wherever the previous level happened to be is disorienting.
+	f := newFakeController()
+	f.plans = []store.Plan{{ID: "p1", Title: "P", Status: store.PlanStatusActive}}
+	f.tasks["p1"] = []store.Task{{ID: "t1", Description: "task", Status: store.TaskStatusPending}}
+	u := newTestUI(t, f)
+	u.refreshNow() // macro
+
+	// Simulate the operator having scrolled the macro view down.
+	u.scroll.Offset.Y = 250
+	u.scroll.Refresh()
+
+	u.drillTo("p1", "") // → meso; render should scroll back to top
+	if u.scroll.Offset.Y != 0 {
+		t.Fatalf("drill did not reset scroll: Offset.Y = %v, want 0", u.scroll.Offset.Y)
+	}
+}
+
 func TestRender_RefocusesWhenDrillViewChanges(t *testing.T) {
 	// Drilling to a new view SHOULD (re)initialize focus on that view's first
 	// control, even after the operator moved focus elsewhere in the prior view.

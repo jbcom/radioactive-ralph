@@ -143,7 +143,8 @@ type ui struct {
 
 	root      *fyne.Container
 	header    *widget.Label
-	body      *fyne.Container // swapped per drill level
+	body      *fyne.Container   // swapped per drill level
+	scroll    *container.Scroll // wraps body; scrolled to top on each drill
 	errBanner *widget.Label
 
 	// firstFocusable is the first keyboard-focusable widget of the view built
@@ -218,10 +219,11 @@ func newUI(ctx context.Context, c Controller, project string, w fyne.Window) *ui
 		errBanner: widget.NewLabel(""),
 	}
 	u.errBanner.Hide()
+	u.scroll = container.NewVScroll(u.body)
 	u.root = container.NewBorder(
 		container.NewVBox(u.header, u.errBanner), // top
 		nil, nil, nil,
-		container.NewVScroll(u.body), // center
+		u.scroll, // center
 	)
 	return u
 }
