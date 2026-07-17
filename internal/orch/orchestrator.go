@@ -985,7 +985,12 @@ func (o *Orchestrator) dispatchFanoutGroup(ctx context.Context, projectID, proje
 		return 0, nil
 	}
 	if err := o.store.SetWorkerTask(ctx, workerID, planID, claimed[0].task.ID); err != nil {
+		// Don't leak: the tasks are already claimed ('running') under this worker,
+		// so requeue them and release the worker row, mirroring the mid-loop
+		// claim-error path above — otherwise they sit wedged until the reaper.
 		releaseFanoutSlot()
+		o.releaseClaimedTasks(ctx, planID, sessionID, claimed)
+		_ = o.store.ClearWorkerTask(ctx, workerID, "crashed")
 		return 0, fmt.Errorf("orch: set worker task: %w", err)
 	}
 
@@ -1114,13 +1119,18 @@ func (o *Orchestrator) runFanoutGroup(ctx context.Context, projectID, projectDir
 	// never completion for any of them — VerifyAndComplete still
 	// mechanically re-checks (or falls back to non-empty-evidence
 	// judgment) per task.
+	// Verify EVERY claimed task even if one errors: an early return would leave
+	// the group's remaining tasks wedged in 'running' until the reaper and skip
+	// the ClearWorkerTask below (leaking the worker row). Collect the first error
+	// and keep going, then always release the worker.
+	var verifyErr error
 	for _, ds := range claimed {
-		if _, err := o.VerifyAndComplete(persistCtx, planID, ds.task.ID, ev); err != nil {
-			return fmt.Errorf("orch: verify and complete %s: %w", ds.task.ID, err)
+		if _, err := o.VerifyAndComplete(persistCtx, planID, ds.task.ID, ev); err != nil && verifyErr == nil {
+			verifyErr = fmt.Errorf("orch: verify and complete %s: %w", ds.task.ID, err)
 		}
 	}
 	_ = o.store.ClearWorkerTask(persistCtx, workerID, "idle")
-	return nil
+	return verifyErr
 }
 
 // releaseClaimedTasks requeues tasks a fan-out worker had already claimed
