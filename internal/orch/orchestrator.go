@@ -82,6 +82,18 @@ type Orchestrator struct {
 	runningWorkersMu sync.Mutex
 	runningWorkers   map[string]context.CancelFunc
 
+	// capInFlightMu guards capInFlight: the count of dispatched-but-not-yet-
+	// recorded provider turns per CAPPED provider. Async dispatch made
+	// checkSpendCap racy — N concurrent ready steps could each observe the same
+	// persisted balance below the cap and all launch, overspending by N turns.
+	// A per-turn cost isn't known until the turn finishes, so a precise
+	// reservation is impossible; instead we serialize a capped provider to ONE
+	// in-flight turn at a time (checkSpendCap refuses a second), bounding any
+	// overshoot to a single turn's cost — the unavoidable minimum. Uncapped
+	// providers are never tracked here (no lookup, no contention).
+	capInFlightMu sync.Mutex
+	capInFlight   map[string]int
+
 	// Async dispatch (the never-block invariant): dispatchWorker runs the provider
 	// agent turn, which can block for up to watchdogConfig.StallTimeout. It must
 	// NOT run inline under the supervisor's dispatchMu, or a slow turn wedges the
@@ -469,10 +481,15 @@ func (o *Orchestrator) DispatchNext(ctx context.Context, projectID, planID strin
 			break
 		}
 		releaseSlot := true // release inline on any pre-launch early exit below
+		spendProvider := "" // set once checkSpendCap reserves; released with the slot
 		release := func() {
 			if releaseSlot {
 				o.releaseDispatchSlot()
 				releaseSlot = false
+			}
+			if spendProvider != "" {
+				o.releaseSpendReservation(projectID, spendProvider)
+				spendProvider = ""
 			}
 		}
 
@@ -499,6 +516,10 @@ func (o *Orchestrator) DispatchNext(ctx context.Context, projectID, planID strin
 			})
 			continue
 		}
+		// checkSpendCap reserved an in-flight slot for a capped provider; record
+		// it so release() frees it on any pre-launch early exit below, and so
+		// ownership can transfer to the async goroutine on a successful launch.
+		spendProvider = binding.Name
 
 		sessionID, workerID, err := o.spawnWorkerRows(ctx, binding)
 		if err != nil {
@@ -543,6 +564,8 @@ func (o *Orchestrator) DispatchNext(ctx context.Context, projectID, planID strin
 		// releaseSlot transfers to the goroutine here, so the loop's inline release
 		// no longer fires for this iteration.
 		releaseSlot = false
+		reservedProvider := spendProvider // transfer the reservation to the goroutine
+		spendProvider = ""                // loop's release() must not also free it
 		o.inflight.Add(1)
 		// Run under baseCtx, NOT the caller's ctx: HandleEnqueue's ctx is the IPC
 		// request context, cancelled the moment the request handler returns, which
@@ -551,6 +574,10 @@ func (o *Orchestrator) DispatchNext(ctx context.Context, projectID, planID strin
 		go func() {
 			defer o.inflight.Done()
 			defer o.releaseDispatchSlot()
+			// Release the spend reservation once the turn's usage is recorded
+			// (dispatchWorker records it before returning), freeing the capped
+			// provider for its next turn.
+			defer o.releaseSpendReservation(projectID, reservedProvider)
 			if err := o.dispatchWorker(runCtx, projectID, projectDir, planID, sessionID, workerID, binding, ds, scoped); err != nil {
 				// Async: no caller to return to. A dispatch error for one worker
 				// must never abort the pass or wedge the supervisor — log it as a
@@ -947,6 +974,18 @@ func (o *Orchestrator) dispatchFanoutGroup(ctx context.Context, projectID, proje
 			}),
 		})
 		return 0, nil
+	}
+	// checkSpendCap reserved an in-flight slot for a capped provider. Fold its
+	// release into releaseFanoutSlot so every synchronous early-exit below frees
+	// both; on a successful launch, ownership transfers to the goroutine.
+	baseReleaseFanoutSlot := releaseFanoutSlot
+	spendReserved := binding.Name
+	releaseFanoutSlot = func() {
+		baseReleaseFanoutSlot()
+		if spendReserved != "" {
+			o.releaseSpendReservation(projectID, spendReserved)
+			spendReserved = ""
+		}
 	}
 
 	sessionID, workerID, err := o.spawnWorkerRows(ctx, binding)

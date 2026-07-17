@@ -256,5 +256,112 @@ func TestDispatchHeartbeatsRunningWorker(t *testing.T) {
 	o.Wait()
 }
 
+// TestSpendCapSerializesCappedProviderTurns proves the spend-cap reservation
+// bounds a CAPPED provider to one in-flight turn at a time. Async dispatch made
+// the old check-then-record spend-cap racy — concurrent ready steps could all
+// read the same sub-cap balance and launch, overspending by N turns. With the
+// reservation, a second turn is refused while the first is in flight, so a capped
+// provider can overshoot its cap by at most one turn's cost.
+func TestSpendCapSerializesCappedProviderTurns(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	projectID := mustCreateTestProject(t, s, "cap-serial-project")
+	planID := mustCreateTestPlan(t, s, projectID, "cap-serial-plan", "Fan", threeStepParallelPlan)
+
+	runner := &blockingRunner{started: make(chan string, 8)}
+	o := New(s,
+		WithRunnerFactory(func(provider.Binding) (provider.Runner, error) { return runner, nil }),
+		WithBindingResolver(fakeBindingResolver("claude", false)),
+		WithSpendCap("claude", 100.00), // capped, but well under cap so balance doesn't refuse
+	)
+
+	// A parallel group with three ready steps on a CAPPED provider: only ONE
+	// should launch (the reservation refuses the other two this pass).
+	if _, err := o.DispatchNext(ctx, projectID, planID); err != nil {
+		t.Fatalf("DispatchNext: %v", err)
+	}
+
+	<-runner.started // exactly one turn started
+	select {
+	case <-runner.started:
+		t.Fatal("a second turn started on a capped provider despite one already in flight")
+	case <-time.After(200 * time.Millisecond):
+	}
+
+	// Cancel the in-flight turn and drain; once its usage is recorded the
+	// reservation frees, so a later pass can dispatch the next step.
+	workerID := waitForRegisteredWorker(t, o)
+	o.KillWorker(workerID)
+	o.Wait()
+
+	if _, err := o.DispatchNext(ctx, projectID, planID); err != nil {
+		t.Fatalf("DispatchNext #2: %v", err)
+	}
+	select {
+	case <-runner.started:
+		// good — the freed reservation let the next step dispatch.
+	case <-time.After(2 * time.Second):
+		t.Fatal("no turn dispatched after the reservation was freed")
+	}
+	workerID2 := waitForRegisteredWorker(t, o)
+	o.KillWorker(workerID2)
+	o.Wait()
+}
+
+// TestSpendReservationIsPerProject proves the in-flight reservation is scoped to
+// (project, provider): a capped provider with a turn in flight for project A must
+// NOT block the same provider dispatching for project B. The orchestrator is
+// shared across all projects, and spend is capped per project.
+func TestSpendReservationIsPerProject(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	projA := mustCreateTestProject(t, s, "spend-proj-a")
+	projB := mustCreateTestProject(t, s, "spend-proj-b")
+	planA := mustCreateTestPlan(t, s, projA, "plan-a", "A", twoStepSequentialPlan)
+	planB := mustCreateTestPlan(t, s, projB, "plan-b", "B", twoStepSequentialPlan)
+
+	runner := &blockingRunner{started: make(chan string, 8)}
+	o := New(s,
+		WithRunnerFactory(func(provider.Binding) (provider.Runner, error) { return runner, nil }),
+		WithBindingResolver(fakeBindingResolver("claude", false)),
+		WithSpendCap("claude", 100.00),
+	)
+
+	// Project A launches one capped turn (now in flight, blocked).
+	if _, err := o.DispatchNext(ctx, projA, planA); err != nil {
+		t.Fatalf("DispatchNext A: %v", err)
+	}
+	<-runner.started
+
+	// Project B must still dispatch its own turn — the reservation for A's claude
+	// must not spill over to B's claude.
+	if _, err := o.DispatchNext(ctx, projB, planB); err != nil {
+		t.Fatalf("DispatchNext B: %v", err)
+	}
+	select {
+	case <-runner.started:
+		// good — B dispatched despite A holding a reservation for the same provider.
+	case <-time.After(2 * time.Second):
+		t.Fatal("project B's capped turn was blocked by project A's reservation (reservation not per-project)")
+	}
+
+	// Drain both blocked turns.
+	for _, id := range runningWorkerIDs(o) {
+		o.KillWorker(id)
+	}
+	o.Wait()
+}
+
+// runningWorkerIDs snapshots the ids currently in the cancel registry.
+func runningWorkerIDs(o *Orchestrator) []string {
+	o.runningWorkersMu.Lock()
+	defer o.runningWorkersMu.Unlock()
+	ids := make([]string, 0, len(o.runningWorkers))
+	for id := range o.runningWorkers {
+		ids = append(ids, id)
+	}
+	return ids
+}
+
 // blockingRunner must satisfy provider.Runner.
 var _ provider.Runner = (*blockingRunner)(nil)
