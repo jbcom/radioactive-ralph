@@ -152,17 +152,25 @@ checkClaudeAuth distinguishes a missing CLI from an unauthenticated one, mirrori
 checkCodexAuth's ErrNotFound branch (#125). Directive/PILLARS reconciled to main
 via #117. Releases v0.19.0–v0.21.0.
 
-## Async dispatch — never-block invariant restored (in flight)
+## Never-block / async-dispatch (v0.21.0–v0.21.2)
 
 A supervisor/store review found the central never-block invariant violated on the
 hottest path: dispatchWorker ran the provider agent turn (up to the 5-min
-StallTimeout) inline under the supervisor's dispatchMu, so a slow turn wedged the
+StallTimeout) INLINE under the supervisor's dispatchMu, so a slow turn wedged the
 periodic tick, every HandleEnqueue client, and the reaper — while the DispatchNext
-doc comment already (falsely) promised goroutine-per-dispatch. The fix moves the
-slow turn+verify into a goroutine (per-step and native-fanout paths) behind a
-maxParallel try-acquire semaphore, with a WaitGroup the supervisor drains on
-shutdown after cancelling the run context; the goroutines run under a base context
-(the supervisor run ctx) rather than the per-request IPC ctx that dies when the
-request returns. A test proves DispatchNext returns promptly while a provider turn
-blocks. Design: docs/superpowers/specs/2026-07-17-async-dispatch-never-block-design.md.
-PR #127.
+doc comment already (falsely) promised goroutine-per-dispatch. The fix (#127)
+moves the slow turn+verify into a goroutine (per-step and native-fanout paths)
+behind a maxParallel try-acquire semaphore, with a WaitGroup the supervisor drains
+on shutdown; the goroutines run under a base context (the supervisor run ctx) not
+the per-request IPC ctx that dies when the request returns. Careful review
+reception then caught and fixed several edge cases the async change exposed: a
+running-worker store heartbeat (every 20s) so the reaper doesn't reclaim a healthy
+turn longer than its 90s staleness window; a persistCtx (detached from shutdown
+cancellation) so a nearly-complete turn's evidence + verification still land; and
+two fan-out task-leak paths. Supporting fixes: the SQLite pool is capped at 4
+connections (#129) — not 1, which would deadlock database/sql and let a backup's
+VACUUM INTO freeze the whole supervisor — bounding writer-lock contention while
+leaving headroom for a live backup + WAL readers; the spend-cap check reserves an
+in-flight slot per (project, provider) so concurrent launches on a capped provider
+overshoot by at most one turn (#131); and the supervisor concurrent-start test was
+de-flaked to bounded, race-independent assertions (#132).
