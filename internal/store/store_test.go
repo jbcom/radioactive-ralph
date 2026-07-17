@@ -3,11 +3,60 @@ package store
 import (
 	"context"
 	"path/filepath"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/jonboulle/clockwork"
 )
+
+// TestOpenCapsConnectionPool pins the single-connection pool: _txlock=immediate
+// makes every transaction take SQLite's writer lock up front, so an uncapped
+// pool would let unbounded goroutines pile onto that lock with only busy_timeout
+// as the backstop. SetMaxOpenConns(1) makes Go's pool the serialization point.
+func TestOpenCapsConnectionPool(t *testing.T) {
+	s := openTestStore(t)
+	if got := s.DB().Stats().MaxOpenConnections; got != 1 {
+		t.Fatalf("MaxOpenConnections = %d, want 1 (single-writer WAL serialization)", got)
+	}
+}
+
+// TestConcurrentWritersDoNotLock exercises many goroutines writing concurrently
+// through the single-connection pool and asserts none hits "database is locked":
+// with SetMaxOpenConns(1) the Go pool serializes them cleanly rather than
+// letting concurrent BEGIN IMMEDIATE attempts race SQLite's writer lock.
+func TestConcurrentWritersDoNotLock(t *testing.T) {
+	s := openTestStore(t)
+	ctx := context.Background()
+	projectID := mustCreateProject(t, s, "conc-writers")
+
+	const writers = 24
+	var wg sync.WaitGroup
+	errs := make(chan error, writers)
+	for range writers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			// Emit is a simple single-row write that BeginTx-es under the hood.
+			if err := s.Emit(ctx, EmitOpts{
+				ProjectID: projectID,
+				Kind:      "concurrency.probe",
+				Stream:    "service",
+			}); err != nil {
+				errs <- err
+			}
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if strings.Contains(err.Error(), "database is locked") {
+			t.Fatalf("concurrent write hit a lock error (pool not serializing): %v", err)
+		}
+		t.Fatalf("concurrent write failed: %v", err)
+	}
+}
 
 func mustParseTime(t *testing.T, raw string) time.Time {
 	t.Helper()

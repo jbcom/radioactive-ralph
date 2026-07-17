@@ -98,17 +98,30 @@ func Open(ctx context.Context, opts Options) (*Store, error) {
 		return nil, fmt.Errorf("store: open: %w", err)
 	}
 
+	// Serialize DB access at the Go pool layer with a single connection. This is
+	// the standard pattern for a single-file WAL SQLite: _txlock=immediate makes
+	// every BeginTx take SQLite's one writer lock up front, so an uncapped pool
+	// would let unbounded goroutines (the 1s dispatch tick, every per-connection
+	// IPC handler, each dispatched worker's store writes, the reaper) each open a
+	// fresh connection and pile onto that lock, with only busy_timeout(5s) as the
+	// backstop — a SQLITE_BUSY under load surfaces as a hard "database is locked"
+	// error deep in a store call. With one connection Go's own pool is the
+	// serialization point, so writers queue cleanly instead of racing the lock.
+	// This is a low-throughput control-plane DB; the single-writer serialization
+	// is not a bottleneck. It also guarantees the one-time PRAGMA below applies to
+	// the only connection there is.
+	db.SetMaxOpenConns(1)
+
 	// Verify the connection is live. sql.Open is lazy.
 	if err := db.PingContext(ctx); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("store: ping: %w", err)
 	}
 
-	// Enable foreign keys on every connection (per-connection PRAGMA in
-	// SQLite). modernc.org/sqlite honors _pragma DSN params but
-	// SetMaxIdleConns > 0 can recycle connections that drop the pragma, so
-	// re-affirm on an init hook. For simplicity we just exec it once;
-	// Options callers pass the DSN pragmas.
+	// Re-affirm foreign keys on the (single) connection. The DSN already sets
+	// foreign_keys(1) per-connection, but exec'ing it here is a cheap belt-and-
+	// suspenders that also documents the invariant at the Go layer. With
+	// SetMaxOpenConns(1) there is exactly one connection, so this applies to it.
 	if _, err := db.ExecContext(ctx, "PRAGMA foreign_keys = ON"); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("store: enable FK: %w", err)
