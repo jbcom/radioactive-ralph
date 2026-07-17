@@ -21,9 +21,12 @@ but only the micro subscription feeds it.
 
 Make the live event feed run for the **whole TUI session**, not just at micro,
 so the macro/meso views update from events as they land (with the poll as the
-reconcile net, exactly as at micro). A `task.claimed`/`done`/`failed` visibly
-lands on the macro plan-progress and the macro event pane immediately; the macro
-event list becomes a live tail, not a 1s poll.
+reconcile net, exactly as at micro). Concretely: the macro event pane becomes a
+live tail (not a 1s poll), and a `task.claimed`/`done`/`failed` updates the
+matching task's *status* immediately when that task is loaded (meso). The macro
+plan-*progress* counters are NOT recomputed from a single event — they refresh
+on the poll (see the note under "Approach"); the live signal at macro is the
+event pane. This scoping is intentional and consistent throughout this spec.
 
 Non-goals: no change to the wire/store layer; no per-level *resubscribe* (one
 subscription serves all levels); no removal of the poll.
