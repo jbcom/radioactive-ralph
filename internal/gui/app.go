@@ -59,12 +59,24 @@ func Run(ctx context.Context, o Opts) error {
 
 	// Keyboard navigation (a11y + parity with the TUI, which is fully keyboard-
 	// driven): Escape drills back one level (micro→meso→macro), the mouse-free
-	// equivalent of the on-screen back buttons.
-	w.Canvas().SetOnTypedKey(func(ev *fyne.KeyEvent) {
-		if ev.Name == fyne.KeyEscape {
-			ui.drillBack()
-		}
-	})
+	// equivalent of the on-screen back buttons. Fyne routes TypedKey to the
+	// FOCUSED widget first, so SetOnTypedKey alone misses Escape when a plan/task
+	// button has focus. The desktop canvas's SetOnKeyDown fires for every key
+	// regardless of focus, so prefer it and fall back to SetOnTypedKey where the
+	// desktop canvas isn't available (e.g. the headless test driver).
+	if dc, ok := w.Canvas().(desktop.Canvas); ok {
+		dc.SetOnKeyDown(func(ev *fyne.KeyEvent) {
+			if ev.Name == fyne.KeyEscape {
+				ui.drillBack()
+			}
+		})
+	} else {
+		w.Canvas().SetOnTypedKey(func(ev *fyne.KeyEvent) {
+			if ev.Name == fyne.KeyEscape {
+				ui.drillBack()
+			}
+		})
+	}
 
 	// System tray (where the desktop driver supports it): a compact way to
 	// raise the window and quit. Degrades to just the window otherwise.
