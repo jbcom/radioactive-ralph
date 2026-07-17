@@ -191,22 +191,17 @@ Structured attach event surface (the observe half goes live) — shipping arc:
   AND the pre-existing TUI macro pane + GUI event view; fixed by switching it to
   the shared eventProjectScope so all consumers agree with the live tail.
 
-Rolling (session-long TUI live tail — in flight):
-- [ ] [WAIT] #180 (docs: the session-long TUI live-tail spec) — CI. Spec revised
-  to match as-built #182 + 4 codex spec-review notes folded in (reconnect
-  cursor-gap + macro-progress-lag documented as known limitations; the two
-  already-fixed items point at #178/#182). Threads resolved; merge green.
-- [ ] [WAIT] #182 (feat: session-long TUI live tail — macro/meso go push-live).
-  Subscription starts once on first fetch (ensureAttach), routes liveFrameMsg by
-  level (always applyEvent delta + prependEvent macro tail; micro adds the
-  filtered log), drillOut no longer cancels, quit does. Code-review found ONE
-  real bug — the poll wholesale-replaced planEvent, dropping a live event whose
-  DB commit landed inside the poll's read window; fixed with mergeEventTail
-  (union deduped-by-id, +tests). Reconnect-after-blip verified + tested. Threads
-  resolved; CI on the fix; merge green.
+- Session-long TUI live tail (MERGED): spec #180, feature #182 — the macro/meso
+  views go push-live (subscription starts once on first fetch, routes frames by
+  level: always applyEvent delta + prependEvent macro tail deduped, micro adds
+  the filtered log; poll reconciles via mergeEventTail so no live event is
+  dropped). Review folded forward: poll-drops-live-event bug (mergeEventTail),
+  id-less-frame dedup, spec internal-consistency. Reconnect-after-blip works
+  (next fetch restarts) with a known cursor-gap limitation — the next item below.
+  The observe-half push-live work now spans CLI (#178) / TUI (#173/#182) / GUI
+  (#173).
 
-Next concrete item (runnable once #180/#182 land — the observe-half push-live
-work spans CLI/TUI/GUI):
+Next concrete item (now runnable — #180/#182 merged):
 - [ ] Cursor-aware TUI reconnect: the session subscription currently re-seeds
   from the current MaxEventID on reconnect, so events during a supervisor-blip
   gap arrive only via the poll, not the live stream (the one real limitation the
