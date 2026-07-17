@@ -102,8 +102,14 @@ func (l *liveDataSource) Attach(ctx context.Context, fn func(json.RawMessage) er
 		return err
 	}
 	defer func() { _ = client.Close() }()
-	// Scope the stream to this client's project. AfterID 0 starts from the
-	// beginning of what the supervisor still holds; a future change can thread a
-	// resume cursor here once the TUI persists one.
-	return client.Attach(ctx, ipc.AttachArgs{ProjectID: l.projectID}, fn)
+	// Seed the cursor to the current max so the live view starts from "now"
+	// rather than replaying the entire project history on every launch/attach —
+	// a mature project would otherwise flood the micro view (and re-fetch) with
+	// thousands of historical frames. A read error here is non-fatal: fall back
+	// to 0 (from the beginning) so the stream still works, just verbosely.
+	afterID, err := l.store.MaxEventID(ctx, l.projectID)
+	if err != nil {
+		afterID = 0
+	}
+	return client.Attach(ctx, ipc.AttachArgs{ProjectID: l.projectID, AfterID: afterID}, fn)
 }

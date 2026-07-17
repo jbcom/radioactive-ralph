@@ -2,9 +2,12 @@ package supervisor
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -451,10 +454,23 @@ func (s *Supervisor) HandleAttach(ctx context.Context, args ipc.AttachArgs, emit
 		for {
 			events, err := s.store.EventsAfter(ctx, args.ProjectID, cursor, attachTailBatch)
 			if err != nil {
-				// A transient read error (e.g. momentary pool contention) must
-				// not kill a live stream: log, stop draining, wait for the next
-				// tick. The cursor is unchanged, so nothing is skipped.
-				s.log("attach tail: events after cursor", "err", err)
+				// Cancellation is a clean end, not an error to surface.
+				if ctx.Err() != nil {
+					return nil
+				}
+				// A PERMANENT store failure (closed DB, corruption, schema error)
+				// won't fix itself: retrying every tick would just spin, log
+				// forever, and leave the client attached to a permanently stale
+				// stream. End the subscription with the error so the client sees
+				// the stream close rather than hang silently. Only a TRANSIENT
+				// error (momentary pool contention) is retried: log, stop
+				// draining, wait for the next tick with the cursor unchanged so
+				// nothing is skipped.
+				if !isTransientStoreErr(err) {
+					s.log("attach tail: permanent store error, ending stream", "err", err)
+					return fmt.Errorf("supervisor: attach tail: %w", err)
+				}
+				s.log("attach tail: transient error, retrying next tick", "err", err)
 				break
 			}
 			if len(events) == 0 {
@@ -487,6 +503,27 @@ func (s *Supervisor) HandleAttach(ctx context.Context, args ipc.AttachArgs, emit
 		case <-ticker.C:
 		}
 	}
+}
+
+// isTransientStoreErr reports whether a store read error is worth retrying on
+// the next tail tick (momentary contention) versus a permanent failure that
+// should end the stream. SQLite surfaces contention as SQLITE_BUSY /
+// SQLITE_LOCKED — recoverable. A closed DB / done connection / done transaction
+// (sql.ErrConnDone, sql.ErrTxDone) or anything else is treated as permanent, so
+// the tail ends rather than spinning forever against a broken store. Context
+// cancellation is handled by the caller before this is consulted.
+func isTransientStoreErr(err error) bool {
+	if errors.Is(err, sql.ErrConnDone) || errors.Is(err, sql.ErrTxDone) {
+		return false
+	}
+	// modernc.org/sqlite reports lock contention via an error whose message
+	// carries the SQLITE_BUSY/SQLITE_LOCKED token; match on that rather than the
+	// driver's un-exported error type so we don't couple to its internals.
+	msg := err.Error()
+	return strings.Contains(msg, "SQLITE_BUSY") ||
+		strings.Contains(msg, "SQLITE_LOCKED") ||
+		strings.Contains(msg, "database is locked") ||
+		strings.Contains(msg, "database table is locked")
 }
 
 // attachEventFrame maps a store event row to the public wire shape. Payload is

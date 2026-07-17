@@ -236,6 +236,39 @@ func TestHandleAttachEmitsNewEvents(t *testing.T) {
 	}
 }
 
+// TestHandleAttachPermanentStoreErrorEndsStream confirms a permanent store
+// failure (here: a closed DB) ends the stream with an error rather than
+// spinning forever, logging every tick, and leaving the client attached to a
+// permanently stale feed.
+func TestHandleAttachPermanentStoreErrorEndsStream(t *testing.T) {
+	ctx := context.Background()
+	sup := newTestSupervisor(t, clockwork.NewRealClock())
+	projectID, err := sup.store.CreateProject(ctx, "attach-permerr", []store.Fingerprint{
+		{Kind: store.FingerprintKindAbsPath, Value: t.TempDir()},
+	})
+	if err != nil {
+		t.Fatalf("CreateProject: %v", err)
+	}
+	// Close the store so EventsAfter returns a permanent (connection-done) error.
+	if err := sup.store.Close(); err != nil {
+		t.Fatalf("Close store: %v", err)
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		done <- sup.HandleAttach(ctx, ipc.AttachArgs{ProjectID: projectID}, func(_ json.RawMessage) error { return nil })
+	}()
+
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Error("HandleAttach: want an error when the store is permanently broken, got nil")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("HandleAttach spun instead of ending on a permanent store error")
+	}
+}
+
 // TestHandleAttachEmitStopEndsStream confirms that when emit reports the client
 // is gone (returns an error), the tail ends cleanly with a nil error — the
 // documented emit contract the IPC server relies on.

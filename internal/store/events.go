@@ -84,11 +84,15 @@ func (s *Store) ListProjectEvents(ctx context.Context, projectID string, limit i
 // headline lifecycle events (task.claimed/done/failed/…) are inserted inline in
 // tasks.go with plan_id/task_id only, so a bare `project_id = ?` filter would
 // silently drop exactly the events a live view exists to show. plans.project_id
-// is NOT NULL, so a plan-scoped event resolves to exactly one project. The
-// fragment binds the project id TWICE. Rows with neither a project_id nor a
-// plan_id (a few service-internal kinds like `tick`) belong to no project and
-// are intentionally excluded.
-const eventProjectScope = `(project_id = ? OR plan_id IN (SELECT id FROM plans WHERE project_id = ?))`
+// is NOT NULL, so a plan-scoped event resolves to exactly one project.
+//
+// An explicit project_id WINS: plan linkage is consulted only when project_id
+// IS NULL. This means a (contradictory) row that carries project_id = A but a
+// plan owned by B belongs to A alone — it is returned for A and never for B —
+// rather than surfacing in both projects' streams. The fragment binds the
+// project id TWICE. Rows with neither a project_id nor a plan_id (a few
+// service-internal kinds like `tick`) belong to no project and are excluded.
+const eventProjectScope = `(project_id = ? OR (project_id IS NULL AND plan_id IN (SELECT id FROM plans WHERE project_id = ?)))`
 
 // EventsAfter returns a project's events with id strictly greater than
 // afterID, in ascending id order, capped at limit. It is the tail query

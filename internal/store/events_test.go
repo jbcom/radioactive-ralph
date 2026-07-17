@@ -278,6 +278,36 @@ func TestEventsAfterIncludesPlanScopedEventsWithoutProjectID(t *testing.T) {
 	}
 }
 
+func TestEventsAfterExplicitProjectIDWinsOverPlanLinkage(t *testing.T) {
+	ctx := context.Background()
+	s := openTestStore(t)
+	projectA := mustCreateProject(t, s, "eventsafter-conflict-a")
+	projectB := mustCreateProject(t, s, "eventsafter-conflict-b")
+	planB := mustCreatePlan(t, s, projectB, "eventsafter-conflict-plan-b")
+
+	// A contradictory row: explicit project_id = A, but plan_id belongs to B.
+	// Explicit project_id must win — the row is A's, never B's.
+	if err := s.Emit(ctx, EmitOpts{ProjectID: projectA, PlanID: planB, Kind: "task.custom"}); err != nil {
+		t.Fatalf("Emit conflicting: %v", err)
+	}
+
+	gotA, err := s.EventsAfter(ctx, projectA, 0, 100)
+	if err != nil {
+		t.Fatalf("EventsAfter(A): %v", err)
+	}
+	if len(gotA) != 1 || gotA[0].Kind != "task.custom" {
+		t.Errorf("EventsAfter(A) = %+v, want the row (explicit project_id = A wins)", gotA)
+	}
+
+	gotB, err := s.EventsAfter(ctx, projectB, 0, 100)
+	if err != nil {
+		t.Fatalf("EventsAfter(B): %v", err)
+	}
+	if len(gotB) != 0 {
+		t.Errorf("EventsAfter(B) = %+v, want empty — the row is explicitly project A's, not B's", gotB)
+	}
+}
+
 func TestEventsAfterExcludesUnscopedServiceRows(t *testing.T) {
 	ctx := context.Background()
 	s := openTestStore(t)
