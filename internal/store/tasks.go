@@ -70,6 +70,13 @@ type CreateTaskOpts struct {
 	SequenceOrdinal *int64
 	AcceptanceJSON  string
 	ParentTaskID    string
+
+	// RequiresApproval materializes the task in 'ready_pending_approval'
+	// instead of the default 'pending', holding it out of dispatch until an
+	// operator approves it (ApproveTask → 'ready' → claimable). This is the
+	// producer for the human-in-the-loop approval gate; a plan step carries it
+	// via the [approval] marker (see internal/plan).
+	RequiresApproval bool
 }
 
 // ErrDuplicateTask is returned by CreateTask when a task with the same
@@ -80,7 +87,9 @@ type CreateTaskOpts struct {
 // validation failure) is a real fault that must NOT be silently swallowed.
 var ErrDuplicateTask = errors.New("store: task with this id already exists in this plan")
 
-// CreateTask inserts a pending task. Callers wire dependencies via AddDep.
+// CreateTask inserts a new task — 'pending' by default, or
+// 'ready_pending_approval' when o.RequiresApproval is set (held behind the
+// approval gate). Callers wire dependencies via AddDep.
 func (s *Store) CreateTask(ctx context.Context, o CreateTaskOpts) error {
 	if o.PlanID == "" || o.ID == "" || o.Description == "" {
 		return fmt.Errorf("store: PlanID, ID, and Description required")
@@ -99,13 +108,22 @@ func (s *Store) CreateTask(ctx context.Context, o CreateTaskOpts) error {
 		parent = sql.NullString{String: o.ParentTaskID, Valid: true}
 	}
 
+	// A gated step starts held behind the approval gate; every other step is
+	// immediately claimable. The claim path treats both 'pending' and (post-
+	// approval) 'ready' as claimable, so a gated task only dispatches after
+	// ApproveTask promotes it out of 'ready_pending_approval'.
+	status := "pending"
+	if o.RequiresApproval {
+		status = string(TaskStatusReadyPendingApproval)
+	}
+
 	_, err := s.db.ExecContext(ctx, `
 		INSERT INTO tasks(
 			id, plan_id, description, parallel_group, sequence_ordinal,
 			acceptance_json, status, parent_task_id
-		) VALUES (?, ?, ?, ?, ?, ?, 'pending', ?)
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 	`, o.ID, o.PlanID, o.Description, parallelGroup, sequenceOrdinal,
-		nullIfEmpty(o.AcceptanceJSON), parent)
+		nullIfEmpty(o.AcceptanceJSON), status, parent)
 	if err != nil {
 		if isUniqueViolation(err) {
 			return fmt.Errorf("%w: %s (plan=%s)", ErrDuplicateTask, o.ID, o.PlanID)

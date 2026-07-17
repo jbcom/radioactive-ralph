@@ -62,13 +62,23 @@ type Group struct {
 // Step is a single unit of work: the list item text plus any trailing
 // paragraph(s) of detail found alongside the list under the same heading.
 type Step struct {
-	// Text is the trimmed text of the list item itself.
+	// Text is the trimmed text of the list item itself, with any recognized
+	// trailing marker (see RequiresApproval) stripped off.
 	Text string
 
 	// Detail is the trimmed, newline-joined text of any paragraphs found
 	// in the same section as the list (narrative elaborating the step).
 	// Empty when there is no such detail.
 	Detail string
+
+	// RequiresApproval is true when the step carries the `[approval]` marker
+	// (case-insensitive, at the end of the list-item text). Such a step is
+	// materialized as a task in status 'ready_pending_approval': it is held
+	// out of dispatch until an operator approves it (GUI/IPC ApproveTask),
+	// which transitions it to 'ready' so it becomes claimable. This is the
+	// human-in-the-loop gate — the producer for the approval flow the
+	// observe/drive surface already exposes.
+	RequiresApproval bool
 }
 
 // Parse parses plan markdown into a Plan. Parse uses goldmark's core
@@ -207,7 +217,8 @@ func parseLeafSection(node, sectionEnd ast.Node, source []byte) (steps []Step, p
 				sawList = true
 			}
 			for item := v.FirstChild(); item != nil; item = item.NextSibling() {
-				steps = append(steps, Step{Text: listItemText(item, source)})
+				text, requiresApproval := parseStepMarkers(listItemText(item, source))
+				steps = append(steps, Step{Text: text, RequiresApproval: requiresApproval})
 			}
 		case *ast.Paragraph:
 			if t := strings.TrimSpace(string(v.Lines().Value(source))); t != "" {
@@ -224,6 +235,25 @@ func parseLeafSection(node, sectionEnd ast.Node, source []byte) (steps []Step, p
 	}
 
 	return steps, parallel
+}
+
+// approvalMarker is the case-insensitive trailing tag that gates a step behind
+// operator approval. It is matched at the END of the list-item text so it reads
+// naturally in the plan ("Deploy to production [approval]") and is stripped from
+// the step's visible Text.
+const approvalMarker = "[approval]"
+
+// parseStepMarkers extracts recognized trailing markers from a list-item's text
+// and returns the cleaned text plus the flags they set. Today the only marker
+// is [approval] (case-insensitive). Unknown bracketed tokens are left in Text
+// untouched, so ordinary prose in brackets is never silently consumed.
+func parseStepMarkers(text string) (cleaned string, requiresApproval bool) {
+	trimmed := strings.TrimSpace(text)
+	if len(trimmed) >= len(approvalMarker) &&
+		strings.EqualFold(trimmed[len(trimmed)-len(approvalMarker):], approvalMarker) {
+		return strings.TrimSpace(trimmed[:len(trimmed)-len(approvalMarker)]), true
+	}
+	return trimmed, false
 }
 
 // headingText returns the trimmed source text of a heading line.

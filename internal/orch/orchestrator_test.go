@@ -427,3 +427,91 @@ func containsAll(s string, subs ...string) bool {
 	}
 	return true
 }
+
+const gatedFirstStepPlan = `# Ship the feature
+
+1. deploy to production [approval]
+2. run smoke tests
+`
+
+// TestDispatchNextHoldsGatedStepUntilApproved is the end-to-end proof of the
+// approval-gate producer: a step marked [approval] materializes as
+// ready_pending_approval and is NOT dispatched until an operator approves it,
+// after which DispatchNext claims it normally.
+func TestDispatchNextHoldsGatedStepUntilApproved(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	projectID := mustCreateTestProject(t, s, "gate-e2e-project")
+	planID := mustCreateTestPlan(t, s, projectID, "gate-e2e-plan", "Ship", gatedFirstStepPlan)
+
+	runner := &fakeRunner{results: []provider.Result{{AssistantOutput: "deployed"}}}
+	o := New(s,
+		WithRunnerFactory(func(provider.Binding) (provider.Runner, error) { return runner, nil }),
+		WithBindingResolver(fakeBindingResolver("claude", false)),
+	)
+
+	// First dispatch: the gated first step must NOT be claimed (the sequential
+	// group gates on it, so nothing dispatches).
+	dispatched, err := o.DispatchNext(ctx, projectID, planID)
+	if err != nil {
+		t.Fatalf("DispatchNext (gated): %v", err)
+	}
+	o.Wait()
+	if dispatched != 0 {
+		t.Fatalf("dispatched = %d, want 0 (gated step held for approval)", dispatched)
+	}
+	// The task exists but is held behind the gate.
+	gated, err := s.GetTask(ctx, planID, "0.0")
+	if err != nil {
+		t.Fatalf("GetTask: %v", err)
+	}
+	if gated.Status != store.TaskStatusReadyPendingApproval {
+		t.Fatalf("gated task status = %q, want ready_pending_approval", gated.Status)
+	}
+	if len(runner.callReqs()) != 0 {
+		t.Fatalf("runner was called %d times before approval, want 0", len(runner.callReqs()))
+	}
+
+	// The gate must not leak worker/session rows: dispatch several more times
+	// (as the supervisor's 15s tick would) while the step is still gated, then
+	// assert NO worker or session rows were created. Before the pre-gate check,
+	// each tick spawned an orphan session + worker row that was only marked
+	// idle, never deleted — thousands per day for a pending gate.
+	for range 5 {
+		if _, err := o.DispatchNext(ctx, projectID, planID); err != nil {
+			t.Fatalf("DispatchNext (repeat gated): %v", err)
+		}
+		o.Wait()
+	}
+	var workerRows, sessionRows int
+	if err := s.DB().QueryRowContext(ctx, "SELECT COUNT(*) FROM workers").Scan(&workerRows); err != nil {
+		t.Fatalf("count workers: %v", err)
+	}
+	if err := s.DB().QueryRowContext(ctx, "SELECT COUNT(*) FROM sessions").Scan(&sessionRows); err != nil {
+		t.Fatalf("count sessions: %v", err)
+	}
+	if workerRows != 0 {
+		t.Errorf("worker rows = %d after repeated gated ticks, want 0 (gate must not spawn workers)", workerRows)
+	}
+	// The orchestrator lazily creates ONE session for its own bookkeeping; a
+	// gated tick must not add per-tick worker sessions on top of that.
+	if sessionRows > 1 {
+		t.Errorf("session rows = %d after repeated gated ticks, want <=1 (no per-tick worker sessions)", sessionRows)
+	}
+
+	// Approve it, then dispatch again: now it must be claimed and run.
+	if found, changed, err := s.ApproveTask(ctx, planID, "0.0"); err != nil || !found || !changed {
+		t.Fatalf("ApproveTask = (found=%v changed=%v err=%v), want (true,true,nil)", found, changed, err)
+	}
+	dispatched, err = o.DispatchNext(ctx, projectID, planID)
+	if err != nil {
+		t.Fatalf("DispatchNext (approved): %v", err)
+	}
+	o.Wait()
+	if dispatched != 1 {
+		t.Fatalf("dispatched = %d after approval, want 1", dispatched)
+	}
+	if len(runner.callReqs()) != 1 {
+		t.Fatalf("runner called %d times after approval, want 1", len(runner.callReqs()))
+	}
+}
