@@ -79,11 +79,11 @@ func runEventsWith(ctx context.Context, out, errOut io.Writer, src eventSource, 
 		return fmt.Errorf("read event backlog: %w", err)
 	}
 	for _, ev := range events {
-		writeEvent(out, storeEventToAttach(ev), asJSON)
+		writeEvent(out, errOut, storeEventToAttach(ev), asJSON)
 	}
 
 	attachErr := src.AttachEvents(ctx, ipc.AttachArgs{ProjectID: projectID, AfterID: cursor}, func(ev ipc.AttachEvent) error {
-		writeEvent(out, ev, asJSON)
+		writeEvent(out, errOut, ev, asJSON)
 		return nil
 	})
 	// A clean end-of-stream (nil) or a user interrupt (ctx cancelled) is a
@@ -96,11 +96,18 @@ func runEventsWith(ctx context.Context, out, errOut io.Writer, src eventSource, 
 	return nil
 }
 
-func writeEvent(out io.Writer, ev ipc.AttachEvent, asJSON bool) {
+func writeEvent(out, errOut io.Writer, ev ipc.AttachEvent, asJSON bool) {
 	if asJSON {
-		if raw, err := json.Marshal(ev); err == nil {
-			_, _ = fmt.Fprintln(out, string(raw))
+		raw, err := json.Marshal(ev)
+		if err != nil {
+			// Don't silently drop the event — a gap in a --json stream would
+			// mislead a CI consumer into thinking it never occurred. Keep stdout
+			// pure JSONL (a machine parses it) and report the drop on stderr with
+			// the event id so it can be reconciled against the store.
+			_, _ = fmt.Fprintf(errOut, "radioactive_ralph: skipped event %d (marshal failed: %v)\n", ev.ID, err)
+			return
 		}
+		_, _ = fmt.Fprintln(out, string(raw))
 		return
 	}
 	line := ev.OccurredAt.Format("15:04:05") + " " + ev.Kind
@@ -146,23 +153,38 @@ func (s *liveEventSource) Backlog(ctx context.Context, projectID string, n int) 
 	}
 	defer func() { _ = st.Close() }()
 
+	// With a backlog, the live cursor is the newest id IN THE BACKLOG READ
+	// itself — NOT a separate MaxEventID query. Two independent queries would
+	// race: the supervisor (the very process this command tails) could insert an
+	// event between them whose id exceeds a separately-read max, so it would
+	// print once in the backlog AND again in the live tail (a duplicate). Taking
+	// the cursor from the same result set the backlog prints makes the seam
+	// exact — every printed row has id <= cursor, and the live tail delivers only
+	// id > cursor. ListProjectEvents is newest-first, so recent[0] is the max.
+	if n > 0 {
+		recent, err := st.ListProjectEvents(ctx, projectID, n)
+		if err != nil {
+			return nil, 0, fmt.Errorf("list events: %w", err)
+		}
+		if len(recent) == 0 {
+			// No events yet; tail from the beginning (nothing to duplicate).
+			return nil, 0, nil
+		}
+		cursor := recent[0].ID // newest-first: the highest id in this page
+		// Reverse to oldest-first for a readable scrollback that flows into live.
+		for i, j := 0, len(recent)-1; i < j; i, j = i+1, j-1 {
+			recent[i], recent[j] = recent[j], recent[i]
+		}
+		return recent, cursor, nil
+	}
+
+	// No backlog requested: seed the cursor to the current max so the stream
+	// tails strictly from "now". A single query, so no race to worry about.
 	maxID, err := st.MaxEventID(ctx, projectID)
 	if err != nil {
 		return nil, 0, fmt.Errorf("max event id: %w", err)
 	}
-	if n <= 0 {
-		return nil, maxID, nil
-	}
-	// ListProjectEvents is newest-first; reverse to oldest-first for a readable
-	// scrollback that flows into the live tail.
-	recent, err := st.ListProjectEvents(ctx, projectID, n)
-	if err != nil {
-		return nil, 0, fmt.Errorf("list events: %w", err)
-	}
-	for i, j := 0, len(recent)-1; i < j; i, j = i+1, j-1 {
-		recent[i], recent[j] = recent[j], recent[i]
-	}
-	return recent, maxID, nil
+	return nil, maxID, nil
 }
 
 func (s *liveEventSource) AttachEvents(ctx context.Context, args ipc.AttachArgs, fn func(ipc.AttachEvent) error) error {

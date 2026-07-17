@@ -135,6 +135,81 @@ func TestRunEventsWith_CtxCancelExitsClean(t *testing.T) {
 	}
 }
 
+// TestLiveEventSourceBacklogCursorFromSameRead proves the anti-race property:
+// with a backlog, the live cursor is the newest id from the SAME query that
+// produced the printed rows — not a separate MaxEventID read that could race a
+// concurrent supervisor insert and duplicate an event across the boundary.
+func TestLiveEventSourceBacklogCursorFromSameRead(t *testing.T) {
+	ctx := context.Background()
+	stateRoot := t.TempDir()
+	st, err := store.Open(ctx, store.Options{DSN: store.DSN(storeDBPath(stateRoot))})
+	if err != nil {
+		t.Fatalf("store.Open: %v", err)
+	}
+	projectID, err := st.CreateProject(ctx, "events-backlog", []store.Fingerprint{
+		{Kind: store.FingerprintKindAbsPath, Value: t.TempDir()},
+	})
+	if err != nil {
+		t.Fatalf("CreateProject: %v", err)
+	}
+	for i := 0; i < 3; i++ {
+		if err := st.Emit(ctx, store.EmitOpts{ProjectID: projectID, Kind: "tick"}); err != nil {
+			t.Fatalf("Emit: %v", err)
+		}
+	}
+	// The newest event's id is the cursor we expect.
+	newest, err := st.ListProjectEvents(ctx, projectID, 1)
+	if err != nil {
+		t.Fatalf("ListProjectEvents: %v", err)
+	}
+	wantCursor := newest[0].ID
+	_ = st.Close()
+
+	src := &liveEventSource{stateRoot: stateRoot}
+	events, cursor, err := src.Backlog(ctx, projectID, 2)
+	if err != nil {
+		t.Fatalf("Backlog: %v", err)
+	}
+	if cursor != wantCursor {
+		t.Errorf("cursor = %d, want %d (the newest id, taken from the backlog read itself)", cursor, wantCursor)
+	}
+	// Backlog returns the 2 most recent, oldest-first; the LAST printed row's id
+	// must equal the cursor (no printed row exceeds it → no live duplicate).
+	if len(events) != 2 {
+		t.Fatalf("got %d backlog events, want 2", len(events))
+	}
+	if events[len(events)-1].ID != cursor {
+		t.Errorf("last backlog row id = %d, want it to equal the cursor %d", events[len(events)-1].ID, cursor)
+	}
+}
+
+// TestLiveEventSourceBacklogEmptyTailsFromZero: an empty project with a backlog
+// request tails from 0 (nothing to duplicate).
+func TestLiveEventSourceBacklogEmptyTailsFromZero(t *testing.T) {
+	ctx := context.Background()
+	stateRoot := t.TempDir()
+	st, err := store.Open(ctx, store.Options{DSN: store.DSN(storeDBPath(stateRoot))})
+	if err != nil {
+		t.Fatalf("store.Open: %v", err)
+	}
+	projectID, err := st.CreateProject(ctx, "events-empty", []store.Fingerprint{
+		{Kind: store.FingerprintKindAbsPath, Value: t.TempDir()},
+	})
+	if err != nil {
+		t.Fatalf("CreateProject: %v", err)
+	}
+	_ = st.Close()
+
+	src := &liveEventSource{stateRoot: stateRoot}
+	events, cursor, err := src.Backlog(ctx, projectID, 5)
+	if err != nil {
+		t.Fatalf("Backlog: %v", err)
+	}
+	if len(events) != 0 || cursor != 0 {
+		t.Errorf("empty project: got %d events, cursor %d; want 0 events, cursor 0", len(events), cursor)
+	}
+}
+
 func TestEventsCmd_Registered(t *testing.T) {
 	root := newRootCmd(context.Background())
 	var found *cobra.Command
