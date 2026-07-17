@@ -45,6 +45,5 @@ internal/store/schema
 internal/supervisor
 internal/tui
 internal/vconfig
-internal/voice
 internal/xdg
 ```

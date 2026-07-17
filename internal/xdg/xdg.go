@@ -119,9 +119,9 @@ func repoHash(absPath string) string {
 // machine and user, respecting overrides. Honors the $RALPH_STATE_DIR
 // override for tests.
 //
-// Exported so packages outside the xdg package can land the plandag
-// SQLite file and other global artifacts under the same root as
-// per-repo workspaces.
+// Exported so packages outside the xdg package can land the one
+// user-level SQLite database and other global artifacts under a single
+// state root.
 func StateRoot() (string, error) {
 	return stateRoot()
 }
