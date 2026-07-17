@@ -57,12 +57,30 @@ func runClientMode(ctx context.Context, cmd *cobra.Command) error {
 	client, err := supervisor.Find(stateRoot)
 	if err != nil {
 		if errors.Is(err, supervisor.ErrNoSupervisor) {
-			fmt.Fprintln(os.Stderr, "radioactive_ralph: no supervisor is running.")
-			fmt.Fprintln(os.Stderr, "Install the durable background service:  radioactive_ralph service install")
-			fmt.Fprintln(os.Stderr, "or run one in the foreground (dies with this terminal):  radioactive_ralph --supervisor")
-			return fmt.Errorf("no supervisor listening")
+			// No supervisor. On an interactive terminal, OFFER to set one up
+			// (guided, consent-gated). On a non-interactive stdin/stdout
+			// (pipe, CI, go test) the wizard is skipped and we keep the exact
+			// print-commands-and-exit-nonzero behavior the tests assert.
+			if onboardingInteractive() {
+				reready, oerr := runFirstRunWizard(stateRoot)
+				if oerr != nil {
+					return oerr
+				}
+				if reready {
+					// A supervisor is now up — re-discover and continue to the TUI.
+					client, err = supervisor.Find(stateRoot)
+				}
+				if !reready || err != nil {
+					// User chose foreground/manual, or re-discovery failed.
+					return errNoSupervisorListening
+				}
+			} else {
+				fmt.Fprintln(os.Stderr, noSupervisorMessage)
+				return errNoSupervisorListening
+			}
+		} else {
+			return fmt.Errorf("find supervisor: %w", err)
 		}
-		return fmt.Errorf("find supervisor: %w", err)
 	}
 
 	if !tui.IsTerminal() {
