@@ -4,8 +4,10 @@ package gui
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
+	"time"
 	"unicode/utf8"
 
 	"fyne.io/fyne/v2"
@@ -217,6 +219,35 @@ func TestMicro_NoKillButtonWhenNoWorker(t *testing.T) {
 
 	if findButton(u.root, "Kill worker") != nil {
 		t.Error("kill button present when no worker is running the task")
+	}
+}
+
+func TestHeaderText_ConnectedAndWaiting(t *testing.T) {
+	// Connected: leads with the uptime + counters.
+	st := ipc.StatusReply{Uptime: 2 * time.Hour, ActivePlans: 3, ActiveWorkers: 1}
+	got := headerText(st, nil)
+	if !strings.Contains(got, "connected") || !strings.Contains(got, "up 2h0m") {
+		t.Errorf("connected header = %q, want it to lead with connected + uptime", got)
+	}
+	if !strings.Contains(got, "plans 3 active") {
+		t.Errorf("connected header = %q, want the plan counter", got)
+	}
+	// Waiting: a Status error → the calm waiting-for-supervisor line, no stale counters.
+	if w := headerText(ipc.StatusReply{}, errors.New("no supervisor")); !strings.Contains(w, "waiting for supervisor") {
+		t.Errorf("error header = %q, want the waiting-for-supervisor state", w)
+	}
+}
+
+func TestHumanizeUptime(t *testing.T) {
+	cases := map[time.Duration]string{
+		45 * time.Second: "45s",
+		5 * time.Minute:  "5m",
+		90 * time.Minute: "1h30m",
+	}
+	for d, want := range cases {
+		if got := humanizeUptime(d); got != want {
+			t.Errorf("humanizeUptime(%s) = %q, want %q", d, got, want)
+		}
 	}
 }
 

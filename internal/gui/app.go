@@ -195,7 +195,7 @@ func (u *ui) refreshNow() {
 
 	paint := func() {
 		u.setError(snap.err)
-		u.header.SetText(headerText(snap.status))
+		u.header.SetText(headerText(snap.status, snap.err))
 		u.render(snap)
 	}
 	if u.syncRender {
