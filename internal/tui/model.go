@@ -81,6 +81,14 @@ type Model struct {
 	// subscription is active.
 	attachCancel context.CancelFunc
 
+	// attachFrames/attachDone are the current subscription's channels, held
+	// so the liveFrameMsg handler can RE-ISSUE attachCmd after every frame —
+	// Bubble Tea models a stream as a command that must be re-armed each
+	// delivery. Without re-arming, the stream stopped after one frame and the
+	// forwarder goroutine leaked (blocked writing to a channel no one read).
+	attachFrames chan json.RawMessage
+	attachDone   chan error
+
 	quitting bool
 }
 
@@ -282,9 +290,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if len(m.snap.live) > 500 {
 			m.snap.live = m.snap.live[len(m.snap.live)-500:]
 		}
+		// Re-arm the stream: pull the NEXT frame. Without this the
+		// subscription delivers exactly one frame and the forwarder goroutine
+		// blocks forever on the unread channel.
+		if m.attachFrames != nil {
+			return m, attachCmd(m.ctx, m.attachFrames, m.attachDone)
+		}
 		return m, nil
 
 	case attachEndedMsg:
+		// The stream closed (clean end, error, or ctx cancel) — stop pulling
+		// and drop the channel references so a later re-arm can't reuse them.
+		m.attachFrames = nil
+		m.attachDone = nil
 		return m, nil
 	}
 	return m, nil
@@ -371,6 +389,8 @@ func (m Model) drillIn() (tea.Model, tea.Cmd) {
 		m.viewport = viewportState{}
 		frames, done, cancel := startAttach(m.ctx, m.source)
 		m.attachCancel = cancel
+		m.attachFrames = frames
+		m.attachDone = done
 		return m, tea.Batch(m.fetchCmd(), attachCmd(m.ctx, frames, done))
 
 	default:

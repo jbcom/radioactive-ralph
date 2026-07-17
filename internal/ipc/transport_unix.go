@@ -11,6 +11,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"golang.org/x/sys/unix"
 )
 
 func listenEndpoint(endpoint string) (net.Listener, error) {
@@ -37,11 +39,19 @@ func listenEndpoint(endpoint string) (net.Listener, error) {
 	// the 0700 leaf blocks traversal) and NOT the natural XDG-state path
 	// (user-private, and legitimately 0755 for ~/.local/state).
 	if isFallbackSocketDir(dir) {
-		if err := os.Chmod(dir, 0o700); err != nil { //nolint:gosec // G302: this is a DIRECTORY — it needs the owner execute bit (0700) to be traversable; 0600 would make the socket unreachable. Group/other bits are intentionally cleared.
-			return nil, fmt.Errorf("ipc: secure fallback socket dir: %w", err)
-		}
+		// VERIFY BEFORE MUTATING. A path-based os.Chmod follows symlinks, so
+		// chmod'ing before the symlink check would let an attacker who
+		// pre-created /tmp/rralph-<uid> as a symlink redirect a
+		// victim-privileged chmod onto an arbitrary target dir. verifySecureDir
+		// Lstat-rejects a symlink (and a non-dir / other-owned / group-or-
+		// world-accessible dir) first; only then do we tighten perms — via an
+		// fd opened O_NOFOLLOW so even a TOCTOU swap after the check can't
+		// redirect the fchmod through a symlink.
 		if err := verifySecureDir(dir); err != nil {
 			return nil, fmt.Errorf("ipc: fallback socket dir %s is not safe: %w", dir, err)
+		}
+		if err := chmodDirNoFollow(dir, 0o700); err != nil {
+			return nil, fmt.Errorf("ipc: secure fallback socket dir: %w", err)
 		}
 	}
 	listener, err := net.Listen("unix", endpoint)
@@ -68,6 +78,21 @@ func isFallbackSocketDir(dir string) bool {
 		return false
 	}
 	return strings.HasPrefix(filepath.Base(d), "rralph-")
+}
+
+// chmodDirNoFollow chmods dir WITHOUT following a symlink: it opens the path
+// with O_NOFOLLOW|O_DIRECTORY (so a symlink or non-dir errors out instead of
+// being traversed) and fchmods the resulting fd. This closes the TOCTOU
+// window a path-based os.Chmod leaves open — even if an attacker swaps dir
+// for a symlink between verifySecureDir and here, the open fails rather than
+// redirecting the mode change onto the link target.
+func chmodDirNoFollow(dir string, mode os.FileMode) error {
+	fd, err := unix.Open(dir, unix.O_RDONLY|unix.O_NOFOLLOW|unix.O_DIRECTORY|unix.O_CLOEXEC, 0)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = unix.Close(fd) }()
+	return unix.Fchmod(fd, uint32(mode.Perm()))
 }
 
 // verifySecureDir refuses a socket dir an attacker could control on a shared
