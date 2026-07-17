@@ -6,11 +6,20 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"time"
+
+	"github.com/jbcom/radioactive-ralph/internal/xdg"
 )
 
 const defaultCommandTimeout = 15 * time.Second
+
+// minStateFreeBytes is the free-space floor under the state root below which
+// checkStateDir warns. The one user-level SQLite DB plus its WAL, per-worker
+// session/log files, and git mirrors accumulate here; 64 MiB is a conservative
+// "you are about to have a bad time" threshold, not a hard requirement.
+const minStateFreeBytes = 64 << 20
 
 // checkGitVersion verifies git is installed at a high-enough version
 // for worktree support (≥ 2.5.0 by default).
@@ -199,6 +208,61 @@ func checkServicePlatform(_ context.Context, _ RunOptions) Check {
 			Remediate: "use macOS, Linux, or native Windows for the full repo-service runtime",
 		}
 	}
+}
+
+// checkStateDir verifies the XDG state root — where the one user-level SQLite DB
+// and every worker's session/log files live — actually exists, is writable, and
+// has headroom. Without this, a full disk or a wrong-ownership state dir passes
+// every other doctor check and only surfaces as a cryptic "unable to open
+// database file" / "disk I/O error" deep inside store.Open at first run. This
+// check turns that into a clean, actionable diagnosis.
+func checkStateDir(_ context.Context, _ RunOptions) Check {
+	root, err := xdg.StateRoot()
+	if err != nil {
+		return Check{
+			Name:      "state dir",
+			Severity:  FAIL,
+			Detail:    "cannot resolve the Ralph state root: " + err.Error(),
+			Remediate: "set $RALPH_STATE_DIR to a writable directory, or ensure $XDG_STATE_HOME / $HOME is set",
+		}
+	}
+
+	// Create it if absent (the same MkdirAll the runtime does on first use) so a
+	// fresh machine reports OK rather than a spurious "missing" — the real failure
+	// we care about is a root that exists but is not writable.
+	if err := os.MkdirAll(root, 0o700); err != nil {
+		return Check{
+			Name:      "state dir",
+			Severity:  FAIL,
+			Detail:    fmt.Sprintf("state root %s is not creatable: %v", root, err),
+			Remediate: "fix the permissions/ownership of the parent directory, or set $RALPH_STATE_DIR elsewhere",
+		}
+	}
+
+	// Prove writability with a probe file rather than trusting the mode bits —
+	// ownership, ACLs, read-only mounts, and SELinux can all deny a write that the
+	// permission bits appear to allow.
+	probe := filepath.Join(root, ".doctor-write-probe")
+	if err := os.WriteFile(probe, []byte("ok"), 0o600); err != nil {
+		return Check{
+			Name:      "state dir",
+			Severity:  FAIL,
+			Detail:    fmt.Sprintf("state root %s is not writable: %v", root, err),
+			Remediate: "fix its ownership/permissions (the DB and worker files must be writable), or set $RALPH_STATE_DIR to a writable path",
+		}
+	}
+	_ = os.Remove(probe)
+
+	if free, ok := diskFreeBytes(root); ok && free < minStateFreeBytes {
+		return Check{
+			Name:      "state dir",
+			Severity:  WARN,
+			Detail:    fmt.Sprintf("state root %s is writable but low on space (%d MiB free)", root, free>>20),
+			Remediate: "free up disk space; the SQLite DB, worker logs, and git mirrors grow under this directory",
+		}
+	}
+
+	return Check{Name: "state dir", Severity: OK, Detail: "state root " + root + " is writable"}
 }
 
 type providerVersionCheck struct {
