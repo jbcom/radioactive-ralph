@@ -13,6 +13,13 @@ shipped. That means historical sections may still mention MCP, plugins,
 supervisors, or the archived Python implementation even though those are no
 longer part of the live contract.
 
+## [0.21.2](https://github.com/jbcom/radioactive-ralph/compare/v0.21.1...v0.21.2) (2026-07-17)
+
+
+### Bug Fixes
+
+* **store:** cap the SQLite pool at one connection ([#129](https://github.com/jbcom/radioactive-ralph/issues/129)) ([531f9c7](https://github.com/jbcom/radioactive-ralph/commit/531f9c7963651badf3b0ebdcb500dab90262f1dd))
+
 ## [0.21.1](https://github.com/jbcom/radioactive-ralph/compare/v0.21.0...v0.21.1) (2026-07-17)
 
 
