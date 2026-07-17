@@ -58,7 +58,7 @@ func Find(runtimeDir string) (*ipc.Client, error)
 Find tries to connect to the supervisor socket under runtimeDir. A successful connect means a live supervisor answered — the returned \*ipc.Client is ready to use. Any failure \(connect refused, socket missing, or a stale socket nothing is listening behind\) collapses to ErrNoSupervisor: callers don't need to distinguish "never started" from "crashed," both mean the client should offer to start one \(spec §4\).
 
 <a name="Run"></a>
-## func [Run](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/supervisor/supervisor.go#L90>)
+## func [Run](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/supervisor/supervisor.go#L93>)
 
 ```go
 func Run(ctx context.Context, opts Options) error
@@ -100,7 +100,7 @@ func (l *Listener) Release() error
 Release closes the PID lockfile \(dropping the flock\) and removes the PID file. It does NOT close the \*ipc.Server bound to SocketPath — the caller owns that server's lifecycle separately \(Server.Stop\(\) also unlinks the socket file\). Calling Release after the server has stopped is the expected order: server down, then mutex released.
 
 <a name="Options"></a>
-## type [Options](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/supervisor/supervisor.go#L29-L50>)
+## type [Options](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/supervisor/supervisor.go#L32-L53>)
 
 Options configures a Supervisor run.
 
@@ -130,7 +130,7 @@ type Options struct {
 ```
 
 <a name="Supervisor"></a>
-## type [Supervisor](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/supervisor/supervisor.go#L60-L82>)
+## type [Supervisor](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/supervisor/supervisor.go#L63-L85>)
 
 Supervisor is the small, boring control\-plane process described in spec §4/§13: pty ownership \+ IPC \+ store \+ reaper, PLUS \(as of Phase 6c\) real plan dispatch: HandleEnqueue drives internal/orch's DispatchNext instead of returning "not implemented". Orch itself — via the provider runners it dispatches onto internal/agent — owns every agent subprocess's lifetime \(start, watchdog supervision, kill\), so the supervisor holds no separate pty\-tracking map of its own; there is nothing left for the supervisor to additionally track or drain at shutdown.
 
@@ -141,7 +141,7 @@ type Supervisor struct {
 ```
 
 <a name="Supervisor.HandleAttach"></a>
-### func \(\*Supervisor\) [HandleAttach](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/supervisor/supervisor.go#L439>)
+### func \(\*Supervisor\) [HandleAttach](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/supervisor/supervisor.go#L442>)
 
 ```go
 func (s *Supervisor) HandleAttach(ctx context.Context, args ipc.AttachArgs, emit func(json.RawMessage) error) error
@@ -150,7 +150,7 @@ func (s *Supervisor) HandleAttach(ctx context.Context, args ipc.AttachArgs, emit
 HandleAttach streams the project's events to the client as they are written, turning the observe half of the drive\+observe API from a stub into a live feed. It TAILS the append\-only events table: each tick it reads rows with id greater than the cursor \(scoped to args.ProjectID, including plan\-linked rows\), emits each, and advances the cursor. The cursor starts at args.AfterID — the client owns it \(it obtains an initial value from MaxEventID/backlog\), so there is no server\-side seed and no lost\-event race. The loop returns when ctx is cancelled \(client disconnect — \#165's watcher — or supervisor shutdown\) or when emit reports the client is gone.
 
 <a name="Supervisor.HandleEnqueue"></a>
-### func \(\*Supervisor\) [HandleEnqueue](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/supervisor/supervisor.go#L386>)
+### func \(\*Supervisor\) [HandleEnqueue](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/supervisor/supervisor.go#L389>)
 
 ```go
 func (s *Supervisor) HandleEnqueue(ctx context.Context, args ipc.EnqueueArgs) (ipc.EnqueueReply, error)
@@ -179,7 +179,7 @@ func (s *Supervisor) HandlePlanSetStatus(ctx context.Context, args ipc.PlanSetSt
 HandlePlanSetStatus changes a plan's lifecycle status, validated to the allowed operator transitions.
 
 <a name="Supervisor.HandleReloadConfig"></a>
-### func \(\*Supervisor\) [HandleReloadConfig](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/supervisor/supervisor.go#L415>)
+### func \(\*Supervisor\) [HandleReloadConfig](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/supervisor/supervisor.go#L418>)
 
 ```go
 func (s *Supervisor) HandleReloadConfig(_ context.Context) error
@@ -188,7 +188,7 @@ func (s *Supervisor) HandleReloadConfig(_ context.Context) error
 HandleReloadConfig is a no\-op today: config reload semantics belong to vconfig's virtual\-layer resolution \(spec §5a\), which this minimal supervisor does not yet wire into a running process's live config.
 
 <a name="Supervisor.HandleStatus"></a>
-### func \(\*Supervisor\) [HandleStatus](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/supervisor/supervisor.go#L320>)
+### func \(\*Supervisor\) [HandleStatus](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/supervisor/supervisor.go#L323>)
 
 ```go
 func (s *Supervisor) HandleStatus(ctx context.Context) (ipc.StatusReply, error)
@@ -197,7 +197,7 @@ func (s *Supervisor) HandleStatus(ctx context.Context) (ipc.StatusReply, error)
 HandleStatus reports supervisor\-level liveness. ActiveWorkers and the per\-worker detail are sourced from the store's real worker rows \(store.ListRunningWorkers\) rather than an in\-process map: no in\-process structure could ever reflect this anyway, since agent subprocess lifetime is fully owned by whichever provider runner orch dispatched, not by the supervisor itself. A query failure degrades to an empty list / 0 count rather than failing the whole status reply — a transient error should never make \`status\` itself fail.
 
 <a name="Supervisor.HandleStop"></a>
-### func \(\*Supervisor\) [HandleStop](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/supervisor/supervisor.go#L407>)
+### func \(\*Supervisor\) [HandleStop](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/supervisor/supervisor.go#L410>)
 
 ```go
 func (s *Supervisor) HandleStop(_ context.Context, _ ipc.StopArgs) error
