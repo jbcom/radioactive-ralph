@@ -13,6 +13,13 @@ shipped. That means historical sections may still mention MCP, plugins,
 supervisors, or the archived Python implementation even though those are no
 longer part of the live contract.
 
+## [0.21.5](https://github.com/jbcom/radioactive-ralph/compare/v0.21.4...v0.21.5) (2026-07-17)
+
+
+### Bug Fixes
+
+* **agent:** kill the whole process group, not just the direct child ([#138](https://github.com/jbcom/radioactive-ralph/issues/138)) ([2847d64](https://github.com/jbcom/radioactive-ralph/commit/2847d641f5acbfd82f57b1863834e8c24604f94f))
+
 ## [0.21.4](https://github.com/jbcom/radioactive-ralph/compare/v0.21.3...v0.21.4) (2026-07-17)
 
 
