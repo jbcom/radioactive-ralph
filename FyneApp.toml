@@ -1,0 +1,12 @@
+# Metadata for `fyne package` (the GUI desktop bundles: .app / .exe / AppImage).
+# Only consumed by the packaging step; the CLI build ignores it. The Version is a
+# placeholder — the release workflow overrides it with the tag via
+# `fyne package --app-version`.
+Website = "https://github.com/jbcom/radioactive-ralph"
+
+[Details]
+Icon = "packaging/icons/radioactive-ralph.png"
+Name = "radioactive-ralph"
+ID = "com.jonbogaty.radioactive-ralph"
+Version = "0.0.0"
+Build = 1

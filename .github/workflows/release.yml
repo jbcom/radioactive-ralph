@@ -44,6 +44,87 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.CI_GITHUB_TOKEN }}
           JBCOM_PKGS_GITHUB_TOKEN: ${{ secrets.CI_GITHUB_TOKEN }}
 
+  gui-bundles:
+    name: GUI bundle (${{ matrix.os }})
+    needs: goreleaser
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            target: darwin
+          - os: ubuntu-latest
+            target: linux
+          - os: windows-latest
+            target: windows
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+      # Linux GUI build needs the GL/X11/Wayland dev headers (same set the CI
+      # `gui` job installs) for glfw to link.
+      - name: Install Linux GUI dev headers
+        if: matrix.target == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libgl1-mesa-dev xorg-dev libxkbcommon-dev \
+            libwayland-dev wayland-protocols
+      - name: Install the fyne packaging CLI
+        run: go install fyne.io/tools/cmd/fyne@latest
+      - name: Package the GUI app
+        shell: bash
+        env:
+          CGO_ENABLED: "1"
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME#v}"
+          "$(go env GOPATH)/bin/fyne" package \
+            --target "${{ matrix.target }}" \
+            --tags gui \
+            --src ./cmd/radioactive_ralph \
+            --icon "$PWD/packaging/icons/radioactive-ralph.png" \
+            --name radioactive-ralph \
+            --app-id com.jonbogaty.radioactive-ralph \
+            --app-version "$VERSION"
+      # macOS: ad-hoc sign (free) — delivered via a Homebrew cask that strips
+      # quarantine on install, so Gatekeeper allows it without notarization.
+      - name: Ad-hoc sign the .app (macOS)
+        if: matrix.target == 'darwin'
+        run: codesign --force --deep --sign - radioactive-ralph.app
+      - name: Wrap .app into a .dmg (macOS)
+        if: matrix.target == 'darwin'
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          hdiutil create -volname radioactive-ralph -srcfolder radioactive-ralph.app \
+            -ov -format UDZO "radioactive-ralph_${VERSION}_darwin.dmg"
+      # Linux: repack the fyne tarball into an AppImage (unsigned by convention).
+      - name: Build AppImage (Linux)
+        if: matrix.target == 'linux'
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME#v}"
+          bash packaging/linux/build-appimage.sh "$VERSION"
+      - name: Upload GUI bundles to the release
+        env:
+          GH_TOKEN: ${{ secrets.CI_GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          # Upload the deliverable GUI bundles only (the .app/.tar.xz are
+          # intermediate; the .dmg / .AppImage / .exe are what users install).
+          assets=( *.dmg *.AppImage *.exe )
+          if [ ${#assets[@]} -eq 0 ]; then
+            echo "::warning::no GUI bundle produced for ${{ matrix.target }}"
+            exit 0
+          fi
+          gh release upload "$GITHUB_REF_NAME" "${assets[@]}" --clobber
+
   chocolatey:
     name: GoReleaser (chocolatey publish)
     needs: goreleaser
