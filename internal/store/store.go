@@ -26,6 +26,12 @@ import (
 	_ "modernc.org/sqlite" // pure-Go driver; FTS5 compiled in
 )
 
+// maxDBConns caps the database/sql pool. Small enough to bound writer-lock
+// contention (see Open), large enough that a live VACUUM INTO backup or a
+// long-held reader can't starve concurrent store calls — and >1 to avoid
+// database/sql's single-connection deadlock.
+const maxDBConns = 4
+
 // Store is the user-level store handle. It wraps a *sql.DB plus a
 // deterministic clock + UUID provider (test-swappable).
 type Store struct {
@@ -98,19 +104,24 @@ func Open(ctx context.Context, opts Options) (*Store, error) {
 		return nil, fmt.Errorf("store: open: %w", err)
 	}
 
-	// Serialize DB access at the Go pool layer with a single connection. This is
-	// the standard pattern for a single-file WAL SQLite: _txlock=immediate makes
-	// every BeginTx take SQLite's one writer lock up front, so an uncapped pool
-	// would let unbounded goroutines (the 1s dispatch tick, every per-connection
-	// IPC handler, each dispatched worker's store writes, the reaper) each open a
+	// Bound the connection pool to a small fixed size. _txlock=immediate makes
+	// every BeginTx take SQLite's one writer lock up front, so an UNCAPPED pool
+	// lets unbounded goroutines (the 1s dispatch tick, every per-connection IPC
+	// handler, each dispatched worker's store writes, the reaper) each open a
 	// fresh connection and pile onto that lock, with only busy_timeout(5s) as the
 	// backstop — a SQLITE_BUSY under load surfaces as a hard "database is locked"
-	// error deep in a store call. With one connection Go's own pool is the
-	// serialization point, so writers queue cleanly instead of racing the lock.
-	// This is a low-throughput control-plane DB; the single-writer serialization
-	// is not a bottleneck. It also guarantees the one-time PRAGMA below applies to
-	// the only connection there is.
-	db.SetMaxOpenConns(1)
+	// deep in a store call. A small cap keeps that contention bounded.
+	//
+	// NOT 1: a single connection deadlocks database/sql if any code issues a
+	// query while another is still using the sole connection (e.g. a long Rows
+	// held open), and it lets a long-running VACUUM INTO (Store.Backup) monopolize
+	// the DB, freezing every heartbeat/dispatch/reaper/IPC store call for the whole
+	// backup. maxDBConns leaves headroom for a live backup + concurrent readers
+	// (WAL allows concurrent reads; the single writer is still serialized by
+	// _txlock=immediate + busy_timeout). This is a low-throughput control-plane DB,
+	// so the exact number is not performance-critical — it exists to cap contention
+	// without the single-connection hazards.
+	db.SetMaxOpenConns(maxDBConns)
 
 	// Verify the connection is live. sql.Open is lazy.
 	if err := db.PingContext(ctx); err != nil {
@@ -118,10 +129,10 @@ func Open(ctx context.Context, opts Options) (*Store, error) {
 		return nil, fmt.Errorf("store: ping: %w", err)
 	}
 
-	// Re-affirm foreign keys on the (single) connection. The DSN already sets
-	// foreign_keys(1) per-connection, but exec'ing it here is a cheap belt-and-
-	// suspenders that also documents the invariant at the Go layer. With
-	// SetMaxOpenConns(1) there is exactly one connection, so this applies to it.
+	// The DSN sets foreign_keys(1) as a per-connection _pragma, so every pooled
+	// connection enforces FKs. This one-time exec is a cheap belt-and-suspenders
+	// that documents the invariant at the Go layer (it lands on whichever pooled
+	// connection serves it; the DSN pragma covers the rest).
 	if _, err := db.ExecContext(ctx, "PRAGMA foreign_keys = ON"); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("store: enable FK: %w", err)
