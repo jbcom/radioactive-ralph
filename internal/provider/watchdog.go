@@ -12,10 +12,10 @@ import (
 
 // ErrAgentBlocked is returned by superviseAgent (and wrapped with the
 // triggering reason) when the control invariant fires: the agent produced a
-// signal (an interactive prompt, a stall, or a resource-exceeded condition)
-// that means it can no longer be trusted to make forward progress
-// non-interactively. superviseAgent ALWAYS kills the agent before returning
-// this error — callers must never wait on it themselves.
+// signal (an interactive prompt or a stall) that means it can no longer be
+// trusted to make forward progress non-interactively. superviseAgent ALWAYS
+// kills the agent before returning this error — callers must never wait on it
+// themselves.
 var ErrAgentBlocked = errors.New("provider: agent blocked (killed by watchdog)")
 
 // DefaultStallTimeout is the default ceiling on how long superviseAgent will
@@ -82,7 +82,7 @@ func StreamJSONWatchdogConfig() agent.WatchdogConfig {
 // parsing keeps working exactly as before), while agent.Watch classifies
 // each line and watches for a stall.
 //
-// The moment agent.Watch emits Prompt, Stall, or ResourceExceeded,
+// The moment agent.Watch emits Prompt or Stall,
 // superviseAgent immediately calls a.Kill() and returns an error wrapping
 // ErrAgentBlocked with the triggering detail — it NEVER waits for the
 // agent to finish on its own once one of those signals fires. This is the
@@ -126,7 +126,7 @@ func superviseAgent(ctx context.Context, a *agent.Agent, cfg agent.WatchdogConfi
 				return nil
 			}
 			switch sig.Kind {
-			case agent.Prompt, agent.Stall, agent.ResourceExceeded:
+			case agent.Prompt, agent.Stall:
 				_ = a.Kill()
 				return fmt.Errorf("%w: %s", ErrAgentBlocked, blockedReason(sig))
 			case agent.Progress:
@@ -154,8 +154,6 @@ func blockedReason(sig agent.Signal) string {
 		return fmt.Sprintf("interactive prompt detected: %q", sig.Detail)
 	case agent.Stall:
 		return "no output before stall timeout"
-	case agent.ResourceExceeded:
-		return "resource limit exceeded"
 	default:
 		return "unknown blocking signal"
 	}

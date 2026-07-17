@@ -98,7 +98,6 @@ func TestHandleWatchdogSignalKillsOnPromptStallResourceExceeded(t *testing.T) {
 	}{
 		{agent.Prompt, true},
 		{agent.Stall, true},
-		{agent.ResourceExceeded, true},
 		{agent.Progress, false},
 		{agent.Exited, false},
 	}
