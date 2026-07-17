@@ -79,6 +79,12 @@ func (u *ui) render(s snapshot) {
 		if c := u.win.Canvas(); c != nil {
 			c.Focus(u.firstFocusable) // Focus(nil) is a safe no-op (blurs)
 		}
+		// Reset the scroll offset on a new view: drilling in from a scrolled-down
+		// list, or back out, should land at the top of the new content, not at
+		// whatever offset the previous level happened to be at.
+		if u.scroll != nil {
+			u.scroll.ScrollToTop()
+		}
 	}
 }
 
