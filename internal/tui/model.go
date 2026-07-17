@@ -716,9 +716,15 @@ const macroEventCap = 10
 // macroEventCap. It maps the wire AttachEvent back to a store.Event so the macro
 // renderer (which reads []store.Event) is unchanged.
 func prependEvent(tail []store.Event, ev ipc.AttachEvent) []store.Event {
-	for i := range tail {
-		if tail[i].ID == ev.ID {
-			return tail // already present (from a poll or an earlier frame)
+	// Dedup by id — but ONLY for real (nonzero) ids. A store event always has a
+	// nonzero autoincrement id; id==0 means a malformed/id-less frame, and every
+	// such frame is distinct, so deduping them (they'd all collide on 0) would
+	// wrongly drop all but the first. Keep them.
+	if ev.ID != 0 {
+		for i := range tail {
+			if tail[i].ID == ev.ID {
+				return tail // already present (from a poll or an earlier frame)
+			}
 		}
 	}
 	at := ev.OccurredAt
@@ -746,6 +752,19 @@ func prependEvent(tail []store.Event, ev ipc.AttachEvent) []store.Event {
 // before they stream) would simply age out as newer rows arrive.
 func mergeEventTail(live, poll []store.Event) []store.Event {
 	seen := make(map[int64]bool, len(live)+len(poll))
+	// take reports whether to keep this row, recording real ids as seen. id==0
+	// (a malformed/id-less frame) is never deduped — each is distinct, so
+	// collapsing them on 0 would wrongly drop all but one.
+	take := func(ev store.Event) bool {
+		if ev.ID == 0 {
+			return true
+		}
+		if seen[ev.ID] {
+			return false
+		}
+		seen[ev.ID] = true
+		return true
+	}
 	merged := make([]store.Event, 0, len(live)+len(poll))
 	// Merge two newest-first lists by descending id, skipping duplicates.
 	i, j := 0, 0
@@ -758,20 +777,17 @@ func mergeEventTail(live, poll []store.Event) []store.Event {
 			pick = poll[j]
 			j++
 		}
-		if !seen[pick.ID] {
-			seen[pick.ID] = true
+		if take(pick) {
 			merged = append(merged, pick)
 		}
 	}
 	for ; i < len(live); i++ {
-		if !seen[live[i].ID] {
-			seen[live[i].ID] = true
+		if take(live[i]) {
 			merged = append(merged, live[i])
 		}
 	}
 	for ; j < len(poll); j++ {
-		if !seen[poll[j].ID] {
-			seen[poll[j].ID] = true
+		if take(poll[j]) {
 			merged = append(merged, poll[j])
 		}
 	}

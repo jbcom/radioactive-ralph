@@ -436,6 +436,38 @@ func TestModel_PollDoesNotDropLiveEvent(t *testing.T) {
 	m.attachCancel()
 }
 
+// TestPrependEvent_IDLessFramesNotDeduped: two distinct frames with no id
+// (mapping to ID 0) must BOTH appear — deduping on 0 would drop all but one.
+func TestPrependEvent_IDLessFramesNotDeduped(t *testing.T) {
+	var tail []store.Event
+	tail = prependEvent(tail, ipc.AttachEvent{Kind: "service.started"})
+	tail = prependEvent(tail, ipc.AttachEvent{Kind: "tick"})
+	if len(tail) != 2 {
+		t.Fatalf("id-less frames were deduped: got %d, want 2 (%+v)", len(tail), tail)
+	}
+	// A real (nonzero) id is still deduped.
+	tail = prependEvent(tail, ipc.AttachEvent{ID: 5, Kind: "task.done"})
+	tail = prependEvent(tail, ipc.AttachEvent{ID: 5, Kind: "task.done"})
+	realCount := 0
+	for _, e := range tail {
+		if e.ID == 5 {
+			realCount++
+		}
+	}
+	if realCount != 1 {
+		t.Errorf("real id=5 deduped incorrectly: appears %d times", realCount)
+	}
+}
+
+func TestMergeEventTail_IDLessRowsNotDeduped(t *testing.T) {
+	live := []store.Event{{ID: 0, Kind: "a"}, {ID: 0, Kind: "b"}}
+	poll := []store.Event{{ID: 3, Kind: "c"}}
+	got := mergeEventTail(live, poll)
+	if len(got) != 3 {
+		t.Errorf("id-less rows deduped in merge: got %d, want 3 (%+v)", len(got), got)
+	}
+}
+
 func TestMergeEventTail(t *testing.T) {
 	live := []store.Event{{ID: 9}, {ID: 7}} // newest-first
 	poll := []store.Event{{ID: 8}, {ID: 7}, {ID: 6}}
