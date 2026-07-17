@@ -277,6 +277,23 @@ func TestModel_LiveFrameAppliesTaskStatusDelta(t *testing.T) {
 	}
 }
 
+func TestModel_LiveFrameAppliesBlockedDelta(t *testing.T) {
+	f := testFake()
+	m := newTestModel(t, f)
+	m.snap.tasks = []store.Task{{ID: "task-a", Status: store.TaskStatusRunning}}
+
+	// The store emits task.blocked / task.context_requested on running→blocked;
+	// both must flip the visible status to blocked immediately.
+	for _, kind := range []string{"task.blocked", "task.context_requested"} {
+		m.snap.tasks[0].Status = store.TaskStatusRunning
+		updated, _ := m.Update(liveFrameMsg{raw: []byte(`{"kind":"` + kind + `","task_id":"task-a"}`)})
+		m = updated.(Model)
+		if m.snap.tasks[0].Status != store.TaskStatusBlocked {
+			t.Errorf("%s: task-a status = %q, want blocked (live delta)", kind, m.snap.tasks[0].Status)
+		}
+	}
+}
+
 func TestModel_LiveFrameUnknownKindIsSnapshotNoop(t *testing.T) {
 	f := testFake()
 	m := newTestModel(t, f)

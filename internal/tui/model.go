@@ -657,6 +657,12 @@ func taskDeltaStatus(kind string) store.TaskStatus {
 		return store.TaskStatusFailed
 	case "task.released":
 		return store.TaskStatusReady
+	case "task.blocked", "task.context_requested":
+		// The store emits these on the running→blocked transition (a worker
+		// stalled or requested context). Reflect it immediately — a blocked
+		// worker waiting on input is exactly the state an operator watching the
+		// live view most needs to see promptly, not a poll interval later.
+		return store.TaskStatusBlocked
 	default:
 		return ""
 	}
