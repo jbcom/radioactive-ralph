@@ -61,33 +61,71 @@ The tail polls the DB on a short interval. This keeps a single ordered delivery
 path (the DB), survives supervisor restarts (a reconnecting client resumes from
 its last id), and needs no change to any of the ~20 emit sites.
 
-### Cursor semantics — connect-time snapshot, then live
+### Cursor semantics — client-owned cursor, no server-side "seed to max"
 
-On attach the client passes an optional `AfterID`. The supervisor:
+The cursor is **entirely the client's**. `HandleAttach` streams every event
+with `id > AfterID`, full stop — the server never substitutes a "current max"
+for a zero cursor. `AfterID == 0` therefore means "from the beginning," not
+"from now." This closes a lost-event race that a server-side seed-to-max would
+open:
 
-1. If `AfterID == 0` (fresh attach), seeds the cursor to the **current max
-   event id** so the client starts with the live tail, not the entire history.
-   A separate one-shot backlog read (existing `ListProjectEvents`, exposed
-   over IPC as a normal request/reply) hydrates the initial view; Attach is
-   purely the live delta. This keeps the first frame small and bounded.
-2. If `AfterID > 0` (reconnect), resumes from exactly that id, so a client that
-   dropped and reconnected sees every event it missed with no gap and no
-   duplicate. This is what makes #165's reconnect loop (GUI `runAttach`)
-   correct rather than lossy.
+> A naive fresh-attach — client reads the backlog via a one-shot request, then
+> attaches with `AfterID=0`, and the server seeds the cursor to `MAX(id)` *at
+> attach time* — can permanently drop an event inserted between the backlog read
+> and the attach: it is past the backlog snapshot yet at or below the seeded max,
+> so it appears in neither.
+
+The client instead owns a single monotonic cursor across both reads:
+
+1. **Backlog hydrate** (optional, for a populated initial view): the client
+   issues a normal request/reply that returns the recent backlog **and the
+   max event id at read time** (`ListProjectEvents` already reads newest-first;
+   the highest id in that page, or a dedicated `MaxEventID`, is the cursor). If
+   the client wants no backlog, it uses `MaxEventID` alone.
+2. **Attach** with `AfterID` set to exactly that cursor. Any event inserted
+   after the backlog snapshot has `id > cursor`, so the live stream delivers it —
+   no gap. Any event already in the backlog has `id <= cursor`, so it is not
+   re-sent — no duplicate.
+3. **Reconnect** re-uses the same rule: the client passes the highest id it has
+   processed, and resumes with no gap and no duplicate. This is what makes
+   #165's reconnect loop (GUI `runAttach`) correct rather than lossy.
+
+`MaxEventID` and `ListProjectEvents` share the same connection/serialization as
+the subsequent attach, and the client reads-then-attaches, so the cursor it
+carries into the attach is a real observed id; there is no window where the
+server invents one.
 
 The tail loop each tick: `SELECT ... WHERE id > ? ORDER BY id ASC LIMIT N`,
 emit each row as one frame, set cursor to the last id returned. `LIMIT N`
 (e.g. 256) bounds a single tick's work if a burst landed; the next tick drains
 the rest immediately.
 
-### Scope — project
+### Scope — project, including plan-linked events
 
-Attach is already established per connected client, and a client is scoped to
-one project (the supervisor discovers the project from the connection's init).
-The tail filters `WHERE project_id = ?` so a client only sees its own project's
-events — matching `ListProjectEvents`' existing scoping. Events with a NULL
-project_id (a few service-level kinds like `tick`) are **not** streamed to
-project clients; they are service-internal and add noise.
+An Attach connection is not implicitly project-scoped: the IPC connection has
+no init handshake, and the supervisor is deliberately project-agnostic (it
+serves all of a machine's projects on one socket). So the **client passes the
+project id in `AttachArgs`** (as the drive commands already pass a project id in
+their args), and `HandleAttach` scopes the tail to it.
+
+Scoping cannot be a bare `WHERE project_id = ?`, because **the headline
+lifecycle events do not populate `project_id`.** The transactional inserts in
+`internal/store/tasks.go` (`task.claimed`, `task.done`/`worker.completed`,
+`task.failed`, `task.failed_terminal`, `task.released`, `task.blocked`,
+`task.progress`, …) set only `plan_id`/`task_id`. A `project_id`-only filter
+would silently drop exactly the events a live view exists to show. The tail
+therefore scopes by project **through plan linkage** too:
+
+```sql
+WHERE id > ?
+  AND ( project_id = ?
+        OR plan_id IN (SELECT id FROM plans WHERE project_id = ?) )
+```
+
+`plans.project_id` is `NOT NULL REFERENCES projects(id)`, so a plan-scoped event
+resolves to exactly one project. Events with neither a `project_id` nor a
+`plan_id` (a few service-internal kinds like `tick`) are not delivered to any
+project client — they are noise, not observability.
 
 ## Event frame schema
 
@@ -96,6 +134,16 @@ NOT the raw `store.Event` (which exposes DB column quirks). A new
 `ipc.AttachEvent`:
 
 ```go
+// AttachArgs is the client's CmdAttach payload. ProjectID scopes the stream
+// (the connection carries no implicit project). AfterID is the client-owned
+// resume cursor: the stream carries every event with id > AfterID (0 means
+// from the beginning — the client, not the server, chooses the live-tail
+// cursor by first reading MaxEventID).
+type AttachArgs struct {
+    ProjectID string `json:"project_id"`
+    AfterID   int64  `json:"after_id,omitempty"`
+}
+
 // AttachEvent is one event streamed over an Attach connection. It is the
 // public, versioned shape of an events-table row; payload is the kind's
 // already-JSON payload passed through verbatim.
@@ -120,22 +168,30 @@ JSON message).
 
 ## Layering
 
-- **store** (`internal/store/events.go`): add
-  `EventsAfter(ctx, projectID string, afterID int64, limit int) ([]Event,
-  error)` — `WHERE project_id = ? AND id > ? ORDER BY id ASC LIMIT ?` — and
-  `MaxEventID(ctx, projectID string) (int64, error)` for the connect-time
-  snapshot seed. Leaf, no new deps. Reuses `scanEvent`.
-- **supervisor** (`internal/supervisor`): implement `HandleAttach` as the tail
-  loop — seed cursor (MaxEventID or the client's AfterID), then on a ticker call
-  `EventsAfter`, map each `store.Event` → `ipc.AttachEvent`, `emit` it, advance
-  the cursor, until `ctx.Done()`. Interval is a small const (e.g. 250ms);
-  `emit` returning an error (client gone / write deadline) ends the loop,
-  matching the existing contract.
-- **ipc** (`internal/ipc`): add `AttachEvent`; extend `AttachArgs`/the attach
-  request with `AfterID int64`. `Client.Attach` already streams
-  `json.RawMessage` frames; add a typed `Client.AttachEvents(ctx, afterID,
-  func(AttachEvent) error)` convenience that unmarshals each frame, leaving the
-  raw `Attach` intact.
+- **store** (`internal/store/events.go`): add `EventsAfter(ctx, projectID
+  string, afterID int64, limit int) ([]Event, error)` — the tail query, scoped
+  to a project **including plan-linked events**:
+  `WHERE id > ? AND (project_id = ? OR plan_id IN (SELECT id FROM plans WHERE
+  project_id = ?)) ORDER BY id ASC LIMIT ?` — and `MaxEventID(ctx, projectID
+  string) (int64, error)` with the **same** scoping, so the client's initial
+  cursor and the tail agree on which rows belong to the project. Leaf, no new
+  deps. Reuses `scanEvent`.
+- **supervisor** (`internal/supervisor`): implement `HandleAttach(ctx, args,
+  emit)` as the tail loop — cursor starts at `args.AfterID` (no server-side
+  seed-to-max), then on a ticker call `EventsAfter(ctx, args.ProjectID, cursor,
+  N)`, map each `store.Event` → `ipc.AttachEvent`, `emit` it, advance the cursor
+  to the last emitted id, until `ctx.Done()`. Reject an empty `args.ProjectID`.
+  Interval is a small const (e.g. 250ms); `emit` returning an error (client gone
+  / write deadline) ends the loop, matching the existing contract.
+- **ipc** (`internal/ipc`): add `AttachArgs{ProjectID, AfterID}` and
+  `AttachEvent`; change the `Handler.HandleAttach` interface to
+  `(ctx, args AttachArgs, emit)` and parse `AttachArgs` from the request in the
+  server's CmdAttach path (a malformed args blob is an `invalid_args` response).
+  `Client.Attach` already streams `json.RawMessage` frames; add a typed
+  `Client.AttachEvents(ctx, args AttachArgs, func(AttachEvent) error)`
+  convenience that sends the args and unmarshals each frame, leaving the raw
+  `Attach` intact. Expose `MaxEventID`/backlog over IPC (a small
+  request/reply) so a client can obtain its initial cursor.
 - **consumers** (later tasks, incremental): TUI/GUI live view subscribes via
   `AttachEvents` and applies deltas, falling back to the existing poll as a
   safety net. Kept out of the first PR to keep it reviewable; the first PR makes
@@ -156,7 +212,11 @@ JSON message).
 ## Testing
 
 - store: `EventsAfter` returns only rows with `id > afterID`, ascending, capped
-  at limit, scoped to project; `MaxEventID` on an empty project returns 0.
+  at limit, scoped to project — **including a plan-scoped event whose row has no
+  `project_id`, only a `plan_id` belonging to the project** (the P1 that a bare
+  `project_id` filter would drop), and excluding another project's events and
+  unscoped service rows; `MaxEventID` uses the same scoping and returns 0 on an
+  empty project.
 - supervisor: with a fake `emit`, attaching to a project with pre-existing
   events + `AfterID=0` emits nothing until a *new* event lands, then emits it;
   with `AfterID=k` emits exactly the rows after k in order; the loop exits when
