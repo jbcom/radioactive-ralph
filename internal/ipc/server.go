@@ -62,9 +62,11 @@ type Handler interface {
 	HandleReloadConfig(ctx context.Context) error
 
 	// HandleAttach streams events to the client until either the
-	// service exits or the client disconnects. The implementation
-	// should return when ctx is cancelled.
-	HandleAttach(ctx context.Context, emit func(json.RawMessage) error) error
+	// service exits or the client disconnects. args.AfterID is the resume
+	// cursor — the handler emits events with id greater than it (0 means
+	// start from the live tail). The implementation should return when ctx
+	// is cancelled.
+	HandleAttach(ctx context.Context, args AttachArgs, emit func(json.RawMessage) error) error
 }
 
 // DriveHandler is the OPTIONAL v2 drive surface. A Handler that also
@@ -398,6 +400,18 @@ func (s *Server) handleConn(conn net.Conn) {
 		err := s.handler.HandleReloadConfig(ctx)
 		s.writeResponse(conn, Response{Ok: err == nil, Error: errString(err)})
 	case CmdAttach:
+		// Parse the optional resume cursor. A malformed args blob is a client
+		// error, not a reason to stream from the wrong place: reject it.
+		var attachArgs AttachArgs
+		if len(req.Args) > 0 {
+			if err := json.Unmarshal(req.Args, &attachArgs); err != nil {
+				s.writeResponse(conn, Response{
+					Ok: false, Code: CodeInvalidArgs,
+					Error: fmt.Sprintf("attach args: %v", err),
+				})
+				return
+			}
+		}
 		emit := func(event json.RawMessage) error {
 			frame, err := encodeJSONLine(StreamEvent{Event: event})
 			if err != nil {
@@ -435,7 +449,7 @@ func (s *Server) handleConn(conn net.Conn) {
 			_, _ = conn.Read(buf[:])
 			attachCancel()
 		}()
-		attachErr := s.handler.HandleAttach(attachCtx, emit)
+		attachErr := s.handler.HandleAttach(attachCtx, attachArgs, emit)
 		// Final frame: single Response signals end-of-stream.
 		s.writeResponse(conn, Response{Ok: attachErr == nil, Error: errString(attachErr)})
 

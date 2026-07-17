@@ -102,5 +102,8 @@ func (l *liveDataSource) Attach(ctx context.Context, fn func(json.RawMessage) er
 		return err
 	}
 	defer func() { _ = client.Close() }()
-	return client.Attach(ctx, fn)
+	// Scope the stream to this client's project. AfterID 0 starts from the
+	// beginning of what the supervisor still holds; a future change can thread a
+	// resume cursor here once the TUI persists one.
+	return client.Attach(ctx, ipc.AttachArgs{ProjectID: l.projectID}, fn)
 }

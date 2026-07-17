@@ -416,11 +416,95 @@ func (s *Supervisor) HandleReloadConfig(_ context.Context) error {
 	return nil
 }
 
-// HandleAttach streams no events yet — the durable event/attach surface is
-// part of the plan-orchestration work in a later phase. It blocks until
-// ctx is cancelled so a connected client simply sees a quiet, still-open
-// stream rather than an immediate close.
-func (s *Supervisor) HandleAttach(ctx context.Context, _ func(json.RawMessage) error) error {
-	<-ctx.Done()
-	return nil
+// attachTailInterval is how often HandleAttach polls the events table for new
+// rows. Short enough that a live view feels immediate, long enough that an idle
+// stream is nearly free. The events table is the single ordered source of
+// truth (see docs/superpowers/specs/2026-07-17-attach-event-stream-design.md);
+// tailing it reuses that ordering with no change to any emit site.
+const attachTailInterval = 250 * time.Millisecond
+
+// attachTailBatch caps how many events one tail tick emits, so a burst can't
+// make a single tick unbounded. The next tick drains the remainder immediately.
+const attachTailBatch = 256
+
+// HandleAttach streams the project's events to the client as they are written,
+// turning the observe half of the drive+observe API from a stub into a live
+// feed. It TAILS the append-only events table: each tick it reads rows with id
+// greater than the cursor (scoped to args.ProjectID, including plan-linked
+// rows), emits each, and advances the cursor. The cursor starts at
+// args.AfterID — the client owns it (it obtains an initial value from
+// MaxEventID/backlog), so there is no server-side seed and no lost-event race.
+// The loop returns when ctx is cancelled (client disconnect — #165's watcher —
+// or supervisor shutdown) or when emit reports the client is gone.
+func (s *Supervisor) HandleAttach(ctx context.Context, args ipc.AttachArgs, emit func(json.RawMessage) error) error {
+	if args.ProjectID == "" {
+		return fmt.Errorf("supervisor: attach requires a project id")
+	}
+	cursor := args.AfterID
+
+	ticker := time.NewTicker(attachTailInterval)
+	defer ticker.Stop()
+
+	for {
+		// Drain everything currently past the cursor before waiting again, so a
+		// burst larger than one batch doesn't wait a full tick between batches.
+		for {
+			events, err := s.store.EventsAfter(ctx, args.ProjectID, cursor, attachTailBatch)
+			if err != nil {
+				// A transient read error (e.g. momentary pool contention) must
+				// not kill a live stream: log, stop draining, wait for the next
+				// tick. The cursor is unchanged, so nothing is skipped.
+				s.log("attach tail: events after cursor: %v", err)
+				break
+			}
+			if len(events) == 0 {
+				break
+			}
+			for _, ev := range events {
+				frame, err := json.Marshal(attachEventFrame(ev))
+				if err != nil {
+					// A single un-marshalable row must not wedge the stream;
+					// skip it but still advance past it so the tail progresses.
+					s.log("attach tail: marshal event %d: %v", ev.ID, err)
+					cursor = ev.ID
+					continue
+				}
+				if err := emit(frame); err != nil {
+					// Client gone / write deadline — end the subscription. This
+					// is the emit contract the IPC server relies on.
+					return nil
+				}
+				cursor = ev.ID
+			}
+			if len(events) < attachTailBatch {
+				break // fully drained
+			}
+		}
+
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-ticker.C:
+		}
+	}
+}
+
+// attachEventFrame maps a store event row to the public wire shape. Payload is
+// the row's payload_json passed through verbatim as raw JSON — the stream stays
+// kind-agnostic so a new event kind needs no transport change.
+func attachEventFrame(ev store.Event) ipc.AttachEvent {
+	var payload json.RawMessage
+	if ev.PayloadJSON != "" {
+		payload = json.RawMessage(ev.PayloadJSON)
+	}
+	return ipc.AttachEvent{
+		ID:         ev.ID,
+		Kind:       ev.Kind,
+		Stream:     ev.Stream,
+		PlanID:     ev.PlanID,
+		TaskID:     ev.TaskID,
+		Actor:      ev.Actor,
+		Payload:    payload,
+		OccurredAt: ev.OccurredAt,
+	}
 }

@@ -89,7 +89,10 @@ func (l *liveController) Attach(ctx context.Context, fn func(json.RawMessage) er
 		return err
 	}
 	defer func() { _ = c.Close() }()
-	return c.Attach(ctx, fn)
+	// Scope the stream to this controller's project. AfterID 0 starts from the
+	// beginning of what the supervisor still holds; the GUI's reconnect loop can
+	// thread a resume cursor here later.
+	return c.Attach(ctx, ipc.AttachArgs{ProjectID: l.projectID}, fn)
 }
 
 func (l *liveController) ImportPlan(ctx context.Context, args ipc.PlanImportArgs) (ipc.PlanImportReply, error) {

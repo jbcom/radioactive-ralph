@@ -24,7 +24,7 @@ func (noopHandler) HandleEnqueue(context.Context, ipc.EnqueueArgs) (ipc.EnqueueR
 }
 func (noopHandler) HandleStop(context.Context, ipc.StopArgs) error { return nil }
 func (noopHandler) HandleReloadConfig(context.Context) error       { return nil }
-func (noopHandler) HandleAttach(ctx context.Context, _ func(json.RawMessage) error) error {
+func (noopHandler) HandleAttach(ctx context.Context, _ ipc.AttachArgs, _ func(json.RawMessage) error) error {
 	<-ctx.Done()
 	return nil
 }

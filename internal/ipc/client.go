@@ -128,11 +128,35 @@ func (c *Client) ReloadConfig(ctx context.Context) error {
 	return nil
 }
 
+// AttachEvents is the typed convenience over Attach: it opens the stream with
+// the given args (project scope + resume cursor) and decodes each frame into an
+// AttachEvent before handing it to fn. Prefer this to raw Attach for the event
+// stream; Attach stays available for callers that want the raw frames.
+func (c *Client) AttachEvents(ctx context.Context, args AttachArgs, fn func(AttachEvent) error) error {
+	return c.attach(ctx, args, func(raw json.RawMessage) error {
+		var ev AttachEvent
+		if err := json.Unmarshal(raw, &ev); err != nil {
+			return fmt.Errorf("ipc: decode attach event: %w", err)
+		}
+		return fn(ev)
+	})
+}
+
 // Attach issues an attach request and streams event frames through fn
 // until the repo service closes the stream or ctx is cancelled. The
-// returned error is nil for a clean end-of-stream.
-func (c *Client) Attach(ctx context.Context, fn func(json.RawMessage) error) error {
-	if err := c.send(ctx, Request{Cmd: CmdAttach}); err != nil {
+// returned error is nil for a clean end-of-stream. It scopes the stream via
+// args (the project id is required; a zero AfterID starts from the beginning).
+func (c *Client) Attach(ctx context.Context, args AttachArgs, fn func(json.RawMessage) error) error {
+	return c.attach(ctx, args, fn)
+}
+
+// attach is the shared streaming implementation behind Attach and AttachEvents.
+func (c *Client) attach(ctx context.Context, args AttachArgs, fn func(json.RawMessage) error) error {
+	rawArgs, err := json.Marshal(args)
+	if err != nil {
+		return fmt.Errorf("ipc: marshal attach args: %w", err)
+	}
+	if err := c.send(ctx, Request{Cmd: CmdAttach, Args: rawArgs, ProtoVersion: ProtoVersion}); err != nil {
 		return err
 	}
 	// The attach stream is long-lived, so ctx cancellation (not a fixed

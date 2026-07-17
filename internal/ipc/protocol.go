@@ -131,6 +131,36 @@ type EnqueueReply struct {
 	Inserted bool   `json:"inserted"` // false means FTS found a duplicate
 }
 
+// AttachArgs is the client's payload when opening an event stream via
+// CmdAttach. ProjectID scopes the stream — the IPC connection carries no
+// implicit project (the supervisor serves every project on one socket), so the
+// client names it, as the drive commands do. AfterID is the client-owned resume
+// cursor: the stream carries every event with id strictly greater than AfterID.
+// AfterID=0 means "from the beginning" — the CLIENT, not the server, picks the
+// live-tail cursor by first reading MaxEventID (or the backlog's max id) and
+// passing it here. A reconnecting client passes the highest id it has processed,
+// resuming with no gap and no duplicate.
+type AttachArgs struct {
+	ProjectID string `json:"project_id"`
+	AfterID   int64  `json:"after_id,omitempty"`
+}
+
+// AttachEvent is one event streamed over an Attach connection: the public,
+// versioned shape of an events-table row. It is deliberately NOT the raw store
+// row — Payload is the kind-specific JSON passed through verbatim, so adding a
+// new event kind never requires a transport change. ID lets a client persist
+// its resume cursor for reconnects.
+type AttachEvent struct {
+	ID         int64           `json:"id"`
+	Kind       string          `json:"kind"`
+	Stream     string          `json:"stream,omitempty"`
+	PlanID     string          `json:"plan_id,omitempty"`
+	TaskID     string          `json:"task_id,omitempty"`
+	Actor      string          `json:"actor,omitempty"`
+	Payload    json.RawMessage `json:"payload,omitempty"`
+	OccurredAt time.Time       `json:"occurred_at"`
+}
+
 // StopArgs controls the termination mode for CmdStop.
 type StopArgs struct {
 	Graceful bool          `json:"graceful"`             // wait for in-flight sessions to finish cleanly
