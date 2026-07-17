@@ -660,6 +660,64 @@ func TestApproveTask(t *testing.T) {
 	}
 }
 
+// TestApprovedReadyTaskIsClaimable is the regression guard for the approval-gate
+// dead-end: a task that ApproveTask has moved into 'ready' MUST be claimable and
+// surfaced by Ready(). Before the claim path accepted 'ready', an approved task
+// was stranded forever (Ready/ClaimNextReady only matched 'pending'), so the
+// approval gate silently discarded exactly the tasks it was meant to release.
+func TestApprovedReadyTaskIsClaimable(t *testing.T) {
+	ctx := context.Background()
+	s := openTestStore(t)
+	projectID := mustCreateProject(t, s, "gate-project")
+	planID := mustCreatePlan(t, s, projectID, "gate-plan")
+	sessionID, workerID := mustCreateSessionAndWorker(t, s, "gate")
+
+	// A gated task the operator then approves → status 'ready'.
+	if err := s.CreateTask(ctx, CreateTaskOpts{PlanID: planID, ID: "g", Description: "gated then approved"}); err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+	if _, err := s.db.ExecContext(ctx,
+		`UPDATE tasks SET status='ready_pending_approval' WHERE plan_id=? AND id=?`, planID, "g"); err != nil {
+		t.Fatalf("set gate: %v", err)
+	}
+
+	// While still gated it must NOT be claimable or ready.
+	readyBefore, err := s.Ready(ctx, planID)
+	if err != nil {
+		t.Fatalf("Ready (gated): %v", err)
+	}
+	if len(readyBefore) != 0 {
+		t.Fatalf("Ready returned %d tasks while gated, want 0 (gate must hold)", len(readyBefore))
+	}
+	if _, err := s.ClaimNextReady(ctx, planID, sessionID, workerID); !errors.Is(err, ErrNoReadyTask) {
+		t.Fatalf("ClaimNextReady (gated) err = %v, want ErrNoReadyTask", err)
+	}
+
+	// Approve it → 'ready'.
+	if found, changed, err := s.ApproveTask(ctx, planID, "g"); err != nil || !found || !changed {
+		t.Fatalf("ApproveTask = (found=%v changed=%v err=%v), want (true,true,nil)", found, changed, err)
+	}
+
+	// Now it must be surfaced by Ready() AND actually claimable.
+	readyAfter, err := s.Ready(ctx, planID)
+	if err != nil {
+		t.Fatalf("Ready (approved): %v", err)
+	}
+	if len(readyAfter) != 1 || readyAfter[0].ID != "g" {
+		t.Fatalf("Ready (approved) = %+v, want exactly task g", readyAfter)
+	}
+	task, err := s.ClaimNextReady(ctx, planID, sessionID, workerID)
+	if err != nil {
+		t.Fatalf("ClaimNextReady (approved) err = %v, want a successful claim", err)
+	}
+	if task.ID != "g" {
+		t.Fatalf("claimed %q, want g", task.ID)
+	}
+	if task.Status != TaskStatusRunning {
+		t.Errorf("claimed task status = %q, want running", task.Status)
+	}
+}
+
 func TestReclaimWorker(t *testing.T) {
 	ctx := context.Background()
 	s := openTestStore(t)
