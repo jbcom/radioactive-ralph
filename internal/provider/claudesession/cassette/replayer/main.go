@@ -88,6 +88,16 @@ func main() {
 		switch f.Direction {
 		case "out":
 			line := maybeRewriteSessionID(f.Line, sessionID, resumeMode, i)
+			// A frame Line that is a JSON STRING is a non-JSON source line
+			// (banner/warning) the recorder wrapped so the cassette stays
+			// valid JSON (see recorder.asRawJSON). Unwrap it back to the exact
+			// original bytes so replay reproduces the real stream verbatim
+			// rather than emitting a quoted "banner".
+			if raw, ok := unwrapJSONString(line); ok {
+				_, _ = os.Stdout.Write(raw)
+				_, _ = os.Stdout.WriteString("\n")
+				break
+			}
 			// Cassettes store frames as indented JSON for readable
 			// diffs; compact before emitting so stream-json readers
 			// see exactly one frame per line.
@@ -135,6 +145,22 @@ func parseArgs(args []string) (sessionID string, resume bool) {
 		}
 	}
 	return
+}
+
+// unwrapJSONString reports whether line is a JSON string (the recorder's
+// wrapping of a non-JSON source line) and, if so, returns the original raw
+// bytes. A real stream-json frame is a JSON object/array, not a string, so
+// this only fires for wrapped banner/warning lines.
+func unwrapJSONString(line json.RawMessage) ([]byte, bool) {
+	trimmed := bytes.TrimSpace(line)
+	if len(trimmed) == 0 || trimmed[0] != '"' {
+		return nil, false
+	}
+	var s string
+	if err := json.Unmarshal(trimmed, &s); err != nil {
+		return nil, false
+	}
+	return []byte(s), true
 }
 
 // maybeRewriteSessionID patches the session_id field in the init

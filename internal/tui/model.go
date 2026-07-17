@@ -142,8 +142,12 @@ type liveFrameMsg struct {
 }
 
 // attachEndedMsg signals the Attach stream ended (cleanly or with error).
+// epoch tags the subscription it belongs to, so a stale end-message from a
+// subscription the user already drilled out of doesn't clear the CURRENT
+// subscription's channels (which would silently stop the new stream).
 type attachEndedMsg struct {
-	err error
+	err   error
+	epoch uint64
 }
 
 // fetchCmd re-fetches everything the current level needs.
@@ -217,11 +221,11 @@ func attachCmd(ctx context.Context, frames chan json.RawMessage, done chan error
 		select {
 		case raw, ok := <-frames:
 			if !ok {
-				return attachEndedMsg{err: <-done}
+				return attachEndedMsg{err: <-done, epoch: epoch}
 			}
 			return liveFrameMsg{raw: raw, epoch: epoch}
 		case <-ctx.Done():
-			return attachEndedMsg{err: ctx.Err()}
+			return attachEndedMsg{err: ctx.Err(), epoch: epoch}
 		}
 	}
 }
@@ -314,8 +318,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case attachEndedMsg:
-		// The stream closed (clean end, error, or ctx cancel) — stop pulling
-		// and drop the channel references so a later re-arm can't reuse them.
+		// Ignore a stale end from a subscription the user already drilled out
+		// of — clearing the channels here would kill the CURRENT subscription.
+		if msg.epoch != m.attachEpoch {
+			return m, nil
+		}
+		// The current stream closed (clean end, error, or ctx cancel) — stop
+		// pulling and drop the channel references so a later re-arm can't
+		// reuse them.
 		m.attachFrames = nil
 		m.attachDone = nil
 		return m, nil

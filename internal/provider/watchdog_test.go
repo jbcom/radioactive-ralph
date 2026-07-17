@@ -138,13 +138,13 @@ sleep 300
 // runner level: ClaudeRunner.Run, driving a fake `claude` CLI that emits a
 // permission prompt and then sleeps, must return promptly with an
 // ErrAgentBlocked-wrapped error rather than hang for the sleep's duration.
-// TestClaudeRunnerKilledByWatchdogOnStall proves a claude process that
-// wedges (produces no further frames) is killed by the STALL timeout rather
-// than waited out. Note: claude uses StreamJSONWatchdogConfig (no prompt
-// patterns), so a wedged stream-json CLI is caught by the stall path, not by
-// pattern-matching a raw line — the fake here prints a prompt-looking line
-// then sleeps, and the stall (not the text) is what trips.
-func TestClaudeRunnerKilledByWatchdogOnStall(t *testing.T) {
+// TestClaudeRunnerKilledByWatchdogOnRawPrompt proves that a GENUINE raw
+// interactive prompt (a non-JSON line) is still detected and kills the turn,
+// even under StreamJSONWatchdogConfig. That config sets
+// SkipPromptMatchOnJSONLines, which suppresses matching ONLY on valid JSON
+// frames — the raw "Allow this action? (y/n)" line here is not JSON, so it
+// still matches and trips the watchdog well before the fake's 300s sleep.
+func TestClaudeRunnerKilledByWatchdogOnRawPrompt(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("shell-script fake CLI is Unix-only")
 	}

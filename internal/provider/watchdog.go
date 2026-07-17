@@ -60,19 +60,18 @@ func DefaultWatchdogConfig() agent.WatchdogConfig {
 
 // StreamJSONWatchdogConfig is the watchdog config for providers driven in a
 // structured stream-json mode (claude/opencode: `--output-format
-// stream-json`). Their every stdout line is a JSON frame, NOT free-form pane
-// text, and they run non-interactively — a real permission prompt never
-// reaches stdout as raw text (it is handled via flags/config or a structured
-// frame). Content-blind prompt-pattern matching against those JSON frames is
-// therefore not just useless but HARMFUL: an assistant frame whose text
-// merely contains "permission", "do you want to", "continue?", etc. would be
-// misread as an interactive prompt and KILL a perfectly valid turn. So this
-// config carries NO prompt patterns and relies solely on the stall timeout
-// (a genuinely wedged CLI still produces no frames and trips it).
+// stream-json`). Their normal output is JSON frames whose text can innocently
+// contain prompt-like words ("permission", "continue?"), which content-blind
+// matching would misread and KILL a valid turn. It keeps the prompt patterns
+// but sets SkipPromptMatchOnJSONLines: patterns are matched ONLY on lines
+// that are NOT valid JSON, so a legitimate JSON frame is never a false prompt
+// while a GENUINE raw interactive prompt (never valid JSON) is still caught
+// immediately — not merely by the slower stall timeout.
 func StreamJSONWatchdogConfig() agent.WatchdogConfig {
 	return agent.WatchdogConfig{
-		StallTimeout:   DefaultStallTimeout,
-		PromptPatterns: nil,
+		StallTimeout:               DefaultStallTimeout,
+		PromptPatterns:             DefaultPromptPatterns,
+		SkipPromptMatchOnJSONLines: true,
 	}
 }
 
