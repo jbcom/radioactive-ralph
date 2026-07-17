@@ -173,28 +173,21 @@ Structured attach event surface (the observe half goes live) — shipping arc:
   claimed tick_test.go still used the 2-arg HandleAttach; the pushed tree has
   the 3-arg fix, build/test green). The marshal-skip-and-advance tradeoff both
   agents noted is intended (don't wedge the stream on one bad row).
-Attach live-consumers (push-live view) — #169 landed, consumers in flight:
-- [x] #169 (feat: stream events over Attach) MERGED — the observe half is live
-  on main. Store tail queries, supervisor HandleAttach tail loop, ipc
-  AttachArgs/AttachEvent/AttachEvents; all 5 review threads resolved (scope
-  precedence, transient/permanent error classification, MaxEventID cursor seed).
-- [x] #173 (feat: apply attach deltas — TUI/GUI go push-live) MERGED. TUI decodes
-  ipc.AttachEvent, filters the micro-view tail to the selected task (the deferred
-  codex P2), and applies task-status deltas (incl. task.blocked/context_requested,
-  a code-review finding) ahead of the poll; GUI gates its per-frame refresh on the
-  event kind. Poll stays the reconcile net. Code-review clean on items 1-4.
-- [x] #175 (fix(store): payload_json always valid JSON structurally) MERGED — the
-  LOW json.Valid hardening from the #169 security self-review: jsonOrEmptyObject
-  wraps a malformed input as {"raw":...} so the events column's invariant is
-  structural, not caller-discipline.
+- Attach event stream — the observe half goes live (compressed →
+  docs/superpowers/PILLARS.md): producer #169 (store tail queries + supervisor
+  HandleAttach loop + ipc AttachArgs/AttachEvent/AttachEvents; 3 codex spec P1s +
+  5 review threads folded in), consumers #173 (TUI decode + selected-task filter
+  + status deltas incl. blocked; GUI per-frame refresh gate), json.Valid
+  hardening #175. Code-simplifier pass found ONE clean change (below).
 
-Next after the arc lands (forward-exploration candidates):
-- [ ] [WAIT-AGENT] code-simplifier lens over the merged attach surface (store
-  tail queries + supervisor HandleAttach loop + ipc Attach types/dispatch) —
-  running background; fold any genuine simplification forward, else record clean.
-- [ ] After that: pick the next product feature (GUI richness, provider coverage,
-  observability, DX, perf) per directive 0 — likely a security-sast pass on the
-  new IPC surface, then a fresh feature.
+Rolling (attach follow-ups):
+- [ ] [WAIT] #174 (chore: directive/PILLARS sync for the attach arc) — CI; merge green.
+- [ ] Fold the code-simplifier finding: collapse the pure pass-through
+  Client.Attach → private attach into one method and point AttachEvents at the
+  public Attach (internal/ipc/client.go) — zero behavior change. (AttachEvents'
+  zero-caller state is BY DESIGN: the spec designates it the GUI's consumer path,
+  keep it.) Then pick the next product feature per directive 0 (a security-sast
+  pass on the new IPC surface is the leading candidate).
 
 ## Notes
 
