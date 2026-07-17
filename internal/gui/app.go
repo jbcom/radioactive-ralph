@@ -215,11 +215,12 @@ type snapshot struct {
 	status       ipc.StatusReply
 	err          error
 
-	plans    []store.Plan
-	progress map[string]orch.Progress // planID -> progress (macro)
-	tasks    []store.Task             // meso
-	events   []store.Event            // micro
-	killID   string                   // micro: worker id running the selected task ("" = none)
+	plans      []store.Plan
+	progress   map[string]orch.Progress // planID -> progress (macro)
+	projEvents []store.Event            // macro: recent project-wide events
+	tasks      []store.Task             // meso
+	events     []store.Event            // micro
+	killID     string                   // micro: worker id running the selected task ("" = none)
 }
 
 type drillLevel int
@@ -277,6 +278,8 @@ func (u *ui) gather(plan, task string) snapshot {
 			pr, _ := u.ctrl.PlanProgress(u.ctx, p.ID)
 			s.progress[p.ID] = pr
 		}
+		// The ambient project-activity feed the TUI's macro view also shows.
+		s.projEvents, _ = u.ctrl.ListProjectEvents(u.ctx, u.project, 20)
 	}
 	return s
 }

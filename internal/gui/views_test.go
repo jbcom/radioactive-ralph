@@ -58,6 +58,42 @@ func tapButton(t *testing.T, root fyne.CanvasObject, text string) {
 	test.Tap(b)
 }
 
+// forEachLabel visits every *widget.Label in the tree.
+func forEachLabel(obj fyne.CanvasObject, fn func(*widget.Label)) {
+	switch o := obj.(type) {
+	case *widget.Label:
+		fn(o)
+	case *fyne.Container:
+		for _, c := range o.Objects {
+			forEachLabel(c, fn)
+		}
+	case *container.Scroll:
+		forEachLabel(o.Content, fn)
+	}
+}
+
+// labelExists reports whether some label's text equals text exactly.
+func labelExists(root fyne.CanvasObject, text string) bool {
+	found := false
+	forEachLabel(root, func(l *widget.Label) {
+		if l.Text == text {
+			found = true
+		}
+	})
+	return found
+}
+
+// labelContains reports whether some label's text contains substr.
+func labelContains(root fyne.CanvasObject, substr string) bool {
+	found := false
+	forEachLabel(root, func(l *widget.Label) {
+		if strings.Contains(l.Text, substr) {
+			found = true
+		}
+	})
+	return found
+}
+
 func TestMacro_RendersPlansAndDrillsToMeso(t *testing.T) {
 	f := newFakeController()
 	f.plans = []store.Plan{{ID: "p1", Title: "Ship It", Status: store.PlanStatusActive}}
@@ -181,6 +217,37 @@ func TestMicro_NoKillButtonWhenNoWorker(t *testing.T) {
 
 	if findButton(u.root, "Kill worker") != nil {
 		t.Error("kill button present when no worker is running the task")
+	}
+}
+
+func TestMacro_RendersProjectEventsFeed(t *testing.T) {
+	f := newFakeController()
+	f.plans = []store.Plan{{ID: "p1", Title: "P", Status: store.PlanStatusActive}}
+	f.pEvents = []store.Event{
+		{Kind: "task.done", Actor: "worker-1"},
+		{Kind: "plan.imported", Actor: "cli"},
+	}
+	u := newTestUI(t, f)
+	u.refreshNow()
+
+	// The macro view must show the "Recent activity" section header and at least
+	// one event kind — the parity feature the TUI's macro view has.
+	if !labelExists(u.root, "Recent activity") {
+		t.Error("macro view missing the Recent activity header")
+	}
+	if !labelContains(u.root, "task.done") {
+		t.Error("macro view did not render a project event (task.done)")
+	}
+}
+
+func TestMacro_ProjectEventsEmptyState(t *testing.T) {
+	f := newFakeController()
+	f.plans = []store.Plan{{ID: "p1", Title: "P", Status: store.PlanStatusActive}}
+	// no pEvents
+	u := newTestUI(t, f)
+	u.refreshNow()
+	if !labelContains(u.root, "no activity yet") {
+		t.Error("macro view should show an empty-activity state when there are no events")
 	}
 }
 

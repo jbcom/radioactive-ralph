@@ -85,6 +85,23 @@ func (u *ui) buildMacro(s snapshot) {
 		))
 	}
 	u.body.Add(u.importButton())
+	u.addRecentActivity(s.projEvents)
+}
+
+// addRecentActivity renders the ambient project-wide event feed under the plan
+// list — the GUI twin of the TUI macro view's "recent events" section.
+func (u *ui) addRecentActivity(events []store.Event) {
+	u.body.Add(widget.NewSeparator())
+	u.body.Add(widget.NewLabelWithStyle("Recent activity", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}))
+	if len(events) == 0 {
+		u.body.Add(widget.NewLabel("(no activity yet)"))
+		return
+	}
+	for _, e := range events {
+		// Newest-first (ListProjectEvents contract); show local time + kind +
+		// actor, mirroring the micro timeline's format.
+		u.body.Add(widget.NewLabel(fmt.Sprintf("%s  %s  %s", e.OccurredAt.Local().Format("15:04:05"), e.Kind, e.Actor)))
+	}
 }
 
 // buildMeso shows one plan's tasks with per-task status, plan-level drive
