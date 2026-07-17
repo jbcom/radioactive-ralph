@@ -109,6 +109,27 @@ func TestDeclarativeDefaultsTurnTimeout(t *testing.T) {
 	}
 }
 
+// TestValidateBindingRejectsNonPositiveTurnTimeout confirms a zero/negative
+// explicit turn_timeout is refused — it would leave the turn unbounded, reopening
+// the never-block gap the operator meant to close.
+func TestValidateBindingRejectsNonPositiveTurnTimeout(t *testing.T) {
+	for _, tt := range []string{"0", "0s", "-5s"} {
+		err := ValidateBinding(Binding{
+			Name:            "zero",
+			BinaryFromLocal: true,
+			Config: BindingConfig{
+				Type:        "plain-stdout",
+				Binary:      "sh",
+				Args:        []string{"{prompt}"},
+				TurnTimeout: tt,
+			},
+		})
+		if err == nil || !strings.Contains(err.Error(), "turn_timeout must be positive") {
+			t.Errorf("ValidateBinding(turn_timeout=%q) error = %v, want a must-be-positive rejection", tt, err)
+		}
+	}
+}
+
 func TestDeclarativeLastMessageFileRunner(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("shell-script fake CLI is Unix-only")

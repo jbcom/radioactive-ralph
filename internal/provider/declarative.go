@@ -77,13 +77,18 @@ func runDeclarativeAttempt(ctx context.Context, binding Binding, req Request) (R
 		if err != nil {
 			return Result{}, fmt.Errorf("provider %q: parse turn_timeout: %w", binding.Name, err)
 		}
+		if parsed <= 0 {
+			// A zero/negative explicit timeout would mean "no bound" and reopen the
+			// never-block gap the operator meant to close. ValidateBinding rejects
+			// this too; guard here defensively.
+			return Result{}, fmt.Errorf("provider %q: turn_timeout must be positive, got %q", binding.Name, binding.Config.TurnTimeout)
+		}
 		timeout = parsed
 	}
-	if timeout > 0 {
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, timeout)
-		defer cancel()
-	}
+	// timeout is always positive here (default or a validated explicit value).
+	var cancel context.CancelFunc
+	ctx, cancel = context.WithTimeout(ctx, timeout)
+	defer cancel()
 
 	promptPath, err := writeProviderTempFile("prompt.txt", combinePrompt(req))
 	if err != nil {
@@ -218,8 +223,14 @@ func ValidateBinding(binding Binding) error {
 		return fmt.Errorf("provider %q: binary %q not on PATH", binding.Name, cfg.Binary)
 	}
 	if cfg.TurnTimeout != "" {
-		if _, err := time.ParseDuration(cfg.TurnTimeout); err != nil {
+		d, err := time.ParseDuration(cfg.TurnTimeout)
+		if err != nil {
 			return fmt.Errorf("provider %q: parse turn_timeout: %w", binding.Name, err)
+		}
+		if d <= 0 {
+			// Reject "0"/negative: it would leave the turn UNBOUNDED, reopening the
+			// never-block gap. Omit turn_timeout entirely to get the default bound.
+			return fmt.Errorf("provider %q: turn_timeout must be positive (omit it for the default bound), got %q", binding.Name, cfg.TurnTimeout)
 		}
 	}
 	return nil

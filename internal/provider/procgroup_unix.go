@@ -18,10 +18,20 @@ import (
 // the child a group leader; Cancel signals the negative PID to SIGKILL the whole
 // group; WaitDelay bounds the wait for stdout copying to finish after the kill.
 func setProcessGroupKill(cmd *exec.Cmd) {
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	// Preserve any other SysProcAttr the caller set; only add Setpgid.
+	if cmd.SysProcAttr == nil {
+		cmd.SysProcAttr = &syscall.SysProcAttr{}
+	}
+	cmd.SysProcAttr.Setpgid = true
 	cmd.Cancel = func() error {
 		if cmd.Process == nil {
 			return nil
+		}
+		// CRITICAL guard: Kill(-pid) with pid 0 signals the CALLER's own process
+		// group (Ralph would SIGKILL itself); pid 1 targets init's group. Never
+		// group-signal those — fall back to the direct kill. A real child is pid > 1.
+		if cmd.Process.Pid <= 1 {
+			return cmd.Process.Kill()
 		}
 		if err := syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL); err != nil {
 			return cmd.Process.Kill() // fall back to the direct child
