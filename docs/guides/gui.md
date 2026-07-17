@@ -28,10 +28,17 @@ when you run `gui` there.
 | Linux | the `.AppImage` from the [latest release](https://github.com/jbcom/radioactive-ralph/releases/latest) — `chmod +x`, run |
 | macOS (direct) / Windows | the `.dmg` / `.exe` from the latest release |
 
-Everything is signed the open-source way — no paid Apple or Microsoft
-credentials — so the macOS cask needs no security override. (The Windows `.exe`
-is Authenticode-signed once the project's free SignPath enrollment is
-configured; until then Windows SmartScreen may warn on first launch.)
+Signing is the open-source way — no paid Apple or Microsoft credentials — but
+the current state differs per platform:
+
+- **macOS:** the `.app` is ad-hoc-signed and the Homebrew cask strips the
+  quarantine attribute on install, so the cask opens with no Gatekeeper prompt
+  (the direct-download `.dmg` still shows one).
+- **Windows:** the `.exe` becomes Authenticode-signed once the project's free
+  SignPath enrollment is configured; until then Windows SmartScreen may warn on
+  first launch.
+- **Linux:** the AppImage is unsigned by convention and verified by its
+  release checksum.
 
 ## Launching
 
@@ -43,9 +50,12 @@ configured; until then Windows SmartScreen may warn on first launch.)
   project; launched from a file manager (working directory not a repo) it opens
   project-agnostic and lists the active plans across every project the
   supervisor knows — it never registers the launch directory as a new project.
-  In project-agnostic mode the plan/task views work read-only, but importing a
-  plan needs a project context, so **launch from a project directory (or the
-  `gui` subcommand inside a repo) when you want to import**.
+  In project-agnostic mode you can still drive any plan or task the list shows —
+  pause/resume/abandon, approve, and kill each act on a specific
+  plan/task/worker id and need no project scope. Only **importing** a plan needs
+  a project context (it targets the project you launched from), so **launch from
+  a project directory (or the `gui` subcommand inside a repo) when you want to
+  import** — the import affordance is hidden otherwise.
 
 The window opens even before a supervisor is running: the header shows
 `waiting for supervisor…`, and it lights up to `connected · up <duration>` the
