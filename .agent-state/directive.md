@@ -153,13 +153,19 @@ Completed since (all shipped):
   so it still gets its reply) + C5 (proto-version guard before dispatch).
 
 Next forward-exploration items:
-- [ ] [WAIT] #160 (IPC deadlines/limits/conn-close) — CI; merge when green.
+- [ ] [WAIT] #160 (IPC deadlines/limits/conn-close) — CI; merge when green. Its
+  GUI check was flaking on an ungenerated en_US locale (harfbuzz panic, NOT the
+  IPC change) → fixed in #162 (generate the locale + POSIX name); merge #162
+  first to unblock.
+- [ ] [WAIT] #162 (CI: generate en_US.UTF-8 for the GUI shaper) — CI; merge green.
+- [ ] [WAIT-AGENT] GUI audit (opus) — adversarial review of the Fyne desktop
+  client for off-UI-thread widget races, wrong-entity drive actions (stale
+  index/pointer), stale renders, crashes, and connection/goroutine leaks.
+  Re-invokes on completion; fold confirmed findings into fresh items + ship.
 - [ ] IPC C4 follow-up (after #160): a vanished Attach client leaks its handler
   until process exit — nothing observes the client disconnect. Add a read-side
   disconnect probe in the server's CmdAttach path that cancels the handler ctx
   on EOF. (Recorded in memory: project_ipc_c4_attach_disconnect.)
-- [ ] Then rotate the lens again (GUI audit, or a NEW product feature —
-  approval-gate docs + plan example, observability, DX).
 
 ## Notes
 
