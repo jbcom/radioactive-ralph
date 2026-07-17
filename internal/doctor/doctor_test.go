@@ -129,6 +129,15 @@ func TestCodexMeteringIsInformational(t *testing.T) {
 	if !strings.Contains(check.Detail, "not metered") || !strings.Contains(check.Detail, "spend cap") {
 		t.Errorf("codex metering detail = %q, want it to explain the spend-cap blind spot", check.Detail)
 	}
+	// The account-level mitigation must live in Detail, not Remediate: WriteText only
+	// prints Remediate for non-OK checks, so an OK check's Remediate never reaches the
+	// operator. Detail always prints — keep the guidance there.
+	if !strings.Contains(check.Detail, "account level") {
+		t.Errorf("codex metering detail = %q, want the account-level mitigation (Remediate is dropped for OK checks)", check.Detail)
+	}
+	if check.Remediate != "" {
+		t.Errorf("codex metering remediate = %q, want empty (OK-check Remediate is never printed)", check.Remediate)
+	}
 }
 
 func TestCodexAuthRequiresCLILoginWithAPIKey(t *testing.T) {

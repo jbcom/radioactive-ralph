@@ -121,11 +121,15 @@ func checkCodexAuth(ctx context.Context, cfg RunOptions) Check {
 // informational (OK), not a fault — it exists so the gap is discoverable rather
 // than silent.
 func checkCodexMetering(_ context.Context, _ RunOptions) Check {
+	// The guidance lives in Detail, not Remediate: WriteText only prints Remediate
+	// for non-OK checks, and this check is deliberately OK, so an OK-check's
+	// Remediate would never reach the operator.
 	return Check{
-		Name:      "codex metering",
-		Severity:  OK,
-		Detail:    "codex usage/cost is not metered (its CLI has no machine-readable usage stream); a codex spend cap is not enforced",
-		Remediate: "cap codex spend at the OpenAI account level if you need a hard limit; claude/opencode usage IS metered",
+		Name:     "codex metering",
+		Severity: OK,
+		Detail: "codex usage/cost is not metered (its CLI has no machine-readable usage stream), " +
+			"so a codex spend cap is not enforced — cap codex spend at the OpenAI account level if you " +
+			"need a hard limit; claude/opencode usage IS metered",
 	}
 }
 
