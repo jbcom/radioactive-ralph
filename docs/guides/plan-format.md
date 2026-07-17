@@ -46,6 +46,35 @@ decomposition, no separate plan-definition language to learn.
 is sequential (ordered list) and only starts once every step in "Fix the
 login bug" is done.
 
+## Approval gates
+
+A step can be **held for human approval** before it runs. End the step's
+text with the `[approval]` marker (case-insensitive):
+
+```markdown
+# Ship
+
+1. build the release artifacts
+2. Deploy to production [approval]
+3. run smoke tests
+```
+
+The `[approval]` marker is stripped from the displayed step text and does
+**not** change how the step reads. A gated step is materialized in the
+`ready_pending_approval` state instead of `pending`, so the supervisor's
+dispatch loop **skips it** — it is never claimed or run, and (in a
+sequential group) the steps after it wait too, until an operator approves
+it. Approve from the TUI/GUI (the **Approve** button on a gated task) or
+the drive API; that promotes it to `ready`, and the next dispatch tick
+claims and runs it normally.
+
+Use it for the irreversible or high-blast-radius step in an otherwise
+autonomous plan — a production deploy, a data migration, a destructive
+cleanup — so the run pauses for a human check at exactly that point
+without stopping everything before it. Bracketed text that isn't the
+`[approval]` marker (e.g. a trailing `[WIP]`) is left untouched and does
+not gate the step.
+
 ## Validation
 
 `internal/plan.Validate` checks the document against the grammar (sibling

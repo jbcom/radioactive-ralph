@@ -82,7 +82,9 @@ A2A coordination vocabulary is the official `a2aproject/a2a-go`.
 
 Plans are simple markdown decomposed heuristically over the goldmark AST
 (`internal/plan`): heading = group, unordered list = parallel steps, ordered =
-sequential, don't descend past a heading with subheadings. No LLM in
+sequential, don't descend past a heading with subheadings. A step ending in the
+`[approval]` marker is held (`ready_pending_approval`) until an operator approves
+it, gating dispatch of that step — see docs/guides/plan-format.md. No LLM in
 decomposition. The orchestrator (`internal/orch`) dispatches steps with
 plan-scoped context and **verifies completion against acceptance criteria** —
 completion is never agent-asserted and never inferred from termination.
