@@ -445,6 +445,107 @@ func TestModel_LiveFrameAppliesBlockedDelta(t *testing.T) {
 	}
 }
 
+// TestModel_LiveFrameBumpsMacroProgress: a live task.done frame advances the
+// plan's progress counter immediately (the macro progress bar), not just on the
+// next poll, and doesn't double-count a re-applied done for the same task.
+func TestModel_LiveFrameBumpsMacroProgress(t *testing.T) {
+	f := testFake()
+	m := newTestModel(t, f)
+	m.snap.progress = map[string]orch.Progress{"plan-1": {Done: 1, Total: 3}}
+	m.snap.tasks = []store.Task{{ID: "task-a", Status: store.TaskStatusRunning}}
+
+	// A task.done for task-a in plan-1 bumps Done 1→2, live.
+	updated, _ := m.Update(liveFrameMsg{raw: []byte(`{"id":5,"kind":"task.done","task_id":"task-a","plan_id":"plan-1"}`)})
+	m = updated.(Model)
+	if got := m.snap.progress["plan-1"].Done; got != 2 {
+		t.Fatalf("plan-1 Done = %d, want 2 (live progress bump)", got)
+	}
+
+	// A second done for the SAME (already-done) task must NOT double-count.
+	updated, _ = m.Update(liveFrameMsg{raw: []byte(`{"id":6,"kind":"task.done","task_id":"task-a","plan_id":"plan-1"}`)})
+	m = updated.(Model)
+	if got := m.snap.progress["plan-1"].Done; got != 2 {
+		t.Errorf("plan-1 Done = %d, want 2 (already-done task must not re-count)", got)
+	}
+
+	// Done never exceeds Total: a done for a fresh task when already at Total-...
+	// fill to Total then confirm it clamps.
+	updated, _ = m.Update(liveFrameMsg{raw: []byte(`{"id":7,"kind":"task.done","task_id":"task-b","plan_id":"plan-1"}`)})
+	m = updated.(Model)
+	updated, _ = m.Update(liveFrameMsg{raw: []byte(`{"id":8,"kind":"task.done","task_id":"task-c","plan_id":"plan-1"}`)})
+	m = updated.(Model)
+	if got := m.snap.progress["plan-1"].Done; got != 3 {
+		t.Errorf("plan-1 Done = %d, want 3 (clamped at Total)", got)
+	}
+}
+
+// TestModel_LiveProgressDedupsCompletionAliases: one completion emits both
+// worker.completed and worker.verified_done for the same task; at MACRO level
+// (snap.tasks empty) the progress counter must count that task ONCE, not twice.
+func TestModel_LiveProgressDedupsCompletionAliases(t *testing.T) {
+	f := testFake()
+	m := newTestModel(t, f)
+	m.lvl = levelMacro // snap.tasks empty — the per-task status check can't dedup
+	m.snap.progress = map[string]orch.Progress{"plan-1": {Done: 0, Total: 3}}
+
+	for _, kind := range []string{"worker.completed", "worker.verified_done"} {
+		updated, _ := m.Update(liveFrameMsg{raw: []byte(`{"kind":"` + kind + `","task_id":"task-a","plan_id":"plan-1"}`)})
+		m = updated.(Model)
+	}
+	if got := m.snap.progress["plan-1"].Done; got != 1 {
+		t.Errorf("plan-1 Done = %d, want 1 (the two completion aliases for one task count once)", got)
+	}
+}
+
+// TestModel_LiveProgressSurvivesInFlightPoll: a poll snapshot that predates a
+// live bump must not regress the counter (Done is monotonic within a run).
+func TestModel_LiveProgressSurvivesInFlightPoll(t *testing.T) {
+	f := testFake()
+	m := newTestModel(t, f)
+	m.lvl = levelMacro
+	m.snap.progress = map[string]orch.Progress{"plan-1": {Done: 1, Total: 3}}
+
+	// A live completion bumps Done 1→2.
+	updated, _ := m.Update(liveFrameMsg{raw: []byte(`{"kind":"task.done","task_id":"task-a","plan_id":"plan-1"}`)})
+	m = updated.(Model)
+	if m.snap.progress["plan-1"].Done != 2 {
+		t.Fatalf("live bump failed: Done = %d, want 2", m.snap.progress["plan-1"].Done)
+	}
+
+	// An in-flight poll (read Done=1 before the completion persisted) lands.
+	// The counter must NOT regress to 1 — the max is kept.
+	updated, _ = m.Update(fetchedMsg{snap: snapshot{
+		plans:    f.plans,
+		progress: map[string]orch.Progress{"plan-1": {Done: 1, Total: 3}},
+	}})
+	m = updated.(Model)
+	if got := m.snap.progress["plan-1"].Done; got != 2 {
+		t.Errorf("poll regressed the live bump: Done = %d, want 2 (max of live 2 and stale poll 1)", got)
+	}
+	// The dedup set was cleared by the poll — a fresh completion for the same
+	// task now counts again (the poll is the new baseline).
+	if m.liveDoneTasks != nil && m.liveDoneTasks["task-a"] {
+		t.Error("liveDoneTasks not cleared on poll")
+	}
+}
+
+// TestModel_LiveFrameProgressNoopForUnknownPlan: a done frame for a plan not in
+// the progress map (or with no plan_id) doesn't panic or invent an entry.
+func TestModel_LiveFrameProgressNoopForUnknownPlan(t *testing.T) {
+	f := testFake()
+	m := newTestModel(t, f)
+	m.snap.progress = map[string]orch.Progress{"plan-1": {Done: 0, Total: 2}}
+
+	updated, _ := m.Update(liveFrameMsg{raw: []byte(`{"id":9,"kind":"task.done","task_id":"t","plan_id":"plan-unknown"}`)})
+	m = updated.(Model)
+	if _, ok := m.snap.progress["plan-unknown"]; ok {
+		t.Error("done for an unknown plan invented a progress entry")
+	}
+	if m.snap.progress["plan-1"].Done != 0 {
+		t.Error("done for an unknown plan mutated another plan's progress")
+	}
+}
+
 // TestModel_LiveFramePrependsToMacroTail: a live frame prepends to the macro
 // event pane (newest-first) at ANY level, deduped by id, so the macro overview
 // is a live feed and a poll landing after a live prepend doesn't double-count.

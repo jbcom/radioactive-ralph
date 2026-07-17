@@ -107,6 +107,15 @@ type Model struct {
 	// reconnect (which must keep the advanced cursor, not reset it).
 	attachSeeded bool
 
+	// liveDoneTasks is the set of task-ids already counted as done by a LIVE
+	// progress bump since the last poll reconcile. A single completion emits TWO
+	// done-kind events (worker.completed from MarkDone, then worker.verified_done
+	// from VerifyAndComplete), and at macro level snap.tasks is empty so the
+	// per-task wasDone check can't dedup them — this set does, keyed by task-id
+	// regardless of drill level. Cleared on each fetchedMsg (the poll's
+	// PlanProgress is fresh truth and already counts every persisted done).
+	liveDoneTasks map[string]bool
+
 	// fetching is true while a refresh gather is in flight. The 1s refresh
 	// tick fires unconditionally, so without this guard a gather that outlives
 	// its interval (large plan set, contended SQLite, slow supervisor) would
@@ -383,7 +392,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.snap.plans = msg.snap.plans
 		}
 		if msg.snap.progress != nil {
+			// Reconcile progress toward the poll WITHOUT regressing a live bump a
+			// poll snapshot may predate: if this gather read PlanProgress just
+			// before a task completed, a live frame already advanced Done, and a
+			// wholesale replace with the older poll value would visibly revert it
+			// until the next poll. Done is monotonic within a plan run, so take
+			// the max per plan. Then clear the live-done dedup set — the poll is
+			// the fresh baseline and already counts every persisted completion.
+			for id, pollProg := range msg.snap.progress {
+				if cur, ok := m.snap.progress[id]; ok && cur.Done > pollProg.Done {
+					pollProg.Done = cur.Done
+				}
+				msg.snap.progress[id] = pollProg
+			}
 			m.snap.progress = msg.snap.progress
+			m.liveDoneTasks = nil
 		}
 		if msg.snap.planEvent != nil {
 			// MERGE the poll's events with the live-built tail rather than
@@ -452,6 +475,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// next poll. The periodic poll still runs every tick and remains the
 		// source of truth that reconciles any missed or duplicated frame.
 		m.snap = applyEvent(m.snap, ev)
+		// And advance the macro plan-PROGRESS counter for a fresh completion
+		// (dedup + monotonic — see bumpLiveProgress).
+		m.bumpLiveProgress(ev)
 
 		// Macro event pane: prepend to the live project-event tail (newest-first,
 		// like the poll refill), so the macro overview is a live feed, not a 1s
@@ -831,11 +857,13 @@ func mergeEventTail(live, poll []store.Event) []store.Event {
 	return merged
 }
 
-// applyEvent applies a live event as a delta to the snapshot's task list so a
+// applyEvent applies a live event's TASK-STATUS delta to the snapshot so a
 // lifecycle change is reflected immediately, ahead of the next poll. It is a
 // pure function (returns the updated snapshot) to keep Update easy to test. A
-// kind that maps to no task-status change, or a task_id not currently in view,
-// is a no-op — the poll reconciles everything regardless.
+// kind that maps to no task-status change, or a task_id not currently loaded, is
+// a no-op; the poll reconciles everything regardless. The macro plan-PROGRESS
+// delta is applied separately by Model.bumpLiveProgress (it needs the
+// model-owned dedup set that spans drill levels).
 func applyEvent(snap snapshot, ev ipc.AttachEvent) snapshot {
 	status := taskDeltaStatus(ev.Kind)
 	if status == "" || ev.TaskID == "" {
@@ -848,4 +876,32 @@ func applyEvent(snap snapshot, ev ipc.AttachEvent) snapshot {
 		}
 	}
 	return snap
+}
+
+// bumpLiveProgress advances the plan's live Done counter for a fresh completion
+// so the macro progress bar moves ahead of the next poll. It dedups by task-id
+// via m.liveDoneTasks: a single completion emits TWO done-kind events
+// (worker.completed then worker.verified_done), and at macro level snap.tasks is
+// empty so a per-task status check can't tell them apart — the set counts each
+// task at most once. Cleared on the next poll, which reconciles the exact count.
+// A no-op for a non-done kind, an absent task/plan id, or an unknown plan.
+func (m *Model) bumpLiveProgress(ev ipc.AttachEvent) {
+	if taskDeltaStatus(ev.Kind) != store.TaskStatusDone || ev.TaskID == "" || ev.PlanID == "" {
+		return
+	}
+	if m.liveDoneTasks[ev.TaskID] {
+		return // already counted this task's completion live
+	}
+	prog, ok := m.snap.progress[ev.PlanID]
+	if !ok {
+		return
+	}
+	if m.liveDoneTasks == nil {
+		m.liveDoneTasks = map[string]bool{}
+	}
+	m.liveDoneTasks[ev.TaskID] = true
+	if prog.Done < prog.Total {
+		prog.Done++
+		m.snap.progress[ev.PlanID] = prog
+	}
 }
