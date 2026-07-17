@@ -61,3 +61,41 @@ func TestRun_RequiresController(t *testing.T) {
 		t.Error("Run with nil Controller: want error, got nil")
 	}
 }
+
+// TestRunAttach_ReconnectsAfterStreamEnds is the regression for the GUI audit's
+// C1: the live attach subscription was single-shot — Attach returning (a failed
+// pre-supervisor dial, or an EOF when the supervisor restarts) killed the stream
+// permanently for the rest of the session. runAttach must re-dial in a loop, so
+// the event stream recovers after a supervisor blip.
+func TestRunAttach_ReconnectsAfterStreamEnds(t *testing.T) {
+	f := newFakeController()
+	// Attach returns immediately every call — as if the supervisor is down / the
+	// stream keeps ending. runAttach must keep re-dialing.
+	f.attachReturn = context.Canceled
+
+	u := newTestUI(t, f)
+	// Shrink the retry delay on THIS ui only (per-instance field — no shared
+	// global to race another test's runAttach goroutine).
+	u.attachRetryDelay = 1 * time.Millisecond
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { u.runAttach(ctx); close(done) }()
+
+	// Poll until Attach has been called several times (proving the re-dial loop),
+	// then cancel and confirm runAttach returns.
+	deadline := time.After(3 * time.Second)
+	for f.attachCount.Load() < 3 {
+		select {
+		case <-deadline:
+			t.Fatalf("Attach called only %d time(s) — runAttach did not reconnect after the stream ended", f.attachCount.Load())
+		default:
+			time.Sleep(time.Millisecond)
+		}
+	}
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("runAttach did not return after ctx cancel")
+	}
+}

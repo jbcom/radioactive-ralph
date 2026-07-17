@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"sync"
+	"sync/atomic"
 
 	"github.com/jbcom/radioactive-ralph/internal/ipc"
 	"github.com/jbcom/radioactive-ralph/internal/orch"
@@ -36,6 +37,13 @@ type fakeController struct {
 	onSetPlan  func() // optional hook run inside SetPlanStatus, before it returns
 	approveErr error
 	killErr    error
+
+	// attachCount records how many times Attach was called — so a test can
+	// assert runAttach re-dials after the stream ends. attachReturn, when set,
+	// makes Attach return immediately with that error (simulating a stream end /
+	// failed dial) instead of blocking until ctx cancel.
+	attachCount  atomic.Int32
+	attachReturn error
 }
 
 func newFakeController() *fakeController {
@@ -83,8 +91,14 @@ func (f *fakeController) ListTaskEvents(_ context.Context, planID, taskID string
 }
 
 func (f *fakeController) Attach(ctx context.Context, _ func(json.RawMessage) error) error {
-	// The fake has no live stream; block until cancelled so the app's attach
+	f.attachCount.Add(1)
+	// When attachReturn is set, return immediately (simulating a failed dial or
+	// a stream end) so a test can observe runAttach re-dialing. Otherwise the
+	// fake has no live stream; block until cancelled so the app's attach
 	// goroutine behaves like the real one (ends on ctx cancel).
+	if f.attachReturn != nil {
+		return f.attachReturn
+	}
 	<-ctx.Done()
 	return ctx.Err()
 }
