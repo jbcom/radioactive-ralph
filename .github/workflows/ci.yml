@@ -326,6 +326,14 @@ jobs:
       - name: Test GUI package (headless test driver)
         env:
           CGO_ENABLED: '1'
+          # Fyne 2.8 parses the user locale with golang.org/x/text at startup; a
+          # bare `C`/unset locale (as GitHub runners sometimes have) — and even
+          # `C.UTF-8` — is not a well-formed BCP-47 tag, so it resolves to the
+          # undefined tag and the harfbuzz text shaper panics (index out of
+          # range). `en-US` parses cleanly (verified), so the headless render is
+          # deterministic. (macOS already has a well-formed locale.)
+          LANG: en-US
+          LC_ALL: en-US
         run: go test -tags gui ./internal/gui/... -timeout 5m
 
   build-targets:
