@@ -87,3 +87,48 @@ func TestWatchdogGoroutineExitsAfterStall(t *testing.T) {
 		t.Fatal("watchdog channel did not close after Stall — goroutine leaked")
 	}
 }
+
+// TestWatchNoStallWhenTimeoutNonPositive is the regression guard for the
+// spurious-immediate-stall bug: Watch with StallTimeout<=0 means "no stall
+// detection", so it must NOT emit a Stall on the first iteration (a timer
+// created with a zero duration would otherwise fire at once and kill a healthy
+// agent). The agent here produces a line then lingers; Watch must surface that
+// line as Progress and never a Stall.
+func TestWatchNoStallWhenTimeoutNonPositive(t *testing.T) {
+	a, err := Start(context.Background(), Options{
+		Command: "sh", Args: []string{"-c", "printf 'alive\\n'; sleep 2"},
+	})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer func() { _ = a.Kill() }()
+
+	sigs := Watch(context.Background(), a, WatchdogConfig{StallTimeout: 0})
+
+	// Within a window that a zero-duration timer would trip almost instantly,
+	// we must see the Progress line and NOT a Stall.
+	deadline := time.After(1 * time.Second)
+	sawProgress := false
+	for {
+		select {
+		case sig, ok := <-sigs:
+			if !ok {
+				if !sawProgress {
+					t.Fatal("Watch channel closed without any Progress signal")
+				}
+				return
+			}
+			switch sig.Kind {
+			case Stall:
+				t.Fatalf("Watch emitted a spurious Stall with StallTimeout<=0 (want none)")
+			case Progress:
+				sawProgress = true
+			}
+		case <-deadline:
+			if !sawProgress {
+				t.Fatal("no Progress signal within 1s")
+			}
+			return // no Stall seen in the window — correct
+		}
+	}
+}

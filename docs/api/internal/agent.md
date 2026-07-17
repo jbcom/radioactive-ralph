@@ -50,7 +50,7 @@ func Watch(ctx context.Context, a *Agent, cfg WatchdogConfig) <-chan Signal
 Watch observes an agent and emits Signals. It NEVER blocks waiting on the agent: a prompt pattern or a stall is surfaced immediately so the caller can kill\-and\-reclaim. The channel closes when the agent exits.
 
 <a name="Agent"></a>
-## type [Agent](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/agent/agent.go#L47-L80>)
+## type [Agent](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/agent/agent.go#L47-L91>)
 
 Agent is a pty\-owned agent subprocess.
 
@@ -61,7 +61,7 @@ type Agent struct {
 ```
 
 <a name="Start"></a>
-### func [Start](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/agent/agent.go#L83>)
+### func [Start](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/agent/agent.go#L94>)
 
 ```go
 func Start(ctx context.Context, opts Options) (*Agent, error)
@@ -70,7 +70,7 @@ func Start(ctx context.Context, opts Options) (*Agent, error)
 Start launches opts.Command under a pty and begins streaming its output.
 
 <a name="Agent.Done"></a>
-### func \(\*Agent\) [Done](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/agent/agent.go#L193>)
+### func \(\*Agent\) [Done](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/agent/agent.go#L201>)
 
 ```go
 func (a *Agent) Done() <-chan struct{}
@@ -79,7 +79,7 @@ func (a *Agent) Done() <-chan struct{}
 Done is closed when the process exits.
 
 <a name="Agent.ExitErr"></a>
-### func \(\*Agent\) [ExitErr](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/agent/agent.go#L229>)
+### func \(\*Agent\) [ExitErr](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/agent/agent.go#L245>)
 
 ```go
 func (a *Agent) ExitErr() error
@@ -88,7 +88,7 @@ func (a *Agent) ExitErr() error
 ExitErr returns the subprocess's exit status once it has exited on its own \(nil if it exited 0\). It returns nil while the process is still running and nil when the process was KILLED by this Agent \(a signal\-death from Kill / ctx\-cancel / a stall\-or\-prompt watchdog kill is not a real failure — the caller already knows it forced the exit\). Call only after Output\(\) closes / Done\(\) fires. This lets a runner without a structured terminal frame \(codex\) distinguish a clean completion from a failed CLI exit, rather than treating any exit as success.
 
 <a name="Agent.Kill"></a>
-### func \(\*Agent\) [Kill](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/agent/agent.go#L199>)
+### func \(\*Agent\) [Kill](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/agent/agent.go#L207>)
 
 ```go
 func (a *Agent) Kill() error
@@ -97,7 +97,7 @@ func (a *Agent) Kill() error
 Kill terminates the process immediately and releases the pty. Killing an agent that already exited on its own is a no\-op success — a normal shutdown that races an agent finishing its task must not surface a spurious "already closed" error.
 
 <a name="Agent.Output"></a>
-### func \(\*Agent\) [Output](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/agent/agent.go#L179>)
+### func \(\*Agent\) [Output](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/agent/agent.go#L187>)
 
 ```go
 func (a *Agent) Output() <-chan []byte
@@ -106,7 +106,7 @@ func (a *Agent) Output() <-chan []byte
 Output is the line\-oriented output stream; closed when the process exits.
 
 <a name="Agent.PID"></a>
-### func \(\*Agent\) [PID](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/agent/agent.go#L241>)
+### func \(\*Agent\) [PID](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/agent/agent.go#L257>)
 
 ```go
 func (a *Agent) PID() int
@@ -115,7 +115,7 @@ func (a *Agent) PID() int
 PID returns the subprocess PID \(0 before start / after release\).
 
 <a name="Agent.Wait"></a>
-### func \(\*Agent\) [Wait](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/agent/agent.go#L219>)
+### func \(\*Agent\) [Wait](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/agent/agent.go#L235>)
 
 ```go
 func (a *Agent) Wait() error
@@ -124,7 +124,7 @@ func (a *Agent) Wait() error
 Wait blocks until the process exits.
 
 <a name="Agent.WriteInput"></a>
-### func \(\*Agent\) [WriteInput](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/agent/agent.go#L187>)
+### func \(\*Agent\) [WriteInput](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/agent/agent.go#L195>)
 
 ```go
 func (a *Agent) WriteInput(b []byte) error

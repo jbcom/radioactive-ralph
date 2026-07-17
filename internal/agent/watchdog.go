@@ -50,8 +50,17 @@ func Watch(ctx context.Context, a *Agent, cfg WatchdogConfig) <-chan Signal {
 	out := make(chan Signal, 16)
 	go func() {
 		defer close(out)
-		timer := time.NewTimer(cfg.StallTimeout)
-		defer timer.Stop()
+		// A non-positive StallTimeout means "no stall detection". Leave the timer
+		// nil so its receive in the select below blocks forever (a nil channel is
+		// never ready) rather than creating a timer that fires immediately and
+		// emits a spurious Stall on the very first iteration.
+		var timerC <-chan time.Time
+		var timer *time.Timer
+		if cfg.StallTimeout > 0 {
+			timer = time.NewTimer(cfg.StallTimeout)
+			timerC = timer.C
+			defer timer.Stop()
+		}
 		emit := func(s Signal) {
 			select {
 			case out <- s:
@@ -59,7 +68,7 @@ func Watch(ctx context.Context, a *Agent, cfg WatchdogConfig) <-chan Signal {
 			}
 		}
 		for {
-			if cfg.StallTimeout > 0 {
+			if timer != nil {
 				timer.Reset(cfg.StallTimeout)
 			}
 			select {
@@ -89,11 +98,12 @@ func Watch(ctx context.Context, a *Agent, cfg WatchdogConfig) <-chan Signal {
 				if !matched {
 					emit(Signal{Kind: Progress, Detail: string(line)})
 				}
-			case <-timer.C:
+			case <-timerC:
 				// Stall is TERMINAL: the consumer (superviseAgent) kills the agent
 				// and stops reading on the first Stall, so continuing the loop would
 				// only block the next emit() on an abandoned channel until ctx is
 				// cancelled — a per-turn goroutine leak on every stall-kill. Return.
+				// timerC is nil when StallTimeout<=0, so this case never fires then.
 				emit(Signal{Kind: Stall})
 				return
 			}

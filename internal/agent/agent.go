@@ -63,6 +63,14 @@ type Agent struct {
 	killOnce sync.Once
 	killed   chan struct{}
 
+	// cmdCancel cancels the command's private context. Kill calls it to
+	// terminate the process: exec.Cmd's Cancel (group-kill, via
+	// setCancelKillsGroup) + WaitDelay coordinate the kill with exec's own
+	// Process.Wait, so a signal can never land on an already-reaped/recycled
+	// PID — unlike a direct killProcessTree(cmd.Process) from Kill, which would
+	// race readLoop's cmd.Wait(). Idempotent (context.CancelFunc).
+	cmdCancel context.CancelFunc
+
 	// ctx is the caller's context, observed by readLoop's blocking send so a
 	// consumer that stops reading after ctx cancellation (e.g. a runner that
 	// returned on ctx.Done before the process fully exits) doesn't leak the
@@ -81,17 +89,29 @@ type Agent struct {
 
 // Start launches opts.Command under a pty and begins streaming its output.
 func Start(ctx context.Context, opts Options) (*Agent, error) {
-	cmd := exec.CommandContext(ctx, opts.Command, opts.Args...) //nolint:gosec // G204: launching the configured agent CLI is this package's entire purpose; opts.Command/Args come from caller-controlled provider config, not untrusted external input
+	// Give the command a PRIVATE cancelable context (child of the caller's) so
+	// Kill can terminate the process by cancelling it. Routing the kill through
+	// exec.Cmd's own Cancel→Wait machinery — rather than calling
+	// killProcessTree(cmd.Process) directly — is the only race-free option: exec
+	// coordinates the group-kill with its internal Process.Wait, so a signal can
+	// NEVER land after the PID was reaped (and possibly recycled by the kernel).
+	// A direct kill from Kill() would race readLoop's own cmd.Wait() reaping.
+	cmdCtx, cmdCancel := context.WithCancel(ctx)
+	cmd := exec.CommandContext(cmdCtx, opts.Command, opts.Args...) //nolint:gosec // G204: launching the configured agent CLI is this package's entire purpose; opts.Command/Args come from caller-controlled provider config, not untrusted external input
 	cmd.Dir = opts.Dir
 	if opts.Env != nil {
 		cmd.Env = opts.Env
 	}
 	// Route the automatic ctx-cancel kill through the whole process group, not
 	// just the direct child (exec.CommandContext's default) — so a turn cancelled
-	// by KillWorker / shutdown / stall-timeout reaps grandchildren too.
+	// by KillWorker / shutdown / stall-timeout / Kill reaps grandchildren too.
+	// This also sets cmd.WaitDelay, bounding how long exec waits after Cancel
+	// before force-killing so Wait returns promptly and a child ignoring the
+	// group SIGKILL can't wedge the reaper.
 	setCancelKillsGroup(cmd)
 	ptmx, err := pty.Start(cmd)
 	if err != nil {
+		cmdCancel() // nothing started; release the private context
 		if errors.Is(err, pty.ErrUnsupported) {
 			return nil, ErrPTYUnsupported
 		}
@@ -104,7 +124,7 @@ func Start(ctx context.Context, opts Options) (*Agent, error) {
 		// stdin line the caller subsequently sends.
 		if err := disablePTYEcho(ptmx); err != nil {
 			_ = ptmx.Close()
-			_ = killProcessTree(cmd.Process)
+			cmdCancel() // triggers exec's group-kill of the just-started child
 			// Reap the killed child — readLoop (the only other Wait) hasn't
 			// started yet on this early-return path, so without this Wait the
 			// process would be left a zombie.
@@ -113,13 +133,14 @@ func Start(ctx context.Context, opts Options) (*Agent, error) {
 		}
 	}
 	a := &Agent{
-		ctx:    ctx,
-		cmd:    cmd,
-		ptmx:   ptmx,
-		out:    make(chan []byte, 256),
-		done:   make(chan struct{}),
-		killed: make(chan struct{}),
-		opts:   opts,
+		ctx:       ctx,
+		cmd:       cmd,
+		cmdCancel: cmdCancel,
+		ptmx:      ptmx,
+		out:       make(chan []byte, 256),
+		done:      make(chan struct{}),
+		killed:    make(chan struct{}),
+		opts:      opts,
 	}
 	go a.readLoop()
 	return a, nil
@@ -132,7 +153,14 @@ func (a *Agent) readLoop() {
 	defer close(a.done)
 	defer a.closePTY()
 	defer func() {
+		// exec.Cmd.Wait() reaps the child. It coordinates with cmd.Cancel (from
+		// Kill via cmdCancel) internally, so the group-kill never races this
+		// reap — no PID-recycle hazard here.
 		err := a.cmd.Wait()
+		// Release the private command context on EVERY exit (natural or killed),
+		// so it doesn't leak once the process is gone. Idempotent with Kill's
+		// call.
+		a.cmdCancel()
 		a.exitMu.Lock()
 		a.exitErr = err
 		a.exitMu.Unlock()
@@ -165,16 +193,6 @@ func (a *Agent) closePTY() {
 	a.closeOnce.Do(func() { _ = a.ptmx.Close() })
 }
 
-// exited reports whether the process has already exited (readLoop finished).
-func (a *Agent) exited() bool {
-	select {
-	case <-a.done:
-		return true
-	default:
-		return false
-	}
-}
-
 // Output is the line-oriented output stream; closed when the process exits.
 func (a *Agent) Output() <-chan []byte { return a.out }
 
@@ -200,17 +218,22 @@ func (a *Agent) Kill() error {
 	// Unblock a readLoop that may be parked on a full a.out (dead/slow
 	// consumer) so it can exit instead of leaking the reader goroutine.
 	a.killOnce.Do(func() { close(a.killed) })
-	if a.exited() {
-		a.closePTY() // idempotent; the readLoop already closed it
-		return nil
+
+	// Terminate the process by cancelling its private context. exec.Cmd's Cancel
+	// (setCancelKillsGroup → group SIGKILL) + WaitDelay coordinate the kill with
+	// exec's own Process.Wait, so the signal is guaranteed NOT to land on an
+	// already-reaped (and possibly kernel-recycled) PID — the race a direct
+	// killProcessTree(a.cmd.Process) here could not avoid, because readLoop's
+	// cmd.Wait() may have reaped the child inside Process.Wait even though Wait
+	// itself has not yet returned. cmdCancel is idempotent, so racing/repeated
+	// Kills are safe. A no-op if the process already exited (Cancel on a
+	// finished cmd does nothing).
+	if a.cmdCancel != nil {
+		a.cmdCancel()
 	}
-	if a.cmd.Process != nil {
-		// Kill the whole process GROUP, not just the direct child: the agent CLI
-		// may have spawned grandchildren (shell tools, git, an MCP server) that
-		// would otherwise orphan against the checkout and keep running after this
-		// returns. See killProcessTree.
-		_ = killProcessTree(a.cmd.Process)
-	}
+
+	// closePTY unblocks a scanner still parked on the ptmx so the reaper can
+	// finish; idempotent with readLoop's own close.
 	a.closePTY()
 	return nil
 }
