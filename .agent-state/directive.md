@@ -163,9 +163,16 @@ provider-runners, agent-watchdog, TUI, IPC, GUI.
 
 Next forward-exploration items:
 - [ ] [WAIT] #167 (docs: [approval] marker operator guide) — CI; merge when green.
-- [ ] More new-feature candidates now the sweep is done: a runnable approval-gate
-  plan example; richer observability (a real structured event/attach surface —
-  today HandleAttach emits nothing); or a DX improvement. Agent's call next.
+- [ ] **DECIDED next feature — structured attach event surface.** The audit sweep
+  is done, so rotate from review to product. `HandleAttach`'s `emit` callback is
+  wired end-to-end (server streams frames until ctx cancel; C4 disconnect watcher
+  + write deadlines from #160/#165 protect it) but NOTHING is ever emitted — an
+  Attach client connects and receives silence until it disconnects. The observe
+  half of the drive+observe API is a stub. Ship a typed supervisor event stream
+  (task state transitions, worker lifecycle, spend/heartbeat ticks) that Attach
+  clients subscribe to, turning the read-only TUI/GUI from poll-only into
+  push-live. Sequence: brainstorm the event schema → spec doc → plan → build,
+  each task landing build/test/-race/lint green in isolation.
 
 ## Notes
 
