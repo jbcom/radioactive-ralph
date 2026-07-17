@@ -128,7 +128,7 @@ func startServer(t *testing.T, h Handler) (socketPath, heartbeatPath string, cle
 	if err != nil {
 		t.Fatalf("NewServer: %v", err)
 	}
-	if err := srv.Start(20 * time.Millisecond); err != nil {
+	if err := srv.Start(); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
 	return socketPath, heartbeatPath, func() {
@@ -472,7 +472,7 @@ func TestStopIsIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewServer: %v", err)
 	}
-	if err := srv.Start(100 * time.Millisecond); err != nil {
+	if err := srv.Start(); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
 	if err := srv.Stop(); err != nil {

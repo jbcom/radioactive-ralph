@@ -134,7 +134,7 @@ func Run(ctx context.Context, opts Options) error {
 	}
 	sup.server = server
 
-	if err := server.Start(0); err != nil {
+	if err := server.Start(); err != nil {
 		_ = sup.store.CloseSession(ctx, sessionID)
 		_ = listener.Release()
 		return fmt.Errorf("supervisor: start ipc server: %w", err)

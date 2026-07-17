@@ -5,6 +5,9 @@ import (
 	"os/exec"
 	"path/filepath"
 	"testing"
+	"time"
+
+	"github.com/jonboulle/clockwork"
 )
 
 func openTestStore(t *testing.T) *Store {
@@ -348,5 +351,75 @@ func TestProjectAbsPathMissingIsNotFound(t *testing.T) {
 	}
 	if found {
 		t.Error("ProjectAbsPath found=true for a project with no abs_path identifier")
+	}
+}
+
+// TestProjectAbsPathMostRecentWins is the regression for the audit's
+// test-coverage finding: ProjectAbsPath's `ORDER BY added_at DESC LIMIT 1`
+// is load-bearing (a project accumulates abs_paths as it's cloned/moved, and
+// the most-recently-added one is the best guess at where the operator works
+// now). A fake clock makes the ordering deterministic.
+func TestProjectAbsPathMostRecentWins(t *testing.T) {
+	ctx := context.Background()
+	clock := clockwork.NewFakeClockAt(mustParseTime(t, "2026-07-16T00:00:00Z"))
+	s := openTestStoreWithClock(t, clock)
+
+	id, err := s.CreateProject(ctx, "Moved Project", []Fingerprint{
+		{Kind: FingerprintKindAbsPath, Value: "/old/location"},
+	})
+	if err != nil {
+		t.Fatalf("CreateProject: %v", err)
+	}
+
+	// A later move adds a second abs_path at a strictly-later timestamp.
+	clock.Advance(1 * time.Hour)
+	if err := s.AddProjectIdentifiers(ctx, id, []Fingerprint{
+		{Kind: FingerprintKindAbsPath, Value: "/new/location"},
+	}); err != nil {
+		t.Fatalf("AddProjectIdentifiers: %v", err)
+	}
+
+	path, found, err := s.ProjectAbsPath(ctx, id)
+	if err != nil || !found {
+		t.Fatalf("ProjectAbsPath: found=%v err=%v", found, err)
+	}
+	if path != "/new/location" {
+		t.Errorf("abs path = %q, want the most-recently-added /new/location", path)
+	}
+}
+
+// TestProjectAbsPathMoveBackRefreshesTimestamp is the regression for
+// CodeRabbit's finding: re-adding an already-known abs_path (a project moved
+// A -> B -> A) must REFRESH its added_at so most-recent-wins picks A again,
+// which INSERT OR IGNORE failed to do (it kept the stale original timestamp).
+func TestProjectAbsPathMoveBackRefreshesTimestamp(t *testing.T) {
+	ctx := context.Background()
+	clock := clockwork.NewFakeClockAt(mustParseTime(t, "2026-07-16T00:00:00Z"))
+	s := openTestStoreWithClock(t, clock)
+
+	id, err := s.CreateProject(ctx, "Bouncing Project", []Fingerprint{
+		{Kind: FingerprintKindAbsPath, Value: "/path/A"},
+	})
+	if err != nil {
+		t.Fatalf("CreateProject: %v", err)
+	}
+
+	// Move to B (later).
+	clock.Advance(1 * time.Hour)
+	if err := s.AddProjectIdentifiers(ctx, id, []Fingerprint{{Kind: FingerprintKindAbsPath, Value: "/path/B"}}); err != nil {
+		t.Fatalf("add B: %v", err)
+	}
+	// Now B is most recent.
+	if p, _, _ := s.ProjectAbsPath(ctx, id); p != "/path/B" {
+		t.Fatalf("after move to B, abs path = %q, want /path/B", p)
+	}
+
+	// Move back to A (later still): re-adding A must refresh its timestamp.
+	clock.Advance(1 * time.Hour)
+	if err := s.AddProjectIdentifiers(ctx, id, []Fingerprint{{Kind: FingerprintKindAbsPath, Value: "/path/A"}}); err != nil {
+		t.Fatalf("re-add A: %v", err)
+	}
+	if p, _, _ := s.ProjectAbsPath(ctx, id); p != "/path/A" {
+		t.Errorf("after move back to A, abs path = %q, want /path/A (re-add must refresh added_at)", p)
 	}
 }

@@ -12,6 +12,7 @@ package orch
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -437,12 +438,18 @@ func (o *Orchestrator) claimStepTask(ctx context.Context, planID string, p *plan
 		if jsonErr != nil {
 			return nil, fmt.Errorf("orch: build acceptance for %s: %w", taskID, jsonErr)
 		}
-		_ = o.store.CreateTask(ctx, store.CreateTaskOpts{
+		// Only the benign "another dispatcher already created this row" race
+		// (ErrDuplicateTask) is tolerable here — the loser falls through to
+		// the race-safe claim below. A REAL insert failure (disk full, DB
+		// busy, I/O) must surface, not be swallowed into a silent stall.
+		if err := o.store.CreateTask(ctx, store.CreateTaskOpts{
 			PlanID:         planID,
 			ID:             taskID,
 			Description:    step.Text,
 			AcceptanceJSON: acceptance,
-		})
+		}); err != nil && !errors.Is(err, store.ErrDuplicateTask) {
+			return nil, fmt.Errorf("orch: materialize task %s: %w", taskID, err)
+		}
 	}
 
 	claimed, err := o.store.ClaimNextReady(ctx, planID, sessionID, workerID)
@@ -586,7 +593,10 @@ func (o *Orchestrator) dispatchWorker(ctx context.Context, projectID, projectDir
 	}
 
 	if runErr != nil {
-		if _, err := o.store.MarkFailed(ctx, planID, ds.task.ID, sessionID, runErr.Error(), 3); err != nil {
+		// A stale failure report (the reaper reclaimed this worker's claim
+		// mid-run and possibly reassigned the task) is benign — the current
+		// owner keeps its work; we just release this now-defunct worker.
+		if _, err := o.store.MarkFailed(ctx, planID, ds.task.ID, sessionID, runErr.Error(), 3); err != nil && !errors.Is(err, store.ErrTaskNotOwnedRunning) {
 			return fmt.Errorf("orch: mark failed after run error: %w", err)
 		}
 		_ = o.store.ClearWorkerTask(ctx, workerID, "crashed")
@@ -638,6 +648,12 @@ func (o *Orchestrator) dispatchFanoutGroup(ctx context.Context, projectID, proje
 	for i, ref := range refs {
 		ds, err := o.claimStepTask(ctx, planID, parsedPlan, ref, steps[i], sessionID, workerID)
 		if err != nil {
+			// A mid-loop claim error would otherwise leave the tasks this
+			// worker ALREADY claimed (transitioned to 'running') wedged with
+			// no worker to complete them. Release them back to pending so the
+			// reaper/next dispatch can pick them up, then fail.
+			o.releaseClaimedTasks(ctx, planID, sessionID, claimed)
+			_ = o.store.ClearWorkerTask(ctx, workerID, "crashed")
 			return 0, err
 		}
 		if ds == nil {
@@ -721,7 +737,9 @@ func (o *Orchestrator) dispatchFanoutGroup(ctx context.Context, projectID, proje
 
 	if runErr != nil {
 		for _, ds := range claimed {
-			if _, err := o.store.MarkFailed(ctx, planID, ds.task.ID, sessionID, runErr.Error(), 3); err != nil {
+			// Benign if the reaper already reclaimed/reassigned this task —
+			// don't stomp the new owner (see MarkFailed's owner guard).
+			if _, err := o.store.MarkFailed(ctx, planID, ds.task.ID, sessionID, runErr.Error(), 3); err != nil && !errors.Is(err, store.ErrTaskNotOwnedRunning) {
 				return 0, fmt.Errorf("orch: mark failed after run error: %w", err)
 			}
 		}
@@ -742,6 +760,20 @@ func (o *Orchestrator) dispatchFanoutGroup(ctx context.Context, projectID, proje
 	}
 	_ = o.store.ClearWorkerTask(ctx, workerID, "idle")
 	return len(claimed), nil
+}
+
+// releaseClaimedTasks requeues tasks a fan-out worker had already claimed
+// when a later claim in the same group fails, so they don't sit wedged in
+// 'running' with no worker. Uses store.ReleaseClaim (NOT MarkFailed): this
+// is a system-level abort, not a task-execution failure, so it must NOT
+// charge a retry — otherwise repeated transient claim/materialization
+// hiccups could exhaust an otherwise-valid task's budget and terminally fail
+// it. Best-effort: individual failures are ignored — the reaper is the
+// backstop.
+func (o *Orchestrator) releaseClaimedTasks(ctx context.Context, planID, sessionID string, claimed []*dispatchedStep) {
+	for _, ds := range claimed {
+		_ = o.store.ReleaseClaim(ctx, planID, ds.task.ID, sessionID, "released: fan-out group claim aborted")
+	}
 }
 
 // derefSteps extracts the dispatchedStep values (not pointers) for

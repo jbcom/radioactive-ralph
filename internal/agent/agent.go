@@ -45,6 +45,20 @@ type Agent struct {
 	// closeOnce guards ptmx.Close so the readLoop's natural-exit close and
 	// a caller's Kill can't double-close (which would return os.ErrClosed).
 	closeOnce sync.Once
+
+	// killed is closed by Kill so the readLoop's output send can abandon a
+	// blocked-or-dead consumer instead of either dropping lines silently
+	// (which could drop a provider's terminal result frame and force a false
+	// stall) or blocking the reader forever (violating the never-block
+	// invariant). A live consumer drains a.out; a killed agent unblocks here.
+	killOnce sync.Once
+	killed   chan struct{}
+
+	// ctx is the caller's context, observed by readLoop's blocking send so a
+	// consumer that stops reading after ctx cancellation (e.g. a runner that
+	// returned on ctx.Done before the process fully exits) doesn't leak the
+	// reader on a[.out send that no one will ever drain.
+	ctx context.Context
 }
 
 // Start launches opts.Command under a pty and begins streaming its output.
@@ -62,33 +76,45 @@ func Start(ctx context.Context, opts Options) (*Agent, error) {
 		return nil, err
 	}
 	a := &Agent{
-		cmd:  cmd,
-		ptmx: ptmx,
-		out:  make(chan []byte, 256),
-		done: make(chan struct{}),
-		opts: opts,
+		ctx:    ctx,
+		cmd:    cmd,
+		ptmx:   ptmx,
+		out:    make(chan []byte, 256),
+		done:   make(chan struct{}),
+		killed: make(chan struct{}),
+		opts:   opts,
 	}
 	go a.readLoop()
 	return a, nil
 }
 
 func (a *Agent) readLoop() {
+	// Reap the process and release the pty on EVERY exit path (natural EOF or
+	// the killed-consumer abandon below), so neither leaks a zombie nor a fd.
 	defer close(a.out)
 	defer close(a.done)
+	defer a.closePTY()
+	defer func() { _ = a.cmd.Wait() }()
 	scanner := bufio.NewScanner(a.ptmx)
 	scanner.Buffer(make([]byte, 0, 64*1024), 1<<20)
 	for scanner.Scan() {
 		line := append([]byte(nil), scanner.Bytes()...)
 		line = append(line, '\n')
+		// Block until the consumer takes the line OR the agent is killed —
+		// never silently drop (a dropped terminal result frame forces a
+		// false stall) and never block forever (a killed agent unblocks via
+		// a.killed, honoring the never-block invariant). A live consumer
+		// keeps a.out draining, so this rarely blocks in practice.
 		select {
 		case a.out <- line:
-		default:
-			// Never block the reader on a slow consumer; drop to keep
-			// the pty draining (the watchdog only needs recent signal).
+		case <-a.killed:
+			return
+		case <-a.ctx.Done():
+			// The caller cancelled: a consumer that returned on ctx.Done
+			// will never drain a.out, so stop rather than block forever.
+			return
 		}
 	}
-	_ = a.cmd.Wait()
-	a.closePTY()
 }
 
 // closePTY closes the pty exactly once, whether from the readLoop's
@@ -129,6 +155,9 @@ func (a *Agent) Done() <-chan struct{} { return a.done }
 // shutdown that races an agent finishing its task must not surface a
 // spurious "already closed" error.
 func (a *Agent) Kill() error {
+	// Unblock a readLoop that may be parked on a full a.out (dead/slow
+	// consumer) so it can exit instead of leaking the reader goroutine.
+	a.killOnce.Do(func() { close(a.killed) })
 	if a.exited() {
 		a.closePTY() // idempotent; the readLoop already closed it
 		return nil

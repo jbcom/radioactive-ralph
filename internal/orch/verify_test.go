@@ -220,3 +220,55 @@ func mustCreateSessionAndWorkerForTest(t *testing.T, s *store.Store) (sessionID,
 	}
 	return sessionID, workerID
 }
+
+// TestVerifyAndCompleteRetryExhaustionMarksFailed is the orchestrator-path
+// regression for the audit's coverage gap: repeated verification failures
+// requeue the task (retryable) until the retry budget is spent, after which
+// the task is terminally failed — not left pending forever. Each attempt
+// re-claims the task (the prior failure requeued it and cleared the claim).
+func TestVerifyAndCompleteRetryExhaustionMarksFailed(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("posix shell script — skip on windows")
+	}
+	ctx := context.Background()
+	s := newTestStore(t)
+	o := New(s)
+
+	projectID := mustCreateTestProject(t, s, "verify-exhaust-project")
+	planID := mustCreateTestPlan(t, s, projectID, "verify-exhaust-plan", "Ship", "# Ship\n\n- do it\n")
+
+	// An acceptance that always fails, so every verification rejects.
+	if err := s.CreateTask(ctx, store.CreateTaskOpts{
+		PlanID: planID, ID: "0.0", Description: "do it", AcceptanceJSON: `{"command":"exit 1"}`,
+	}); err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+	sessionID, workerID := mustCreateSessionAndWorkerForTest(t, s)
+
+	ev := a2a.Evidence{Ran: "exit 1", Output: "claims success"}
+
+	// The store retry budget in VerifyAndComplete is 3, so the task tolerates
+	// retries until retry_count+1 > 3, then goes terminal-failed. Re-claim
+	// before each attempt since the prior requeue cleared the claim.
+	var finalStatus store.TaskStatus
+	for attempt := 0; attempt < 5; attempt++ {
+		task, err := s.GetTask(ctx, planID, "0.0")
+		if err != nil {
+			t.Fatalf("GetTask attempt %d: %v", attempt, err)
+		}
+		finalStatus = task.Status
+		if task.Status == store.TaskStatusFailed {
+			break // terminal
+		}
+		if _, err := s.ClaimNextReady(ctx, planID, sessionID, workerID); err != nil {
+			t.Fatalf("ClaimNextReady attempt %d: %v", attempt, err)
+		}
+		if _, err := o.VerifyAndComplete(ctx, planID, "0.0", ev); err != nil {
+			t.Fatalf("VerifyAndComplete attempt %d: %v", attempt, err)
+		}
+	}
+
+	if finalStatus != store.TaskStatusFailed {
+		t.Errorf("after exhausting retries, task status = %q, want failed (not left pending forever)", finalStatus)
+	}
+}

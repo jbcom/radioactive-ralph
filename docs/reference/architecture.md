@@ -24,8 +24,10 @@ lastUpdated: 2026-07-16
 - **`radioactive_ralph doctor`** — environment checks (git, provider
   CLIs, service manager).
 
-There are no other command-level subsystems: no variant/persona
-selection, no per-repo plan commands, no attach/cockpit framing. The
+The `plan` command group (`plan import <file>`, `plan ls`) seeds and lists
+plans for the current *project* — resolved by fingerprint, not by a
+committed per-repo config. Beyond that there are no other command-level
+subsystems: no variant/persona selection, no attach/cockpit framing. The
 client *is* the read-only view; there's nothing separate to attach to.
 
 ## The control invariant
@@ -54,7 +56,7 @@ supervisor reclaims: remove the stale socket, take over).
 ## State: one user-level database, clean repos
 
 All project, plan, config, and spend state lives in **one user-level
-SQLite database** under the XDG data root — durable memory for every
+SQLite database** under the XDG state root — durable memory for every
 registered project on the machine, not per-repo. There is no committed
 config directory and no per-repo database. Never store Ralph runtime
 state under `.claude/`.

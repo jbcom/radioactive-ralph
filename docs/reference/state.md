@@ -10,7 +10,7 @@ This page tracks what the runtime actually does today.
 ## What is live today
 
 - Go CLI under `cmd/radioactive_ralph/`: `--supervisor`, dumb client mode,
-  `--init`, `doctor`, `service {install,uninstall,status}`
+  `--init`, `plan {import,ls}`, `doctor`, `service {install,uninstall,status}`
 - the supervisor: pty ownership per agent (`internal/agent`), discovery
   socket + PID-lock single-instance + stale-socket reclaim
   (`internal/supervisor`), the reaper

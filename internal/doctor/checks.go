@@ -113,6 +113,20 @@ func checkCodexAuth(ctx context.Context, cfg RunOptions) Check {
 	}
 }
 
+// checkOpencodeVersion warns when the opencode CLI is absent. opencode is a
+// first-class supported provider (a NativeFanout-capable local agent CLI),
+// so doctor reports on it alongside claude and codex.
+func checkOpencodeVersion(ctx context.Context, cfg RunOptions) Check {
+	return checkProviderVersion(ctx, cfg, providerVersionCheck{
+		Name:          "opencode",
+		Binary:        "opencode",
+		VersionArgs:   []string{"--version"},
+		MissingLevel:  WARN,
+		MissingDetail: "opencode CLI not found on PATH",
+		MissingFix:    "install opencode so the `opencode` provider binding is usable",
+	})
+}
+
 // checkGhVersion warns when the GitHub CLI is absent — present
 // because most variants use `gh pr ...` internally, but non-fatal so
 // Ralph can still run on machines without it.

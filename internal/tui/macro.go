@@ -20,7 +20,15 @@ func renderMacro(m Model) string {
 		m.snap.status.BlockedTasks, m.snap.status.RunningTasks, m.snap.status.FailedTasks)
 
 	if len(m.snap.plans) == 0 {
-		b.WriteString(styleMuted.Render("no plans yet\n"))
+		// Actionable empty state: a bare "no plans yet" leaves the operator
+		// at a dead end (the footer offers "drill into plan" with nothing to
+		// drill into). Point them at the command that seeds work. Newlines
+		// stay OUTSIDE Render so the style doesn't paint a trailing blank
+		// styled line.
+		b.WriteString(styleMuted.Render("no plans yet — import one to get started:"))
+		b.WriteString("\n")
+		b.WriteString(styleMuted.Render("  radioactive_ralph plan import <plan.md>"))
+		b.WriteString("\n")
 	}
 	for i, p := range m.snap.plans {
 		marker := styleUnselected.String()
@@ -37,12 +45,18 @@ func renderMacro(m Model) string {
 	b.WriteString(styleHeader.Render("recent events"))
 	b.WriteString("\n")
 	if len(m.snap.planEvent) == 0 {
-		b.WriteString(styleMuted.Render("(none)\n"))
+		b.WriteString(styleMuted.Render("(none)"))
+		b.WriteString("\n")
 	}
 	for _, ev := range m.snap.planEvent {
 		b.WriteString(styleMuted.Render(ev.OccurredAt.Format("15:04:05")) + " " + ev.Kind + "\n")
 	}
 
-	b.WriteString(renderFooter(m, "enter: drill into plan   q: quit"))
+	footerHint := "enter: drill into plan   q: quit"
+	if len(m.snap.plans) == 0 {
+		// Nothing to drill into yet — don't offer an action that does nothing.
+		footerHint = "q: quit"
+	}
+	b.WriteString(renderFooter(m, footerHint))
 	return b.String()
 }

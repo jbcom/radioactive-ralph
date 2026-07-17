@@ -240,11 +240,9 @@ func resolveModel(cfg BindingConfig, model Model) string {
 		if cfg.OpusModel != "" {
 			return cfg.OpusModel
 		}
-	default:
-		if cfg.SonnetModel != "" {
-			return cfg.SonnetModel
-		}
 	}
+	// Sonnet is the default tier: used for ModelSonnet AND as the fallback
+	// when the requested tier has no configured override.
 	if cfg.SonnetModel != "" {
 		return cfg.SonnetModel
 	}

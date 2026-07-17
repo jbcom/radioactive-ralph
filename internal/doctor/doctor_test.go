@@ -31,6 +31,8 @@ func fakeRunner(m map[string]struct {
 				return "codex-cli 0.1.0", nil
 			case "codex login status":
 				return "logged in", nil
+			case "opencode --version":
+				return "opencode 1.18.3", nil
 			}
 		}
 		if !ok {

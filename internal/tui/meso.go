@@ -17,7 +17,8 @@ func renderMeso(m Model) string {
 	prog := m.snap.progress[m.selectedPlan.ID]
 	b.WriteString(styleHeader.Render(fmt.Sprintf("plan: %s", m.selectedPlan.Title)))
 	b.WriteString("\n")
-	b.WriteString(styleMuted.Render(fmt.Sprintf("status=%s  progress=%d/%d\n\n", m.selectedPlan.Status, prog.Done, prog.Total)))
+	b.WriteString(styleMuted.Render(fmt.Sprintf("status=%s  progress=%d/%d", m.selectedPlan.Status, prog.Done, prog.Total)))
+	b.WriteString("\n\n")
 
 	groups := groupTasks(m.snap.tasks)
 	row := 0
@@ -40,7 +41,8 @@ func renderMeso(m Model) string {
 		}
 	}
 	if len(m.snap.tasks) == 0 {
-		b.WriteString(styleMuted.Render("no tasks yet\n"))
+		b.WriteString(styleMuted.Render("no tasks yet"))
+		b.WriteString("\n")
 	}
 
 	b.WriteString(renderFooter(m, "enter: drill into task   esc: back to plans   q: quit"))

@@ -7,6 +7,7 @@ import (
 	"path"
 	"path/filepath"
 	"runtime"
+	"strconv"
 )
 
 // maxUnixSocketPath is the conservative upper bound on a Unix-domain socket
@@ -47,8 +48,26 @@ func serviceEndpointForGOOS(goos, tempDir, sessionsDir string) (endpoint, heartb
 	// Natural path is too long for sun_path: bind it under the system temp
 	// dir with a short hashed name instead. Deterministic in sessionsDir so
 	// the supervisor and every client resolve the identical socket.
-	short := filepath.Join(tempDir, "rralph-"+token+".sock")
+	//
+	// Nest it under a PER-USER subdirectory ("rralph-<uid>") rather than
+	// directly in the world-writable temp dir: listenEndpoint creates that
+	// parent 0o700, so on a shared/multi-user machine another user can
+	// neither pre-create the predictable socket path (a bind DoS) nor
+	// traverse in to connect. The socket file itself is additionally chmod'd
+	// 0o600 by listenEndpoint.
+	short := filepath.Join(tempDir, "rralph-"+userID(), token+".sock")
 	return short, heartbeat
+}
+
+// userID returns the current uid as a string for the per-user fallback
+// socket dir, or "shared" when the uid can't be determined (e.g. Windows,
+// where Getuid returns -1 — though this POSIX sun_path fallback never fires
+// there; the socket stays isolated per token regardless).
+func userID() string {
+	if u := os.Getuid(); u >= 0 {
+		return strconv.Itoa(u)
+	}
+	return "shared"
 }
 
 // endpointToken is a short, stable, collision-resistant token derived from

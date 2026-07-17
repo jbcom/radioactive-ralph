@@ -36,7 +36,7 @@ the DB), so recovery is replaying that slice to a fresh worker.
 ## State — one user-level SQLite DB, clean repos
 
 All project/plan/config/worker/spend state lives in **one user-level SQLite
-DB** under the XDG data root (`internal/store`, opened by the supervisor).
+DB** under the XDG state root (`internal/store`, opened by the supervisor).
 There is NO committed repo state — no `.radioactive-ralph/` dir, no per-repo
 DB. Projects are identified by accumulated fingerprints (git root-commit +
 remote + abs-path), so identity survives `git init` and directory moves.

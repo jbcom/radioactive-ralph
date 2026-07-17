@@ -44,7 +44,7 @@ func startBareServer(t *testing.T, runtimeDir string) *ipc.Server {
 	if err != nil {
 		t.Fatalf("ipc.NewServer: %v", err)
 	}
-	if err := srv.Start(0); err != nil {
+	if err := srv.Start(); err != nil {
 		t.Fatalf("ipc.Server.Start: %v", err)
 	}
 	return srv
@@ -110,7 +110,7 @@ func TestAcquire_SecondFailsWhileFirstHolds(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ipc.NewServer: %v", err)
 	}
-	if err := srv.Start(0); err != nil {
+	if err := srv.Start(); err != nil {
 		t.Fatalf("ipc.Server.Start: %v", err)
 	}
 	defer func() { _ = srv.Stop() }()

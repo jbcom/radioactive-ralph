@@ -54,7 +54,7 @@ func (c *Client) Status(ctx context.Context) (StatusReply, error) {
 	if err := c.send(ctx, Request{Cmd: CmdStatus}); err != nil {
 		return zero, err
 	}
-	resp, err := c.readResponse()
+	resp, err := c.readResponse(ctx)
 	if err != nil {
 		return zero, err
 	}
@@ -79,7 +79,7 @@ func (c *Client) Enqueue(ctx context.Context, args EnqueueArgs) (EnqueueReply, e
 	if err := c.send(ctx, Request{Cmd: CmdEnqueue, Args: body}); err != nil {
 		return zero, err
 	}
-	resp, err := c.readResponse()
+	resp, err := c.readResponse(ctx)
 	if err != nil {
 		return zero, err
 	}
@@ -103,7 +103,7 @@ func (c *Client) Stop(ctx context.Context, args StopArgs) error {
 	if err := c.send(ctx, Request{Cmd: CmdStop, Args: body}); err != nil {
 		return err
 	}
-	resp, err := c.readResponse()
+	resp, err := c.readResponse(ctx)
 	if err != nil {
 		return err
 	}
@@ -118,7 +118,7 @@ func (c *Client) ReloadConfig(ctx context.Context) error {
 	if err := c.send(ctx, Request{Cmd: CmdReloadConfig}); err != nil {
 		return err
 	}
-	resp, err := c.readResponse()
+	resp, err := c.readResponse(ctx)
 	if err != nil {
 		return err
 	}
@@ -135,12 +135,35 @@ func (c *Client) Attach(ctx context.Context, fn func(json.RawMessage) error) err
 	if err := c.send(ctx, Request{Cmd: CmdAttach}); err != nil {
 		return err
 	}
+	// The attach stream is long-lived, so ctx cancellation (not a fixed
+	// deadline) is the usual exit — e.g. the TUI drilling out of a view.
+	// ReadBytes blocks in the kernel and never observes ctx on its own, which
+	// leaked the attach goroutine. Unblock it deterministically by closing
+	// the connection when ctx is done: ReadBytes then returns immediately
+	// with a use-of-closed error, which we translate back to ctx.Err(). A
+	// rolling read-deadline poll was rejected because a timeout mid-frame
+	// makes bufio.Reader.ReadBytes drop the partial line.
+	watchDone := make(chan struct{})
+	defer close(watchDone)
+	go func() {
+		select {
+		case <-ctx.Done():
+			_ = c.conn.SetReadDeadline(time.Now()) // interrupt the blocked read at once
+		case <-watchDone:
+		}
+	}()
+
 	for {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
 		line, err := c.reader.ReadBytes('\n')
 		if err != nil {
+			// If ctx was cancelled, the watcher tripped the read deadline;
+			// surface the ctx error rather than the low-level timeout.
+			if cerr := ctx.Err(); cerr != nil {
+				return cerr
+			}
 			if errors.Is(err, io.EOF) {
 				return ErrClosed
 			}
@@ -184,9 +207,30 @@ func (c *Client) send(ctx context.Context, req Request) error {
 	return nil
 }
 
-func (c *Client) readResponse() (Response, error) {
+func (c *Client) readResponse(ctx context.Context) (Response, error) {
+	// Bound the blocking read by the caller's ctx: send() only set a WRITE
+	// deadline, so without this a server that accepts the request but never
+	// replies would hang the read forever. Honor an explicit deadline AND a
+	// bare cancellation (no deadline) — the latter via a watcher that trips
+	// the read deadline the moment ctx is done, so ReadBytes returns at once.
+	if deadline, ok := ctx.Deadline(); ok {
+		_ = c.conn.SetReadDeadline(deadline)
+		defer func() { _ = c.conn.SetReadDeadline(time.Time{}) }()
+	}
+	watchDone := make(chan struct{})
+	defer close(watchDone)
+	go func() {
+		select {
+		case <-ctx.Done():
+			_ = c.conn.SetReadDeadline(time.Now())
+		case <-watchDone:
+		}
+	}()
 	line, err := c.reader.ReadBytes('\n')
 	if err != nil {
+		if cerr := ctx.Err(); cerr != nil {
+			return Response{}, cerr
+		}
 		if errors.Is(err, io.EOF) {
 			return Response{}, ErrClosed
 		}

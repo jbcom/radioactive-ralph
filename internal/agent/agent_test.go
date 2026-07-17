@@ -109,3 +109,37 @@ func TestKillAfterNaturalExitIsNilError(t *testing.T) {
 		t.Fatalf("second Kill = %v, want nil", err)
 	}
 }
+
+// TestKillUnblocksParkedReadLoop is the regression for the audit's
+// back-pressure finding: readLoop now blocks on the output send rather than
+// silently dropping lines, so a consumer that never reads must not deadlock
+// the reader — Kill must unblock it. We start an agent that emits far more
+// lines than the output buffer (256) and NEVER drain a.Output(); the
+// readLoop parks on a full channel. Kill must return promptly and the done
+// channel must close, proving no goroutine leak.
+func TestKillUnblocksParkedReadLoop(t *testing.T) {
+	// Emit ~1000 lines with no consumer so a.out (cap 256) fills and the
+	// readLoop parks on its blocking send.
+	a, err := Start(context.Background(), Options{
+		Command: "sh",
+		Args:    []string{"-c", "i=0; while [ $i -lt 1000 ]; do echo line$i; i=$((i+1)); done; sleep 30"},
+	})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	// Give the emitter time to overrun the buffer and park the reader.
+	time.Sleep(200 * time.Millisecond)
+
+	if err := a.Kill(); err != nil {
+		t.Fatalf("Kill: %v", err)
+	}
+
+	// The reader must exit (done closes) promptly after Kill, proving the
+	// blocking send was released rather than leaking the goroutine.
+	select {
+	case <-a.Done():
+	case <-time.After(3 * time.Second):
+		t.Fatal("readLoop did not exit within 3s of Kill — blocking send leaked the reader")
+	}
+}
