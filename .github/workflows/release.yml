@@ -52,8 +52,15 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # Two macOS legs so both Mac architectures get a native .app/.dmg:
+          # macos-latest is arm64 (Apple Silicon), macos-15-intel is amd64
+          # (Intel — the current GitHub-hosted Intel runner; macos-13 is retired).
           - os: macos-latest
             target: darwin
+            arch: arm64
+          - os: macos-15-intel
+            target: darwin
+            arch: amd64
           - os: ubuntu-latest
             target: linux
           - os: windows-latest
@@ -97,12 +104,12 @@ jobs:
       - name: Ad-hoc sign the .app (macOS)
         if: matrix.target == 'darwin'
         run: codesign --force --deep --sign - radioactive-ralph.app
-      - name: Wrap .app into a .dmg (macOS)
+      - name: Wrap .app into an arch-specific .dmg (macOS)
         if: matrix.target == 'darwin'
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
           hdiutil create -volname radioactive-ralph -srcfolder radioactive-ralph.app \
-            -ov -format UDZO "radioactive-ralph_${VERSION}_darwin.dmg"
+            -ov -format UDZO "radioactive-ralph_${VERSION}_darwin_${{ matrix.arch }}.dmg"
       # Linux: repack the fyne tarball into an AppImage (unsigned by convention).
       - name: Build AppImage (Linux)
         if: matrix.target == 'linux'
@@ -178,16 +185,23 @@ jobs:
           done
           gh release upload "$GITHUB_REF_NAME" "${assets[@]}" "${checksums[@]}" --clobber
 
-      # Publish the Homebrew cask AFTER the .dmg is uploaded (the cask points at
-      # the release asset URL + its sha). This is the recommended macOS install:
-      # `brew install --cask radioactive-ralph`.
-      - name: Publish Homebrew cask (macOS)
-        if: matrix.target == 'darwin'
+  # Publish the Homebrew cask ONCE, after BOTH macOS legs have uploaded their
+  # arch-specific .dmg — the cask carries on_arm/on_intel URLs+shas so an Intel
+  # Mac and an Apple-Silicon Mac each download the matching build.
+  cask:
+    name: Homebrew cask (macOS)
+    needs: gui-bundles
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0
+      - name: Publish Homebrew cask
         env:
           GH_TOKEN: ${{ secrets.CI_GITHUB_TOKEN }}
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
-          bash packaging/macos/publish-cask.sh "$VERSION" "radioactive-ralph_${VERSION}_darwin.dmg"
+          bash packaging/macos/publish-cask.sh "$VERSION"
 
   chocolatey:
     name: GoReleaser (chocolatey publish)
