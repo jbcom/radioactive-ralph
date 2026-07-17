@@ -113,6 +113,22 @@ func checkCodexAuth(ctx context.Context, cfg RunOptions) Check {
 	}
 }
 
+// checkCodexMetering surfaces a known observability limitation so an operator
+// who configures a codex spend cap understands it will not be enforced. Unlike
+// claude/opencode (which emit stream-json usage frames the runtime parses into
+// token/cost), codex has no stable machine-readable usage stream, so its
+// per-turn cost is not metered and cannot count against a spend cap. This is
+// informational (OK), not a fault — it exists so the gap is discoverable rather
+// than silent.
+func checkCodexMetering(_ context.Context, _ RunOptions) Check {
+	return Check{
+		Name:      "codex metering",
+		Severity:  OK,
+		Detail:    "codex usage/cost is not metered (its CLI has no machine-readable usage stream); a codex spend cap is not enforced",
+		Remediate: "cap codex spend at the OpenAI account level if you need a hard limit; claude/opencode usage IS metered",
+	}
+}
+
 // checkOpencodeVersion warns when the opencode CLI is absent. opencode is a
 // first-class supported provider (a NativeFanout-capable local agent CLI),
 // so doctor reports on it alongside claude and codex.

@@ -121,6 +121,16 @@ func TestCodexAuthUsesLoginStatus(t *testing.T) {
 	}
 }
 
+func TestCodexMeteringIsInformational(t *testing.T) {
+	check := checkCodexMetering(context.Background(), RunOptions{})
+	if check.Severity != OK {
+		t.Errorf("codex metering severity = %v, want OK (informational, not a fault)", check.Severity)
+	}
+	if !strings.Contains(check.Detail, "not metered") || !strings.Contains(check.Detail, "spend cap") {
+		t.Errorf("codex metering detail = %q, want it to explain the spend-cap blind spot", check.Detail)
+	}
+}
+
 func TestCodexAuthRequiresCLILoginWithAPIKey(t *testing.T) {
 	t.Setenv("OPENAI_API_KEY", "test-token")
 	runner := fakeRunner(map[string]struct {
