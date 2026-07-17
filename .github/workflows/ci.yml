@@ -172,13 +172,27 @@ jobs:
           function Invoke-QuietNative {
             param(
               [Parameter(Mandatory = $true)][string]$FilePath,
-              [Parameter(Mandatory = $true)][string[]]$ArgumentList
+              # NOT Mandatory and defaulted to @(): the bare-client smoke case
+              # invokes radioactive_ralph with NO args, and a Mandatory
+              # [string[]] parameter rejects an empty array outright.
+              [string[]]$ArgumentList = @()
             )
             $token = [guid]::NewGuid().ToString()
             $stdout = Join-Path $env:RUNNER_TEMP "$token.stdout.log"
             $stderr = Join-Path $env:RUNNER_TEMP "$token.stderr.log"
             try {
-              $proc = Start-Process -FilePath $FilePath -ArgumentList $ArgumentList -RedirectStandardOutput $stdout -RedirectStandardError $stderr -PassThru -Wait -NoNewWindow
+              # Start-Process -ArgumentList also rejects an empty array, so
+              # only pass it when there are actually args to forward.
+              $startArgs = @{
+                FilePath               = $FilePath
+                RedirectStandardOutput = $stdout
+                RedirectStandardError  = $stderr
+                PassThru               = $true
+                Wait                   = $true
+                NoNewWindow            = $true
+              }
+              if ($ArgumentList.Count -gt 0) { $startArgs.ArgumentList = $ArgumentList }
+              $proc = Start-Process @startArgs
               return $proc.ExitCode
             } finally {
               Remove-Item $stdout, $stderr -ErrorAction SilentlyContinue
