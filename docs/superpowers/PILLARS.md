@@ -1,0 +1,74 @@
+# radioactive-ralph — Pillars (shipped-work ledger)
+
+Compressed record of every fully-landed effort — one tight paragraph each with
+the merge SHA / PR. The live work queue is `.agent-state/directive.md`; this doc
+is where finished directives go so the queue stays short (directive 0, step 3).
+
+## Supervisor-architecture rewrite (v0.10.0)
+
+Replaced the dead variant/kong/plandag model with the supervisor architecture: a
+headless supervisor core owning the pty + all store writes, dumb clients on a
+Unix-socket/named-pipe IPC, one user-level XDG SQLite DB, accumulated-fingerprint
+project identity, goldmark plan decomposition, orchestrator-verified task
+completion, and the never-block control invariant (watchdog kills a stalled
+agent; the system can never wedge). Phases 1–9: pty-owned agent + watchdog,
+store + reaper + backup, cobra/viper config virtual-layers, supervisor +
+discovery, providers + capability detection (no personas), plan engine + orch +
+A2A vocabulary, read-only Bubble Tea TUI + planning genesis, E2E harness + CI,
+and a total docs realignment. Merged via PR #73 (00c788d); API-doc regen + site
+realignment #75 (a3532c2); release-please cut v0.10.0 (#74).
+
+## Post-release multi-lens audit (v0.10.0 → v0.10.4)
+
+A convergence audit of merged main: parallel adversarially-verified review
+workflows (code/security/simplify/bug-hunt lenses) fixing everything real, then
+re-auditing the fixes themselves. Trend 29→14→5→1 confirmed findings across four
+passes until essentially-zero reachable defects remained. Landed real bugs incl.
+owner-guarded task transitions (MarkFailed/Done/Blocked + ErrTaskNotOwnedRunning),
+clock-driven added_at ordering, pty-echo watchdog false-kill (DisableEcho with
+per-platform termios), a chmod-TOCTOU socket-dir hardening, and a watchdog
+false-kill on claude's own stream-json output. PRs #76 (e8268db), #79 (f8b3de2),
+#81 (a75abd3), #83 (eedb6d3); release-please cut v0.10.1–v0.10.3.
+
+## Guided first-run onboarding
+
+A TTY-gated wizard that, on a cold `radioactive_ralph` run (no service, no
+supervisor, no DB), OFFERS to set everything up in one consent-gated step:
+`service install` (XDG state root + the user SQLite DB + native launchd/systemd/
+SCM unit, started), then `--init`, then the TUI. Never prompts on non-TTY/CI
+(keeps the print-commands-exit-nonzero path). `internal/onboard` (DI wizard +
+StdinPrompter), `service.Start`, client.go wiring, unit tests + a real-pty E2E.
+Merged PR #85 (80daad9).
+
+## Versioned IPC drive+observe API
+
+Extended the read-only-TUI IPC into a versioned drive+observe surface so the GUI
+can act, not just watch: protocol v2 (`ProtoVersion` + stable `Response.Code`
+error classes), an optional `DriveHandler` (plan-import / plan-set-status /
+task-approve / worker-kill) the server type-asserts, typed client methods +
+`CodedError`/`IsCode`, store `ApproveTask`/`ReclaimWorker`, and `plan import`
+routing through the supervisor as the single writer. Second-scrutiny review
+(gemini/codex/Amazon-Q) fixed real bugs: pause actually pauses (dispatch filters
+to active-only), worker-kill cancels the live provider process (orch
+cancellation registry + `KillWorker`), `ReclaimWorker` requeues ALL a fan-out
+worker's tasks by `claimed_by_worker_id` without stomping a reassigned one or
+penalizing the retry budget, a proto-version guard before dispatch, atomic
+`ApproveTask`, and a typed `ErrPlanNotFound`. Merged PR #87 (2f20adf).
+
+## Fyne desktop GUI client
+
+A Go-native (Fyne) desktop app: a peer to the TUI on the same supervisor socket
+that watches AND drives (approve/pause/resume/abandon/kill/import). CONSISTENT
+identity — a `ralphTheme` + a shared `internal/statusbucket` palette the TUI was
+refactored to consume too (one source, anti-drift test), and the same
+macro→meso→micro drill. A read+drive `Controller` seam; `liveController` forwards
+reads to the store + a fresh short-lived `ipc.Client` and drives via the v2
+methods; all IPC runs off the Fyne main thread (gather→snapshot→render,
+mutex-guarded selection, -race clean). The whole Fyne dependency is isolated
+behind a `//go:build gui` tag (Fyne is CGO-only and would break CI's CGO-off
+six-way cross-build) with a `!gui` cobra stub and a dedicated CGO-on GL/Wayland
+CI job. Two bot-review rounds fixed two real pre-existing bugs the GUI surfaced
+(always-zero status counters → `store.StatusCounts`; fan-out kill only on the
+first task → keyed on `claimed_by_worker_id`) plus tray Quit, ctx-cancel
+teardown, async launch, local-time, and rune-safe truncation. Merged PR #89
+(e969551).
