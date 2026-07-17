@@ -173,27 +173,21 @@ Structured attach event surface (the observe half goes live) — shipping arc:
   claimed tick_test.go still used the 2-arg HandleAttach; the pushed tree has
   the 3-arg fix, build/test green). The marshal-skip-and-advance tradeoff both
   agents noted is intended (don't wedge the stream on one bad row).
-- [ ] [WAIT] #169 (feat: stream events over Attach) — store EventsAfter/MaxEventID
-  tail queries + the supervisor HandleAttach tail loop + ipc AttachArgs/
-  AttachEvent/AttachEvents. All 5 review threads resolved: slog fix; store
-  scope-precedence (explicit project_id wins over plan linkage, +test);
-  transient-vs-permanent store-error classification so a broken DB ends the
-  stream instead of spinning (+test); cursor seeded to MaxEventID in both live
-  clients so launch/reconnect starts from "now" not a full-history replay. The
-  per-task micro-view filter (codex P2) is deferred to the consumer PR below.
-  CI re-running on the fixes; merge when green.
+- Attach event stream — the observe half goes live (compressed →
+  docs/superpowers/PILLARS.md): producer #169 (store tail queries + supervisor
+  HandleAttach loop + ipc AttachArgs/AttachEvent/AttachEvents; 3 codex spec P1s +
+  5 review threads folded in), consumers #173 (TUI decode + selected-task filter
+  + status deltas incl. blocked; GUI per-frame refresh gate), json.Valid
+  hardening #175. Code-simplifier pass found ONE clean change (below).
 
-Next after #169 lands:
-- [ ] Wire the TUI/GUI live view to APPLY attach deltas instead of poll-only:
-  subscribe via Client.AttachEvents, decode each frame as ipc.AttachEvent,
-  update the in-memory snapshot per event, keep the periodic poll as a reconcile
-  safety net. Includes the deferred codex P2 from #169: the micro view must
-  FILTER frames to the selected task (match plan_id/task_id) instead of
-  appending every project frame. This is what makes the push-live feed actually
-  visible + correct for a user.
-- [ ] (candidate, from the #169 security self-review, LOW/pre-existing) harden
-  store.jsonOrEmptyObject with a json.Valid guard so the payload_json "always
-  valid JSON" invariant is structural, not caller-discipline. Not a blocker.
+Rolling (attach follow-ups):
+- [ ] [WAIT] #174 (chore: directive/PILLARS sync for the attach arc) — CI; merge green.
+- [ ] Fold the code-simplifier finding: collapse the pure pass-through
+  Client.Attach → private attach into one method and point AttachEvents at the
+  public Attach (internal/ipc/client.go) — zero behavior change. (AttachEvents'
+  zero-caller state is BY DESIGN: the spec designates it the GUI's consumer path,
+  keep it.) Then pick the next product feature per directive 0 (a security-sast
+  pass on the new IPC surface is the leading candidate).
 
 ## Notes
 

@@ -262,3 +262,46 @@ GUI-check flake was a go-text/typesetting harfbuzz panic on Fyne's bundled font
 (not locale — the first hypothesis was wrong); fixed via FYNE_FONT → DejaVu Sans
 (#162). The TUI audit earlier drove cursor identity-reconciliation + a refresh
 in-flight guard (#157).
+
+## Attach event stream — the observe half goes live (v0.21.6+)
+
+The IPC drive+observe API had a live *drive* half and a STUB *observe* half: the
+supervisor's `HandleAttach` blocked on `ctx.Done()` and emitted nothing, so an
+Attach client connected and saw silence, while a rich append-only `events` table
+(monotonic autoincrement id, ~20 lifecycle emit sites) was written on every
+load-bearing transition and never read (`ListProjectEvents` had zero callers).
+The clients rendered by polling. This arc wired the producer to the
+already-hardened Attach transport (#160/#165) and made the read-only clients
+push-live.
+
+**Producer (#169).** The supervisor TAILS the events table — the single ordered
+source of truth — reusing it with zero change to any emit site (rejected an
+in-process pub/sub bus and a SQLite update-hook as premature/fragile). New store
+tail queries `EventsAfter(projectID, afterID, limit)` (rows with `id > afterID`,
+ascending, capped) and `MaxEventID` back a 250ms tail loop in `HandleAttach`. New
+`ipc.AttachArgs{ProjectID, AfterID}` + `ipc.AttachEvent` (the public, versioned
+wire shape; payload passed through verbatim so a new kind needs no transport
+change) + typed `Client.AttachEvents`. Three codex P1s on the spec were folded in
+before code: (1) scope by plan-linkage, not bare `project_id` — the headline task
+events carry only `plan_id`, so a `project_id`-only filter would drop exactly what
+a live view needs; an explicit project_id wins over plan linkage; (2) the project
+id travels in AttachArgs (the connection is project-agnostic); (3) a fully
+client-owned cursor (no server seed-to-max) closes the backlog↔attach lost-event
+race. Review hardening: transient (SQLITE_BUSY/LOCKED) errors retry, permanent
+ones (closed/corrupt DB) end the stream instead of spinning; both live clients
+seed the cursor to MaxEventID so launch/reconnect starts from "now", not a
+full-history replay; structured slog key/values (not Printf) in the tail logs.
+
+**Consumers (#173).** The TUI decodes each frame as `ipc.AttachEvent`, FILTERS the
+micro-view tail to the selected task (the deferred codex P2 — a frame for another
+task no longer pollutes the drilled-in log), and applies task-status deltas
+(`applyEvent`/`taskDeltaStatus`, including `task.blocked`/`task.context_requested`
+→ Blocked, a code-review finding) so a lifecycle change lands immediately; the
+GUI gates its per-frame `refreshNow` on the event kind (`eventTriggersRefresh`) to
+kill the heartbeat-refresh storm. The periodic poll stays the reconcile net —
+deltas are the fast path, never the only path. **Hardening (#175):**
+`store.jsonOrEmptyObject` now wraps a malformed input as `{"raw":...}` so the
+`payload_json` column's "always valid JSON" invariant is structural rather than
+caller-discipline (a #169 security-self-review finding). Design specs:
+`docs/superpowers/specs/2026-07-17-attach-event-stream-design.md` and
+`…-attach-live-consumers-design.md`.
