@@ -174,3 +174,35 @@ leaving headroom for a live backup + WAL readers; the spend-cap check reserves a
 in-flight slot per (project, provider) so concurrent launches on a capped provider
 overshoot by at most one turn (#131); and the supervisor concurrent-start test was
 de-flaked to bounded, race-independent assertions (#132).
+
+## Never-block hardening & audit-driven correctness (v0.21.3+)
+
+With async dispatch landed, adversarial audits (opus concurrency review of the
+orchestrator; opus SQLite/claim-path review of the store) drove a round of
+resilience + correctness fixes. **Resilience:** the async per-step and fan-out
+dispatch goroutines had no panic recovery, so a panic in a worker turn or its
+verification crashed the whole supervisor — a direct never-die violation.
+recoverDispatchPanic (installed as the LAST defer so it runs FIRST during
+unwinding, before the inflight.Done() that unblocks Wait(), guaranteeing its
+writes land while the store is still live) now logs a worker.dispatch_panic
+event AND reclaims the goroutine's claimed task(s) via ReleaseClaim (back to
+'pending' with no retry-budget penalty, since a panic is orchestrator-level, not
+task-level) and clears the worker row, so a panicked turn is immediately
+re-dispatchable instead of wedged until the 90s reaper; runWithHeartbeat's
+heartbeat reap was also moved into a defer so a panicking turn no longer leaks
+its heartbeat goroutine (#146). **Provider correctness:** a stream-json frame
+over the 16MiB scanner cap previously discarded the whole turn; the first cut
+salvaged the pre-oversize frames as a SUCCESSFUL turn, but that fed partial text
+into Evidence.Output where the judgment-only acceptance check (non-empty output
+⇒ done) could mark a step complete on a killed-mid-stream worker — so the final
+form FAILS the turn with ErrStreamJSONLineTooLong (retryable) and keeps NO
+partial text in AssistantOutput, so a killed turn can never satisfy completion,
+and reaps the process tree before cmd.Wait() so a CLI still writing the oversized
+line into a full pipe can't hang the turn (#144). **Store correctness:** ApproveTask moved a gated task to
+'ready', but the claim path (Ready, ClaimNextReady, its atomic UPDATE) matched
+only 'pending' and nothing bridged 'ready'→'pending', so an approved task was
+stranded forever; all three sites now accept status IN ('pending','ready') while
+still excluding ready_pending_approval, making the already-wired Approve button
+safe the moment a gate producer lands (#147). Housekeeping: the removed
+ResourceExceeded watchdog signal was purged from the generated API docs and its
+test renamed (#143).

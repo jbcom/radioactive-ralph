@@ -88,6 +88,16 @@ docs/superpowers/specs/2026-07-16-supervisor-architecture-design.md.
   overspend under concurrency #131; supervisor concurrent-start test de-flaked
   #132 (releases v0.21.0–v0.21.2).
 
+- Never-block hardening & audit-driven correctness (two opus adversarial audits —
+  orchestrator concurrency + store claim-path — drove the fixes): dispatch-turn
+  panic containment + immediate claim reclaim, and heartbeat-leak-on-panic fix
+  #146; oversized stream-json line FAILS the turn (retryable) instead of masking
+  a killed worker as a done step, + process-tree reap so it can't hang #144;
+  approval-gate dead-end closed — an approved 'ready' task is now claimable #147;
+  ResourceExceeded purged from generated API docs #143 (v0.21.3+). The
+  orchestrator audit otherwise gave async dispatch a clean bill (no races/leaks);
+  the store audit's C2 (reaper NULL-worker branch) is recorded as latent.
+
 Detail lives in PILLARS.md; consult .agent-state/decisions.ndjson for the why
 behind any load-bearing call.
 
@@ -103,8 +113,25 @@ concrete item.)
 
 ## Rolling improvement queue (directive 0 appends here)
 
+Completed this arc:
+- [x] Orchestrator async-dispatch concurrency audit (opus) — clean on races/
+  leaks/semaphore/WaitGroup/ctx/deadlock; surfaced the panic-crash gap → #146.
+- [x] Store claim-path/SQLite audit (opus) — core claim path race-safe; found
+  the approval-gate dead-end (C1 → #147) + a latent reaper NULL-worker branch
+  (C2 → #149, documented-invariant not code-change: a guard would break the
+  legitimate orphan-recovery, and it's not reachable today).
+
 Next forward-exploration items:
-- [ ] [WAIT-AGENT] Async-surface race review — a code-reviewer agent is checking the async dispatch path for slot/reservation/wg leaks, WaitGroup misuse, ctx bugs, and shutdown deadlock. Fold findings into fresh items on completion, then forward-explore the next unreviewed surface (provider runners / agent watchdog / TUI).
+- [ ] Dead `raw` return on the oversized-line path: runStreamJSONCommand returns
+  raw alongside ErrStreamJSONLineTooLong, but runDeclarativeAttempt discards it
+  (returns Result{}, err), so raw is a dead value on that error path. Micro-fix:
+  drop the unused return or actually persist it. (Surfaced by a #148 bot thread.)
+- [ ] Approval-gate producer: nothing yet sets ready_pending_approval, so the
+  now-safe Approve button has no live trigger. Decide whether the gate is a real
+  product feature (wire a producer — e.g. plan-level approval flag) or dead
+  surface to remove (YAGNI). Architecture call for the agent.
+- [ ] Next unreviewed surface: forward-explore provider runners (claude/codex/
+  opencode framing) or the agent watchdog / TUI with a fresh review lens.
 
 ## Notes
 
