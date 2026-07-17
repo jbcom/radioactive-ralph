@@ -57,6 +57,15 @@ func Run(ctx context.Context, o Opts) error {
 	ui := newUI(ctx, o.Controller, o.ProjectID, w)
 	w.SetContent(ui.root)
 
+	// Keyboard navigation (a11y + parity with the TUI, which is fully keyboard-
+	// driven): Escape drills back one level (micro→meso→macro), the mouse-free
+	// equivalent of the on-screen back buttons.
+	w.Canvas().SetOnTypedKey(func(ev *fyne.KeyEvent) {
+		if ev.Name == fyne.KeyEscape {
+			ui.drillBack()
+		}
+	})
+
 	// System tray (where the desktop driver supports it): a compact way to
 	// raise the window and quit. Degrades to just the window otherwise.
 	if desk, ok := a.(desktop.App); ok {
