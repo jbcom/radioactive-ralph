@@ -65,6 +65,24 @@ Running plain `radioactive_ralph` in a directory the supervisor doesn't
 know about auto-routes to the same initialization, so `--init` is rarely
 needed by hand.
 
+## Import a plan
+
+A plan is plain markdown, decomposed heuristically (heading = group,
+unordered list = parallel steps, ordered = sequential). Import one to
+activate it — the supervisor's periodic dispatch loop then drives its ready
+steps:
+
+```bash
+radioactive_ralph plan import plan.md
+radioactive_ralph plan ls          # confirm it is active
+```
+
+A step opts into mechanical, orchestrator-verified completion with an inline
+marker: `` `accept: <shell command>` `` (re-run in the project checkout and
+must exit 0) or `` `accept-file: <path>` `` (must exist). A step without a
+marker is judgment-only. Either way, completion is verified by the runtime,
+never inferred from a worker terminating.
+
 ## Run the client
 
 ```bash

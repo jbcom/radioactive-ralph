@@ -47,7 +47,16 @@ Never store runtime state under `.claude/`.
 - `radioactive_ralph --supervisor` — run the supervisor.
 - `radioactive_ralph` — dumb client (discover + read-only view).
 - `radioactive_ralph --init` — initialize/re-initialize the current project.
+- `radioactive_ralph plan import <file>` — import a markdown plan and activate
+  it (the supervisor's periodic dispatch loop then drives its ready steps).
+- `radioactive_ralph plan ls [--all]` — list the current project's plans.
 - `radioactive_ralph doctor` — environment checks.
+
+A plan step opts into MECHANICAL, orchestrator-verified completion with an
+inline marker: `` `accept: <shell command>` `` (re-run; must exit 0) and/or
+`` `accept-file: <path>` `` (must exist in the project checkout). A step with
+no marker is judgment-only (accepted on non-empty worker evidence). Completion
+is never inferred from a worker terminating — the orchestrator re-checks.
 
 Config resolves through virtual layers (`internal/vconfig`, cobra/viper):
 three flags (`--config-file`/`-C`, `--user-config-file`, `--project-config-file`),

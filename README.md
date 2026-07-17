@@ -69,7 +69,10 @@ radioactive_ralph --supervisor        # or install it as a system service
 # 2. In a project directory, initialize it (registers the project in the user DB)
 radioactive_ralph --init
 
-# 3. Run the client to see live status / the read-only cockpit
+# 3. Import a markdown plan; it is activated and the supervisor begins driving it
+radioactive_ralph plan import plan.md
+
+# 4. Run the client to see live status / the read-only cockpit
 radioactive_ralph
 ```
 
@@ -79,10 +82,12 @@ start one. Nothing is written into your repository.
 ## CLI surface
 
 ```bash
-radioactive_ralph --supervisor   # run the supervisor (owns agent ptys + the user DB)
-radioactive_ralph                # dumb client: discover the supervisor, read-only view
-radioactive_ralph --init         # initialize / re-initialize the current project
-radioactive_ralph doctor         # environment checks
+radioactive_ralph --supervisor      # run the supervisor (owns agent ptys + the user DB)
+radioactive_ralph                   # dumb client: discover the supervisor, read-only view
+radioactive_ralph --init            # initialize / re-initialize the current project
+radioactive_ralph plan import <f>   # import a markdown plan and activate it
+radioactive_ralph plan ls [--all]   # list the current project's plans
+radioactive_ralph doctor            # environment checks
 ```
 
 ## Docs

@@ -421,8 +421,20 @@ func TestServiceEndpointUnixLongPathFallsBackToTempDir(t *testing.T) {
 	if len(endpoint) > maxUnixSocketPath {
 		t.Fatalf("fallback endpoint %q is still too long (%d bytes)", endpoint, len(endpoint))
 	}
-	if !strings.HasPrefix(endpoint, "/tmp/rralph-") || !strings.HasSuffix(endpoint, ".sock") {
-		t.Fatalf("endpoint = %q, want /tmp/rralph-<token>.sock", endpoint)
+	// The short-path fallback builds its path with filepath.Join, whose
+	// separator follows the HOST OS, not the goos arg (correct in
+	// production: the fallback only ever fires on POSIX, where host==goos).
+	// So the exact forward-slash shape can only be asserted on a POSIX host;
+	// on a Windows runner filepath.Join yields backslashes. Assert the
+	// token-bearing basename either way (separator-independent), and the
+	// full slash shape only on POSIX.
+	if !strings.Contains(endpoint, "rralph-") || !strings.HasSuffix(endpoint, ".sock") {
+		t.Fatalf("endpoint = %q, want a rralph-<token>.sock basename", endpoint)
+	}
+	if runtime.GOOS != "windows" {
+		if !strings.HasPrefix(endpoint, "/tmp/rralph-") {
+			t.Fatalf("endpoint = %q, want /tmp/rralph-<token>.sock", endpoint)
+		}
 	}
 	if heartbeat != sessionsDir+"/service.sock.alive" {
 		t.Fatalf("heartbeat = %q, want it colocated with sessionsDir", heartbeat)
