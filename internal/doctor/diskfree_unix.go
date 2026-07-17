@@ -13,7 +13,14 @@ func diskFreeBytes(path string) (uint64, bool) {
 	if err := unix.Statfs(path, &st); err != nil {
 		return 0, false
 	}
-	// Bavail is blocks available to non-root; multiply by the fragment/block size.
-	//nolint:unconvert // Bsize is int64 on some GOOS, uint32 on others; convert for portability.
-	return uint64(st.Bavail) * uint64(st.Bsize), true
+	// Bavail (blocks available to non-root) is uint64 on every supported GOOS.
+	// Bsize is int64 on Linux but uint32 on darwin/BSD; normalize it through int64
+	// and reject a negative value (a real filesystem never reports one) before the
+	// unsigned multiply, so gosec's G115 overflow check is satisfied and a bogus
+	// negative can't wrap to a huge "free" figure — treat that as unknown instead.
+	bsize := int64(st.Bsize) //nolint:unconvert // Bsize is uint32 on darwin/BSD (conversion needed) but int64 on Linux (where it reads as redundant)
+	if bsize < 0 {
+		return 0, false
+	}
+	return st.Bavail * uint64(bsize), true
 }
