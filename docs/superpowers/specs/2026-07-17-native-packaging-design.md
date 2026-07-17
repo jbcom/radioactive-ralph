@@ -1,9 +1,13 @@
 # Native Installers & Packaging — Design
 
 **Date:** 2026-07-17
-**Status:** design (autonomous authoring under the desktop-app mandate). Two
-sub-scopes; the second is gated on user-only credentials — see "Credential
-gates".
+**Status:** design (autonomous authoring under the desktop-app mandate).
+**Revision (2026-07-17):** the earlier "Scope B is blocked on paid Apple/MS
+credentials" framing was WRONG. OSS projects sign for free: macOS ships as a
+**Homebrew cask** (ad-hoc-signed `.app`, quarantine stripped on install — no
+Apple Developer account), and Windows Authenticode is free via the **SignPath
+Foundation** OSS program. No purchase from Apple or Microsoft is required. See
+"Signing — the OSS way".
 **Related:** [Fyne GUI client design](2026-07-17-fyne-gui-client-design.md),
 `.goreleaser.yaml`, `.github/workflows/release.yml`.
 
@@ -75,26 +79,50 @@ These need **no new credentials** (reuse the existing cosign keyless + tokens):
    the GUI install path (the app bundles are not curl-pipe installable; point at
    the native installers).
 
-## Scope B — gated on USER-ONLY credentials
+## Scope B — GUI app bundles (no purchase required)
 
-These cannot be completed autonomously; each needs something only the user can
-provide. They are **built unsigned** in Scope A's runners so the pipeline is
-ready, and signing is switched on when the credential lands:
+The GUI desktop bundles. Signing is handled the OSS way (next section), so none
+of this needs a paid Apple/Microsoft account:
 
-1. **macOS notarized `.app`/`.dmg`.** Notarization requires an **Apple Developer
-   account** ($99/yr) + a Developer ID Application certificate + an app-specific
-   password / notarytool API key. *(Blocker: purchase + interactive Apple
-   credential — user only.)* Until then, ship the unsigned `.dmg` with a
-   documented Gatekeeper-bypass note.
-2. **Windows MSI/MSIX Authenticode-signed.** Signing needs a **code-signing
-   certificate** (purchased from a CA, or an Azure Trusted Signing account).
-   *(Blocker: purchase — user only.)* Until then, ship the unsigned MSI; SmartScreen
-   will warn.
+1. **macOS `.app` via a Homebrew cask.** `fyne package` on a macos runner
+   produces `radioactive-ralph.app`, ad-hoc-signed (`codesign -s -`, free). It
+   is delivered as a **Homebrew cask** (a `casks/` entry in `jbcom/pkgs`, beside
+   the existing formula): `brew install --cask radioactive-ralph`. Homebrew
+   strips the `com.apple.quarantine` xattr on install, so Gatekeeper does not
+   block it despite the absence of notarization — the standard OSS-app path. A
+   `.dmg` is also produced as a release asset for direct download (that path
+   shows a Gatekeeper prompt; the cask is the recommended install).
+2. **Windows `.exe`/MSI.** `fyne package` + `wix` on a windows runner. Signed
+   with the **SignPath Foundation** OSS certificate (next section) so SmartScreen
+   is clean.
+3. **Linux AppImage** (from Scope A) is the GUI delivery; AppImages are unsigned
+   by convention and verified by the release checksum.
 
-The pipeline produces the artifacts either way; the signing steps are guarded on
-the secret being present (the same `secrets.X != ''` gate pattern release.yml
-already uses for `CHOCOLATEY_API_KEY`), so nothing breaks when the cert is absent
-and everything signs the moment it's added.
+The signing steps are guarded on the corresponding secret being present (the
+same `secrets.X != ''` gate release.yml uses for `CHOCOLATEY_API_KEY`), so the
+pipeline builds bundles unsigned until signing is wired, then signs
+automatically once the secret lands.
+
+## Signing — the OSS way (free, no purchase)
+
+**Open source does not pay for code signing.**
+
+- **macOS:** an ad-hoc signature (`codesign --sign -`) is free and sufficient
+  *when delivered through Homebrew*, because the cask install removes the
+  quarantine attribute. No Apple Developer Program membership, no Developer ID
+  cert, no notarization for the cask path. (Notarization would only matter for a
+  double-click-from-browser `.dmg`; the cask is the blessed install and the
+  `.dmg` is best-effort.)
+- **Windows:** the [SignPath Foundation](https://signpath.io/solutions/open-source-community)
+  gives **free OV Authenticode signing** to qualifying OSS projects
+  (radioactive-ralph is MIT-licensed and public — it qualifies). SignPath signs
+  through a managed pipeline triggered from the release workflow; the publisher
+  shown is "SignPath Foundation". Clears SmartScreen at zero cost.
+
+The one genuine user action is a one-time **signup** (not a purchase): enroll the
+repo in SignPath's OSS program, then add the `SIGNPATH_*` token as a repo secret.
+Until that token exists the Windows bundle ships unsigned; the signing step is
+gated on the secret, so it turns on the moment the token is added.
 
 ## Testing / verification
 
@@ -113,14 +141,19 @@ and everything signs the moment it's added.
 - Flatpak / Snap (AppImage covers portable Linux; revisit if requested).
 - The GUI app's own in-app "check for updates".
 
-## Credential gates — summary for the user
+## Summary for the user
 
-To finish Scope B, the user needs to provide (each is a genuine block per the
-autonomy rules — purchase / interactive credential):
+Nothing here requires paying Apple or Microsoft:
 
-- **Apple:** Developer Program membership + Developer ID cert + notarytool
-  credential → enables notarized `.app`/`.dmg`.
-- **Windows:** an Authenticode code-signing cert (or Azure Trusted Signing) →
-  enables signed MSI/MSIX.
+- **macOS** ships as a **Homebrew cask** (ad-hoc-signed `.app`, quarantine
+  stripped on install) — no Apple Developer account.
+- **Windows** signs via the **free SignPath Foundation OSS program** — no
+  purchased cert. The only user action is a one-time signup + adding a
+  `SIGNPATH_*` repo secret; the pipeline signs automatically once it exists and
+  ships unsigned until then.
+- **Linux** (deb/rpm/AppImage) and all the CLI package managers are fully
+  automatic via the existing cosign-keyless + token flow.
 
-Everything in Scope A ships without them.
+So the whole packaging item can be built and shipped autonomously; the SignPath
+enrollment is the single optional signup that upgrades Windows from
+"SmartScreen-warns" to "clean", and can be added any time.

@@ -17,8 +17,8 @@ Native packaging assets and notes. See the design spec at
 | `.deb`/`.rpm` (CLI) | goreleaser nfpms | ubuntu | cosign (checksums) |
 | Homebrew / Scoop / Chocolatey / winget (CLI) | goreleaser publishers | ubuntu / windows | — (manifest) |
 | AppImage + `.desktop` (GUI) | `fyne package` + `appimagetool` | ubuntu (`-tags gui`, CGO) | unsigned by convention; verified by release checksum |
-| `.app`/`.dmg` (GUI) | `fyne package` + `create-dmg` | macos (`-tags gui`, CGO) | **needs Apple Developer cert — see Credential gates** |
-| `.exe`/MSI (GUI) | `fyne package` + `wix` | windows (`-tags gui`, CGO) | **needs Authenticode cert — see Credential gates** |
+| `.app` Homebrew cask (GUI) | `fyne package` + `codesign -s -` | macos (`-tags gui`, CGO) | ad-hoc (free); cask strips quarantine — no Apple account |
+| `.exe`/MSI (GUI) | `fyne package` + `wix` | windows (`-tags gui`, CGO) | SignPath Foundation OSS cert (free) — no purchase |
 
 ## Icon
 
@@ -27,19 +27,23 @@ per-OS packaging step squares/resizes it to the format each platform wants
 (`.icns` for macOS, `.ico` for Windows, a 512×512 PNG for Linux) — the source
 brand asset is not committed pre-squared so there is one source of truth.
 
-## Credential gates (Scope B — user-only)
+## Signing — the OSS way (free, no purchase)
 
-Signing the macOS and Windows GUI installers cannot be done without credentials
-only the repository owner can provide:
+Open source does not pay for code signing. Neither Apple nor Microsoft charges
+for the path we use:
 
-- **macOS notarization** — an Apple Developer Program membership + a Developer ID
-  Application certificate + a notarytool credential (app-specific password or API
-  key). Until configured, the `.dmg` ships unsigned (Gatekeeper will warn).
-- **Windows Authenticode** — a code-signing certificate (from a CA or Azure
-  Trusted Signing). Until configured, the MSI ships unsigned (SmartScreen will
-  warn).
+- **macOS** — the `.app` is **ad-hoc signed** (`codesign --sign -`, free) and
+  shipped as a **Homebrew cask**. Homebrew strips `com.apple.quarantine` on
+  install, so Gatekeeper allows it without notarization. No Apple Developer
+  Program membership. The direct-download `.dmg` is best-effort (it will show a
+  Gatekeeper prompt); the cask is the blessed install.
+- **Windows** — Authenticode signing is free through the
+  [SignPath Foundation](https://signpath.io/solutions/open-source-community) OSS
+  program (radioactive-ralph is MIT-licensed + public → qualifies). The only
+  user action is a **one-time signup** and adding a `SIGNPATH_*` repo secret —
+  not a purchase. Until the secret exists the MSI ships unsigned; the signing
+  step is gated on `secrets.SIGNPATH_* != ''` (same pattern as the Chocolatey
+  job), so it turns on automatically once the token is added.
 
-The release pipeline builds these artifacts unsigned regardless; the signing
-steps are guarded on the corresponding secret being present (the same
-`secrets.X != ''` gate the Chocolatey job uses), so they switch on the moment
-the credential is added — no pipeline change needed.
+Everything else (deb/rpm/AppImage checksums, all CLI package managers) is
+already automatic via the existing cosign-keyless + token flow.
