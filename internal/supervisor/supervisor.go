@@ -454,7 +454,7 @@ func (s *Supervisor) HandleAttach(ctx context.Context, args ipc.AttachArgs, emit
 				// A transient read error (e.g. momentary pool contention) must
 				// not kill a live stream: log, stop draining, wait for the next
 				// tick. The cursor is unchanged, so nothing is skipped.
-				s.log("attach tail: events after cursor: %v", err)
+				s.log("attach tail: events after cursor", "err", err)
 				break
 			}
 			if len(events) == 0 {
@@ -465,7 +465,7 @@ func (s *Supervisor) HandleAttach(ctx context.Context, args ipc.AttachArgs, emit
 				if err != nil {
 					// A single un-marshalable row must not wedge the stream;
 					// skip it but still advance past it so the tail progresses.
-					s.log("attach tail: marshal event %d: %v", ev.ID, err)
+					s.log("attach tail: marshal event", "event_id", ev.ID, "err", err)
 					cursor = ev.ID
 					continue
 				}
