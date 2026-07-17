@@ -1,6 +1,6 @@
 ---
 title: Demo
-lastUpdated: 2026-04-15
+lastUpdated: 2026-07-16
 ---
 
 # Demo — Ralph in Action
@@ -12,8 +12,8 @@ The demo asset is intentionally treated like a release asset, not an embedded br
 1. `radioactive_ralph --help`
 2. `radioactive_ralph doctor`
 3. `radioactive_ralph service --help`
-4. `radioactive_ralph plan --help`
-5. `radioactive_ralph tui --help`
+4. `radioactive_ralph --supervisor` (foreground, then Ctrl-C)
+5. `radioactive_ralph` — the read-only TUI against a live supervisor
 
 ## Source of truth
 
@@ -23,4 +23,4 @@ The demo asset is intentionally treated like a release asset, not an embedded br
 
 ## Recording standard
 
-The demo should feel like a poster for the project, not a tutorial. The goal is to prove three things quickly: Ralph is alive, Ralph is funny, and Ralph has a clear operator surface. Keep the tape deterministic and cheap to re-record; richer live-runtime footage can be a later release asset, not the baseline capture.
+The demo should feel like a poster for the project, not a tutorial. The goal is to prove three things quickly: Ralph is alive, Ralph is funny, and Ralph has a clear supervisor + client surface. Keep the tape deterministic and cheap to re-record; richer live-runtime footage can be a later release asset, not the baseline capture.

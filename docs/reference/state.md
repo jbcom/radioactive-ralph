@@ -1,55 +1,75 @@
 ---
 title: State
-lastUpdated: 2026-04-15
+lastUpdated: 2026-07-16
 ---
 
 # State
 
-This page tracks the live state of the runtime after the repo-service pivot.
+This page tracks what the runtime actually does today.
 
 ## What is live today
 
-- Go CLI under `cmd/radioactive_ralph/`
-- repo init and config scaffolding
-- durable SQLite-backed plan store
-- durable repo-scoped runtime under `radioactive_ralph service start`
-- attached bounded execution under `radioactive_ralph run --variant <name>`
-- socket-backed `status`, `attach`, `stop`, and `tui`
-- operator task controls via `plan tasks`, `plan approvals`, `plan blocked`, `plan approve`, `plan requeue`, `plan retry`, `plan handoff`, `plan fail`, `plan history`, `plan import`, and `plan mark-done`
-- named provider bindings with a repo-level default provider
-- shipped provider runners for `claude` and `codex` (`gemini` was removed
-  2026-06-18 after the Gemini CLI's auth endpoint was deprecated)
-- native Windows durable-service support via SCM + named pipes
-- repo-root Sphinx docs
-- generated Go API reference under `docs/api/`
+- Go CLI under `cmd/radioactive_ralph/`: `--supervisor`, dumb client mode,
+  `--init`, `doctor`, `service {install,uninstall,status}`
+- the supervisor: pty ownership per agent (`internal/agent`), discovery
+  socket + PID-lock single-instance + stale-socket reclaim
+  (`internal/supervisor`), the reaper
+- one user-level SQLite database (`internal/store`) holding project
+  fingerprints, config, plans/tasks, spend accounting, and A2A
+  evidence/messages
+- config virtual layers (`internal/vconfig`): USER/PROJECTS composition,
+  change-vs-override handling, conflict diffing, validation
+- project identity via accumulated fingerprints (`store.Fingerprints`)
+- plan markdown parsing + heuristic decomposition + validation
+  (`internal/plan`)
+- planning genesis: multi-agent juxtaposition/challenge refinement from a
+  vague prompt to a plan document, plus TUI/`$EDITOR` review
+  (`internal/genesis`)
+- the orchestrator: dispatch, spend-cap admission, orchestrator-verified
+  completion against acceptance criteria (`internal/orch`)
+- A2A vocabulary adoption over `a2aproject/a2a-go` core types
+  (`internal/a2a`)
+- shipped provider bindings for `claude`, `codex`, `opencode`
+  (`internal/provider`), plus a declarative config-only binding path for
+  compatible CLI framings
+- agent detection/classification (`internal/agentdetect`)
+- native service-manager integration for launchd, systemd-user, and
+  Windows SCM (`internal/service`)
+- the read-only Bubble Tea TUI with macro/meso/micro drill-down
+  (`internal/tui`)
+- repo-root Sphinx docs and a generated Go API reference under
+  `docs/api/`
 
-## What changed
+## What changed from the earlier design
 
 The live contract no longer includes:
 
-- MCP serving
-- plugin packaging as a product surface
-- per-variant supervisors
-- detached multiplexer management
+- variants/personas (blue/green/savage/fixit/professor/old-man/
+  world-breaker/etc.) — there is one mutating Ralph
+- a durable **repo-scoped** service, a per-repo plan DAG database, or a
+  committed `.radioactive-ralph/` config directory — replaced by the one
+  supervisor and the one user-level database
+- the socket-backed "cockpit"/"attach" framing — the client is a
+  read-only view, not a second runtime to attach to
+- `kong` for CLI parsing — replaced by `cobra` + `viper`
+- confirmation-gate-per-variant / spend-cap-as-variant-floor — completion
+  verification and spend caps are now orchestrator-level, not
+  persona-level
 
-Those concepts may still appear in archived plan documents, but they are not
-part of the shipped runtime anymore.
+Those concepts may still appear in the archived design record under
+`docs/superpowers/`, which is intentionally preserved as history, not
+live documentation.
 
 ## Remaining work
 
-The remaining work is polish rather than missing architecture:
-
-- a written launch/backlog plan now lives in
-  [plans/2026-04-16-v1-remaining-work.prd.md](../plans/2026-04-16-v1-remaining-work.prd.md)
-- richer TUI navigation, filtering, and prompt-entry ergonomics
+- richer TUI navigation and filtering ergonomics
 - broader native-host smoke testing, especially on real Windows machines
-- continued copy cleanup in archival and lore-heavy pages that intentionally
-  preserve older design history
+- continued usage-frame parsing for `codex`/`opencode` so spend
+  accounting covers every provider, not just `claude`
 
 ## What is intentionally true now
 
-- Ralph is one binary with many personalities.
-- The durable repo service is the main runtime.
-- Attached `run` exists for bounded variants only.
-- Fixit is the bridge from free-form human ask to durable plan context.
+- Ralph is one binary, one supervisor, one mutating agent.
+- The supervisor is the durable authority; the client is a read-only view.
 - Providers are bindings, not the identity of the product.
+- Completion is verified by the orchestrator, never asserted by a worker.

@@ -5,16 +5,13 @@ package provider
 import (
 	"context"
 	"fmt"
-
-	"github.com/jbcom/radioactive-ralph/internal/config"
-	"github.com/jbcom/radioactive-ralph/internal/variant"
 )
 
 // Binding is one resolved provider selection after repo config, local
 // overrides, and per-variant overrides have been applied.
 type Binding struct {
 	Name   string
-	Config config.ProviderFile
+	Config BindingConfig
 
 	// BinaryFromLocal is true when Config.Binary was set by the gitignored
 	// local.toml provider_binary override rather than by committed
@@ -31,7 +28,7 @@ type Request struct {
 	SystemPrompt string
 	UserPrompt   string
 	OutputSchema string
-	Model        variant.Model
+	Model        Model
 	Effort       string
 	AllowedTools []string
 }
@@ -65,7 +62,7 @@ type Runner interface {
 }
 
 // ResolveBinding picks the provider for one variant.
-func ResolveBinding(cfg config.File, local config.Local, _ variant.Profile, fromConfig config.VariantFile) (Binding, error) {
+func ResolveBinding(cfg File, local Local, fromConfig VariantFile) (Binding, error) {
 	name := fromConfig.Provider
 	if name == "" {
 		name = cfg.DefaultProvider
@@ -100,10 +97,13 @@ func ResolveBinding(cfg config.File, local config.Local, _ variant.Profile, from
 // shippedProviderBinaries are the executable names the built-in provider
 // types resolve to. A committed config.toml may name one of these; any
 // other binary must come from the gitignored local.toml provider_binary
-// override. Keep in sync with config.Default*Provider.
+// override. Keep in sync with builtInProvider. agy is deliberately absent:
+// the spike in agy.go found it is not local-only, so no runner is
+// registered for it and it must never be reachable from committed config.
 var shippedProviderBinaries = map[string]bool{
-	"claude": true,
-	"codex":  true,
+	"claude":   true,
+	"codex":    true,
+	"opencode": true,
 }
 
 // NewRunner returns the runtime implementation for a provider type.
@@ -113,6 +113,8 @@ func NewRunner(binding Binding) (Runner, error) {
 		return ClaudeRunner{}, nil
 	case "codex":
 		return CodexRunner{}, nil
+	case "opencode":
+		return OpencodeRunner{}, nil
 	case declarativePlainStdout, declarativeLastMessageFile, declarativeStreamJSON:
 		return DeclarativeRunner{}, nil
 	default:
@@ -120,13 +122,15 @@ func NewRunner(binding Binding) (Runner, error) {
 	}
 }
 
-func builtInProvider(name string) (config.ProviderFile, bool) {
+func builtInProvider(name string) (BindingConfig, bool) {
 	switch name {
 	case "", "claude":
-		return config.DefaultClaudeProvider(), true
+		return defaultClaudeProvider(), true
 	case "codex":
-		return config.DefaultCodexProvider(), true
+		return defaultCodexProvider(), true
+	case "opencode":
+		return defaultOpencodeProvider(), true
 	default:
-		return config.ProviderFile{}, false
+		return BindingConfig{}, false
 	}
 }

@@ -1,6 +1,7 @@
 ---
 title: Runbooks
-description: Operator-facing runbooks for install, auth, service, approvals, troubleshooting.
+description: Operator-facing runbooks for install, auth, service, troubleshooting.
+lastUpdated: 2026-07-16
 ---
 
 # Runbooks
@@ -14,8 +15,7 @@ start, go to [install-first-run](./install-first-run.md).
 |------|----------|
 | [Install + first run](./install-first-run.md) | Fresh install on a new machine |
 | [Provider auth](./provider-auth.md) | `doctor` reports a provider check fails, or you're switching providers |
-| [Service install/start/stop/recover](./service.md) | Managing the durable repo runtime |
-| [Approvals + handoffs](./approvals-handoffs.md) | Day-to-day plan operation |
+| [Service install/start/stop/recover](./service.md) | Managing the supervisor as a per-user OS service |
 | [Troubleshooting](./troubleshooting.md) | Something broke |
 | [Platform notes](./platforms.md) | Platform-specific quirks (launchd, systemd-user, SCM, WSL) |
 
@@ -29,7 +29,6 @@ way."
 install-first-run
 provider-auth
 service
-approvals-handoffs
 troubleshooting
 platforms
 ```

@@ -1,6 +1,7 @@
 ---
 title: Install + first run
-description: Install the radioactive_ralph binary, initialize a repo, and do a first runner-backed run.
+description: Install the radioactive_ralph binary, start the supervisor, and run the client.
+lastUpdated: 2026-07-16
 ---
 
 This is the canonical first-time flow. Use the package-manager path
@@ -17,9 +18,6 @@ brew tap jbcom/pkgs https://github.com/jbcom/pkgs
 brew install radioactive-ralph
 radioactive_ralph --version
 ```
-
-Expected: the version string matches whatever tag you're installing
-(e.g. `0.8.1 (99536d0, built 2026-04-16T...)`).
 
 ## 1b. Scoop (Windows)
 
@@ -39,95 +37,61 @@ radioactive_ralph --version
 The installer writes to `/usr/local/bin` if writable, else
 `~/.local/bin`. On the latter, make sure `~/.local/bin` is on `$PATH`.
 
-## 2. Initialize the repo
-
-`cd` into any git repo and run:
-
-```sh
-radioactive_ralph init
-```
-
-This scaffolds `.radioactive-ralph/` with:
-
-- `config.toml` — operator choices (committed)
-- `local.toml` — machine-local overrides (gitignored)
-- `plans/index.md` — human-readable plan index
-
-Re-runnable. Pass `--force` to overwrite an existing `config.toml`.
-`--yes` is accepted as a no-op compatibility flag (init is already
-non-interactive) so it stays safe in CI scripts.
-
-## 3. Verify your environment
+## 2. Verify your environment
 
 ```sh
 radioactive_ralph doctor
 ```
 
-Expected OK lines: `git`, your provider CLI (`claude` or `codex`),
-optional service-manager hook (launchd on macOS, systemd on
-Linux, SCM on Windows). See
+Expected OK lines: `git`, a provider CLI (`claude`, `codex`, or
+`opencode`), and an optional service-manager hook. See
 [Provider auth](./provider-auth.md) if a provider check fails.
 
-## 4. Start the repo-scoped runtime
+## 3. Start the supervisor
 
 ```sh
-radioactive_ralph service start
+radioactive_ralph --supervisor
 ```
 
-Runs the durable repo service in the foreground. On launchd/systemd,
-you'll more commonly `service install` (see [Service runbook](./service.md))
-which registers the runtime to start at login. For a first run, keep
-it in the foreground so you can see the control-plane logs.
-
-In another terminal:
+Runs the supervisor in the foreground. For daily use, install it as an
+OS service instead (see [Service runbook](./service.md)):
 
 ```sh
-radioactive_ralph status --json
+radioactive_ralph service install
+radioactive_ralph service status
 ```
 
-Expected: a JSON body with `repo_path`, `pid`, `uptime_ns`, and an
-empty `workers` array. If you see `no service socket at <path>`, the
-service isn't running yet — go back to step 4.
+For a first run, keep it in the foreground so you can see the logs
+directly.
 
-## 5. Create your first plan
+## 4. Register a project
+
+In another terminal, from inside any project directory:
 
 ```sh
-radioactive_ralph run --variant fixit --advise --topic bootstrap
+radioactive_ralph --init
 ```
 
-Fixit runs its six-stage plan-creation pipeline against the repo and:
+This records the project's fingerprints (git root-commit + remote +
+absolute path) and its config in the one user-level database. Nothing is
+written into the project directory.
 
-1. Writes `.radioactive-ralph/plans/bootstrap-advisor.md` (the
-   human-readable plan)
-2. Emits the same plan into the plan DAG (durable SQLite under your
-   XDG state dir)
-3. Prints the next-step command
-
-See the [fixit delegation guide](../guides/fixit-delegation.md) for
-the full pipeline.
-
-## 6. Supervise a plan
-
-With a plan in place, any non-fixit variant can claim tasks:
+## 5. Run the client
 
 ```sh
-radioactive_ralph run --variant grey
+radioactive_ralph
 ```
 
-The runner polls the DAG for ready tasks, dispatches each to the
-provider subprocess (your configured Claude / Codex), and marks
-tasks done/failed based on acceptance criteria.
-
-## 7. Open the cockpit
+In a terminal, this discovers the running supervisor and renders the
+read-only TUI. Piped or non-interactive, it prints a single status line:
 
 ```sh
-radioactive_ralph tui
+radioactive_ralph 2>&1 | cat
 ```
 
-Shows active plans, workers, recent events. See the [TUI guide](../guides/tui.md)
-for keyboard shortcuts and drilldowns.
+If you see "no supervisor is running", go back to step 3.
 
 ## When something goes wrong
 
-See [Troubleshooting](./troubleshooting.md) for the common failure
-modes (stale heartbeat, dead socket, provider CLI missing).
+See [Troubleshooting](./troubleshooting.md) for common failure modes
+(stale heartbeat, dead socket, provider CLI missing).

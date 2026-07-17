@@ -11,7 +11,9 @@ description: Go API reference for the service package.
 import "github.com/jbcom/radioactive-ralph/internal/service"
 ```
 
-Package service manages platform service definitions for the durable repo\-scoped radioactive\_ralph runtime.
+Package service manages the platform\-native auto\-restart definition for the durable radioactive\_ralph supervisor process.
+
+The rewritten runtime \(docs/superpowers/specs/2026\-07\-16\-supervisor\-architecture\-design.md §4\-§6\) is a SINGLE per\-user supervisor keyed off the XDG state root, not a per\-repo daemon — so there is exactly one service definition per user per machine, not one per repo. Installing it makes \`radioactive\_ralph \-\-supervisor\` a long\-running, auto\-restarting background process managed by the platform's native service host instead of something the operator has to remember to start by hand in a terminal.
 
 Platform dispatch:
 
@@ -19,7 +21,7 @@ Platform dispatch:
 - Linux/WSL → systemd user unit
 - Windows → native Service Control Manager entry
 
-Service\-context detection is used to distinguish durable service launches from operator\-attached \`radioactive\_ralph run\` sessions.
+Service\-context detection is used to distinguish durable service launches from operator\-attached foreground invocations.
 
 ## Index
 
@@ -28,12 +30,14 @@ Service\-context detection is used to distinguish durable service launches from 
 - [func IsServiceContext\(\) bool](<#IsServiceContext>)
 - [func MarshalWindowsServiceConfig\(opts InstallOptions\) \(\[\]byte, error\)](<#MarshalWindowsServiceConfig>)
 - [func Uninstall\(opts InstallOptions\) error](<#Uninstall>)
-- [func UnitName\(b Backend, repoPath string\) string](<#UnitName>)
-- [func UnitPath\(b Backend, home, repoPath string\) string](<#UnitPath>)
-- [func WindowsServiceArgs\(repoPath, serviceName, configPath string\) \[\]string](<#WindowsServiceArgs>)
+- [func UnitName\(b Backend\) string](<#UnitName>)
+- [func UnitPath\(b Backend, home string\) string](<#UnitPath>)
+- [func WindowsServiceArgs\(\) \[\]string](<#WindowsServiceArgs>)
 - [type Backend](<#Backend>)
   - [func DetectBackend\(\) Backend](<#DetectBackend>)
 - [type InstallOptions](<#InstallOptions>)
+- [type Status](<#Status>)
+  - [func Inspect\(opts InstallOptions\) \(Status, error\)](<#Inspect>)
 - [type WindowsServiceConfig](<#WindowsServiceConfig>)
   - [func BuildWindowsServiceConfig\(opts InstallOptions\) WindowsServiceConfig](<#BuildWindowsServiceConfig>)
   - [func ParseWindowsServiceConfig\(raw \[\]byte\) \(WindowsServiceConfig, error\)](<#ParseWindowsServiceConfig>)
@@ -47,12 +51,6 @@ Service\-context detection is used to distinguish durable service launches from 
 var ErrMissingRalphBin = errors.New("service: RalphBin required")
 ```
 
-<a name="ErrMissingRepoPath"></a>ErrMissingRepoPath is returned when RepoPath is empty.
-
-```go
-var ErrMissingRepoPath = errors.New("service: RepoPath required")
-```
-
 <a name="ErrUnsupportedBackend"></a>ErrUnsupportedBackend is returned for platforms we don't manage.
 
 ```go
@@ -60,13 +58,13 @@ var ErrUnsupportedBackend = errors.New("service: unsupported platform")
 ```
 
 <a name="Install"></a>
-## func [Install](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/service/service.go#L122>)
+## func [Install](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/service/service.go#L118>)
 
 ```go
 func Install(opts InstallOptions) (path string, err error)
 ```
 
-Install writes or registers the platform service definition for the given repo. On launchd/systemd this means writing the unit file; on Windows it also registers the SCM entry.
+Install writes or registers the platform service definition that runs \`radioactive\_ralph \-\-supervisor\` as a per\-user auto\-restarting background process. On launchd/systemd this means writing the unit file; on Windows it also registers the SCM entry.
 
 <a name="IsServiceContext"></a>
 ## func [IsServiceContext](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/service/service.go#L207>)
@@ -75,10 +73,10 @@ Install writes or registers the platform service definition for the given repo. 
 func IsServiceContext() bool
 ```
 
-IsServiceContext reports whether the current process looks like it's running under the durable repo\-service host rather than an operator\-attached foreground invocation.
+IsServiceContext reports whether the current process looks like it's running under the durable per\-user service host rather than an operator\-attached foreground invocation.
 
 <a name="MarshalWindowsServiceConfig"></a>
-## func [MarshalWindowsServiceConfig](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/service/windows_config.go#L32>)
+## func [MarshalWindowsServiceConfig](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/service/windows_config.go#L29>)
 
 ```go
 func MarshalWindowsServiceConfig(opts InstallOptions) ([]byte, error)
@@ -87,7 +85,7 @@ func MarshalWindowsServiceConfig(opts InstallOptions) ([]byte, error)
 MarshalWindowsServiceConfig renders the Windows service config in the exact JSON form written to disk for the native service host.
 
 <a name="Uninstall"></a>
-## func [Uninstall](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/service/service.go#L175>)
+## func [Uninstall](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/service/service.go#L178>)
 
 ```go
 func Uninstall(opts InstallOptions) error
@@ -96,34 +94,40 @@ func Uninstall(opts InstallOptions) error
 Uninstall removes the unit file. Returns nil if already absent.
 
 <a name="UnitName"></a>
-## func [UnitName](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/service/service.go#L60>)
+## func [UnitName](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/service/service.go#L53>)
 
 ```go
-func UnitName(b Backend, repoPath string) string
+func UnitName(b Backend) string
 ```
 
-UnitName returns the canonical service definition name for a repo. launchd: "jbcom.radioactive\-ralph.\<slug\>.\<hash\>" systemd: "radioactive\_ralph\-\<slug\>\-\<hash\>" windows\-scm: "radioactive\_ralph\-\<slug\>\-\<hash\>"
+UnitName is the single, stable name for the per\-user supervisor service definition — there is exactly one per user per machine, so unlike the old per\-repo scheme this takes no arguments.
+
+```
+launchd:     "jbcom.radioactive-ralph.supervisor"
+systemd:     "radioactive_ralph-supervisor"
+windows-scm: "radioactive_ralph-supervisor"
+```
 
 <a name="UnitPath"></a>
-## func [UnitPath](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/service/service.go#L74>)
+## func [UnitPath](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/service/service.go#L78>)
 
 ```go
-func UnitPath(b Backend, home, repoPath string) string
+func UnitPath(b Backend, home string) string
 ```
 
 UnitPath returns the on\-disk path where the unit file will be written. Callers pass the operator's home dir \(tests inject a tmpdir\).
 
 <a name="WindowsServiceArgs"></a>
-## func [WindowsServiceArgs](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/service/windows_config.go#L51>)
+## func [WindowsServiceArgs](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/service/windows_config.go#L49>)
 
 ```go
-func WindowsServiceArgs(repoPath, serviceName, configPath string) []string
+func WindowsServiceArgs() []string
 ```
 
-WindowsServiceArgs returns the radioactive\_ralph argv used by the native Windows SCM service entry.
+WindowsServiceArgs returns the radioactive\_ralph argv used by the native Windows SCM service entry: just \-\-supervisor, since the per\-user supervisor takes no repo\-scoped arguments.
 
 <a name="Backend"></a>
-## type [Backend](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/service/service.go#L28>)
+## type [Backend](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/service/service.go#L32>)
 
 Backend identifies which platform mechanism is in use.
 
@@ -148,7 +152,7 @@ const (
 ```
 
 <a name="DetectBackend"></a>
-### func [DetectBackend](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/service/service.go#L43>)
+### func [DetectBackend](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/service/service.go#L63>)
 
 ```go
 func DetectBackend() Backend
@@ -157,7 +161,7 @@ func DetectBackend() Backend
 DetectBackend returns the appropriate backend for the current OS.
 
 <a name="InstallOptions"></a>
-## type [InstallOptions](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/service/service.go#L91-L106>)
+## type [InstallOptions](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/service/service.go#L93-L104>)
 
 InstallOptions configures an install.
 
@@ -168,41 +172,58 @@ type InstallOptions struct {
     // HomeDir overrides os.UserHomeDir. Empty = use os.UserHomeDir().
     HomeDir string
     // RalphBin is the absolute path to the radioactive_ralph binary that
-    // the unit should exec. Required.
+    // the unit should exec (with --supervisor). Required.
     RalphBin string
-    // RepoPath is the operator's repo — written into the unit as the
-    // working directory for the durable runtime and used to derive the
-    // service unit name. Required.
-    RepoPath string
     // ExtraEnv is merged into the unit's environment block. Callers use
-    // this for RALPH_SPEND_CAP_USD etc.
+    // this for RALPH_STATE_DIR, RALPH_SPEND_CAP_USD, etc.
     ExtraEnv map[string]string
 }
 ```
 
-<a name="WindowsServiceConfig"></a>
-## type [WindowsServiceConfig](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/service/windows_config.go#L10-L13>)
+<a name="Status"></a>
+## type [Status](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/service/service.go#L227-L231>)
 
-WindowsServiceConfig is the persisted config payload used by the native Windows service host.
+Status reports whether the per\-user supervisor service definition is installed. This only inspects the service definition on disk \(unit file present/absent\); it says nothing about whether the supervisor process is currently running — callers wanting liveness should combine this with supervisor.Find against the XDG state root.
+
+```go
+type Status struct {
+    Backend   Backend
+    Installed bool
+    UnitPath  string
+}
+```
+
+<a name="Inspect"></a>
+### func [Inspect](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/service/service.go#L235>)
+
+```go
+func Inspect(opts InstallOptions) (Status, error)
+```
+
+Inspect reports the current install status of the per\-user supervisor service definition for the detected \(or overridden\) backend.
+
+<a name="WindowsServiceConfig"></a>
+## type [WindowsServiceConfig](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/service/windows_config.go#L10-L12>)
+
+WindowsServiceConfig is the persisted config payload used by the native Windows service host for the per\-user supervisor service.
 
 ```go
 type WindowsServiceConfig struct {
-    RepoPath string            `json:"repo_path"`
     ExtraEnv map[string]string `json:"extra_env,omitempty"`
 }
 ```
 
 <a name="BuildWindowsServiceConfig"></a>
-### func [BuildWindowsServiceConfig](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/service/windows_config.go#L17>)
+### func [BuildWindowsServiceConfig](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/service/windows_config.go#L16>)
 
 ```go
 func BuildWindowsServiceConfig(opts InstallOptions) WindowsServiceConfig
 ```
 
-BuildWindowsServiceConfig produces the persisted config payload for a repo service instance.
+BuildWindowsServiceConfig produces the persisted config payload for the supervisor service instance.
 
 <a name="ParseWindowsServiceConfig"></a>
-### func [ParseWindowsServiceConfig](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/service/windows_config.go#L41>)
+### func [ParseWindowsServiceConfig](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/service/windows_config.go#L38>)
 
 ```go
 func ParseWindowsServiceConfig(raw []byte) (WindowsServiceConfig, error)

@@ -1,24 +1,26 @@
 ---
-title: Service install, start, stop, recover
-description: Manage the repo-scoped runtime as a durable service on macOS, Linux, and Windows.
+title: Supervisor service install, start, stop, recover
+description: Manage the supervisor as a per-user OS service on macOS, Linux, and Windows.
+lastUpdated: 2026-07-16
 ---
 
-`radioactive_ralph service ...` is the operator-facing control plane
-for the durable repo runtime. The runtime is a single repo-scoped
-process that watches the plan DAG and dispatches ready tasks to the
-configured provider(s).
+`radioactive_ralph service ...` manages the supervisor
+(`radioactive_ralph --supervisor`) as a per-user auto-restarting OS
+service. The supervisor is the one long-lived process on the machine —
+there is one per user, not one per repo.
 
-## service start vs service install
+## service install vs. running --supervisor directly
 
 | Command | What it does | When to use |
 |---------|--------------|-------------|
-| `service start` | Runs the service **in the foreground** | First-run debugging, CI smoke tests, situations where you want to see logs directly |
-| `service install` | Registers the service with your OS service manager (launchd / systemd / SCM) | Daily use; the service auto-starts at login |
-
-You only need to run one of these. `install` is for durable use;
-`start` is for iterative debugging.
+| `radioactive_ralph --supervisor` | Runs the supervisor **in the foreground** | First-run debugging, CI smoke tests, watching logs directly |
+| `radioactive_ralph service install` | Registers the supervisor with your OS service manager (launchd / systemd / SCM) | Daily use; the supervisor auto-starts at login and auto-restarts on crash |
 
 ## 1. Install as an OS service
+
+There is exactly one service definition per user per machine — not one
+per repo — named `jbcom.radioactive-ralph.supervisor` (launchd) or
+`radioactive_ralph-supervisor` (systemd / Windows SCM).
 
 ### macOS (launchd)
 
@@ -26,8 +28,8 @@ You only need to run one of these. `install` is for durable use;
 radioactive_ralph service install
 ```
 
-Emits `~/Library/LaunchAgents/com.jbcom.radioactive-ralph.<repo-slug>.plist`
-and loads it via `launchctl bootstrap`. Verify:
+Writes `~/Library/LaunchAgents/jbcom.radioactive-ralph.supervisor.plist`
+and loads it. Verify:
 
 ```sh
 launchctl list | grep radioactive-ralph
@@ -39,11 +41,11 @@ launchctl list | grep radioactive-ralph
 radioactive_ralph service install
 ```
 
-Emits `~/.config/systemd/user/radioactive-ralph-<repo-slug>.service`
-and enables + starts the unit. Verify:
+Writes `~/.config/systemd/user/radioactive_ralph-supervisor.service` and
+enables + starts it. Verify:
 
 ```sh
-systemctl --user status radioactive-ralph-<repo-slug>
+systemctl --user status radioactive_ralph-supervisor
 ```
 
 ### Windows (Service Control Manager)
@@ -52,106 +54,87 @@ systemctl --user status radioactive-ralph-<repo-slug>
 radioactive_ralph service install
 ```
 
-Registers a service via SCM. Requires admin (run the terminal elevated).
-Verify:
+Registers a service via SCM. Requires an elevated terminal. Verify:
 
 ```powershell
-Get-Service radioactive-ralph-<repo-slug>
+Get-Service radioactive_ralph-supervisor
 ```
 
-## 2. Start / stop / restart
+## 2. Status, list, uninstall
 
 ```sh
-radioactive_ralph service start       # foreground (no install needed)
-radioactive_ralph stop                # graceful shutdown of the running service
+radioactive_ralph service status      # report this machine's installed-service state
+radioactive_ralph service uninstall   # remove the service definition
 ```
 
-For the installed service, use the OS service manager:
+`service status` reports the resolved backend (launchd/systemd/SCM) and
+whether it's installed, plus the unit path. Uninstalling removes only the
+OS-service registration; the binary and the user-level database are
+untouched.
 
-```sh
-launchctl kickstart -k  gui/$UID/com.jbcom.radioactive-ralph.<slug>   # macOS
-systemctl --user restart radioactive-ralph-<slug>                      # Linux
-Restart-Service radioactive-ralph-<slug>                               # Windows
-```
-
-## 3. Uninstall
-
-```sh
-radioactive_ralph service uninstall
-```
-
-Removes the plist/unit/service registration. The binary + your
-`.radioactive-ralph/` config stay put; only the OS-service hook is
-removed.
-
-## 3b. List + status
-
-```sh
-radioactive_ralph service list      # enumerate installed repo service units
-radioactive_ralph service status    # report the current repo's service-unit state
-```
-
-`service list` enumerates every installed repo service unit on the
-machine. `service status` reports the installed-service state for the
-current repo (loaded/stopped/failed on launchd, active/inactive/failed
-on systemd, Running/Stopped on Windows SCM).
-
-## 4. Stale state recovery
-
-When `radioactive_ralph status` says the service is running but
-nothing responds, the previous service process crashed without
-cleaning its control-plane socket (or named pipe on Windows) and
-heartbeat file.
-
-### 4a. Verify the service is actually dead
-
-```sh
-pgrep -f "radioactive_ralph service" || echo "no orphan"
-```
-
-If `pgrep` shows a PID, the service is still alive — use
-`radioactive_ralph stop` (or `kill <pid>`) first, then re-check.
-
-### 4b. Remove the stale socket and heartbeat file manually
-
-`radioactive_ralph` does not ship a `service clean` subcommand. The
-stale control-plane endpoint lives next to the heartbeat file under
-your XDG state root. Remove both by hand:
-
-```sh
-# macOS
-rm -f "$HOME/Library/Application Support/radioactive-ralph/<repo-hash>"/control.sock
-rm -f "$HOME/Library/Application Support/radioactive-ralph/<repo-hash>"/control.alive
-
-# Linux / WSL2
-rm -f "${XDG_STATE_HOME:-$HOME/.local/state}/radioactive-ralph/<repo-hash>"/control.sock
-rm -f "${XDG_STATE_HOME:-$HOME/.local/state}/radioactive-ralph/<repo-hash>"/control.alive
-```
-
-On Windows, named pipes are cleaned by reboot; if a reboot is
-impractical, restart the SCM service.
-
-Then `service start` (or the OS service manager) will succeed again.
-
-## 5. Logs
+## 3. Logs
 
 ### Foreground
 
-`service start` writes logs to stderr. Redirect:
-
 ```sh
-radioactive_ralph service start 2> ~/tmp/ralph.log
+radioactive_ralph --supervisor --log-format json 2> ~/tmp/ralph.log
 ```
+
+`--log-format json` emits one structured record per lifecycle/reaper
+event — easier to grep/assert on than free-form text; `--log-format text`
+(the default) is more readable interactively.
 
 ### Installed service
 
-- macOS launchd: `~/Library/Logs/radioactive-ralph-<slug>.log`
-- Linux systemd: `journalctl --user -u radioactive-ralph-<slug> -f`
-- Windows SCM: Event Viewer → Windows Logs → Application, filter
-  source `radioactive-ralph`
+- macOS launchd: `launchctl list` for status; logs land wherever the
+  generated plist directs stdout/stderr (check the plist for the path).
+- Linux systemd: `journalctl --user -u radioactive-ralph -f`
+- Windows SCM: Event Viewer → Windows Logs → Application, filter source
+  `radioactive-ralph`
+
+## 4. Stale state recovery
+
+When a client says "no supervisor is running" but you expect one, the
+previous supervisor process crashed without cleaning its socket and
+heartbeat file.
+
+### 4a. Verify the supervisor is actually dead
+
+```sh
+pgrep -f "radioactive_ralph --supervisor" || echo "no orphan"
+```
+
+If `pgrep` shows a PID, the supervisor is still alive — stop it (`kill
+<pid>`, or the OS service manager's stop) first, then re-check.
+
+### 4b. Remove the stale socket and heartbeat file manually
+
+The stale endpoint lives directly under your XDG state root (there is no
+per-repo subdirectory at this layer — the supervisor is one process per
+machine, not per repo):
+
+```sh
+# macOS
+rm -f "$HOME/Library/Application Support/radioactive-ralph/service.sock"
+rm -f "$HOME/Library/Application Support/radioactive-ralph/service.sock.alive"
+
+# Linux / WSL2
+rm -f "${XDG_STATE_HOME:-$HOME/.local/state}/radioactive-ralph/service.sock"
+rm -f "${XDG_STATE_HOME:-$HOME/.local/state}/radioactive-ralph/service.sock.alive"
+```
+
+On Windows, named pipes are cleaned by reboot; if a reboot is
+impractical, restart the SCM service instead.
+
+Then `radioactive_ralph --supervisor` (or the OS service manager) will
+succeed again — a fresh supervisor also self-reclaims a stale socket
+automatically at startup if the recorded PID is dead, so manual removal
+is a fallback, not the primary recovery path.
 
 ## When something goes wrong
 
-- Control-plane socket missing or dead → [Troubleshooting → dead socket](./troubleshooting.md#dead-socket-or-pipe)
-- Service-install fails → [Troubleshooting → service-install errors](./troubleshooting.md#service-install-errors)
+- Socket missing or dead → [Troubleshooting → dead
+  socket](./troubleshooting.md#dead-socket-or-pipe)
+- Service-install fails → [Troubleshooting → service-install
+  errors](./troubleshooting.md#service-install-errors)
 - Platform-specific caveats → [Platform notes](./platforms.md)

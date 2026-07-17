@@ -1,6 +1,7 @@
 ---
 title: Cassette VCR — deterministic replay of Claude sessions
 description: How internal/provider/claudesession/cassette records + replays claude stream-json so tests run hermetically without API credentials.
+lastUpdated: 2026-07-16
 ---
 
 The session wrapper (`internal/provider/claudesession`) talks to a `claude -p

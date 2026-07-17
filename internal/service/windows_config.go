@@ -6,18 +6,15 @@ import (
 )
 
 // WindowsServiceConfig is the persisted config payload used by the native
-// Windows service host.
+// Windows service host for the per-user supervisor service.
 type WindowsServiceConfig struct {
-	RepoPath string            `json:"repo_path"`
 	ExtraEnv map[string]string `json:"extra_env,omitempty"`
 }
 
-// BuildWindowsServiceConfig produces the persisted config payload for a repo
-// service instance.
+// BuildWindowsServiceConfig produces the persisted config payload for the
+// supervisor service instance.
 func BuildWindowsServiceConfig(opts InstallOptions) WindowsServiceConfig {
-	cfg := WindowsServiceConfig{
-		RepoPath: opts.RepoPath,
-	}
+	cfg := WindowsServiceConfig{}
 	if len(opts.ExtraEnv) != 0 {
 		cfg.ExtraEnv = make(map[string]string, len(opts.ExtraEnv))
 		for k, v := range opts.ExtraEnv {
@@ -47,19 +44,8 @@ func ParseWindowsServiceConfig(raw []byte) (WindowsServiceConfig, error) {
 }
 
 // WindowsServiceArgs returns the radioactive_ralph argv used by the native
-// Windows SCM service entry.
-func WindowsServiceArgs(repoPath, serviceName, configPath string) []string {
-	if serviceName == "" {
-		serviceName = UnitName(BackendWindowsSCM, repoPath)
-	}
-	args := []string{
-		"service",
-		"run-windows",
-		"--repo-root", repoPath,
-		"--service-name", serviceName,
-	}
-	if configPath != "" {
-		args = append(args, "--config-path", configPath)
-	}
-	return args
+// Windows SCM service entry: just --supervisor, since the per-user
+// supervisor takes no repo-scoped arguments.
+func WindowsServiceArgs() []string {
+	return []string{"--supervisor"}
 }

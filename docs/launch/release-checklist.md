@@ -1,6 +1,6 @@
 ---
 title: Release checklist
-lastUpdated: 2026-04-16
+lastUpdated: 2026-07-16
 ---
 
 # Release Checklist
@@ -49,8 +49,10 @@ Smoke the macOS-arm64 binary locally:
 ```
 
 - [ ] `--version` prints `<ver> (<commit>, built <iso-timestamp>)`
-- [ ] `--help` lists: `init`, `run`, `status`, `attach`, `stop`,
-      `doctor`, `service`, `plan`, `tui`
+- [ ] `--help` lists the root flags (`--supervisor`, `--init`,
+      `--config-file`/`-C`, `--user-config-file`,
+      `--project-config-file`, `--log-format`) and the `doctor` and
+      `service` subcommands
 
 ## 3. Docs ↔ artifacts parity
 
@@ -190,24 +192,25 @@ radioactive_ralph --version
 
 ## 7. Post-install operator-flow smoke
 
-Against the freshly-installed binary in a clean tmp repo:
+Against the freshly-installed binary in a clean tmp directory:
 
 ```sh
 mkdir -p ~/tmp/ralph-smoke && cd ~/tmp/ralph-smoke && git init -q
-radioactive_ralph init --yes
 radioactive_ralph doctor
-radioactive_ralph service start &
+radioactive_ralph --supervisor &
 sleep 2
-radioactive_ralph status --json
-radioactive_ralph stop
+radioactive_ralph --init
+radioactive_ralph 2>&1 | cat   # non-tty: prints one status line
+kill %1
 ```
 
-- [ ] `init` scaffolds `.radioactive-ralph/` + `plans/index.md`
 - [ ] `doctor` reports OK on git, provider CLI, service-manager
-- [ ] `service start` spins up without IPC errors (Unix socket or
+- [ ] `--supervisor` spins up without IPC errors (Unix socket or
       Windows named pipe, as platform dictates)
-- [ ] `status --json` prints a well-formed record with `repo_path`
-- [ ] `stop` shuts the service down cleanly
+- [ ] `--init` registers the directory as a known project in the
+      user-level database
+- [ ] the plain client reports the supervisor is up
+- [ ] the supervisor shuts down cleanly on SIGTERM/SIGINT
 
 ## 8. Release notes
 

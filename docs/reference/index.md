@@ -1,17 +1,17 @@
 ---
 title: Reference
-lastUpdated: 2026-04-15
+lastUpdated: 2026-07-16
 ---
 
 # Reference
 
 | Reference | What it covers |
 |---|---|
-| [Architecture](./architecture.md) | Binary-first runtime, repo service, personas, and provider direction |
-| [State](./state.md) | What exists today, what is missing, and what changed in the product contract |
-| [Testing](./testing.md) | Test strategy, commands, and repo-specific conventions |
+| [Architecture](./architecture.md) | One binary, two modes; discovery; state; project identity |
+| [State](./state.md) | What's live today, what changed from the earlier design, what remains |
+| [Testing](./testing.md) | The two-layer E2E strategy, CI checks, live-provider opt-in |
 | [API Reference](../api/index.md) | Generated Go package documentation from `cmd/` and `internal/` |
-| [Rewrite PRD](../plans/2026-04-14-radioactive-ralph-rewrite.prq.md) | The product-plan document that explains the rewrite goals and milestones |
+| [Architecture design (authoritative)](../superpowers/specs/2026-07-16-supervisor-architecture-design.md) | The full design spec this reference tracks |
 
 ```{toctree}
 :hidden:

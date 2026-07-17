@@ -1,23 +1,25 @@
 ---
 title: Design
-description: Design notes for the live runtime's core contracts.
+description: Design notes for the supervisor architecture's core contracts.
 ---
 
 # Design
 
-Contract-level documentation for the parts of the runtime that
-callers depend on.
+Contract-level documentation for the parts of the runtime that callers
+depend on.
 
 | Page | Contract |
 |------|----------|
-| [Provider contract](./provider-contract.md) | How the runtime binds to claude/codex; stateful vs stateless; code-defined vs config-defined |
+| [Provider contract](./provider-contract.md) | Capability records, stateful vs. stateless, resolution and validation |
 | [Declarative provider bindings](./declarative-provider-bindings.md) | Config-only provider onboarding for compatible CLI framings |
-| [Fixit plan-creation pipeline](./fixit-plan-pipeline.md) | The six-stage pipeline fixit runs to produce a plan; validation gates; fallback behavior |
+| [Config virtual layers](./config-layers.md) | USER/PROJECTS layering, changes vs. overrides, conflict diffing |
+| [Orchestrator-verified completion and A2A](./completion-and-a2a.md) | Why a worker never marks its own work done, and the A2A vocabulary that carries evidence |
 
 ```{toctree}
 :hidden:
 
 provider-contract
 declarative-provider-bindings
-fixit-plan-pipeline
+config-layers
+completion-and-a2a
 ```

@@ -59,46 +59,27 @@ type StreamEvent struct {
 
 // StatusReply is the data payload for CmdStatus responses.
 type StatusReply struct {
-	RepoPath        string               `json:"repo_path"`
-	PID             int                  `json:"pid"`
-	Uptime          time.Duration        `json:"uptime_ns"`
-	ActiveWorkers   int                  `json:"active_workers"`
-	ReadyTasks      int                  `json:"ready_tasks"`
-	ApprovalTasks   int                  `json:"approval_tasks"`
-	BlockedTasks    int                  `json:"blocked_tasks"`
-	RunningTasks    int                  `json:"running_tasks"`
-	FailedTasks     int                  `json:"failed_tasks"`
-	ActivePlans     int                  `json:"active_plans"`
-	Workers         []WorkerSummary      `json:"workers,omitempty"`
-	SessionVariants []SessionVariantInfo `json:"session_variants,omitempty"`
-	LastEventAt     time.Time            `json:"last_event_at,omitempty"`
-	HeartbeatAge    time.Duration        `json:"heartbeat_age_ns,omitempty"`
-}
-
-// SessionVariantInfo is the status-facing projection of one
-// session_variant row. It surfaces workers that the durable runtime
-// has registered but that the in-process workers map does not yet
-// know about (e.g. workers spawned by a previous service instance
-// that crashed, or workers owned by a peer service process).
-type SessionVariantInfo struct {
-	ID            string    `json:"id"`
-	VariantName   string    `json:"variant_name"`
-	Status        string    `json:"status"`
-	PlanSlug      string    `json:"plan_slug,omitempty"`
-	TaskID        string    `json:"task_id,omitempty"`
-	TaskDesc      string    `json:"task_desc,omitempty"`
-	StartedAt     time.Time `json:"started_at,omitempty"`
-	LastHeartbeat time.Time `json:"last_heartbeat,omitempty"`
+	RepoPath      string          `json:"repo_path"`
+	PID           int             `json:"pid"`
+	Uptime        time.Duration   `json:"uptime_ns"`
+	ActiveWorkers int             `json:"active_workers"`
+	ReadyTasks    int             `json:"ready_tasks"`
+	ApprovalTasks int             `json:"approval_tasks"`
+	BlockedTasks  int             `json:"blocked_tasks"`
+	RunningTasks  int             `json:"running_tasks"`
+	FailedTasks   int             `json:"failed_tasks"`
+	ActivePlans   int             `json:"active_plans"`
+	Workers       []WorkerSummary `json:"workers,omitempty"`
+	LastEventAt   time.Time       `json:"last_event_at,omitempty"`
+	HeartbeatAge  time.Duration   `json:"heartbeat_age_ns,omitempty"`
 }
 
 // WorkerSummary is the runtime-facing status for one in-flight worker.
 type WorkerSummary struct {
 	PlanID            string `json:"plan_id"`
 	TaskID            string `json:"task_id"`
-	Variant           string `json:"variant"`
 	Provider          string `json:"provider,omitempty"`
 	ProviderSessionID string `json:"provider_session_id,omitempty"`
-	WorktreePath      string `json:"worktree_path,omitempty"`
 }
 
 // EnqueueArgs is the client's payload when pushing work via CmdEnqueue.

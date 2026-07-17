@@ -1,124 +1,104 @@
 ---
 title: Testing
-lastUpdated: 2026-04-15
+lastUpdated: 2026-07-16
 ---
 
 # Testing — radioactive-ralph
 
 ## Strategy
 
-Three layers, each with a distinct purpose:
+| Layer | Scope | Gating |
+|-------|-------|--------|
+| Unit | Package-local logic and schema rules | Always on |
+| E2E Layer 1 (teatest) | The TUI's `tea.Model` driven through `teatest.NewTestModel` with real `tea.KeyMsg` keystrokes against a `FakeDataSource`, asserting on rendered terminal output | CI-feasible, deterministic |
+| E2E Layer 2 (real-binary pty) | A real `--supervisor` process, a real `--init` against a fixture project, a real non-tty client status check, and a real client TUI driven under an actual pty (`creack/pty`) with literal keystroke bytes | CI-feasible, real OS processes |
+| Live/manual | Real provider CLI turns against a hosted model, real launchd/systemd/SCM install | Manual / opt-in workflow_dispatch |
 
-| Layer | Scope | Gating | Count today |
-|-------|-------|--------|-------------|
-| Unit | Package-local logic and schema rules | Always on | Extensive |
-| Integration (offline) | End-to-end CLI and subsystem flows with fake processes and fixtures | Always on | Present in `tests/` and `internal/..._test.go` |
-| Live/manual | Real provider CLI and `gh` behavior against a local operator environment | Manual | Not part of default CI |
+Layer 1 (`internal/tui/e2e_test.go`) proves the model logic renders drill
+navigation correctly without needing a real supervisor. Layer 2
+(`tests/e2e/flow_test.go`, `tests/e2e/pty_driver.go`) proves the whole
+path end-to-end — build the real binary, start a real supervisor, `--init`
+a fixture project, confirm the client sees it, then drive the TUI under a
+real pty exactly as a user's terminal would (arrow keys and Enter as
+literal ANSI byte sequences, not `tea.KeyMsg` values). Both layers are
+CI-feasible because neither needs a live provider CLI or spends money;
+`tests/e2e/live_test.go` is the one true live layer, gated behind
+`RALPH_E2E_LIVE=1`, that dispatches a real orchestrator step against a
+real installed `claude`/`codex`/`opencode` CLI under a small spend cap —
+it skips (not fails) when no supported CLI is on `PATH`.
 
 ## Run the checks
 
 ```bash
+go build ./...
 go test ./...
+go test -race ./...
 golangci-lint run
 govulncheck ./...
 python3 -m tox -e docs
 ```
 
-The docs tox environment handles the Sphinx dependencies and the Go API prebuild in one shot:
-
-```bash
-python3 -m tox -e docs
-```
+The docs tox environment handles the Sphinx dependencies and the Go API
+prebuild in one shot.
 
 ## What CI validates
 
 | Check | Purpose |
 |-------|---------|
-| `go test -race ./...` on Ubuntu and macOS | Native unit and integration coverage with the race detector on the Unix host platforms |
-| `go test ./...` on Windows | Native unit and integration coverage on the supported Windows host platform, paired with Windows-specific CLI and repo-service smoke |
-| CLI smoke on Ubuntu, macOS, and Windows | Verifies the built binary can execute the core help/doctor/service surface on each native runner |
-| Temp-repo smoke on Ubuntu, macOS, and Windows | Verifies repo init, basic plan-surface behavior, and the expected pre-service `status` failure against a fresh repo on each native runner |
-| Live repo-service IPC smoke on Ubuntu, macOS, and Windows | Launches `service start` on the native runner, polls `status` over the real local control plane, and verifies graceful `stop` against the live runtime |
-| Unix service-definition smoke | Verifies `service install`, `service list`, and `service uninstall` against an isolated `HOME` on macOS and Linux without touching the host service manager |
-| `go build ./...` + cross-target test compilation | Compiles the module plus platform-sensitive command/runtime/provider test binaries for Linux, macOS, and Windows on both `amd64` and `arm64` release targets |
+| `go test -race ./...` on Ubuntu and macOS | Unit + E2E Layer 1/2 coverage with the race detector |
+| `go test ./...` on Windows | Native Windows coverage, including Windows-specific pty/named-pipe paths |
+| `go build ./...` + cross-target test compilation | Compiles the module plus platform-sensitive tests for Linux/macOS/Windows, `amd64`/`arm64` |
 | `golangci-lint run` | Lint hygiene |
-| `actionlint` | Validates GitHub Actions workflow syntax, matrix structure, and shell-step wiring |
+| `actionlint` | Validates GitHub Actions workflow syntax |
 | `govulncheck ./...` | Dependency and call-site vulnerability scan |
-| `tox -e docs` | API markdown generation, docs validation, and Sphinx build |
+| `tox -e docs` | API markdown generation, docs validation, Sphinx build |
 
 ## What CI does not prove
 
 CI is intentionally strong on hermetic coverage and weaker on host-manager
-integration. The remaining real-host checks are:
+integration and live provider behavior:
 
-- live launchd install/start/stop behavior on macOS
-- live systemd user-unit install/start/stop behavior on Linux
-- live Windows SCM install/start/stop behavior on native Windows
+- live launchd/systemd-user/Windows SCM install/start/stop on a real host
+- live provider turns against a real hosted model
 
-The repo now includes an opt-in GitHub Actions workflow,
-`.github/workflows/service-managers.yml`, for native launchd, systemd-user, and
-Windows SCM smoke. It is intentionally `workflow_dispatch` only because those
-checks depend on host-manager capabilities that are stronger and noisier than
-the default CI contract.
-
-The repo also includes an opt-in credentialed provider workflow,
-`.github/workflows/provider-live.yml`, that installs the Claude Code and
-Codex CLIs and runs the live provider smoke tests when the corresponding
-repository secrets are present. That workflow expects:
+`.github/workflows/service-managers.yml` covers the first, opt-in via
+`workflow_dispatch` because it needs real host-manager capabilities.
+`.github/workflows/provider-live.yml` covers the second, opt-in and
+credentialed:
 
 - `ANTHROPIC_API_KEY` for Claude live smoke
-- `OPENAI_API_KEY` for Codex live smoke. The workflow uses it to run
-  `codex login --with-api-key` before enabling the Codex test.
+- `OPENAI_API_KEY` for Codex live smoke (the workflow runs
+  `codex login --with-api-key` headlessly before enabling the test)
 
-Gemini was removed as a shipped provider on 2026-06-18 after the Gemini
-CLI's auth endpoint was deprecated, so there is no live Gemini smoke test
-anymore.
-
-The repo still covers the service and IPC contract in hermetic tests by
-validating service-manager command construction, the persisted Windows config
-payload, the `service run-windows` argv construction, the named-pipe endpoint
-derivation, and the CLI's pre-connect heartbeat gate without needing a live
-launchd/systemd/SCM instance.
+`gemini` was removed as a shipped provider on 2026-06-18, so there is no
+live Gemini smoke step.
 
 ## Conventions
 
-- Keep Go files under the repo's 300-line discipline where practical.
-- Mock at the boundary: subprocesses, IPC, filesystem, or external CLIs.
-- Prefer deterministic fixtures for provider CLI behavior via cassette replay or fake binaries.
-- Use package-level tests to enforce variant invariants, schema correctness, and migration behavior.
+- Keep Go files under the repo's ~300-line discipline where practical.
+- Mock at the boundary: subprocesses, IPC, filesystem, external CLIs.
+- Prefer deterministic fixtures for provider CLI behavior via cassette
+  replay ([Cassette VCR](../guides/cassette-vcr.md)) or fake binaries.
+- Use package-level tests for plan-grammar invariants, store schema
+  correctness, and orchestrator verification behavior.
 
-## Coverage target
+## Manual live-provider setup
 
-High confidence over vanity percentages. The important gates are variant-profile invariants, plan-store correctness, and safe runtime behavior.
-
-## Integration test gating
-
-Manual live checks require:
-
-- the shipped provider CLIs on `PATH`, authenticated, for a full
-  release-gate run:
-  - `claude`
-  - `codex`
+- the shipped provider CLIs on `PATH`, authenticated:
+  `claude`, `codex`, `opencode`
 - `gh` CLI on `PATH`, authenticated
-- a disposable repo or sandbox branch
+- a disposable repo or sandbox directory
 
-The live smoke tests are opt-in and gated explicitly:
-
-- `CLAUDE_AUTHENTICATED=1` enables the real Claude session and runner tests
-- `CODEX_AUTHENTICATED=1` enables the real Codex runner test
-
-Claude accepts `ANTHROPIC_API_KEY` in the environment. Current Codex CLI
-releases require a CLI login before `codex exec`; use
-`printenv OPENAI_API_KEY | codex login --with-api-key` for headless API-key
-setup.
-
-Default CI stays hermetic and does not depend on a live provider account.
-Release validation is stricter: the manual provider workflow should pass
-without provider skips for both shipped bindings before a stable tag.
+Set `RALPH_E2E_LIVE=1` to run `tests/e2e/live_test.go` against whichever
+supported CLI is detected on `PATH`. Default CI never depends on a live
+provider account; release validation is stricter and should pass without
+provider skips for the shipped bindings before a stable tag.
 
 ## Current test focus
 
-- `internal/db` migration and spend accounting
-- `internal/variant` safety floors and model/tool invariants
+- `internal/store` schema/migration correctness and spend accounting
+- `internal/plan` grammar validation and heuristic decomposition
+- `internal/orch` dispatch, spend-cap admission, and verification
+- `internal/supervisor` discovery, single-instance, stale-socket reclaim
 - `cmd/radioactive_ralph` command wiring
 - docs generation and Sphinx publication

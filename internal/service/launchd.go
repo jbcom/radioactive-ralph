@@ -2,53 +2,52 @@ package service
 
 import (
 	"fmt"
+	"path"
 	"sort"
 	"strings"
 )
 
-// renderLaunchd returns a fully-formed plist XML for a per-user
-// launchd agent.
-//
-// The agent runs `<ralphBin> service start --foreground --repo-root <repo>`
-// under RepoPath, auto-restarts on crash (KeepAlive=true), logs to
-// ~/Library/Logs/radioactive-ralph/<repo-token>.log, and always sets
+// renderLaunchd returns a fully-formed plist XML for the per-user launchd
+// agent that runs `<ralphBin> --supervisor`, auto-restarts on crash
+// (KeepAlive=true), and logs to
+// <home>/Library/Logs/radioactive-ralph/supervisor.log. It always sets
 // LAUNCHED_BY=launchd so the runtime can detect durable service context.
+//
+// home is the resolved home directory the log path is written under.
+// launchd's StandardOutPath/StandardErrorPath keys take a literal
+// filesystem path — unlike a shell command line, launchd does NOT expand
+// "${HOME}" or "~" in plist string values, so the log path must be
+// resolved to an absolute path before being written into the plist (a
+// literal "${HOME}/..." string previously here silently pointed at a
+// nonexistent directory, which made launchd itself refuse to spawn the
+// job at all — an EX_CONFIG/78 exit with no log ever written, since the
+// job never got far enough to open its own log file). Install creates
+// the log directory before writing this plist so launchd never has to.
 //
 // Intentionally plain-string templated rather than via encoding/xml —
 // plists are finicky about attribute ordering and empty-element shape,
 // and the target format is small and stable.
-func renderLaunchd(opts InstallOptions) string {
-	slug, _ := repoToken(opts.RepoPath)
+func renderLaunchd(opts InstallOptions, home string) string {
 	var sb strings.Builder
 	sb.WriteString(`<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
 `)
-	fmt.Fprintf(&sb, "  <key>Label</key>\n  <string>%s</string>\n",
-		UnitName(BackendLaunchd, opts.RepoPath))
+	fmt.Fprintf(&sb, "  <key>Label</key>\n  <string>%s</string>\n", UnitName(BackendLaunchd))
 	sb.WriteString("  <key>ProgramArguments</key>\n  <array>\n")
 	fmt.Fprintf(&sb, "    <string>%s</string>\n", xmlEscape(opts.RalphBin))
-	sb.WriteString("    <string>service</string>\n")
-	sb.WriteString("    <string>start</string>\n")
-	sb.WriteString("    <string>--foreground</string>\n")
-	sb.WriteString("    <string>--repo-root</string>\n")
-	fmt.Fprintf(&sb, "    <string>%s</string>\n", xmlEscape(opts.RepoPath))
+	sb.WriteString("    <string>--supervisor</string>\n")
 	sb.WriteString("  </array>\n")
-
-	if opts.RepoPath != "" {
-		fmt.Fprintf(&sb, "  <key>WorkingDirectory</key>\n  <string>%s</string>\n",
-			xmlEscape(opts.RepoPath))
-	}
 
 	sb.WriteString("  <key>KeepAlive</key>\n  <true/>\n")
 	sb.WriteString("  <key>RunAtLoad</key>\n  <true/>\n")
 	sb.WriteString("  <key>ProcessType</key>\n  <string>Background</string>\n")
 
-	// Log paths — ~/Library/Logs/radioactive-ralph/<variant>.log
-	logPath := fmt.Sprintf("${HOME}/Library/Logs/radioactive-ralph/%s.log", slug)
-	fmt.Fprintf(&sb, "  <key>StandardOutPath</key>\n  <string>%s</string>\n", logPath)
-	fmt.Fprintf(&sb, "  <key>StandardErrorPath</key>\n  <string>%s</string>\n", logPath)
+	// Log paths — <home>/Library/Logs/radioactive-ralph/supervisor.log.
+	logPath := path.Join(home, "Library", "Logs", "radioactive-ralph", "supervisor.log")
+	fmt.Fprintf(&sb, "  <key>StandardOutPath</key>\n  <string>%s</string>\n", xmlEscape(logPath))
+	fmt.Fprintf(&sb, "  <key>StandardErrorPath</key>\n  <string>%s</string>\n", xmlEscape(logPath))
 
 	// Environment — LAUNCHED_BY=launchd plus any operator-supplied extras.
 	env := make(map[string]string, len(opts.ExtraEnv)+1)

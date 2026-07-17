@@ -1,127 +1,62 @@
 ---
-title: Safety floors & shell trust
-description: Non-negotiable guardrails the runtime enforces, and how to opt into destructive operations.
+title: Safety floors
+description: The non-negotiable guardrails the supervisor enforces on every agent.
 ---
 
-Ralph manages long-running provider sessions that run for hours or days
-without operator attention. **Safety floors** are the set of
-non-negotiable guardrails that keep those sessions from damaging the
-repo, the operator's machine, or the broader state of the world.
-This page documents each floor and the narrow, deliberate ways to
-opt into more aggressive behavior.
+# Safety floors
 
-## The floors
+Ralph runs agent CLIs for hours or days without operator attention. These
+are the non-negotiable guardrails that keep those sessions from blocking
+the system or running away on spend.
 
-### 1. Mirror-based isolation for destructive variants
+## 1. The never-block control invariant
 
-Variants whose profile declares `object_store = full` (in
-`internal/variant`) **must** be spawned inside a worktree backed by a
-`git clone --mirror`, not the operator's repo. This is enforced in
-`internal/workspace` at spawn time; single-flag overrides are
-rejected.
+An agent CLI must never block the system — no permission prompts, no
+clarification waits, no interactive menus. The supervisor owns every
+agent's pty directly (`creack/pty`, `internal/agent`) and runs a watchdog
+per agent that classifies output as normal progress, a stall
+(no-output-for-N), or an interactive prompt pattern. Any of those signals
+triggers auto-resolve, deny, or **kill-and-reclaim** — the supervisor
+never waits.
 
-**Why:** a destructive variant that rebases history or force-pushes
-can corrupt the operator's working copy. Mirror-based isolation
-ensures every destructive op runs against a disposable clone.
+Kill is cheap because state is durable: the plan slice a worker was
+executing lives in the one user-level database, so recovery is replaying
+that slice to a fresh worker process, not resuming a fragile session.
 
-### 2. Confirmation gates on destructive operations
+## 2. Completion is orchestrator-verified
 
-Before certain operations — force-push, `git reset --hard`, deleting
-non-merged branches — the runtime raises a gate that blocks the
-session until the operator confirms. Gates are defined per-variant
-in the variant profile and are surfaced through the operator task
-controls (`plan approvals`, `plan approve`, `plan blocked`,
-`plan requeue`, `plan retry`, `plan handoff`).
+A step is not done because a worker says so, and especially not because
+the worker's process terminated (termination may be a crash, not
+success). A worker submits evidence of completion — what it ran, exit
+codes, output, diff. Only the orchestrator (`internal/orch`) transitions
+a task to `done`, by re-running the step's acceptance check (a command
+that must exit 0, a file that must exist) or, absent a mechanical check,
+requiring non-empty evidence output. This is the correctness backbone:
+nothing downstream depends on a worker's self-assessment.
 
-Gate confirmation differs by execution path:
+## 3. Spend caps
 
-- **Attached (`radioactive_ralph run --variant X`)** — the operator passes
-  the per-invocation flag (`--confirm-burn-budget`, `--confirm-no-mercy`,
-  `--confirm-burn-everything`). The run refuses to start without it.
-- **Durable (`radioactive_ralph service start`)** — the service is
-  non-interactive, so authorization lives in the gitignored `local.toml`:
+Providers can be configured with a spend cap. The orchestrator
+accumulates each provider's reported cost per project
+(`internal/orch/spend.go`) and refuses to dispatch further work on a
+provider once its accumulated spend reaches the cap — other ready steps
+on an uncapped or under-cap provider still dispatch normally. Cost
+metering is populated from provider-reported usage frames where
+available.
 
-  ```toml
-  # .radioactive-ralph/local.toml  (gitignored)
-  confirm_durable_variants = ["savage"]   # savage | old-man | world-breaker
-  ```
+## 4. One user-level database, clean repos
 
-  Authorization lives in `local.toml` and **never** in committed
-  `config.toml` — a pull request must not be able to flip a plan to a
-  destructive variant and have the service run it. The durable scheduler
-  refuses to dispatch a gated variant that is not listed (and a
-  spend-cap-required variant with no cap), emitting a
-  `worker.admission_refused` event with the reason; the task stays pending
-  until the operator authorizes it.
+All plan, project, config, and spend state lives in the one user-level
+SQLite database under the XDG data root. Nothing is committed to a
+repo — no config directory, no per-repo database — so there is nothing
+in version control that can encode or leak execution state, and no
+merge-conflict surface from concurrent runs.
 
-The `ShellExplicitlyTrusted` field on the variant profile is reserved
-for a future "opt-out" path, but the live runtime does not honor it —
-destructive variants are gated exclusively by explicit run-time
-confirmations and spend caps declared either by CLI flag or variant
-config. There is no committed shell-trust block today. When a future
-release wires `ShellExplicitlyTrusted` into the gate logic, both the
-flag and the matching variant profile tag will be required; one-flag
-overrides fail closed.
+## 5. Local-only providers
 
-### 3. Plans-first discipline
-
-Every variant except `fixit` refuses to boot without an active plan.
-This prevents "let me just start working" sessions that drift into
-unscoped churn.
-
-**Opt-out:** run `fixit --advise` to produce a plan first. There is
-no way to run a non-fixit variant without one.
-
-### 4. SSH-only git remotes
-
-Ralph rewrites `https://` git remotes to their `git@` form when
-attaching a worktree, and refuses to operate on a worktree whose
-origin is still HTTPS. Enforced in `internal/workspace`.
-
-**Why:** HTTPS remotes default to prompting for credentials, which
-freezes long-running sessions indefinitely.
-
-### 5. Conventional commits
-
-The runtime's system-prompt bias includes a conventional-commits
-rule. Variants that don't honor it get their commits rejected at
-the commit-message hook level.
-
-### 6. Durable runtime ownership
-
-The durable repo service owns long-running work, worktree state, and provider
-subprocess execution. Attached runs are bounded specifically so the operator is
-not depending on orphaned background state.
-
-**Why:** the runtime should be the only authority over durable execution.
-
-## Spend caps
-
-Variants whose profile declares `RequireSpendCap` (savage, world-breaker)
-must have a cap set — `--spend-cap-usd` on the attached path, or
-`[variants.<name>] spend_cap_usd` in `config.toml` for the durable service.
-The durable runtime accumulates the provider-reported cost per variant and
-stops dispatching that variant once its running total reaches the cap,
-recording `worker.spend` and `worker.spend_cap_exceeded` events. Cost
-metering is populated by the `claude` runner today; other providers require
-a cap value but are not yet cost-metered.
-
-## Confirmation flow
-
-Destructive variants are gated by explicit run-time confirmations
-and, where applicable, spend caps declared either by CLI flag or
-variant config. Operator intervention flows through:
-
-- `radioactive_ralph plan approvals`
-- `radioactive_ralph plan approve <plan> <task>`
-- `radioactive_ralph plan blocked`
-- `radioactive_ralph plan requeue <plan> <task>`
-- `radioactive_ralph plan retry <plan> <task>`
-- `radioactive_ralph plan handoff <plan> <task> <variant>`
-
-## Auditing
-
-Every time a safety floor triggers — whether it passes or blocks —
-the runtime writes an event into the plan DAG's `task_events`
-table. `radioactive_ralph plan history <plan> <task>` surfaces the
-per-task floor events.
+Shipped providers (`claude`, `codex`, `opencode`) each own their own
+agent loop and tool execution locally; calling a hosted model for
+inference is fine, but the CLI itself never delegates session control to
+a cloud-hosted control surface. This keeps the pty-ownership and
+never-block guarantees meaningful — a provider that handed control to a
+remote service couldn't be watched or killed the same way.

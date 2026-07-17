@@ -1,6 +1,6 @@
 ---
 title: Getting started
-lastUpdated: 2026-04-15
+lastUpdated: 2026-07-16
 ---
 
 # Get started
@@ -14,112 +14,95 @@ lastUpdated: 2026-04-15
 | macOS / Linux curl installer | <code>curl -sSL https://jonbogaty.com/radioactive-ralph/install.sh | sh</code> |
 
 The stable install surface is Homebrew, Scoop, and the curl installer.
-Chocolatey is intentionally not advertised for stable releases unless a
-future release explicitly adds that package to the supported install
-surface.
 
-## Initialize a repo
+## The two modes
 
-Run the initializer once at the repo root:
+`radioactive_ralph` is one binary that runs in two modes:
 
-```bash
-radioactive_ralph init
-```
+- **`radioactive_ralph --supervisor`** — the long-lived supervisor. It owns
+  every agent's pty, holds all work open, serves the discovery socket, runs
+  the reaper, and owns the one user-level SQLite database that is durable
+  memory for every project on the machine. Working directory is irrelevant
+  to it.
+- **`radioactive_ralph`** (no flag) — the dumb client. It discovers the
+  running supervisor and renders a read-only TUI. It refuses to run if no
+  supervisor answers.
 
-That creates `.radioactive-ralph/`, writes the repo config files, scaffolds the
-human-readable plans directory, and seeds the default provider binding.
+Start the supervisor once per machine, then run the client from any project
+directory.
 
-## Ask Fixit what should happen first
-
-When you are starting from a plain-English goal, begin with Fixit Ralph:
-
-```bash
-radioactive_ralph run --variant fixit --advise \
-  --topic finish-runtime-pass \
-  --description "finish the runtime pass and queue the next implementation phase"
-```
-
-That writes `.radioactive-ralph/plans/<topic>-advisor.md` and seeds the durable
-SQLite plan DAG for the repo when the slug does not already exist.
-
-## Start the durable repo service
-
-The durable runtime is the normal way to serve all ten variants:
+## Start the supervisor
 
 ```bash
-radioactive_ralph service start
+radioactive_ralph --supervisor
 ```
 
-Useful follow-up commands:
+This blocks in the foreground. For daily use, install it as an OS service
+instead so it survives logout/reboot/crash — see the
+[service runbook](../runbooks/service.md):
 
 ```bash
-radioactive_ralph status
-radioactive_ralph attach
-radioactive_ralph tui
-radioactive_ralph plan approvals
-radioactive_ralph plan blocked
-radioactive_ralph plan requeue <plan> <task>
-radioactive_ralph plan retry <plan> <task>
-radioactive_ralph plan handoff <plan> <task> <variant>
-radioactive_ralph plan fail <plan> <task>
-radioactive_ralph stop
+radioactive_ralph service install
+radioactive_ralph service status
 ```
 
-When the runtime asks for operator approval or hands work back for a
-different variant, use the plan surface directly:
+## Initialize a project
+
+From inside a repo (or any directory), register it with the running
+supervisor:
 
 ```bash
-radioactive_ralph plan approvals
-radioactive_ralph plan tasks <plan>
-radioactive_ralph plan approve <plan> <task>
-radioactive_ralph plan history <plan> <task>
+radioactive_ralph --init
 ```
 
-## Run a bounded variant attached to the terminal
+This identifies the project by accumulated fingerprints (git root-commit +
+remote + absolute path, so identity survives `git init` and directory
+moves) and stores its config in the one user-level database. Nothing is
+written into the repo — no committed config directory, no per-repo
+database.
 
-Some variants are safe to run as a single attached execution:
+Running plain `radioactive_ralph` in a directory the supervisor doesn't
+know about auto-routes to the same initialization, so `--init` is rarely
+needed by hand.
+
+## Import a plan
+
+A plan is plain markdown, decomposed heuristically (heading = group,
+unordered list = parallel steps, ordered = sequential). Import one to
+activate it — the supervisor's periodic dispatch loop then drives its ready
+steps:
 
 ```bash
-radioactive_ralph run --variant blue
-radioactive_ralph run --variant grey
-radioactive_ralph run --variant red
-radioactive_ralph run --variant fixit
-radioactive_ralph run --variant old-man --confirm-no-mercy
+radioactive_ralph plan import plan.md
+radioactive_ralph plan ls          # confirm it is active
 ```
 
-Long-running variants such as green, professor, immortal, savage, and
-world-breaker require the durable repo service.
+A step opts into mechanical, orchestrator-verified completion with an inline
+marker: `` `accept: <shell command>` `` (re-run in the project checkout and
+must exit 0) or `` `accept-file: <path>` `` (must exist). A step without a
+marker is judgment-only. Either way, completion is verified by the runtime,
+never inferred from a worker terminating.
 
-## Core commands
+## Run the client
 
-| Command | What it does |
-|---|---|
-| `radioactive_ralph init` | Set up `.radioactive-ralph/` and provider config |
-| `radioactive_ralph run --variant fixit --advise` | Interpret a free-form goal and seed the durable plan |
-| `radioactive_ralph run --variant <name>` | Run a bounded variant attached to the terminal |
-| `radioactive_ralph service start` | Launch the durable repo runtime |
-| `radioactive_ralph service install` | Register the durable repo runtime with launchd, systemd, or Windows SCM |
-| `radioactive_ralph service status` | Report installed service-unit state for the current platform |
-| `radioactive_ralph service list` | List installed repo service units |
-| `radioactive_ralph service uninstall` | Remove an installed repo service unit |
-| `radioactive_ralph status` | Query the running repo service over the local control plane |
-| `radioactive_ralph attach` | Stream repo service events live |
-| `radioactive_ralph tui` | Open the repo service cockpit |
-| `radioactive_ralph plan ls` | List plans in the durable plan store |
-| `radioactive_ralph plan show <plan>` | Show plan details and task summary |
-| `radioactive_ralph plan tasks <plan>` | List tasks in a plan (filter with `--status <status>`) |
-| `radioactive_ralph plan next <plan>` | Show the next ready task in a plan |
-| `radioactive_ralph plan approvals` | List tasks waiting for operator approval |
-| `radioactive_ralph plan blocked` | List tasks blocked on missing context or operator intervention |
-| `radioactive_ralph plan requeue <plan> <task>` | Return a blocked/failed task to the runnable queue |
-| `radioactive_ralph plan retry <plan> <task>` | Increment retry count and retry a blocked/failed task |
-| `radioactive_ralph plan handoff <plan> <task> <variant>` | Hand a task to a different Ralph persona |
-| `radioactive_ralph plan fail <plan> <task>` | Force-fail a task from the operator surface |
-| `radioactive_ralph plan approve <plan> <task>` | Approve an approval-gated task |
-| `radioactive_ralph plan mark-done <plan> <task>` | Force-complete a task from the operator surface |
-| `radioactive_ralph plan import <file>` | Import a plan+tasks from a JSON file |
-| `radioactive_ralph plan history <plan> <task>` | Inspect task handoff / approval / completion events |
-| `radioactive_ralph stop` | Shut the repo service down gracefully |
+```bash
+radioactive_ralph
+```
+
+In a terminal, this renders the read-only macro/meso/micro TUI showing the
+current project's plan and live agent activity. Piped or non-interactive
+(CI, `go test`), it prints a single status line instead of launching the
+TUI.
+
+## Check your environment
+
+```bash
+radioactive_ralph doctor
+```
+
+Reports whether `git`, a supported provider CLI (`claude`, `codex`,
+`opencode`), and the platform service manager are available. See
+[Provider auth](../runbooks/provider-auth.md) if a provider check fails.
 
 ## Current requirements
 
@@ -127,11 +110,11 @@ world-breaker require the durable repo service.
 - at least one shipped provider CLI installed and authenticated:
   - `claude`
   - `codex`
+  - `opencode`
 - `gh` recommended for GitHub workflows
 
-The runtime ships provider bindings for Claude and Codex today. Repo config
-picks the default provider and can override it per variant. Gemini was
-removed as a shipped provider on 2026-06-18, after the Gemini CLI's auth
-endpoint was deprecated (it now returns HTTP 410 Gone). The declarative
-provider path still lets a repo wire up a self-hosted, gemini-compatible CLI
-via `config.toml` if needed.
+Providers are local-only capability bindings: the CLI owns its own agent
+loop and tool execution locally, even when it calls a hosted model for
+inference. `gemini` was removed as a shipped provider (CLI deprecated
+2026-06-18); `cursor-agent` is excluded because it delegates the session to
+Cursor's cloud.

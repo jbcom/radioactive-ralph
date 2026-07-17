@@ -1,6 +1,6 @@
 ---
 title: STANDARDS.md — radioactive-ralph
-lastUpdated: 2026-04-15
+lastUpdated: 2026-07-16
 ---
 
 # Code Standards — radioactive-ralph
@@ -36,14 +36,21 @@ docs: add architecture diagram
 
 - Never log API keys or tokens
 - Use argument-vector subprocess execution; never shell-inject untrusted strings
-- Repo policy lives in `.radioactive-ralph/config.toml`
-- Operator-local secrets and overrides live in `.radioactive-ralph/local.toml` or the XDG/App Support state root
+- All project/plan/config/spend state lives in the one user-level SQLite
+  database under the XDG/App Support state root — never a committed
+  per-repo config or database
 - Never store runtime state under `.claude/`
 
 ## Product Contract
 
-- `radioactive_ralph service start` is the durable repo runtime
-- `radioactive_ralph run --variant <name>` is attached bounded execution
-- `radioactive_ralph tui` is the socket-backed cockpit
+- `radioactive_ralph --supervisor` is the durable supervisor: it owns
+  every agent's pty, the discovery socket, the reaper, and the one
+  user-level database
+- Plain `radioactive_ralph` is a dumb, read-only client that refuses to
+  run without a live supervisor
+- `radioactive_ralph --init` registers a project by accumulated
+  fingerprints, never by committed repo state
+- `radioactive_ralph service {install,uninstall,status}` manages the
+  supervisor as a per-user OS service
 - Providers are bindings, not the identity of the product
-- Variants are code-defined personas, not external plugin/skill surfaces
+- There are no variants/personas — one mutating Ralph, driven by the plan

@@ -1,85 +1,76 @@
 ---
-title: Plan format (PRQ / PRD)
-description: How repo-visible plan files relate to the live SQLite plan DAG, and what `plan import` accepts today.
+title: Plan format
+description: The markdown grammar plans are decomposed from, and how completion is verified.
 ---
 
-Radioactive Ralph is **plans-first**: every variant except `fixit`
-expects an active plan in the SQLite plan store. The important nuance is
-that the repo-visible markdown files are documentation and operator
-artifacts, while the executable source of truth lives in the state-dir
-database.
+# Plan format
 
-## Two layers of plan state
+Plans are plain markdown, decomposed **heuristically** over the parsed
+document structure (`goldmark`, pure Go) — no LLM involved in
+decomposition, no separate plan-definition language to learn.
 
-### Repo-visible files
+## Grammar
 
-```text
-.radioactive-ralph/
-├── config.toml
-├── local.toml
-└── plans/
-    ├── index.md
-    └── <topic>-advisor.md
+- **A heading of level N is a nesting group.** Its section runs from the
+  heading to the next heading of level ≤ N.
+- **Heading order encodes group dependency.** `# Do first` followed by
+  `# Do next` means the first group's steps complete before the second
+  group starts.
+- **Under a leaf heading** (one with no child subheadings):
+  - an **unordered list** = parallelizable steps
+  - an **ordered list** = sequential steps
+  - a step may carry paragraphs of supporting detail
+- **Don't descend past a heading that has child subheadings** — the
+  subheadings carry the ordering, not a list under the parent.
+- **A bare paragraph with no list is narrative, not a step.** A list under
+  a heading is what makes it a step-group; the validator enforces this
+  disambiguation.
+
+## Example
+
+```markdown
+# Fix the login bug
+
+- Reproduce the failure locally
+- Write a failing test
+- Patch the handler
+
+# Ship it
+
+1. Open a PR
+2. Wait for CI
+3. Merge
 ```
 
-These files are committed and reviewable. They explain intent, operator
-context, and fixit recommendations, but they are not the execution
-engine.
+"Fix the login bug" is a parallel step-group (unordered list); "Ship it"
+is sequential (ordered list) and only starts once every step in "Fix the
+login bug" is done.
 
-### Live DAG store
+## Validation
 
-The runnable plan state lives under the Ralph state root in SQLite
-(`plans.db`). That store tracks plan IDs, tasks, dependencies, claims,
-retries, and lifecycle events.
+`internal/plan.Validate` checks the document against the grammar (sibling
+heading levels, ambiguous sections) and returns structured errors so a
+malformed plan is caught before dispatch, not discovered mid-run.
 
-## What `init` creates
+## From a vague ask to a plan
 
-`radioactive_ralph init` seeds the repo with human-facing scaffolding so
-operators have an explicit place to point Ralph:
+Turning a free-form prompt into a plan document is the one place a human
+ask needs interpretation. Rather than an interactive Q&A flow, a small
+team of agents **juxtapose and challenge** each other's read of the draft
+until it converges on a plan that covers the work end-to-end
+(`internal/genesis`). Headless mode emits the final markdown; the TUI
+renders it for review (scroll, or hand off to `$EDITOR`) before it's
+accepted. You can also skip this and hand-write the plan directly — the
+refined document *is* the plan; there's no separate machine format it
+gets compiled into.
 
-- `.radioactive-ralph/plans/index.md` as a human-facing landing page
-- per-repo config and local override files
+## How the orchestrator uses it
 
-## What fixit writes
-
-`radioactive_ralph run --variant fixit --advise` writes a markdown report to:
-
-```text
-.radioactive-ralph/plans/<topic>-advisor.md
-```
-
-That report is for humans. It records the recommendation, tradeoffs,
-and suggested tasks.
-
-On first creation for a given repo/topic slug, fixit also syncs the
-proposal into the durable SQLite plan DAG. If a plan with the same slug
-already exists for that repo, the markdown report is refreshed and the
-existing DAG plan is left untouched.
-
-## What `plan import` accepts today
-
-Today, `radioactive_ralph plan import` accepts a **JSON file**, not a PRQ
-markdown document:
-
-```bash
-radioactive_ralph plan import ./plan-bootstrap.json
-```
-
-The JSON importer creates a new plan and tasks in the SQLite store.
-That is the current supported machine-ingest path.
-
-## Practical workflow
-
-1. Run `radioactive_ralph init`.
-2. Ask fixit for advice with `radioactive_ralph run --variant fixit --advise ...`.
-3. Review `.radioactive-ralph/plans/<topic>-advisor.md`.
-4. Inspect the durable plan with `radioactive_ralph plan ls` and `radioactive_ralph plan show <slug>`.
-5. If you need to seed executable tasks programmatically, import JSON with `radioactive_ralph plan import`.
-6. Execute or inspect plans with `plan next` and `plan mark-done`.
-
-## Current limitation
-
-Markdown PRQ import is not the live path right now. If you want a
-machine-loaded plan today, use fixit's advisor sync or feed JSON into
-`plan import`; if you want human-readable planning, use the advisor
-markdown reports.
+The orchestrator (`internal/orch`) computes what's ready from the plan's
+AST plus the database's done-state for each step, dispatches ready steps
+to agent workers with plan-scoped context, and **verifies** each
+completion against the step's acceptance criteria (a command that must
+exit 0, a file that must exist, or — absent either — the worker's
+evidence output) before marking it done. A worker's own claim of
+completion, or its process simply terminating, is never sufficient on its
+own.

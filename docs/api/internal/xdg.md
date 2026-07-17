@@ -64,7 +64,7 @@ func StateRoot() (string, error)
 
 StateRoot returns the absolute path to the Ralph state root for this machine and user, respecting overrides. Honors the $RALPH\_STATE\_DIR override for tests.
 
-Exported so packages outside the xdg package can land the plandag SQLite file and other global artifacts under the same root as per\-repo workspaces.
+Exported so packages outside the xdg package can land the one user\-level SQLite database and other global artifacts under a single state root.
 
 <a name="Paths"></a>
 ## type [Paths](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/xdg/xdg.go#L42-L70>)

@@ -1,11 +1,17 @@
-// Command radioactive_ralph is the radioactive-ralph CLI entry point.
+// Command radioactive_ralph is the one binary, two modes described in
+// docs/superpowers/specs/2026-07-16-supervisor-architecture-design.md §4:
 //
-// Ralph is a per-repo runtime binary with multiple built-in
-// personas. The runtime ships provider bindings for claude and codex
-// today, while keeping the product contract provider-oriented
-// rather than provider-branded. See
-// https://github.com/jbcom/radioactive-ralph for the full rationale and
-// architecture plan.
+//   - `radioactive_ralph --supervisor` runs the durable control-plane
+//     process — pty ownership, IPC, the single user-level store, the
+//     reaper. Working directory is irrelevant to it.
+//   - Plain `radioactive_ralph` is a dumb client: it resolves the current
+//     directory's project, finds the running supervisor (or tells the
+//     operator how to start one), and talks to it. "Dumb" means it owns no
+//     ptys and no plan orchestration — not that it never touches the DB: it
+//     does open the shared user-level store to resolve/create the project
+//     row (the store's WAL + _txlock=immediate DSN is built for exactly this
+//     multi-process access). Project resolution may later move behind an IPC
+//     endpoint on the supervisor.
 package main
 
 import (
@@ -15,75 +21,106 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/alecthomas/kong"
+	"github.com/jbcom/radioactive-ralph/internal/vconfig"
+	"github.com/spf13/cobra"
 )
 
-// Version is set by GoReleaser at build time via -ldflags.
+// Version, Commit, and Date are set by GoReleaser at build time via
+// -ldflags.
 var (
 	Version = "dev"
 	Commit  = "none"
 	Date    = "unknown"
 )
 
-// cli is the top-level kong structure. Every subcommand lives in its
-// own file to keep each one focused and under the 300-LOC limit.
-type cli struct {
-	Version kong.VersionFlag `help:"Print version and exit."`
-
-	Init    InitCmd    `cmd:"" help:"Set up a fresh .radioactive-ralph/ tree in the current repo."`
-	Run     RunCmd     `cmd:"" help:"Run one bounded variant attached to the current terminal."`
-	Status  StatusCmd  `cmd:"" help:"Query the repo service over the local control plane."`
-	Attach  AttachCmd  `cmd:"" help:"Stream the repo service event log."`
-	Stop    StopCmd    `cmd:"" help:"Ask the running repo service to shut down gracefully."`
-	Doctor  DoctorCmd  `cmd:"" help:"Run environment health checks."`
-	Service ServiceCmd `cmd:"" help:"Manage OS service units for the durable repo runtime."`
-	TUI     TUICmd     `cmd:"" help:"Open the repo service cockpit."`
-	Plan    PlanCmd    `cmd:"" help:"Query + manage plans in the plan DAG."`
-}
-
 func main() {
-	os.Exit(mainCode())
+	os.Exit(run())
 }
 
-// mainCode runs the CLI and returns the exit code so deferred cleanup
-// (signal context cancel) always runs before process exit.
-func mainCode() int {
-	if handled, err := maybeRunWindowsServiceHost(os.Args); handled {
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "radioactive_ralph: %v\n", err)
-			return 1
-		}
-		return 0
-	}
-
-	var c cli
-	kctx := kong.Parse(&c,
-		kong.Name("radioactive_ralph"),
-		kong.Description("Helpful little repo runtime with built-in Ralph personas."),
-		kong.Vars{"version": fmt.Sprintf("%s (%s, built %s)", Version, Commit, Date)},
-		kong.UsageOnError(),
-	)
-
+// run builds the root command and executes it, returning the process exit
+// code. Extracted from main so signal-context cleanup always runs before
+// the process actually exits.
+func run() int {
 	ctx, cancel := signalContext()
 	defer cancel()
 
-	if err := kctx.Run(&runContext{ctx: ctx}); err != nil {
+	root := newRootCmd(ctx)
+	if err := root.Execute(); err != nil {
 		fmt.Fprintf(os.Stderr, "radioactive_ralph: %v\n", err)
 		return 1
 	}
 	return 0
 }
 
-// runContext is the shared context-carrier passed to every Run method
-// so subcommands can see the same cancellation channel.
-type runContext struct {
-	ctx context.Context
+// rootFlags collects the root-level flags that decide which of the two
+// modes (§4) this invocation runs in.
+type rootFlags struct {
+	supervisor    bool
+	initFlag      bool
+	forceOverride bool
+	logFormat     string
 }
 
-// signalContext returns a context canceled on SIGINT/SIGTERM. Long-
-// running subcommands (Run, Attach, Supervisor) honor it for graceful
-// shutdown; short-lived subcommands (Status, Stop, Doctor) don't care
-// and finish before the signal would fire anyway.
+func newRootCmd(ctx context.Context) *cobra.Command {
+	var flags rootFlags
+
+	root := &cobra.Command{
+		Use:     "radioactive_ralph",
+		Short:   "Repo-scoped runtime for AI-assisted software work",
+		Version: fmt.Sprintf("%s (%s, built %s)", Version, Commit, Date),
+		// SilenceUsage: operational errors (no supervisor running, project
+		// not initialized, etc.) are expected-path outcomes, not usage
+		// mistakes; printing the full usage block on every one is noise.
+		SilenceUsage: true,
+		// SilenceErrors: run() already prints the returned error with the
+		// "radioactive_ralph:" prefix, so letting cobra also print it to
+		// stderr during Execute() would duplicate every error message.
+		SilenceErrors: true,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return dispatchRoot(cmd.Context(), cmd, flags)
+		},
+	}
+	root.SetContext(ctx)
+
+	// The three virtual-config-layer flags (spec §5a) are shared between
+	// supervisor and client invocations; AddFlags registers them as
+	// persistent so every subcommand sees the same three names.
+	vconfig.AddFlags(root)
+
+	root.Flags().BoolVar(&flags.supervisor, "supervisor", false,
+		"run as the durable supervisor process (spec §4); working directory is irrelevant in this mode")
+	root.Flags().BoolVar(&flags.initFlag, "init", false,
+		"initialize (or re-initialize) the current directory as a known project")
+	root.Flags().BoolVar(&flags.forceOverride, "force-override", false,
+		"with --init, allow an incoming --project-config-file to override existing stored project config keys instead of refusing on conflict")
+	root.Flags().StringVar(&flags.logFormat, "log-format", "text",
+		"supervisor log output format: text (human-readable) or json (stream-json shaped, one record per line)")
+
+	root.AddCommand(newDoctorCmd())
+	root.AddCommand(newServiceCmd())
+	root.AddCommand(newPlanCmd())
+
+	return root
+}
+
+// dispatchRoot implements the mode switch described in spec §4: exactly
+// one of --supervisor or the dumb-client path runs per invocation.
+// --init is a client-side action (it always resolves against the current
+// directory), so it composes with the plain-client path rather than being
+// a third mode.
+func dispatchRoot(ctx context.Context, cmd *cobra.Command, flags rootFlags) error {
+	if flags.supervisor {
+		return runSupervisorMode(ctx, flags.logFormat)
+	}
+	if flags.initFlag {
+		return runInitMode(ctx, cmd)
+	}
+	return runClientMode(ctx, cmd)
+}
+
+// signalContext returns a context canceled on SIGINT/SIGTERM so the
+// supervisor's Run loop (the only long-lived path) shuts down cleanly
+// instead of leaving the socket/PID lock behind.
 func signalContext() (context.Context, context.CancelFunc) {
 	ctx, cancel := context.WithCancel(context.Background())
 	sig := make(chan os.Signal, 1)

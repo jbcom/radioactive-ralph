@@ -1,51 +1,44 @@
 ---
-title: TUI cockpit
-description: Socket-backed plan, worker, and queue controls.
+title: TUI
+description: The read-only macro/meso/micro client view.
 ---
 
-# TUI cockpit
+# TUI
 
-`radioactive_ralph tui` opens a socket-backed cockpit for the current repo.
-It attaches to the repo service if one is already running; otherwise it
-starts one for the session unless `--no-autostart` is set.
+Running `radioactive_ralph` in a terminal renders a read-only Bubble Tea
+TUI over the supervisor's live state. Piped or non-interactive invocations
+(CI, `go test`, a redirected stdout) print a single status line instead —
+the TUI never launches without a real terminal to drive it.
 
-## Views
+The TUI is strictly read-only: it calls only read methods on the
+supervisor's IPC client and the shared store (`internal/tui.DataSource`).
+It never dispatches work and never mutates durable state. All mutation —
+what runs next, when a step is verified done — is the orchestrator's job,
+not something a human triggers from the client.
 
-| Tab | Use |
-|-----|-----|
-| `overview` | Service status, queue counts, active workers |
-| `plans` | Active and paused plans, per-plan queue counts, selected plan tasks |
-| `ready` | Runnable tasks, including pending tasks whose dependencies are satisfied |
-| `approvals` | Tasks waiting for operator approval |
-| `blocked` | Tasks blocked on context or operator intervention |
-| `running` | Running tasks and provider/session details |
-| `failed` | Failed tasks ready for retry, requeue, handoff, or terminal failure |
-| `events` | Recent repo-service events |
+## Drill-down levels
 
-## Keys
+| Level | Shows |
+|-------|-------|
+| Macro | The project's plan and its overall group hierarchy |
+| Meso | One plan group drilled in — its steps, or (for a parallel step-group) the squad of workers running it |
+| Micro | One worker — its live pane or log tail |
 
-| Key | Action |
-|-----|--------|
-| `tab`, right arrow | Next tab |
-| `shift+tab`, left arrow | Previous tab |
-| `j` / down, `k` / up | Move selection |
-| `v` | Cycle the variant filter |
-| `p` | Cycle the provider filter |
-| `c` | Clear active filters |
-| `r` | Refresh service status |
-| `s` | Stop the repo service |
-| `S` | Start the repo service |
-| `a` | Approve the selected task on the approvals tab |
-| `R` | Requeue the selected task |
-| `t` | Retry the selected blocked or failed task |
-| `h` | Handoff the selected task; enter `variant[:reason]` |
-| `d` | Mark the selected task done |
-| `f` | Mark the selected task failed |
-| `?` | Toggle the help overlay |
-| `q`, `ctrl+c` | Quit |
+Each level is a view over the same live snapshot the supervisor holds;
+there is no separate client-side state to get out of sync.
+
+## What it reads
+
+- `Status` — supervisor status snapshot (worker counts, task counts,
+  recent heartbeat)
+- `ListPlans` / `PlanProgress` / `ListTasks` — the current project's plan
+  and task state
+- `ListProjectEvents` / `ListTaskEvents` — recent event history
+- `Attach` — the live event stream, so the view updates as work
+  progresses
 
 ## Relationship to the CLI
 
-The TUI uses the same plan DAG and repo service as the CLI. Its operator
-actions correspond to `radioactive_ralph plan approve`, `requeue`,
-`retry`, `handoff`, `mark-done`, and `fail`; it is not a second runtime.
+There is no separate `tui` subcommand and no separate cockpit runtime.
+Plain `radioactive_ralph` *is* the TUI (when run interactively); it is a
+view, not a second control surface.

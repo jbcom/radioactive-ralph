@@ -12,27 +12,42 @@ if [[ ! -x "$bin" ]]; then
   exit 2
 fi
 
+# The rewritten runtime is a single PER-USER supervisor keyed off the XDG
+# state root — there is no per-repo service instance anymore (see
+# internal/service's package doc comment). This smoke installs it as a
+# launchd user agent, starts it via launchctl, confirms the plain client
+# sees a live supervisor, stops it, and confirms the client reports it gone.
 tmpdir="$(mktemp -d /tmp/ralph-launchd-XXXXXX)"
-repo="$tmpdir/repo"
+project="$tmpdir/project"
+home="$tmpdir/home"
 state="$tmpdir/state"
-log="$tmpdir/launchd-smoke.log"
-mkdir -p "$repo" "$state"
+mkdir -p "$project" "$home" "$state"
+
+export HOME="$home"
+export RALPH_STATE_DIR="$state"
 
 cleanup() {
   if [[ -n "${label:-}" ]]; then
     launchctl bootout "gui/$(id -u)/$label" >/dev/null 2>&1 || true
-    launchctl bootout "gui/$(id -u)" "$install_path" >/dev/null 2>&1 || true
   fi
-  if [[ -n "${repo:-}" ]]; then
-    "$bin" service uninstall --repo-root "$repo" >/dev/null 2>&1 || true
-  fi
+  "$bin" service uninstall >/dev/null 2>&1 || true
   rm -rf "$tmpdir"
 }
 trap cleanup EXIT
 
-RALPH_STATE_DIR="$state" "$bin" init --repo-root "$repo" --yes >/dev/null
-install_path="$("$bin" service install --repo-root "$repo" --radioactive_ralph-bin "$bin" --env "RALPH_STATE_DIR=$state" | awk '{print $2}')"
-"$bin" service list | grep -F "$install_path" >/dev/null
+(cd "$project" && "$bin" --init >/dev/null)
+
+install_out="$("$bin" service install --bin "$bin" --env "RALPH_STATE_DIR=$state" --env "HOME=$home")"
+install_path="$(echo "$install_out" | awk '{print $NF}')"
+if [[ ! -f "$install_path" ]]; then
+  echo "expected installed plist at $install_path" >&2
+  echo "$install_out" >&2
+  exit 1
+fi
+"$bin" service status | grep -qi "installed" || {
+  echo "service status did not report installed" >&2
+  exit 1
+}
 
 label="$(basename "$install_path" .plist)"
 domain="gui/$(id -u)"
@@ -42,7 +57,7 @@ launchctl kickstart -k "$domain/$label" >/dev/null 2>&1 || true
 
 ready=0
 for _ in $(seq 1 30); do
-  if RALPH_STATE_DIR="$state" "$bin" status --repo-root "$repo" --json >"$tmpdir/status.json" 2>/dev/null; then
+  if (cd "$project" && "$bin") 2>/dev/null | grep -q "supervisor is up"; then
     ready=1
     break
   fi
@@ -50,26 +65,24 @@ for _ in $(seq 1 30); do
 done
 if [[ "$ready" -ne 1 ]]; then
   launchctl print "$domain/$label" >&2 || true
-  echo "launchd service never became ready" >&2
+  echo "launchd-managed supervisor never became ready" >&2
   exit 1
 fi
 
-"$bin" service status --repo-root "$repo" >/dev/null
-
 launchctl bootout "$domain/$label"
+label=""
 
 stopped=0
 for _ in $(seq 1 30); do
-  if ! RALPH_STATE_DIR="$state" "$bin" status --repo-root "$repo" >/dev/null 2>&1; then
+  if ! (cd "$project" && "$bin") 2>/dev/null | grep -q "supervisor is up"; then
     stopped=1
     break
   fi
   sleep 1
 done
 if [[ "$stopped" -ne 1 ]]; then
-  launchctl print "$domain/$label" >&2 || true
-  echo "launchd service never stopped" >&2
+  echo "launchd-managed supervisor never stopped" >&2
   exit 1
 fi
 
-echo "launchd smoke: ok" | tee "$log"
+echo "launchd smoke: ok"

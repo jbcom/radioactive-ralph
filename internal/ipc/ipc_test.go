@@ -400,7 +400,7 @@ func TestSocketAliveStale(t *testing.T) {
 }
 
 func TestServiceEndpointUnix(t *testing.T) {
-	endpoint, heartbeat := serviceEndpointForGOOS("linux", "/tmp/ralph/sessions")
+	endpoint, heartbeat := serviceEndpointForGOOS("linux", "/tmp", "/tmp/ralph/sessions")
 	if endpoint != "/tmp/ralph/sessions/service.sock" {
 		t.Fatalf("endpoint = %q", endpoint)
 	}
@@ -409,9 +409,46 @@ func TestServiceEndpointUnix(t *testing.T) {
 	}
 }
 
+func TestServiceEndpointUnixLongPathFallsBackToTempDir(t *testing.T) {
+	// A sessionsDir long enough that sessionsDir/service.sock exceeds the
+	// sun_path limit must relocate the socket under tempDir, while the
+	// heartbeat file stays in sessionsDir.
+	sessionsDir := "/var/folders/8j/" + strings.Repeat("deep/", 25) + "sessions"
+	if len("/tmp/ralph/sessions/service.sock") > maxUnixSocketPath {
+		t.Fatalf("test premise wrong: short path already exceeds limit")
+	}
+	endpoint, heartbeat := serviceEndpointForGOOS("linux", "/tmp", sessionsDir)
+	if len(endpoint) > maxUnixSocketPath {
+		t.Fatalf("fallback endpoint %q is still too long (%d bytes)", endpoint, len(endpoint))
+	}
+	// The short-path fallback builds its path with filepath.Join, whose
+	// separator follows the HOST OS, not the goos arg (correct in
+	// production: the fallback only ever fires on POSIX, where host==goos).
+	// So the exact forward-slash shape can only be asserted on a POSIX host;
+	// on a Windows runner filepath.Join yields backslashes. Assert the
+	// token-bearing basename either way (separator-independent), and the
+	// full slash shape only on POSIX.
+	if !strings.Contains(endpoint, "rralph-") || !strings.HasSuffix(endpoint, ".sock") {
+		t.Fatalf("endpoint = %q, want a rralph-<token>.sock basename", endpoint)
+	}
+	if runtime.GOOS != "windows" {
+		if !strings.HasPrefix(endpoint, "/tmp/rralph-") {
+			t.Fatalf("endpoint = %q, want /tmp/rralph-<token>.sock", endpoint)
+		}
+	}
+	if heartbeat != sessionsDir+"/service.sock.alive" {
+		t.Fatalf("heartbeat = %q, want it colocated with sessionsDir", heartbeat)
+	}
+	// Determinism: same sessionsDir → same socket, so client and supervisor agree.
+	endpoint2, _ := serviceEndpointForGOOS("linux", "/tmp", sessionsDir)
+	if endpoint != endpoint2 {
+		t.Fatalf("non-deterministic fallback: %q != %q", endpoint, endpoint2)
+	}
+}
+
 func TestServiceEndpointWindows(t *testing.T) {
 	sessionsDir := `C:\Users\me\AppData\Local\radioactive-ralph\sessions`
-	endpoint, heartbeat := serviceEndpointForGOOS("windows", sessionsDir)
+	endpoint, heartbeat := serviceEndpointForGOOS("windows", `C:\Windows\Temp`, sessionsDir)
 	sum := sha256.Sum256([]byte(sessionsDir))
 	token := hex.EncodeToString(sum[:])[:12]
 	wantEndpoint := `\\.\pipe\radioactive_ralph-` + token + `-service`
