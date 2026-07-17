@@ -115,7 +115,19 @@ func superviseAgent(ctx context.Context, a *agent.Agent, cfg agent.WatchdogConfi
 	// defaults would re-introduce the false-kill-on-JSON-content bug for
 	// stream-json providers.
 
-	sigs := agent.Watch(ctx, a, cfg)
+	// Run Watch under a child context we cancel on EVERY return. When we return
+	// via the onLine-done path (or a kill), we stop reading sigs — but the Watch
+	// goroutine keeps emitting (remaining buffered pane lines + the terminal
+	// Exited signal) into a 16-buffered channel nobody drains, and blocks on its
+	// emit once that buffer fills. agent.Watch's emit selects on ctx.Done(), so
+	// cancelling this child unblocks and reaps that goroutine (and the pty fd it
+	// keeps referenced) immediately — instead of leaking it until the CALLER's
+	// ctx cancels, which for a long-lived caller (e.g. the genesis refine loop
+	// reusing one ctx across many rounds) is an unbounded per-turn leak.
+	watchCtx, cancelWatch := context.WithCancel(ctx)
+	defer cancelWatch()
+
+	sigs := agent.Watch(watchCtx, a, cfg)
 	for {
 		select {
 		case sig, ok := <-sigs:
