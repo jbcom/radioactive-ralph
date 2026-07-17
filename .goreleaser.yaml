@@ -51,6 +51,32 @@ archives:
       - README.md
       - CHANGELOG.md
 
+# Native Linux packages (.deb / .rpm) for the CLI. CGO-off like the archives,
+# so they build in the same ubuntu goreleaser run and are cosign-signed via the
+# checksums entry below. The GUI app is packaged separately per-OS (fyne
+# package) — see the packaging design spec.
+nfpms:
+  - id: radioactive_ralph
+    ids: [radioactive_ralph]
+    package_name: radioactive-ralph
+    vendor: Jon Bogaty
+    homepage: https://github.com/jbcom/radioactive-ralph
+    maintainer: jbcom-bot <noreply@jonbogaty.com>
+    description: Supervised-execution runtime for local AI-agent CLIs
+    license: MIT
+    formats:
+      - deb
+      - rpm
+    bindir: /usr/bin
+    # Only the CLI binary is packaged; the per-user supervisor registers itself
+    # with the OS service manager via `radioactive_ralph service install`, so
+    # there is no system-wide unit file to ship here.
+    contents:
+      - src: LICENSE
+        dst: /usr/share/doc/radioactive-ralph/LICENSE
+      - src: README.md
+        dst: /usr/share/doc/radioactive-ralph/README.md
+
 checksum:
   name_template: "checksums.txt"
   algorithm: sha256
@@ -81,11 +107,17 @@ changelog:
       - Merge pull request
       - Merge branch
 
-# Single cross-packager repo at jbcom/pkgs holds Formula/, bucket/,
-# choco/, nix/, etc. Users tap with
-# `brew tap jbcom/pkgs https://github.com/jbcom/pkgs` (the explicit URL
-# form is required because the repo isn't named homebrew-pkgs).
-brews:
+# Single cross-packager repo at jbcom/pkgs holds Casks/, bucket/, choco/, nix/,
+# etc. Users tap with
+# `brew tap jbcom/pkgs https://github.com/jbcom/pkgs` (the explicit URL form is
+# required because the repo isn't named homebrew-pkgs).
+#
+# goreleaser v2.17 removed the `brews` (formula) generator in favour of
+# `homebrew_casks`. Modern Homebrew casks carry CLI binaries via the `binary`
+# stanza, so the CLI ships as a cask (`brew install --cask radioactive-ralph`)
+# — the same install namespace as the GUI cask published from the release
+# workflow, just a different artifact.
+homebrew_casks:
   - name: radioactive-ralph
     ids: [default]
     repository:
@@ -93,27 +125,23 @@ brews:
       name: pkgs
       branch: "chore/update-radioactive-ralph-{{ .Version }}"
       token: "{{ .Env.JBCOM_PKGS_GITHUB_TOKEN }}"
-      # jbcom/pkgs main is governed by the enterprise Main ruleset
-      # which requires pull_request for all pushes. GoReleaser opens a
-      # PR from the version-named branch; jbcom/pkgs' automerge
-      # workflow takes it from there.
+      # jbcom/pkgs main is governed by the enterprise Main ruleset which requires
+      # pull_request for all pushes. GoReleaser opens a PR from the version-named
+      # branch; jbcom/pkgs' automerge workflow takes it from there.
       pull_request:
         enabled: true
         base:
           owner: jbcom
           name: pkgs
           branch: main
-    directory: Formula
+    directory: Casks
     homepage: https://github.com/jbcom/radioactive-ralph
     description: Supervised-execution runtime for local AI-agent CLIs
-    license: MIT
+    binaries:
+      - radioactive_ralph
     commit_author:
       name: jbcom-bot
       email: noreply@jonbogaty.com
-    test: |
-      system "#{bin}/radioactive_ralph", "--version"
-    install: |
-      bin.install "radioactive_ralph"
     caveats: |
       Next step — start the supervisor, then register a project:
 
@@ -124,9 +152,6 @@ brews:
       read-only TUI once the supervisor is running. Full docs:
 
         https://jonbogaty.com/radioactive-ralph/getting-started/
-    # Homebrew service blocks are intentionally omitted. `service install`
-    # registers the per-user supervisor with the native OS service manager
-    # itself; there is no per-repo service to declare here.
 
 scoops:
   - name: radioactive-ralph
@@ -151,6 +176,39 @@ scoops:
       - "Write-Host '  radioactive_ralph service install'"
       - "Write-Host '  radioactive_ralph --init'"
       - "Write-Host 'See https://jonbogaty.com/radioactive-ralph/getting-started/ for the full setup flow.'"
+
+# winget manifests (Windows Package Manager). Staged into jbcom/pkgs under
+# winget/ via PR, the same publish flow brews/scoops use; from there the
+# manifest is submitted to microsoft/winget-pkgs. The published CLI archive is
+# CGO-off and unsigned — winget does not require Authenticode for a zip-delivered
+# tool, so this is credential-free (Scope A of the packaging spec).
+winget:
+  - name: radioactive-ralph
+    ids: [default]
+    publisher: jbcom
+    publisher_url: https://github.com/jbcom
+    package_identifier: jbcom.radioactive-ralph
+    homepage: https://github.com/jbcom/radioactive-ralph
+    short_description: Supervised-execution runtime for local AI-agent CLIs
+    description: |
+      radioactive-ralph is a supervised-execution runtime for local AI-agent
+      CLIs: Claude, Codex, and OpenCode run non-interactively under Ralph's own
+      pty and can never block the system.
+    license: MIT
+    license_url: https://github.com/jbcom/radioactive-ralph/blob/main/LICENSE
+    release_notes_url: https://github.com/jbcom/radioactive-ralph/releases/tag/v{{ .Version }}
+    repository:
+      owner: jbcom
+      name: pkgs
+      branch: "chore/update-radioactive-ralph-winget-{{ .Version }}"
+      token: "{{ .Env.JBCOM_PKGS_GITHUB_TOKEN }}"
+      pull_request:
+        enabled: true
+        base:
+          owner: jbcom
+          name: pkgs
+          branch: main
+    path: winget
 
 # Chocolatey publishing is split into .goreleaser.chocolatey.yaml and
 # runs from a windows-latest job in release.yml, since `choco.exe`

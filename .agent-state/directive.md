@@ -1,6 +1,53 @@
 # radioactive-ralph — supervisor-architecture rewrite directive
 
-**Status:** ACTIVE — rewrite merged (v0.10.0), but NOT done. "Done" = every gap we identified + everything comprehensive-review / UI-review / security / simplification / bug-hunt digging surfaces is resolved. Now driving a full multi-lens audit of merged main and fixing everything real it finds, then the desktop-app + onboarding effort.
+**Status:** ACTIVE — never flips to RELEASED without an explicit manual "end the
+session" from the user (directive 2026-07-17). The loop below keeps generating
+work; the queue never legitimately drains.
+
+## Directive 0 — the perpetual-shipping loop (ALWAYS ACTIVE, never checked off)
+
+Standing mandate (user, 2026-07-17): "block on nothing. I want YOU making all
+calls and working autonomously... always forward exploring with different review
+skills and finding new polish and features that make this a better product until
+I manually end the session. Until then keep mutating your loop and scheduled
+reminder and directives so you're always shipping new PRs."
+
+**This item is NEVER done and NEVER `[x]`.** It is the engine that keeps the
+queue non-empty. Each pass:
+
+1. **Ship the current concrete item** (the checklist below) to a merged PR —
+   build → self-review trio (code/security/simplify) → PR → babysit CI + bots →
+   squash-merge. Full autonomy: open PRs, resolve threads, and self-merge green
+   PRs without asking. Design/architecture/packaging/naming calls are MINE; an
+   AskUserQuestion for an impl/design detail under this mandate is a defect.
+2. **When the concrete checklist is empty, GENERATE the next item** by
+   forward-exploring — rotate through these lenses and append what they find as
+   fresh `[ ]` items under "Rolling improvement queue":
+   - comprehensive-review / feature-dev:code-reviewer on the newest merged code
+   - security-scanning:security-sast on any new surface
+   - code-simplifier on the largest / newest files
+   - UI/UX pass on the TUI + GUI (run them, screenshot, compare to intent)
+   - a NEW feature or polish that makes Ralph a better product (GUI richness,
+     provider coverage, observability, DX, docs, perf)
+   - dependency freshness + CVE sweep
+3. **Compress finished work.** When a phase/effort fully lands, move its detail
+   OUT of this file into the pillar doc `docs/superpowers/PILLARS.md` (one
+   tight paragraph per shipped effort with the merge SHA + PR#), and leave only a
+   one-line pointer here. Keeps the directive short and scannable.
+4. **Keep the loop alive.** Re-arm ScheduleWakeup every tick; mutate cadence and
+   the concrete queue as the work demands. Only a true blocker (interactive
+   credential entry, a spend needing payment auth, physical hardware, or
+   remote-state-I-already-triggered) is a legitimate `[WAIT-*]` yield — and even
+   those route to OTHER queued work rather than halting. The user's SignPath
+   enrollment is optional and NOT a blocker: everything ships unsigned-but-
+   working without it.
+
+Only the user typing an explicit end ("end the session", "stop the loop", "we're
+done") flips Status→RELEASED and stops directive 0. Nothing else does.
+
+---
+
+**Original rewrite status (historical):** rewrite merged (v0.10.0). "Done" = every gap we identified + everything comprehensive-review / UI-review / security / simplification / bug-hunt digging surfaces is resolved. Drove a full multi-lens audit of merged main, then the desktop-app + onboarding effort.
 
 Orchestrator: this agent. Executors: chosen per-task (haiku=mechanical,
 sonnet=standard impl, opus/fable=hard reasoning) via Workflow fan-outs.
@@ -9,107 +56,28 @@ compiles + passes its own tests). One large branch; final PR(s) at the end.
 Full decision trail: .agent-state/decisions.ndjson. Spec:
 docs/superpowers/specs/2026-07-16-supervisor-architecture-design.md.
 
-## Phase 1 — Foundation: pty-owned agent + never-block watchdog
-- [x] internal/agent/agent.go: pty-owned Agent (Start/Output/Kill/Wait/PID/Done) + tests — DONE (creack/pty direct dep)
-- [x] internal/agent/watchdog.go: never-block Watchdog (Progress/Stall/Prompt/Exited) + tests — DONE
-- [x] Phase 1 checkpoint: build/test/-race/golangci-lint/gofmt green; control invariant demonstrable — DONE
+## Shipped (compressed → docs/superpowers/PILLARS.md)
 
-## Phase 2 — User store (single XDG SQLite DB)
-- [x] internal/store Go layer — DONE (28 tests, green)
-- [x] project fingerprint — DONE (28 tests, green)
-- [x] project_config/spend — DONE (28 tests, green)
-- [x] in-store reaper — DONE (28 tests, green)
-- [x] backup routine — DONE (28 tests, green)
+- Supervisor-architecture rewrite (v0.10.0) — PRs #73/#74/#75.
+- Post-release multi-lens audit (→ v0.10.3, converged) — PRs #76/#79/#81/#83.
+- Guided first-run onboarding — PR #85 (80daad9).
+- Versioned IPC drive+observe API — PR #87 (2f20adf).
+- Fyne desktop GUI client — PR #89 (e969551).
 
-## Phase 3 — Config resolution (cobra/viper)
-- [x] internal/vconfig — DONE (16 tests, green)
-- [x] vconfig two virtual — DONE (16 tests, green)
-- [x] vconfig change — DONE (16 tests, green)
-- [x] vconfig conflict — DONE (16 tests, green)
-- [x] Phase 3 checkpoint — DONE (16 tests, green)
+Detail lives in PILLARS.md; consult .agent-state/decisions.ndjson for the why
+behind any load-bearing call.
 
-## Phase 4 — Supervisor + discovery (cobra CLI, kong removed)
-- [x] internal/supervisor lifecycle — DONE (9 tests; old model torn out; whole repo green)
-- [x] supervisor discovery — DONE (9 tests; old model torn out; whole repo green)
-- [x] dumb client — DONE (9 tests; old model torn out; whole repo green)
-- [x] Phase 4 checkpoint — DONE (9 tests; old model torn out; whole repo green)
+## Concrete queue (current)
 
-## Phase 5 — Providers + detection (capability records, no personas)
-- [x] rework internal/provider — DONE (green; agy=not-local, deferred codex rework noted)
-- [x] provider capability record — DONE (green; agy=not-local, deferred codex rework noted)
-- [x] internal/agentdetect — DONE (green; agy=not-local, deferred codex rework noted)
-- [x] agy spike — DONE (green; agy=not-local, deferred codex rework noted)
-- [x] Phase 5 checkpoint — DONE (green; agy=not-local, deferred codex rework noted)
+- [ ] [WAIT-REVIEW] Native installers & GUI packaging — PR #92 open (feat/native-packaging). goreleaser nfpms (.deb/.rpm) + winget + homebrew_casks (brews→casks migration for goreleaser v2.17); GUI-bundle release matrix (fyne package --tags gui per-OS → macOS .app+ad-hoc-codesign+.dmg+cask PR, Linux AppImage+.desktop, Windows .exe); FyneApp.toml + 512² icon; install.sh dead-model fix; packaging-lint CI job (goreleaser check + shellcheck + desktop-file-validate). macOS path proven locally on darwin; two AppImage runtime bugs + the v2.17 cask deprecation caught by review/CI and fixed. Spec: docs/superpowers/specs/2026-07-17-native-packaging-design.md. Blocked only on CI green → self squash-merge.
 
-## Phase 6 — Plan engine + orchestration (variants deleted)
-- [x] internal/plan: goldmark heuristic decomposition + validator — DONE (25 tests, green)
-- [x] internal/orch: dispatch — DONE (21 tests; verified-completion proven; no grpc)
-- [x] internal/orch lifecycle — DONE (21 tests; verified-completion proven; no grpc)
-- [x] internal/a2a: adopt — DONE (21 tests; verified-completion proven; no grpc)
-- [x] internal/variant deleted (Phase 4) — VERIFIED gone
-- [x] Phase 6 checkpoint — DONE (21 tests; verified-completion proven; no grpc)
+## Rolling improvement queue (directive 0 appends here)
 
-## Phase 6c — Close tech debt NOW (no deferral — hidden gaps are bad practice)
-
-- [x] Wire agent.Watch END-TO-END — DONE (tested; invariant enforced; no inert scaffolding)
-- [x] Implement NativeFanout — DONE (tested; invariant enforced; no inert scaffolding)
-- [x] Rework codex runner — DONE (tested; invariant enforced; no inert scaffolding)
-- [x] Wire vconfig.DiffConflicts — DONE (tested; invariant enforced; no inert scaffolding)
-- [x] Wire supervisor HandleEnqueue — DONE (tested; invariant enforced; no inert scaffolding)
-- [x] Phase 6c checkpoint — DONE (tested; invariant enforced; no inert scaffolding)
-
-## Phase 7 — TUI + planning genesis
-- [x] internal/tui: read-only — DONE (23 tests; verified by running the real binary)
-- [x] internal/genesis: agent-juxtaposition — DONE (23 tests; verified by running the real binary)
-- [x] Phase 7 checkpoint — DONE (23 tests; verified by running the real binary)
-
-## Phase 8 — E2E + teardown + CI
-- [x] tests/e2e fixtures + CI-feasible + live paths — DONE (Phase 8)
-- [x] DELETE dead old-model — DONE (Phase 8 complete; 3x-reliable E2E; go1.26.4; service+rlog wired)
-- [x] docs sweep — DONE (Phase 8 complete; 3x-reliable E2E; go1.26.4; service+rlog wired)
-- [x] real-agent E2E — DONE (Phase 8 complete; 3x-reliable E2E; go1.26.4; service+rlog wired)
-- [x] final: — DONE (Phase 8 complete; 3x-reliable E2E; go1.26.4; service+rlog wired)
-
-## Phase 9 — Docs TOTAL realignment (the whole docs/ tree describes the dead model)
-
-- [x] DELETE docs/variants/ (11 files) — DONE
-- [x] DELETE the committed .radioactive-ralph/ dir — DONE
-- [x] Rewrite README.md + AGENTS.md + CLAUDE.md — DONE (all three realigned to the supervisor architecture)
-- [x] Rewrite docs/getting-started + docs/guides + docs/design + docs/reference to the new model (supervisor/discovery, config virtual-layers, plan engine, orchestrator-verified completion, A2A vocabulary)
-- [x] Rewrite docs/runbooks (fix the socket-path drift + fabricated RequireOperatorApproval field flagged in review; supervisor install/attach)
-- [x] Regenerate docs/api/ via gomarkdoc against the NEW packages (agent/store/vconfig/supervisor/provider/agentdetect/plan/orch/a2a)
-- [x] Realign the SITE landing (site/ Astro: RalphHero.astro + any component referencing variants/personas/durable-service) to the supervisor model
-- [x] Update Sphinx config/nav (docs/conf.py, docs/index.md toctree, docs/_static) so the PUBLISHED site (jonbogaty.com/radioactive-ralph via cd.yml) reflects the new architecture; verify the site build (site/ pnpm build) + Sphinx build both clean
-- [x] Remove AI-design-trope / extraneous docs (adjective soup, over-explained obvious, marketing filler); every doc matches code
-- [x] tox -e docs builds clean; no residual mention of variant/kong/plandag/per-repo-config/durable-daemon
-
-- [x] Babysit PR #73 to green squash-merge — DONE. Root-caused + fixed all CI portability failures (macOS sun_path socket-path fallback; Windows pty boundary; three Windows CI-workflow-script bugs: `$home` reserved var, PID-lock share-mode + shutdown-timeout flake, empty-ArgumentList binding) and all 6 CodeRabbit P1 gaps (plan import/ls CLI, tick-driven dispatch, project-checkout worker cwd, real `accept:` acceptance, config-backed binding resolver, cobra SilenceErrors). Also renamed the stuttering `--radioactive_ralph-bin` flag to `--bin`. All threads resolved; squash-merged as 00c788d.
-
-- [x] Babysit PR #75 (post-merge API-doc regen + RELEASED flip) — DONE, squash-merged (a3532c2). release-please auto-cut v0.10.0 (#74).
-
-## Full multi-lens audit of merged main (the real "done" bar)
-- [x] post-release-audit workflow — DONE (55 agents, 7 lenses, adversarially verified): 29 confirmed findings (3 high, 13 medium, 13 low). Saved to scratchpad/audit-findings.json. Fixing all on branch chore/post-release-audit.
-  - [x] Fix 3 HIGH — DONE (394a55a): MarkFailed owner guard + ErrTaskNotOwnedRunning; acceptLoop log-and-continue on transient errors; CreateTask ErrDuplicateTask sentinel so real insert failures surface. Regression tests each.
-  - [x] Fix 13 MEDIUM — DONE (cccca9d + 775c94d + 4376a2a): ipc read-deadline + Attach ctx-cancel; agent back-pressure blocking-send; heartbeat-interval single-source; opencode doctor check; abs_path clock-driven ordering (fixed a real latent bug — added_at wasn't clock-driven); plan-import honesty; TUI empty-state; 4 docs-accuracy fixes; plan-CLI + Acquire-live-but-unresponsive coverage.
-  - [x] Fix 13 LOW — DONE (775c94d + 1305f3c): fanout task release on mid-loop error; per-uid socket-dir perms; dead resolveModel branch; recorder mutex snapshot; retry-exhaustion coverage; doctor `run`→`service install` tagline; no-supervisor hint→service install; TUI status colors + newline polish.
-  - [x] Full gate green (build/vet/test/-race/lint 0 issues) + real binary verified end-to-end.
-  - [x] Babysit PR #76 (29 audit fixes) — DONE, squash-merged (e8268db). CodeRabbit's second-scrutiny found 6 real issues in the fixes themselves (incomplete agent-leak guard, cancel-without-deadline hang, INSERT-OR-IGNORE not refreshing added_at on move-back, retry-budget penalty for system aborts, socket-dir pre-creation attack) — all fixed + threads resolved. Then a real regression my socket-hardening introduced (over-strict dir check rejected 0755 CI tempdirs) — rescoped to Ralph's own rralph-<uid> leaf only, pinned with tests.
-  - [x] Second-pass audit (workflow w6ctqzxux) — DONE: 14 confirmed of 15 raw (3 high, 6 medium, 5 low), several introduced BY the earlier fixes + one serious pre-existing bug (pty-echo watchdog false-kill) the first pass missed. All 14 fixed with regression tests on chore/audit-second-pass. Highs: MarkDone/MarkBlocked owner-guard symmetry; pty DisableEcho.
-  - [x] Babysit PR #79 (14 second-pass fixes) — DONE, squash-merged (f8b3de2). Caught + fixed my own linux termios mistake (TIOCGETA is BSD-only; split echo_linux.go/echo_bsd.go) + CodeRabbit's runCtx-scope medium. release-please cut v0.10.1 (#78).
-  - [x] Third convergence pass (wraefo5gr) — DONE, did NOT converge: 5 confirmed (3 high, 1 med, 1 low), incl 2 introduced by MY second-pass fixes (chmod TOCTOU giving a victim-privileged chmod primitive; watchdog false-killing claude's own stream-json output) + TUI attach leak, cassette-discard, echo-zombie. All fixed with regression tests on chore/audit-third-pass.
-  - [x] Babysit PR #81 (5 third-pass fixes) — DONE, squash-merged (a75abd3). CodeRabbit found 4 more real edge cases in the fixes (TUI epoch race on frame + on end-msg; over-broad StreamJSON watchdog losing raw-prompt detection; cassette replay fidelity) — all fixed. release-please cut v0.10.2 (#80).
-  - [x] Fourth convergence pass (wnz3jqpdy) — CONVERGED: 1 confirmed of 3 raw, verifier-downgraded to LOW + confirmed unreachable (cassette Recorder.Close didn't join the pump goroutines before snapshotting — test-only today). Fixed idiomatically (8e75d76). Trend 29→14→5→1(low,latent) → no high/medium/reachable defects remain. **AUDIT CONVERGED.**
-  - [x] Babysit PR #83 (convergence fix) — DONE, squash-merged (eedb6d3). CodeRabbit's review of the pump-join fix caught 2 real deadlock edges (nil Process / inherited fd) + 2 WaitGroup.Go false positives (valid on Go 1.26) — all handled. release-please cut v0.10.3 (#82). **POST-RELEASE AUDIT FULLY CLOSED.**
-
-## ACTIVE — desktop app + onboarding (audit converged)
-The supervisor is a headless core; the TUI is a dumb client on its socket. A GUI is just another client on the same socket — no rearchitecture. User direction (2026-07-17): build a Go-native GUI (Fyne), CONSISTENT not native — one visual identity across terminal and desktop, feels like OUR app either way; ship a real desktop application (.app in /Applications, installer into Program Files, .desktop/AppImage on Linux), because for watching/controlling agents a GUI is the better primary surface for humans. Open-source ≠ limits.
-- [x] Guided first-run onboarding — DONE (internal/onboard wizard + client.go wiring + unit tests + pty E2E). Interactive path verified end-to-end under a real pty. See PR. Original text: when a user runs `radioactive_ralph` cold (no service installed, no supervisor, no user DB), a TTY-gated wizard OFFERS to set it all up in one guided step — `service install` (creates XDG state root + the one user-level SQLite DB + native launchd/systemd/SCM unit and starts it), then `--init` the current project, then the TUI. Constraints: never prompt on non-TTY/CI (keep the current "print exact commands, exit nonzero" path — tests assert it); show exactly what will be created + get consent before installing a background service (outward-facing action); offer a foreground `--supervisor` fallback when service install isn't permitted; fully idempotent. Seam already flagged in cmd/radioactive_ralph/init_cmd.go ("interactive wizard is a later phase"). Spec first (docs/superpowers/specs/), then build.
-- [ ] [WAIT-REVIEW] Harden the IPC into a versioned local DRIVE+observe API — BUILT + PR #87 open (feat/ipc-drive-api). Protocol v2 (ProtoVersion + Response.Code), optional DriveHandler (plan-import/plan-set-status/task-approve/worker-kill), typed client methods + CodedError/IsCode, store ApproveTask/ReclaimWorker, plan.Title/Slug moved server-side, plan-import routes through supervisor. Second-scrutiny review (gemini/codex/Amazon-Q) fixes all landed w/ regression tests: pause-actually-pauses (dispatch filters to active only), worker-kill cancels the live provider process (orch cancellation registry + KillWorker), ReclaimWorker requeues ALL a worker's tasks by claimed_by_worker_id without stomping a reassigned one or penalizing reclaim_count, proto-version guard before dispatch, atomic ApproveTask, arg validation, typed ErrPlanNotFound. Full gate green; 0 unresolved threads. Blocked only on CI green → self squash-merge.
-- [ ] [WAIT-REVIEW] Fyne GUI client — BUILT + PR #89 open (feat/fyne-gui). Pre-push review (3 bots + self) absorbed: dead kill affordance fixed (store.ListRunningWorkers + WorkerID on WorkerSummary + HandleStatus populates Workers with the row id kill keys on), all IPC moved off the Fyne main thread (gather→snapshot→render, mutex-guarded selection, -race clean), dead loop-captures removed. New `gui` CI job (ubuntu+macos, CGO on, GL headers) runs the tagged tests headlessly. Blocked only on CI green → self squash-merge. Original detail: internal/gui: Controller read+drive seam (reads mirror tui.DataSource, drive maps to v2 ipc), liveController (store reads + fresh ipc.Client per call), ralphTheme + shared internal/statusbucket palette (TUI refactored to consume it — one source, anti-drift test), macro→meso→micro views with approve/pause/resume/abandon/kill/import affordances, system-tray entry. `gui` cobra subcommand (tagged real + !gui stub). All Fyne behind //go:build gui; default CGO-off build (incl. linux+windows cross) excludes it; dedicated CGO-on GL-headers CI `gui` job (ubuntu+macos) added. Tests: headless view/interaction (drive calls asserted), launch smoke, untagged liveController real-supervisor round-trip. Full gate green tagged + untagged (build/vet/test/-race/lint 0). TODO: open PR + babysit.
-- [ ] [WAIT-REVIEW] Real native installers/packaging — sequenced AFTER #89 merges (the GUI packaging builds on the `gui` build tag + CI landing on main). Existing baseline already on main: .goreleaser.yaml (CGO-off CLI, 6 platforms, cosign-signed checksums, Homebrew/Scoop brews+scoops via jbcom/pkgs), .goreleaser.chocolatey.yaml, site/public/install.sh, release.yml/cd.yml. TODO on a fresh packaging branch once #89 is in: (1) CLI-level — goreleaser nfpms (.deb/.rpm) + winget manifest + audit install.sh against the cosign sigs; (2) GUI-level (harder, CGO+GL per platform, -tags gui) — signed+notarized .app/.dmg, MSI/MSIX, AppImage + .desktop. Design the GUI-app packaging (fyne package / fyne-cross vs goreleaser CGO builds) before implementing.
+_(empty — next tick's forward-exploration pass fills this once #92 merges: pick a
+review lens or a polish/feature and append concrete `[ ]` items.)_
 
 ## Notes
-- PR #73 review-absorption (commit 84161bb + a8102be): fixed the CI portability failures at the root (ipc.ServiceEndpoint short-path socket fallback for the macOS sun_path 104-byte limit; agent.ErrPTYUnsupported + WSL boundary on Windows; launchd/reclaim tests made host-portable) AND all 6 CodeRabbit P1 gaps (plan import/ls CLI, tick-driven dispatch, worker/acceptance run in the project checkout via store.ProjectAbsPath, real acceptance derived from `accept:`/`accept-file:` plan markers, config-backed binding resolver, cobra SilenceErrors). All 6 review threads resolved. Docs updated (README/AGENTS/getting-started). Full local gate green + real binary verified end-to-end (init→plan import→plan ls).
-- [x] Interim review of Phases 1-6a — DONE (found+fixed agent Kill double-close; doc-comment fixes; dead-code removal)
-- Just-in-time step expansion: expand each phase's TDD micro-steps against the then-current tree at phase start (recorded strategy).
-- CodeQL-go fix belongs upstream in gh-fleet-sync (codeql.yml is centrally managed); branch protection already set on main.
+
+- Model selection for subagents: haiku=mechanical, sonnet=standard, opus/fable=hard reasoning; reserve opus for <10%.
+- Per-commit self-review trio (code/security/simplify) then fold findings forward; never amend a reviewed commit.
+- CodeRabbit/bot rate-limit red check = false-flag; the signal is the review threads (resolve via GraphQL), not the check status.

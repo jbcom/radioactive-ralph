@@ -58,3 +58,9 @@ site/pnpm-debug.log*
 /ralph
 
 /radioactive_ralph
+
+# fyne package build artifacts
+*.app
+*.dmg
+*.exe
+fyne-cross/

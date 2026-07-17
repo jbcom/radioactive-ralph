@@ -155,11 +155,11 @@ if ! printf '%s' "${PATH:-}" | tr ':' '\n' | grep -Fx "$INSTALL_DIR" >/dev/null 
   echo
 fi
 
-echo "Next step — initialize a repo and let Fixit seed the first plan:"
+echo "Next step — start the supervisor, register a project, then open the cockpit:"
 echo
-echo "  cd /path/to/repo"
-echo "  $INSTALL_DIR/$BIN init"
-echo "  $INSTALL_DIR/$BIN run --variant fixit --advise --topic bootstrap"
-echo "  $INSTALL_DIR/$BIN service start"
+echo "  $INSTALL_DIR/$BIN service install"
+echo "  cd /path/to/repo && $INSTALL_DIR/$BIN --init"
+echo "  $INSTALL_DIR/$BIN"
 echo
-echo "Use '$INSTALL_DIR/$BIN tui' for the repo cockpit once the service is running."
+echo "Running '$BIN' inside a registered project opens the read-only TUI once the"
+echo "supervisor is up. Full setup flow: https://jonbogaty.com/radioactive-ralph/getting-started/"
