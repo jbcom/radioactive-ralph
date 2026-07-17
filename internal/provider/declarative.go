@@ -28,8 +28,9 @@ const (
 // so any text parsed before the oversized frame is PARTIAL, and reporting it
 // as a successful turn would let the judgment-only acceptance check
 // (mechanicalAcceptanceCheck: non-empty output ⇒ done) mark a step complete
-// on the strength of a forcibly-terminated worker. The partial text is kept
-// only in the returned rawOutput audit trail, never in AssistantOutput.
+// on the strength of a forcibly-terminated worker. That partial text is
+// discarded entirely — it reaches neither AssistantOutput nor rawOutput — so a
+// killed turn can never satisfy verification.
 var ErrStreamJSONLineTooLong = errors.New("provider: stream-json line exceeded 16MiB limit")
 
 var declarativeTokens = []string{
@@ -170,6 +171,8 @@ func runDeclarativeAttempt(ctx context.Context, binding Binding, req Request) (R
 	case declarativeStreamJSON:
 		out, raw, err := runStreamJSONCommand(ctx, req.WorkingDir, binding.Config.Binary, args)
 		if err != nil {
+			// raw is empty on error by runStreamJSONCommand's contract (diagnostic
+			// context is folded into err), so there is nothing to extract here.
 			return Result{}, err
 		}
 		return Result{
@@ -341,6 +344,11 @@ func validateArgTemplate(input string) error {
 	}
 }
 
+// runStreamJSONCommand runs a stream-json provider turn. rawOutput is the
+// concatenated raw frames and is meaningful ONLY on success (err == nil) —
+// where the caller uses it to extract a session id; on every error path it is
+// returned empty, because a failed turn has no usable output and any diagnostic
+// context (stderr, a scan error) is folded into the returned error instead.
 func runStreamJSONCommand(ctx context.Context, dir, bin string, args []string) (assistantText, rawOutput string, err error) {
 	cmd := exec.CommandContext(ctx, bin, args...) //nolint:gosec // argv is runtime-controlled
 	cmd.Dir = dir
@@ -382,18 +390,28 @@ func runStreamJSONCommand(ctx context.Context, dir, bin string, args []string) (
 			// before the oversized line as a success: that text is partial, and a
 			// nil error would feed it into Evidence.Output where the judgment-only
 			// acceptance check would mark the step done on a forcibly-terminated
-			// worker. The partial text stays in raw (the audit trail) but never
-			// reaches AssistantOutput.
-			return "", raw.String(), ErrStreamJSONLineTooLong
+			// worker. It never reaches AssistantOutput. rawOutput is empty on
+			// error per this function's contract.
+			return "", "", ErrStreamJSONLineTooLong
 		}
-		return "", raw.String(), fmt.Errorf("provider: scan stream-json: %w", scanErr)
+		// cmd.Wait() has already run, so stderr is complete: fold it into the
+		// error for diagnostics rather than discarding it.
+		if msg := strings.TrimSpace(stderr.String()); msg != "" {
+			return "", "", fmt.Errorf("provider: scan stream-json: %w\n%s", scanErr, msg)
+		}
+		return "", "", fmt.Errorf("provider: scan stream-json: %w", scanErr)
 	}
 	if err := cmd.Wait(); err != nil {
 		msg := strings.TrimSpace(stderr.String())
 		if msg == "" {
 			msg = strings.TrimSpace(raw.String())
 		}
-		return "", raw.String(), fmt.Errorf("%s %s: %w\n%s", bin, strings.Join(args, " "), err, msg)
+		if msg == "" {
+			// No stderr and no captured output: don't append a bare trailing
+			// newline to the error.
+			return "", "", fmt.Errorf("%s %s: %w", bin, strings.Join(args, " "), err)
+		}
+		return "", "", fmt.Errorf("%s %s: %w\n%s", bin, strings.Join(args, " "), err, msg)
 	}
 	return strings.TrimSpace(assistant.String()), raw.String(), nil
 }
