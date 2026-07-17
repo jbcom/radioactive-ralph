@@ -107,11 +107,17 @@ changelog:
       - Merge pull request
       - Merge branch
 
-# Single cross-packager repo at jbcom/pkgs holds Formula/, bucket/,
-# choco/, nix/, etc. Users tap with
-# `brew tap jbcom/pkgs https://github.com/jbcom/pkgs` (the explicit URL
-# form is required because the repo isn't named homebrew-pkgs).
-brews:
+# Single cross-packager repo at jbcom/pkgs holds Casks/, bucket/, choco/, nix/,
+# etc. Users tap with
+# `brew tap jbcom/pkgs https://github.com/jbcom/pkgs` (the explicit URL form is
+# required because the repo isn't named homebrew-pkgs).
+#
+# goreleaser v2.17 removed the `brews` (formula) generator in favour of
+# `homebrew_casks`. Modern Homebrew casks carry CLI binaries via the `binary`
+# stanza, so the CLI ships as a cask (`brew install --cask radioactive-ralph`)
+# — the same install namespace as the GUI cask published from the release
+# workflow, just a different artifact.
+homebrew_casks:
   - name: radioactive-ralph
     ids: [default]
     repository:
@@ -119,27 +125,23 @@ brews:
       name: pkgs
       branch: "chore/update-radioactive-ralph-{{ .Version }}"
       token: "{{ .Env.JBCOM_PKGS_GITHUB_TOKEN }}"
-      # jbcom/pkgs main is governed by the enterprise Main ruleset
-      # which requires pull_request for all pushes. GoReleaser opens a
-      # PR from the version-named branch; jbcom/pkgs' automerge
-      # workflow takes it from there.
+      # jbcom/pkgs main is governed by the enterprise Main ruleset which requires
+      # pull_request for all pushes. GoReleaser opens a PR from the version-named
+      # branch; jbcom/pkgs' automerge workflow takes it from there.
       pull_request:
         enabled: true
         base:
           owner: jbcom
           name: pkgs
           branch: main
-    directory: Formula
+    directory: Casks
     homepage: https://github.com/jbcom/radioactive-ralph
     description: Supervised-execution runtime for local AI-agent CLIs
-    license: MIT
+    binaries:
+      - radioactive_ralph
     commit_author:
       name: jbcom-bot
       email: noreply@jonbogaty.com
-    test: |
-      system "#{bin}/radioactive_ralph", "--version"
-    install: |
-      bin.install "radioactive_ralph"
     caveats: |
       Next step — start the supervisor, then register a project:
 
@@ -150,9 +152,6 @@ brews:
       read-only TUI once the supervisor is running. Full docs:
 
         https://jonbogaty.com/radioactive-ralph/getting-started/
-    # Homebrew service blocks are intentionally omitted. `service install`
-    # registers the per-user supervisor with the native OS service manager
-    # itself; there is no per-repo service to declare here.
 
 scoops:
   - name: radioactive-ralph

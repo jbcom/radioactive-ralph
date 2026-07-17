@@ -39,10 +39,14 @@ fi
 install -m 0644 "$ROOT/packaging/linux/radioactive-ralph.desktop" "$APPDIR/radioactive-ralph.desktop"
 install -m 0644 "$ROOT/packaging/icons/radioactive-ralph.png" "$APPDIR/radioactive-ralph.png"
 
+# AppRun must exec the binary at its real location inside the AppDir. fyne
+# extracts it to <pkgdir>/usr/local/bin/<exe>, so use EXE's path RELATIVE to the
+# AppDir root — not basename(dirname) (which would wrongly be $HERE/bin/<exe>).
+REL="${EXE#"$APPDIR"/}"
 cat > "$APPDIR/AppRun" <<APPRUN
 #!/bin/sh
 HERE="\$(dirname "\$(readlink -f "\$0")")"
-exec "\$HERE/$(basename "$(dirname "$EXE")")/$(basename "$EXE")" "\$@"
+exec "\$HERE/$REL" "\$@"
 APPRUN
 chmod +x "$APPDIR/AppRun"
 
