@@ -174,6 +174,81 @@ func TestReclaimStaleDeletesOldWorkersAndSessions(t *testing.T) {
 	}
 }
 
+// TestReclaimStaleKeepsSessionWithFreshWorker is the regression guard for the
+// double-execution hole: a worker's OWN session is not heartbeated by anything
+// but the worker's own beat, so a provider turn lasting longer than the
+// session-delete window (staleSessionMultiplier * staleAfter) leaves the session
+// row stale even while the worker keeps beating. Without the guard, step-2 would
+// delete that stale session, CASCADE-delete the still-live worker, NULL its
+// running task's claim, and let branch (b) re-dispatch the task to a second
+// worker. The reaper must NOT delete a session that still owns a fresh worker,
+// must NOT delete that worker, and must NOT reclaim its running task.
+func TestReclaimStaleKeepsSessionWithFreshWorker(t *testing.T) {
+	ctx := context.Background()
+	clock := clockwork.NewFakeClockAt(mustParseTime(t, "2026-07-16T00:00:00Z"))
+	s := openTestStoreWithClock(t, clock)
+
+	projectID := mustCreateProject(t, s, "longturn-project")
+	planID := mustCreatePlan(t, s, projectID, "longturn-plan")
+	if err := s.CreateTask(ctx, CreateTaskOpts{PlanID: planID, ID: "a", Description: "long turn"}); err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+	sessionID, err := s.CreateSession(ctx, SessionOpts{Role: "worker", PID: 1, PIDStartTime: "t0"})
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	workerID, err := s.CreateWorker(ctx, WorkerOpts{
+		SessionID: sessionID, Provider: "claude", SubprocessPID: 100, SubprocessStartTime: "t0",
+	})
+	if err != nil {
+		t.Fatalf("CreateWorker: %v", err)
+	}
+	if _, err := s.ClaimNextReady(ctx, planID, sessionID, workerID); err != nil {
+		t.Fatalf("ClaimNextReady: %v", err)
+	}
+
+	// Simulate a long turn: advance WELL past the session-delete window
+	// (staleSessionMultiplier=3 * 5min = 15min), keeping only the WORKER's
+	// heartbeat fresh on each tick — exactly what runWithHeartbeat's worker
+	// beat did before it also beat the session. (This test pins the reaper
+	// guard directly: even a bare HeartbeatWorker keeps the pair safe.)
+	for i := 0; i < 5; i++ {
+		clock.Advance(5 * time.Minute)
+		if err := s.HeartbeatWorker(ctx, workerID); err != nil {
+			t.Fatalf("HeartbeatWorker: %v", err)
+		}
+		if _, err := s.ReclaimStale(ctx, 5*time.Minute); err != nil {
+			t.Fatalf("ReclaimStale: %v", err)
+		}
+	}
+
+	// The worker and its session must survive, and the task must still be
+	// claimed by the live worker (never reclaimed).
+	var workerCount, sessionCount int
+	if err := s.DB().QueryRowContext(ctx, "SELECT COUNT(*) FROM workers WHERE id = ?", workerID).Scan(&workerCount); err != nil {
+		t.Fatalf("count workers: %v", err)
+	}
+	if err := s.DB().QueryRowContext(ctx, "SELECT COUNT(*) FROM sessions WHERE id = ?", sessionID).Scan(&sessionCount); err != nil {
+		t.Fatalf("count sessions: %v", err)
+	}
+	if workerCount != 1 {
+		t.Errorf("worker count = %d, want 1 (a fresh worker must not be reaped)", workerCount)
+	}
+	if sessionCount != 1 {
+		t.Errorf("session count = %d, want 1 (a session with a fresh worker must not be reaped)", sessionCount)
+	}
+	got, err := s.GetTask(ctx, planID, "a")
+	if err != nil {
+		t.Fatalf("GetTask: %v", err)
+	}
+	if got.Status != TaskStatusRunning {
+		t.Errorf("task status = %q, want running (a live worker's task must never be reclaimed → double execution)", got.Status)
+	}
+	if got.ClaimedByWorkerID != workerID {
+		t.Errorf("claimed_by_worker_id = %q, want %q (claim must stay with the live worker)", got.ClaimedByWorkerID, workerID)
+	}
+}
+
 // TestReclaimStaleRequeuesOrphanedTask confirms a 'running' task whose
 // claimed_by_worker_id has ALREADY been cascaded to NULL (the worker row
 // was deleted by some other path — e.g. an operator force-closing a

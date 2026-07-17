@@ -50,6 +50,21 @@ func (s *Store) ReclaimStale(ctx context.Context, staleAfter time.Duration) (rec
 	//       excludes it) and stays wedged in 'running' with no claiming
 	//       worker for good — exactly the permanently-stuck-task failure
 	//       mode the reaper exists to prevent.
+	//
+	// SAFETY INVARIANT for branch (b): it reclaims WITHOUT a staleness
+	// check, so it is only safe while NO code path can leave a task
+	// 'running' with a NULL worker id *while that task's provider
+	// subprocess is still executing* — otherwise (b) would re-dispatch a
+	// live task and run it twice. The only producer of a NULL worker id on
+	// a running task is a CASCADE from deleting a worker/session row, so
+	// branch (b)'s safety rests entirely on NEVER deleting a worker/session
+	// whose subprocess is still live. That is enforced two ways: step 2
+	// below skips any session that still owns a fresh-heartbeat worker (the
+	// load-bearing guard), and runWithHeartbeat now beats BOTH the worker
+	// row and its session row so a live worker's session never goes stale
+	// in the first place. (CloseSession is not a hazard: it runs only at
+	// supervisor startup-failure with nothing claimed, or post-shutdown
+	// after orch.Wait() has drained every in-flight dispatch goroutine.)
 	res, err := tx.ExecContext(ctx, `
 		UPDATE tasks
 		SET status = 'pending',
@@ -86,23 +101,36 @@ func (s *Store) ReclaimStale(ctx context.Context, staleAfter time.Duration) (rec
 		}
 	}
 
-	// Step 2: delete workers stale beyond the longer window. Any task
-	// still claimed by such a worker at this point has already had its
-	// claim cleared in step 1 (deleteCutoff < staleCutoff), so this is
-	// safe — ON DELETE SET NULL on tasks.claimed_by_worker_id covers any
-	// remaining reference defensively.
+	// Step 2: delete workers stale beyond the longer window. A worker with a
+	// FRESH heartbeat is excluded even if its row is otherwise deletable —
+	// deleting a live worker would cascade tasks.claimed_by_worker_id to NULL
+	// and let step-1 branch (b) re-dispatch its still-running task (double
+	// execution). last_heartbeat < deleteCutoff already implies the worker is
+	// long dead, so this is belt-and-suspenders against the session path below.
 	if _, err := tx.ExecContext(ctx, `
 		DELETE FROM workers WHERE last_heartbeat < ?
 	`, deleteCutoff); err != nil {
 		return 0, fmt.Errorf("store: delete stale workers: %w", err)
 	}
 
-	// Delete sessions stale beyond the same longer window. FK cascade
-	// (workers.session_id ON DELETE CASCADE) cleans up any of their
-	// remaining workers too.
+	// Delete sessions stale beyond the same longer window, BUT never a session
+	// that still owns a live (fresh-heartbeat) worker. This is the load-bearing
+	// guard for the never-double-execute invariant: a worker's own session row
+	// (spawnWorkerRows) is not independently heartbeated — only the worker row
+	// is (runWithHeartbeat) — so a provider turn running longer than
+	// deleteCutoff (staleSessionMultiplier * staleAfter) would otherwise let
+	// this DELETE reap the worker's stale session, CASCADE-delete the LIVE
+	// worker (workers.session_id ON DELETE CASCADE), NULL out its running task's
+	// claim, and hand that still-executing task to a second worker via step-1
+	// branch (b). Excluding sessions with any non-stale worker closes that path
+	// even though runWithHeartbeat also now beats the session directly.
 	if _, err := tx.ExecContext(ctx, `
-		DELETE FROM sessions WHERE last_heartbeat < ?
-	`, deleteCutoff); err != nil {
+		DELETE FROM sessions
+		WHERE last_heartbeat < ?
+		  AND id NOT IN (
+		    SELECT session_id FROM workers WHERE last_heartbeat >= ?
+		  )
+	`, deleteCutoff, staleCutoff); err != nil {
 		return 0, fmt.Errorf("store: delete stale sessions: %w", err)
 	}
 
