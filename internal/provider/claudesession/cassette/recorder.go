@@ -93,9 +93,17 @@ func NewRecorder(ctx context.Context, cassettePath, bin string, args []string) (
 	}
 
 	// Goroutine 1: client writes → tee to cassette + forward to claude.
-	r.pumpWG.Go(func() { r.pumpStdin(clientStdinR, realStdin) })
+	r.pumpWG.Add(1)
+	go func() {
+		defer r.pumpWG.Done()
+		r.pumpStdin(clientStdinR, realStdin)
+	}()
 	// Goroutine 2: claude emits → tee to cassette + forward to client.
-	r.pumpWG.Go(func() { r.pumpStdout(realStdout, clientStdoutW) })
+	r.pumpWG.Add(1)
+	go func() {
+		defer r.pumpWG.Done()
+		r.pumpStdout(realStdout, clientStdoutW)
+	}()
 
 	return r, nil
 }
@@ -149,18 +157,28 @@ func (r *Recorder) Close() error {
 	if r.clientStdoutW != nil {
 		_ = r.clientStdoutW.Close()
 	}
-	// Kill the subprocess: this closes its stdout write end, so pumpStdout's
-	// scanner drains whatever the process already emitted and then reaches
-	// natural EOF and returns. Do NOT cmd.Wait() yet — per the os/exec
-	// contract Wait closes the stdout pipe, which would race pumpStdout and
-	// discard the tail of the recording.
+	// Kill the subprocess so it stops emitting.
 	if r.cmd != nil && r.cmd.Process != nil {
 		_ = r.cmd.Process.Kill()
 	}
-	// Join both pumps: every frame the subprocess emitted has now been
-	// appended (pumpStdout reached EOF; pumpStdin's reader was closed above).
+	// Deterministically unblock pumpStdout by closing realStdout (the read
+	// end of the process's stdout pipe) ourselves. Relying on the KILLED
+	// process to close the write end is NOT enough: if Start was never
+	// called / failed (nil Process, write end still held by the parent) or a
+	// descendant inherited the stdout fd, pumpStdout would block on Scan
+	// forever and pumpWG.Wait would deadlock. Closing the read end here makes
+	// Scan return at once. (realStdin is closed too so pumpStdin can't hang
+	// on its forward-write, though its reader was already closed above.)
+	if r.realStdout != nil {
+		_ = r.realStdout.Close()
+	}
+	if r.realStdin != nil {
+		_ = r.realStdin.Close()
+	}
+	// Join both pumps: every frame the subprocess emitted (up to the point we
+	// closed the pipe) has now been appended.
 	r.pumpWG.Wait()
-	// Now reap the process — safe because both pumps have finished reading.
+	// Reap the process — safe because the pumps have finished reading.
 	if r.cmd != nil && r.cmd.Process != nil {
 		_ = r.cmd.Wait()
 	}

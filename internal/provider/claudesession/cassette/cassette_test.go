@@ -182,3 +182,31 @@ func TestCassetteSaveProducesIndentedJSON(t *testing.T) {
 		t.Errorf("expected indented JSON, got:\n%s", raw)
 	}
 }
+
+// TestRecorderCloseWithoutStartDoesNotDeadlock is the regression for the
+// third-scrutiny finding: if Start was never called, cmd.Process is nil and
+// the pipe write ends are still held by the parent, so pumpStdout would block
+// on Scan forever and Close's pumpWG.Wait would deadlock. Close must close
+// the real pipe ends itself to unblock the pumps regardless of process state.
+func TestRecorderCloseWithoutStartDoesNotDeadlock(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("fake CLI is a Unix build; the pipe-close behavior is what's under test")
+	}
+	fake := buildBin(t, "github.com/jbcom/radioactive-ralph/internal/provider/claudesession/internal/fakeclaude")
+	cassettePath := filepath.Join(t.TempDir(), "cassette.json")
+
+	rec, err := cassette.NewRecorder(context.Background(), cassettePath, fake, []string{"--session-id", "x"})
+	if err != nil {
+		t.Fatalf("NewRecorder: %v", err)
+	}
+	// Deliberately DO NOT call rec.Start().
+
+	done := make(chan error, 1)
+	go func() { done <- rec.Close() }()
+	select {
+	case <-done:
+		// Close returned promptly — no deadlock.
+	case <-time.After(5 * time.Second):
+		t.Fatal("Recorder.Close deadlocked when Start was never called (pumpWG.Wait never returned)")
+	}
+}
