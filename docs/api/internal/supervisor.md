@@ -23,7 +23,7 @@ Package supervisor implements the \`\-\-supervisor\` process: the single durable
   - [func \(l \*Listener\) Release\(\) error](<#Listener.Release>)
 - [type Options](<#Options>)
 - [type Supervisor](<#Supervisor>)
-  - [func \(s \*Supervisor\) HandleAttach\(ctx context.Context, \_ func\(json.RawMessage\) error\) error](<#Supervisor.HandleAttach>)
+  - [func \(s \*Supervisor\) HandleAttach\(ctx context.Context, args ipc.AttachArgs, emit func\(json.RawMessage\) error\) error](<#Supervisor.HandleAttach>)
   - [func \(s \*Supervisor\) HandleEnqueue\(ctx context.Context, args ipc.EnqueueArgs\) \(ipc.EnqueueReply, error\)](<#Supervisor.HandleEnqueue>)
   - [func \(s \*Supervisor\) HandlePlanImport\(ctx context.Context, args ipc.PlanImportArgs\) \(ipc.PlanImportReply, error\)](<#Supervisor.HandlePlanImport>)
   - [func \(s \*Supervisor\) HandlePlanSetStatus\(ctx context.Context, args ipc.PlanSetStatusArgs\) \(ipc.PlanSetStatusReply, error\)](<#Supervisor.HandlePlanSetStatus>)
@@ -141,13 +141,13 @@ type Supervisor struct {
 ```
 
 <a name="Supervisor.HandleAttach"></a>
-### func \(\*Supervisor\) [HandleAttach](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/supervisor/supervisor.go#L423>)
+### func \(\*Supervisor\) [HandleAttach](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/supervisor/supervisor.go#L439>)
 
 ```go
-func (s *Supervisor) HandleAttach(ctx context.Context, _ func(json.RawMessage) error) error
+func (s *Supervisor) HandleAttach(ctx context.Context, args ipc.AttachArgs, emit func(json.RawMessage) error) error
 ```
 
-HandleAttach streams no events yet — the durable event/attach surface is part of the plan\-orchestration work in a later phase. It blocks until ctx is cancelled so a connected client simply sees a quiet, still\-open stream rather than an immediate close.
+HandleAttach streams the project's events to the client as they are written, turning the observe half of the drive\+observe API from a stub into a live feed. It TAILS the append\-only events table: each tick it reads rows with id greater than the cursor \(scoped to args.ProjectID, including plan\-linked rows\), emits each, and advances the cursor. The cursor starts at args.AfterID — the client owns it \(it obtains an initial value from MaxEventID/backlog\), so there is no server\-side seed and no lost\-event race. The loop returns when ctx is cancelled \(client disconnect — \#165's watcher — or supervisor shutdown\) or when emit reports the client is gone.
 
 <a name="Supervisor.HandleEnqueue"></a>
 ### func \(\*Supervisor\) [HandleEnqueue](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/supervisor/supervisor.go#L386>)

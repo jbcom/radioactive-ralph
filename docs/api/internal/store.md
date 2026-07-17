@@ -58,6 +58,7 @@ The schema is embedded under schema/\*.sql and applied in lexical order by Migra
   - [func \(s \*Store\) CreateWorker\(ctx context.Context, o WorkerOpts\) \(string, error\)](<#Store.CreateWorker>)
   - [func \(s \*Store\) DB\(\) \*sql.DB](<#Store.DB>)
   - [func \(s \*Store\) Emit\(ctx context.Context, o EmitOpts\) error](<#Store.Emit>)
+  - [func \(s \*Store\) EventsAfter\(ctx context.Context, projectID string, afterID int64, limit int\) \(\[\]Event, error\)](<#Store.EventsAfter>)
   - [func \(s \*Store\) GetPlan\(ctx context.Context, id string\) \(\*Plan, error\)](<#Store.GetPlan>)
   - [func \(s \*Store\) GetProjectConfig\(ctx context.Context, projectID string\) \(map\[string\]string, error\)](<#Store.GetProjectConfig>)
   - [func \(s \*Store\) GetTask\(ctx context.Context, planID, id string\) \(\*Task, error\)](<#Store.GetTask>)
@@ -74,6 +75,7 @@ The schema is embedded under schema/\*.sql and applied in lexical order by Migra
   - [func \(s \*Store\) MarkDone\(ctx context.Context, planID, taskID, sessionID string, evidenceJSON string\) \(\[\]Task, error\)](<#Store.MarkDone>)
   - [func \(s \*Store\) MarkFailed\(ctx context.Context, planID, taskID, sessionID, reason string, maxRetries int\) \(retried bool, err error\)](<#Store.MarkFailed>)
   - [func \(s \*Store\) MarkFailedWithPayload\(ctx context.Context, planID, taskID, sessionID string, payload EventPayload, maxRetries int\) \(retried bool, err error\)](<#Store.MarkFailedWithPayload>)
+  - [func \(s \*Store\) MaxEventID\(ctx context.Context, projectID string\) \(int64, error\)](<#Store.MaxEventID>)
   - [func \(s \*Store\) ProjectAbsPath\(ctx context.Context, projectID string\) \(path string, found bool, err error\)](<#Store.ProjectAbsPath>)
   - [func \(s \*Store\) ProjectSpendByProvider\(ctx context.Context, projectID string\) \(map\[string\]float64, error\)](<#Store.ProjectSpendByProvider>)
   - [func \(s \*Store\) Ready\(ctx context.Context, planID string\) \(\[\]Task, error\)](<#Store.Ready>)
@@ -606,6 +608,15 @@ func (s *Store) Emit(ctx context.Context, o EmitOpts) error
 
 Emit appends one event row. Used for events not already covered by a more specific transactional helper \(e.g. task claim/done/failed emit their own events inline so the status transition and audit row commit atomically\).
 
+<a name="Store.EventsAfter"></a>
+### func \(\*Store\) [EventsAfter](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/events.go#L101>)
+
+```go
+func (s *Store) EventsAfter(ctx context.Context, projectID string, afterID int64, limit int) ([]Event, error)
+```
+
+EventsAfter returns a project's events with id strictly greater than afterID, in ascending id order, capped at limit. It is the tail query backing the Attach event stream: a client resumes from its last\-seen id and each call returns the next contiguous batch. Ascending order is deliberate — events are delivered oldest\-first so a live view applies them in the order they occurred \(the opposite of ListProjectEvents, which is newest\-first for a backlog snapshot\). Pass afterID=0 to start from the beginning. Scoping includes plan\-linked events \(see eventProjectScope\).
+
 <a name="Store.GetPlan"></a>
 ### func \(\*Store\) [GetPlan](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/plans.go#L88>)
 
@@ -751,6 +762,15 @@ func (s *Store) MarkFailedWithPayload(ctx context.Context, planID, taskID, sessi
 MarkFailedWithPayload transitions a running task to failed or retries while preserving structured payload details in the event log.
 
 Both UPDATEs are guarded by \`status = 'running' AND claimed\_by\_session = sessionID\`, the same owner guard MarkDone and MarkBlocked carry. Without the owner guard a stale failure report from a worker whose claim the reaper already reclaimed \(and possibly reassigned to a new worker\) would flip the task back to pending / failed and clear the NEW owner's claim — double execution plus a dropped completion. When the guard matches nothing the task has moved on under a different session; MarkFailed returns ErrTaskNotOwnedRunning so the caller can drop the stale report rather than resurrect the task.
+
+<a name="Store.MaxEventID"></a>
+### func \(\*Store\) [MaxEventID](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/events.go#L135>)
+
+```go
+func (s *Store) MaxEventID(ctx context.Context, projectID string) (int64, error)
+```
+
+MaxEventID returns the highest event id for a project, or 0 if the project has no events. It gives an Attach client the initial cursor to resume from \(the client reads this — or the backlog's max id — then attaches with it\), so the client owns a single monotonic cursor and no event slips through the gap between a backlog read and the live stream. Scoping matches EventsAfter \(it includes plan\-linked rows\) so the two agree on project membership.
 
 <a name="Store.ProjectAbsPath"></a>
 ### func \(\*Store\) [ProjectAbsPath](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/projects.go#L166>)

@@ -93,7 +93,7 @@ func NewLiveDataSource(runtimeDir string, st *store.Store, projectID string) Dat
 NewLiveDataSource builds the production DataSource: runtimeDir is the directory the supervisor's socket lives under \(xdg.StateRoot\(\)\), st is the shared store, and projectID scopes the plan/event reads.
 
 <a name="Model"></a>
-## type [Model](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/tui/model.go#L55-L97>)
+## type [Model](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/tui/model.go#L56-L106>)
 
 Model is the root tea.Model. It holds the current drill level, the read\-only DataSource, and the last\-fetched snapshot; Update handles key events and the periodic refresh tick, View delegates to the per\-level renderer. Model never calls anything on DataSource except its documented read methods — see datasource.go's DataSource doc comment for the read\-only enforcement point.
 
@@ -104,7 +104,7 @@ type Model struct {
 ```
 
 <a name="NewModel"></a>
-### func [NewModel](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/tui/model.go#L106>)
+### func [NewModel](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/tui/model.go#L115>)
 
 ```go
 func NewModel(ctx context.Context, source DataSource, projectID string) Model
@@ -113,16 +113,16 @@ func NewModel(ctx context.Context, source DataSource, projectID string) Model
 NewModel constructs the root model. ctx bounds the whole TUI session — cancelling it \(e.g. on SIGINT\) unwinds any in\-flight Attach goroutine.
 
 <a name="Model.Init"></a>
-### func \(Model\) [Init](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/tui/model.go#L118>)
+### func \(Model\) [Init](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/tui/model.go#L131>)
 
 ```go
 func (m Model) Init() tea.Cmd
 ```
 
-Init kicks off the first fetch and starts the refresh tick.
+Init starts the refresh loop. It fires an IMMEDIATE refresh tick rather than launching a fetch directly, so the very first gather goes through the same in\-flight\-guarded path as every periodic tick \(Init returns a Cmd and cannot set m.fetching, so a direct fetch here could overlap the first periodic tick if the initial gather is slow\).
 
 <a name="Model.Update"></a>
-### func \(Model\) [Update](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/tui/model.go#L259>)
+### func \(Model\) [Update](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/tui/model.go#L293>)
 
 ```go
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd)
@@ -131,7 +131,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd)
 Update handles key events \(arrows/enter to drill in, esc/backspace to drill out, q to quit\) and the periodic refresh tick. This is the surface the model\_test.go table tests exercise directly, injecting tea.KeyMsg values without a real terminal.
 
 <a name="Model.View"></a>
-### func \(Model\) [View](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/tui/model.go#L451>)
+### func \(Model\) [View](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/tui/model.go#L577>)
 
 ```go
 func (m Model) View() string
