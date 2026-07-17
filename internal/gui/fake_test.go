@@ -32,7 +32,8 @@ type fakeController struct {
 	approved   [][2]string // {planID, taskID}
 	killed     []string    // workerIDs
 	importErr  error
-	setPlanErr error // returned by SetPlanStatus() — a drive-action failure
+	setPlanErr error  // returned by SetPlanStatus() — a drive-action failure
+	onSetPlan  func() // optional hook run inside SetPlanStatus, before it returns
 	approveErr error
 	killErr    error
 }
@@ -100,9 +101,16 @@ func (f *fakeController) ImportPlan(_ context.Context, args ipc.PlanImportArgs) 
 
 func (f *fakeController) SetPlanStatus(_ context.Context, planID, status string) error {
 	f.mu.Lock()
-	defer f.mu.Unlock()
 	f.setStatus = append(f.setStatus, [2]string{planID, status})
-	return f.setPlanErr
+	hook := f.onSetPlan
+	err := f.setPlanErr
+	f.mu.Unlock()
+	// onSetPlan runs after recording but before returning, letting a test simulate
+	// the operator navigating away while this RPC is "in flight".
+	if hook != nil {
+		hook()
+	}
+	return err
 }
 
 func (f *fakeController) ApproveTask(_ context.Context, planID, taskID string) error {
