@@ -67,10 +67,18 @@ func (u *ui) render(s snapshot) {
 	}
 	u.body.Refresh()
 	// Land keyboard focus on the first actionable control so a keyboard-only
-	// operator can act without blind-Tabbing. A canvas may be nil under the
-	// headless test driver; guard for it.
-	if c := u.win.Canvas(); c != nil {
-		c.Focus(u.firstFocusable) // Focus(nil) is a safe no-op (blurs)
+	// operator can act on arrival without blind-Tabbing — but ONLY when the drill
+	// view just changed. render() also runs on every 1s tick and live event; if we
+	// focused unconditionally, each refresh would yank focus back to the first
+	// control, stealing it from an operator Tabbing toward Pause/Approve/Kill. So
+	// (re)initialize focus only when the view identity changes, and otherwise leave
+	// the operator's current focus untouched during ordinary data refreshes.
+	viewID := fmt.Sprintf("%d\x00%s\x00%s", s.level, s.selectedPlan, s.selectedTask)
+	if viewID != u.focusedView {
+		u.focusedView = viewID
+		if c := u.win.Canvas(); c != nil {
+			c.Focus(u.firstFocusable) // Focus(nil) is a safe no-op (blurs)
+		}
 	}
 }
 
