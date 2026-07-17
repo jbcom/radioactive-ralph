@@ -135,6 +135,36 @@ func (s *Store) HeartbeatWorker(ctx context.Context, workerID string) error {
 	return nil
 }
 
+// HeartbeatWorkerAndSession refreshes both a worker row AND its owning
+// session row in one call. A worker's session (spawnWorkerRows) is not
+// heartbeated by anything else — only the supervisor's own session is
+// (HeartbeatSession) — so without this a live worker's session goes stale and
+// the reaper's step-2 session delete would CASCADE-delete the still-running
+// worker, NULLing its task's claim and letting branch (b) re-dispatch a live
+// task (double execution). Beating both keeps the session as fresh as the
+// worker for the reaper's staleness math. The two UPDATEs share one tx so a
+// mid-call failure never leaves the pair inconsistent.
+func (s *Store) HeartbeatWorkerAndSession(ctx context.Context, workerID string) error {
+	now := s.clock.Now().UTC().Format(time.RFC3339)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("store: begin heartbeat: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE workers SET last_heartbeat = ? WHERE id = ?
+	`, now, workerID); err != nil {
+		return fmt.Errorf("store: heartbeat worker: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE sessions SET last_heartbeat = ?
+		WHERE id = (SELECT session_id FROM workers WHERE id = ?)
+	`, now, workerID); err != nil {
+		return fmt.Errorf("store: heartbeat worker session: %w", err)
+	}
+	return tx.Commit()
+}
+
 // CountRunningWorkers returns how many worker rows are currently
 // status='running' — i.e. actively assigned a task, not idle/terminated/
 // crashed. Used by the supervisor's HandleStatus to report a real

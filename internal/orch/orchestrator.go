@@ -135,9 +135,14 @@ type Orchestrator struct {
 const workerHeartbeatInterval = 20 * time.Second
 
 // runWithHeartbeat runs fn (a provider turn) while periodically refreshing
-// workerID's store heartbeat, so the supervisor's reaper does not mistake a
-// legitimately long-running worker for a crashed one and reclaim its task
-// out from under it. The heartbeat goroutine stops the instant fn returns.
+// workerID's store heartbeat — AND its owning session's heartbeat
+// (HeartbeatWorkerAndSession) — so the supervisor's reaper does not mistake a
+// legitimately long-running worker for a crashed one and reclaim its task out
+// from under it. Beating the session too is load-bearing: a worker's session is
+// heartbeated by nothing else, so a turn longer than the reaper's session-delete
+// window (staleSessionMultiplier * staleAfter) would otherwise let step-2 reap
+// the stale session, CASCADE-delete the live worker, and hand its running task
+// to a second worker. The heartbeat goroutine stops the instant fn returns.
 // hbCtx bounds the heartbeat loop (the dispatch base context); heartbeat write
 // errors are ignored — a missed beat is self-correcting on the next tick, and a
 // heartbeat failure must never fail the turn.
@@ -160,7 +165,7 @@ func (o *Orchestrator) runWithHeartbeat(hbCtx context.Context, workerID string, 
 			case <-hbCtx.Done():
 				return
 			case <-t.C:
-				_ = o.store.HeartbeatWorker(hbCtx, workerID)
+				_ = o.store.HeartbeatWorkerAndSession(hbCtx, workerID)
 			}
 		}
 	}()
