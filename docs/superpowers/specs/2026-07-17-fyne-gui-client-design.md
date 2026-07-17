@@ -164,7 +164,8 @@ metadata (icon, bundle id) is produced here so the packaging item consumes it.
 
 The Fyne project ships `fyne.io/fyne/v2/test`, a headless test driver that
 renders widgets without a display, so views and interactions are testable in CI
-with no X server.
+with no X server (with CGO enabled and GL/X11 headers present — see Build-tag
+isolation below).
 
 1. **`status_test.go`** — every real plan/task status maps to the intended color
    bucket; the GUI switch and the TUI switch agree bucket-for-bucket (the
@@ -186,11 +187,40 @@ with no X server.
    cancel (no leaked goroutines — checked with a goroutine-count guard like the
    TUI's attach-leak test).
 
-Fyne is a real GUI dependency (it pulls in a windowing/GL stack). The `gui`
-package builds on every platform CI already targets; the headless `test` driver
-means the view tests need no display. If any CI runner cannot link the GL stack
-headlessly, the package's tests are still gated behind the `test` driver, which
-is pure-Go — verified as part of this task, not assumed.
+### Build-tag isolation (load-bearing — verified, not assumed)
+
+Fyne is a **CGO** dependency: even its widget/`test` packages fail to compile
+with `CGO_ENABLED=0` (they depend on build-tagged files that need CGO), and on
+Linux it needs the system GL/X11 dev headers. This collides head-on with the
+repo's CI, which cross-builds `go build ./...` with `CGO_ENABLED=0` across six
+GOOS/GOARCH pairs. A plain `internal/gui` package importing Fyne would turn the
+entire build matrix red. (Probed directly: `CGO_ENABLED=0 go vet` on a Fyne
+program fails to build; the headless `test` driver runs fine *with* CGO on.)
+
+So the whole GUI is isolated behind a `gui` build tag:
+
+- Every file in `internal/gui` that imports Fyne, and the `gui` cobra command's
+  registration, carry `//go:build gui`. The default build (`go build ./...`,
+  CGO off) never compiles them, so the six-way matrix stays exactly as green as
+  today.
+- The `gui` cobra subcommand is registered in a `//go:build gui` file; a
+  `//go:build !gui` stub registers a same-named command that prints "this build
+  has no GUI support — rebuild with `-tags gui`" and exits nonzero, so the CLI
+  surface is identical either way and `--help` always lists `gui`.
+- The Fyne-free half of the package — the `Controller` interface, the
+  `statusColor` switch, and its anti-drift test — has **no** Fyne import and no
+  tag, so `status_test.go` (the TUI↔GUI palette-agreement test) runs in the
+  normal CGO-off test job. Only the view/theme/app code that touches Fyne is
+  tagged.
+- A dedicated CI job (`gui`) runs on ubuntu + macOS with `CGO_ENABLED=1`, the
+  Linux GL/X11 dev packages installed (`libgl1-mesa-dev xorg-dev`), and
+  `go test -tags gui ./internal/gui/...` using the headless `test` driver — no
+  display server needed. This is the job that gates the view tests, the
+  liveController wiring test, and the launch smoke.
+
+The packaging directive item (signed `.app`/MSI/`.deb`) builds `-tags gui` with
+CGO on per platform; it is the only place the GL stack must link for a real
+window, and it is out of scope here.
 
 ## Decision record
 
