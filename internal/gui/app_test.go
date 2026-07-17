@@ -62,6 +62,30 @@ func TestRun_RequiresController(t *testing.T) {
 	}
 }
 
+// TestEventTriggersRefresh confirms the runAttach refresh gate: lifecycle events
+// trigger a refresh, pure log/heartbeat kinds are skipped, and an undecodable
+// frame defaults to refreshing (fail safe, not silent-stale).
+func TestEventTriggersRefresh(t *testing.T) {
+	cases := []struct {
+		raw  string
+		want bool
+	}{
+		{`{"kind":"task.done","task_id":"t1"}`, true},
+		{`{"kind":"task.claimed","task_id":"t1"}`, true},
+		{`{"kind":"plan.imported"}`, true},
+		{`{"kind":"worker.completed"}`, true},
+		{`{"kind":"tick"}`, false},
+		{`{"kind":"task.progress","task_id":"t1"}`, false},
+		{`{not json`, true},        // undecodable → refresh (fail safe)
+		{`{"task_id":"t1"}`, true}, // empty kind → refresh (fail safe)
+	}
+	for _, tc := range cases {
+		if got := eventTriggersRefresh([]byte(tc.raw)); got != tc.want {
+			t.Errorf("eventTriggersRefresh(%s) = %v, want %v", tc.raw, got, tc.want)
+		}
+	}
+}
+
 // TestRunAttach_ReconnectsAfterStreamEnds is the regression for the GUI audit's
 // C1: the live attach subscription was single-shot — Attach returning (a failed
 // pre-supervisor dial, or an EOF when the supervisor restarts) killed the stream

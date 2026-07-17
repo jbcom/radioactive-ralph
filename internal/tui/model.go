@@ -357,17 +357,45 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.epoch != m.attachEpoch {
 			return m, nil
 		}
-		m.snap.live = append(m.snap.live, liveLogLine{at: time.Now(), text: renderFrame(msg.raw)})
-		if len(m.snap.live) > 500 {
-			m.snap.live = m.snap.live[len(m.snap.live)-500:]
+		rearm := func() (tea.Model, tea.Cmd) {
+			// Re-arm the stream: pull the NEXT frame. Without this the
+			// subscription delivers exactly one frame and the forwarder
+			// goroutine blocks forever on the unread channel.
+			if m.attachFrames != nil {
+				return m, attachCmd(m.ctx, m.attachFrames, m.attachDone, m.attachEpoch)
+			}
+			return m, nil
 		}
-		// Re-arm the stream: pull the NEXT frame. Without this the
-		// subscription delivers exactly one frame and the forwarder goroutine
-		// blocks forever on the unread channel.
-		if m.attachFrames != nil {
-			return m, attachCmd(m.ctx, m.attachFrames, m.attachDone, m.attachEpoch)
+
+		ev, ok := decodeEvent(msg.raw)
+		if !ok {
+			// Undecodable frame: nothing to act on, but keep the stream alive.
+			return rearm()
 		}
-		return m, nil
+
+		// Apply the event as a live delta to the macro/meso snapshot so a
+		// task/plan lifecycle change lands immediately instead of only on the
+		// next poll. The periodic poll still runs every tick and remains the
+		// source of truth that reconciles any missed or duplicated frame.
+		m.snap = applyEvent(m.snap, ev)
+
+		// Micro-view tail: only append frames relevant to the SELECTED task, so
+		// drilling into one task doesn't fill its one-worker log with unrelated
+		// tasks' activity. A task-agnostic frame (no task_id — plan/service
+		// level) is still shown as context.
+		if m.lvl == levelMicro {
+			if ev.TaskID == "" || m.selectedTask.ID == "" || ev.TaskID == m.selectedTask.ID {
+				at := ev.OccurredAt
+				if at.IsZero() {
+					at = time.Now()
+				}
+				m.snap.live = append(m.snap.live, liveLogLine{at: at, text: renderEvent(ev)})
+				if len(m.snap.live) > 500 {
+					m.snap.live = m.snap.live[len(m.snap.live)-500:]
+				}
+			}
+		}
+		return rearm()
 
 	case attachEndedMsg:
 		// Ignore a stale end from a subscription the user already drilled out
@@ -595,17 +623,60 @@ func (m Model) View() string {
 // expected {kind, task_id, ...} form still renders as raw JSON rather than
 // being dropped, so nothing observed over the wire silently disappears
 // from the pane.
-func renderFrame(raw json.RawMessage) string {
-	var probe struct {
-		Kind   string `json:"kind"`
-		TaskID string `json:"task_id"`
-		Actor  string `json:"actor"`
+// decodeEvent parses one Attach frame into the typed ipc.AttachEvent. ok is
+// false for a frame that can't be decoded or carries no kind — the caller drops
+// it (there is nothing to render or apply).
+func decodeEvent(raw json.RawMessage) (ipc.AttachEvent, bool) {
+	var ev ipc.AttachEvent
+	if err := json.Unmarshal(raw, &ev); err != nil || ev.Kind == "" {
+		return ipc.AttachEvent{}, false
 	}
-	if err := json.Unmarshal(raw, &probe); err != nil || probe.Kind == "" {
-		return string(raw)
+	return ev, true
+}
+
+// renderEvent formats one live event for the micro-view tail.
+func renderEvent(ev ipc.AttachEvent) string {
+	if ev.TaskID != "" {
+		return ev.Kind + " task=" + ev.TaskID + " actor=" + ev.Actor
 	}
-	if probe.TaskID != "" {
-		return probe.Kind + " task=" + probe.TaskID + " actor=" + probe.Actor
+	return ev.Kind + " actor=" + ev.Actor
+}
+
+// taskDeltaStatus maps an event kind to the task status it implies, or "" if
+// the kind doesn't directly change a task's status. It is the fast-path delta:
+// the periodic poll re-reads the real status every tick and reconciles, so this
+// only needs to cover the common lifecycle transitions to make the view feel
+// live — an unmapped kind simply waits for the next poll.
+func taskDeltaStatus(kind string) store.TaskStatus {
+	switch kind {
+	case "task.claimed":
+		return store.TaskStatusRunning
+	case "task.done", "worker.completed", "worker.verified_done":
+		return store.TaskStatusDone
+	case "task.failed", "task.failed_terminal", "worker.verification_failed":
+		return store.TaskStatusFailed
+	case "task.released":
+		return store.TaskStatusReady
+	default:
+		return ""
 	}
-	return probe.Kind + " actor=" + probe.Actor
+}
+
+// applyEvent applies a live event as a delta to the snapshot's task list so a
+// lifecycle change is reflected immediately, ahead of the next poll. It is a
+// pure function (returns the updated snapshot) to keep Update easy to test. A
+// kind that maps to no task-status change, or a task_id not currently in view,
+// is a no-op — the poll reconciles everything regardless.
+func applyEvent(snap snapshot, ev ipc.AttachEvent) snapshot {
+	status := taskDeltaStatus(ev.Kind)
+	if status == "" || ev.TaskID == "" {
+		return snap
+	}
+	for i := range snap.tasks {
+		if snap.tasks[i].ID == ev.TaskID {
+			snap.tasks[i].Status = status
+			break
+		}
+	}
+	return snap
 }
