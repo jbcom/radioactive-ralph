@@ -291,6 +291,21 @@ func TestMacro_EmptyStateShowsImport(t *testing.T) {
 	}
 }
 
+func TestMacro_ActivityFeedShownWithNoPlans(t *testing.T) {
+	// With zero plans, the recent-activity feed must still render (parity with
+	// the TUI, which shows events even before the first plan).
+	f := newFakeController()
+	f.pEvents = []store.Event{{Kind: "service.started", Actor: "supervisor"}}
+	u := newTestUI(t, f)
+	u.refreshNow()
+	if !labelExists(u.root, "Recent activity") {
+		t.Error("no-plans macro view is missing the Recent activity feed")
+	}
+	if !labelContains(u.root, "service.started") {
+		t.Error("no-plans macro view did not render the project event")
+	}
+}
+
 func TestTaskLabel_TruncatesOnRuneBoundary(t *testing.T) {
 	// A long description made of multi-byte runes must not be sliced mid-rune
 	// (which would produce invalid UTF-8). 70 emoji → truncated to 57 runes + …

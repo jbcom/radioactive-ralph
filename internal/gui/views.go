@@ -89,21 +89,24 @@ func (u *ui) buildMacro(s snapshot) {
 	if len(s.plans) == 0 {
 		u.body.Add(widget.NewLabel("No plans yet. Import a markdown plan to begin."))
 		u.body.Add(u.importButton())
-		return
+		// The activity feed is still worth showing with zero plans (the TUI does
+		// too) — a fresh project may have supervisor/service events before its
+		// first plan. Fall through to addRecentActivity rather than returning.
+	} else {
+		u.body.Add(widget.NewLabelWithStyle("Plans", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}))
+		for _, p := range s.plans {
+			planID := p.ID
+			prog := s.progress[p.ID]
+			open := widget.NewButton(p.Title, func() { u.drillTo(planID, "") })
+			open.Alignment = widget.ButtonAlignLeading
+			u.body.Add(container.NewHBox(
+				statusChip(string(p.Status)),
+				open,
+				widget.NewLabel(fmt.Sprintf("%d/%d", prog.Done, prog.Total)),
+			))
+		}
+		u.body.Add(u.importButton())
 	}
-	u.body.Add(widget.NewLabelWithStyle("Plans", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}))
-	for _, p := range s.plans {
-		planID := p.ID
-		prog := s.progress[p.ID]
-		open := widget.NewButton(p.Title, func() { u.drillTo(planID, "") })
-		open.Alignment = widget.ButtonAlignLeading
-		u.body.Add(container.NewHBox(
-			statusChip(string(p.Status)),
-			open,
-			widget.NewLabel(fmt.Sprintf("%d/%d", prog.Done, prog.Total)),
-		))
-	}
-	u.body.Add(u.importButton())
 	u.addRecentActivity(s.projEvents)
 }
 
