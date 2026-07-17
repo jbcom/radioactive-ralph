@@ -305,3 +305,30 @@ deltas are the fast path, never the only path. **Hardening (#175):**
 caller-discipline (a #169 security-self-review finding). Design specs:
 `docs/superpowers/specs/2026-07-17-attach-event-stream-design.md` and
 `…-attach-live-consumers-design.md`.
+
+## TUI/CLI observe surface goes push-live (v0.22+)
+
+The observe half of the drive+observe API became a real live feed end-to-end.
+**CLI (#178):** `radioactive_ralph events` tails the project's events to stdout
+(`--backlog N`, `--json`) — the first CLI consumer of `Client.AttachEvents`;
+review folded in a backlog↔live cursor-race fix (cursor from the same read, not
+a separate MaxEventID), a `--json` marshal-drop→stderr notice, and — notably —
+`ListProjectEvents` was switched to the shared `eventProjectScope` because a bare
+`project_id` filter had silently dropped the plan-scoped lifecycle events
+(`task.claimed/done/failed`) from the CLI backlog AND the pre-existing TUI macro
+pane + GUI event view. **TUI (#182):** the live Attach subscription became
+session-long (started once on first fetch, routed by drill level) so the
+macro/meso views update from events as they land, not just on the 1s poll —
+always applying the lifecycle status delta + a live macro event tail
+(`prependEvent`, id-deduped), the per-task filtered log at micro; the poll
+reconciles via `mergeEventTail` (a wholesale replace would drop a live event
+whose DB commit landed inside the poll's read window — a real bug caught in
+review). **Cursor-aware reconnect (#184):** the model now OWNS the resume cursor
+end-to-end — it seeds `lastEventID` from `MaxEventID` once before the first
+attach (`attachSeeded`) and resumes from it on reconnect (threaded into
+`AttachArgs.AfterID`), so no macro event is missed across a supervisor blip even
+if the first subscription ended before yielding a frame (a codex P1). Two
+post-merge review lenses came back clean: security-auditor (bounded resources,
+parameterized SQL, correct scoping) and code-simplifier (one stale-comment
+delete). A `govulncheck` sweep found 0 CVEs with all direct deps current. Specs:
+`…-events-cli-design.md`, `…-tui-macro-live-events-design.md`.

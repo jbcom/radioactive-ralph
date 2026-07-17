@@ -191,39 +191,21 @@ Structured attach event surface (the observe half goes live) — shipping arc:
   AND the pre-existing TUI macro pane + GUI event view; fixed by switching it to
   the shared eventProjectScope so all consumers agree with the live tail.
 
-- Session-long TUI live tail (MERGED): spec #180, feature #182 — the macro/meso
-  views go push-live (subscription starts once on first fetch, routes frames by
-  level: always applyEvent delta + prependEvent macro tail deduped, micro adds
-  the filtered log; poll reconciles via mergeEventTail so no live event is
-  dropped). Review folded forward: poll-drops-live-event bug (mergeEventTail),
-  id-less-frame dedup, spec internal-consistency. Reconnect-after-blip works
-  (next fetch restarts) with a known cursor-gap limitation — the next item below.
-  The observe-half push-live work now spans CLI (#178) / TUI (#173/#182) / GUI
-  (#173).
+- TUI/CLI observe surface goes push-live (COMPLETE, compressed →
+  docs/superpowers/PILLARS.md): events CLI #178, session-long TUI live tail
+  #182, cursor-aware reconnect #184 (all merged; the reconnect gap is closed —
+  the model owns the cursor end-to-end). Two post-merge review lenses clean
+  (security-auditor, code-simplifier — one stale-comment delete folded into
+  #184); govulncheck 0 CVEs, direct deps current.
 
-Next concrete item (now runnable — #180/#182 merged):
-- [ ] [WAIT] #184 (feat: cursor-aware TUI reconnect) — BUILT and in flight.
-  DataSource.Attach now takes an afterID; the model tracks lastEventID and
-  resumes from it on reconnect (0 on first attach = from now), threaded into
-  AttachArgs.AfterID, so no macro event is missed across a supervisor-blip gap
-  (the one real limitation the #180/#182 reviews surfaced). +regression test
-  (resume from id 14, not 0). CI; merge green.
-- [x] code-simplifier lens over the merged TUI subscription code — DONE. The code
-  is at the right altitude (prependEvent vs mergeEventTail duplication is
-  load-bearing, not accidental; the rearm() closure + early-returns are the
-  clearest shape). One finding: a stale, misleading orphaned renderFrame doc
-  comment (renamed to decodeEvent in #182, falsely claimed undecodable frames
-  render as raw JSON) — deleted, folded into #184.
-- [x] Dependency freshness + CVE sweep — DONE, clean: govulncheck ./... reports
-  0 vulnerabilities, and every DIRECT dep (fyne, bubbletea, lipgloss, cobra,
-  viper, goldmark, x/sys, modernc.org/sqlite, go-isatty, …) is already at latest.
-  The `go list -u all` "outdated" entries are all INDIRECT/transitive deps pinned
-  by Fyne's ecosystem — bumping them manually would risk the build for no
-  benefit; dependabot handles those routine transitive bumps (e.g. the open #95).
-  No PR warranted.
-- [ ] After #184 lands, the model.go-touching TUI features (live macro
-  plan-PROGRESS deltas; GUI per-event delta apply) or a NEW area (provider
-  coverage, observability, DX) become available; pick per directive 0.
+Next concrete item (per directive 0):
+- [ ] Live macro plan-PROGRESS deltas: today a live task.done/failed frame
+  updates the macro EVENT pane + the task's status (at meso) immediately, but the
+  macro plan-PROGRESS counter (snap.progress, from PlanProgress) only refreshes
+  on the 1s poll. Recompute the affected plan's done/total from the frame so the
+  progress bar advances live too — the last poll-only gap in the macro view.
+  Touches model.go's applyEvent/liveFrameMsg; land build+test+lint green with a
+  test (a task.done bumps the plan's Done count without a poll).
 
 ## Notes
 
