@@ -54,11 +54,30 @@ because an agent said so.
 
 ## Install
 
+### CLI
+
 | Platform | Command |
 |---|---|
 | macOS / Linux (Homebrew) | `brew tap jbcom/pkgs https://github.com/jbcom/pkgs && brew install radioactive-ralph` |
 | Windows Scoop | `scoop bucket add jbcom https://github.com/jbcom/pkgs && scoop install radioactive-ralph` |
+| Windows winget / Chocolatey | `winget install jbcom.radioactive-ralph` · `choco install radioactive-ralph` |
+| Linux (deb / rpm) | download the `.deb`/`.rpm` from the [latest release](https://github.com/jbcom/radioactive-ralph/releases/latest) |
 | macOS / Linux curl installer | <code>curl -sSL https://jonbogaty.com/radioactive-ralph/install.sh | sh</code> |
+
+### Desktop app (GUI)
+
+The desktop app is a graphical peer to the terminal UI on the same supervisor —
+it watches **and drives** (approve, pause/resume, kill, import) from a window.
+
+| Platform | Command / file |
+|---|---|
+| macOS (Homebrew cask) | `brew install --cask radioactive-ralph` — opens cleanly, no Gatekeeper prompt |
+| Linux (AppImage) | download the `.AppImage` from the [latest release](https://github.com/jbcom/radioactive-ralph/releases/latest), `chmod +x`, run |
+| macOS (direct) / Windows | the `.dmg` / `.exe` from the [latest release](https://github.com/jbcom/radioactive-ralph/releases/latest) |
+
+Double-clicking the app opens the GUI; from a terminal, `radioactive_ralph gui`
+does the same. Everything is signed the open-source way — no paid Apple or
+Microsoft credentials — so the cask install needs no security override.
 
 ## Quick start
 
@@ -72,18 +91,31 @@ radioactive_ralph --init
 # 3. Import a markdown plan; it is activated and the supervisor begins driving it
 radioactive_ralph plan import plan.md
 
-# 4. Run the client to see live status / the read-only cockpit
+# 4. Watch and drive: the read-only terminal cockpit …
 radioactive_ralph
+#    … or the desktop app (a GUI peer that can also approve/pause/kill/import).
+#    Install it from the "Desktop app" table above; `radioactive_ralph gui`
+#    (or double-clicking the installed app) opens it.
+radioactive_ralph gui
 ```
 
 The client refuses to run unless a supervisor is reachable, and tells you how to
 start one. Nothing is written into your repository.
 
+> The `gui` subcommand only opens a window in a **GUI-enabled build** — the
+> desktop-app installs (Homebrew cask, AppImage, `.dmg`/`.exe`). The CLI-only
+> installs (Homebrew formula, Scoop, winget, Chocolatey, `.deb`/`.rpm`, the curl
+> installer) ship the terminal client; running `gui` there prints a note telling
+> you to install the desktop app. The Windows `.exe` is signed only once the
+> project's free SignPath enrollment is configured — until then Windows
+> SmartScreen may warn on first launch.
+
 ## CLI surface
 
 ```bash
 radioactive_ralph --supervisor      # run the supervisor (owns agent ptys + the user DB)
-radioactive_ralph                   # dumb client: discover the supervisor, read-only view
+radioactive_ralph                   # dumb client: discover the supervisor, read-only TUI
+radioactive_ralph gui               # desktop GUI client (watch + drive); needs a GUI-enabled build
 radioactive_ralph --init            # initialize / re-initialize the current project
 radioactive_ralph plan import <f>   # import a markdown plan and activate it
 radioactive_ralph plan ls [--all]   # list the current project's plans
