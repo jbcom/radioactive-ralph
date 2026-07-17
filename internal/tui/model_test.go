@@ -479,6 +479,56 @@ func TestModel_LiveFrameBumpsMacroProgress(t *testing.T) {
 	}
 }
 
+// TestModel_LiveProgressDedupsCompletionAliases: one completion emits both
+// worker.completed and worker.verified_done for the same task; at MACRO level
+// (snap.tasks empty) the progress counter must count that task ONCE, not twice.
+func TestModel_LiveProgressDedupsCompletionAliases(t *testing.T) {
+	f := testFake()
+	m := newTestModel(t, f)
+	m.lvl = levelMacro // snap.tasks empty — the per-task status check can't dedup
+	m.snap.progress = map[string]orch.Progress{"plan-1": {Done: 0, Total: 3}}
+
+	for _, kind := range []string{"worker.completed", "worker.verified_done"} {
+		updated, _ := m.Update(liveFrameMsg{raw: []byte(`{"kind":"` + kind + `","task_id":"task-a","plan_id":"plan-1"}`)})
+		m = updated.(Model)
+	}
+	if got := m.snap.progress["plan-1"].Done; got != 1 {
+		t.Errorf("plan-1 Done = %d, want 1 (the two completion aliases for one task count once)", got)
+	}
+}
+
+// TestModel_LiveProgressSurvivesInFlightPoll: a poll snapshot that predates a
+// live bump must not regress the counter (Done is monotonic within a run).
+func TestModel_LiveProgressSurvivesInFlightPoll(t *testing.T) {
+	f := testFake()
+	m := newTestModel(t, f)
+	m.lvl = levelMacro
+	m.snap.progress = map[string]orch.Progress{"plan-1": {Done: 1, Total: 3}}
+
+	// A live completion bumps Done 1→2.
+	updated, _ := m.Update(liveFrameMsg{raw: []byte(`{"kind":"task.done","task_id":"task-a","plan_id":"plan-1"}`)})
+	m = updated.(Model)
+	if m.snap.progress["plan-1"].Done != 2 {
+		t.Fatalf("live bump failed: Done = %d, want 2", m.snap.progress["plan-1"].Done)
+	}
+
+	// An in-flight poll (read Done=1 before the completion persisted) lands.
+	// The counter must NOT regress to 1 — the max is kept.
+	updated, _ = m.Update(fetchedMsg{snap: snapshot{
+		plans:    f.plans,
+		progress: map[string]orch.Progress{"plan-1": {Done: 1, Total: 3}},
+	}})
+	m = updated.(Model)
+	if got := m.snap.progress["plan-1"].Done; got != 2 {
+		t.Errorf("poll regressed the live bump: Done = %d, want 2 (max of live 2 and stale poll 1)", got)
+	}
+	// The dedup set was cleared by the poll — a fresh completion for the same
+	// task now counts again (the poll is the new baseline).
+	if m.liveDoneTasks != nil && m.liveDoneTasks["task-a"] {
+		t.Error("liveDoneTasks not cleared on poll")
+	}
+}
+
 // TestModel_LiveFrameProgressNoopForUnknownPlan: a done frame for a plan not in
 // the progress map (or with no plan_id) doesn't panic or invent an entry.
 func TestModel_LiveFrameProgressNoopForUnknownPlan(t *testing.T) {
