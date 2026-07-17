@@ -173,16 +173,6 @@ Structured attach event surface (the observe half goes live) — shipping arc:
   claimed tick_test.go still used the 2-arg HandleAttach; the pushed tree has
   the 3-arg fix, build/test green). The marshal-skip-and-advance tradeoff both
   agents noted is intended (don't wedge the stream on one bad row).
-- [ ] [WAIT] #169 (feat: stream events over Attach) — store EventsAfter/MaxEventID
-  tail queries + the supervisor HandleAttach tail loop + ipc AttachArgs/
-  AttachEvent/AttachEvents. All 5 review threads resolved: slog fix; store
-  scope-precedence (explicit project_id wins over plan linkage, +test);
-  transient-vs-permanent store-error classification so a broken DB ends the
-  stream instead of spinning (+test); cursor seeded to MaxEventID in both live
-  clients so launch/reconnect starts from "now" not a full-history replay. The
-  per-task micro-view filter (codex P2) is deferred to the consumer PR below.
-  CI re-running on the fixes; merge when green.
-
 Attach live-consumers (push-live view) — #169 landed, consumers in flight:
 - [x] #169 (feat: stream events over Attach) MERGED — the observe half is live
   on main. Store tail queries, supervisor HandleAttach tail loop, ipc
