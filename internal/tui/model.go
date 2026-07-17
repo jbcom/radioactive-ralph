@@ -831,20 +831,43 @@ func mergeEventTail(live, poll []store.Event) []store.Event {
 	return merged
 }
 
-// applyEvent applies a live event as a delta to the snapshot's task list so a
-// lifecycle change is reflected immediately, ahead of the next poll. It is a
-// pure function (returns the updated snapshot) to keep Update easy to test. A
-// kind that maps to no task-status change, or a task_id not currently in view,
-// is a no-op — the poll reconciles everything regardless.
+// applyEvent applies a live event as a delta to the snapshot so a lifecycle
+// change is reflected immediately, ahead of the next poll. It updates the
+// selected plan's task list (status, at meso) AND the macro plan-PROGRESS
+// counter (snap.progress) so the progress bar advances live too — the last
+// poll-only gap in the macro view. It is a pure function (returns the updated
+// snapshot) to keep Update easy to test. A kind that maps to no task-status
+// change, or a task_id not currently in view, is a no-op for the task list; the
+// poll reconciles everything regardless.
 func applyEvent(snap snapshot, ev ipc.AttachEvent) snapshot {
 	status := taskDeltaStatus(ev.Kind)
 	if status == "" || ev.TaskID == "" {
 		return snap
 	}
+
+	// Task-status delta (meso): flip the matching task's status if it's loaded.
+	// Capture whether this task was ALREADY done, so the progress bump below
+	// counts a done transition at most once when the task is in view.
+	wasDone := false
 	for i := range snap.tasks {
 		if snap.tasks[i].ID == ev.TaskID {
+			wasDone = snap.tasks[i].Status == store.TaskStatusDone
 			snap.tasks[i].Status = status
 			break
+		}
+	}
+
+	// Macro plan-PROGRESS delta: a fresh done bumps the plan's Done counter so
+	// the progress bar moves live, not just on the next poll. Guard against
+	// double-counting: when the task is loaded (meso), only bump if it wasn't
+	// already Done. Each store event streams once per session (frame-level
+	// dedup via lastEventID), so a task.done is delivered at most once — the
+	// macro case (task not loaded, wasDone=false) can't double-count from
+	// re-delivery. The poll reconciles the exact count within a tick regardless.
+	if status == store.TaskStatusDone && !wasDone && ev.PlanID != "" {
+		if prog, ok := snap.progress[ev.PlanID]; ok && prog.Done < prog.Total {
+			prog.Done++
+			snap.progress[ev.PlanID] = prog
 		}
 	}
 	return snap
