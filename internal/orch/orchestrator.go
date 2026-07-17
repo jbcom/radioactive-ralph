@@ -81,6 +81,80 @@ type Orchestrator struct {
 	// which is touched from every concurrent dispatch and from KillWorker.
 	runningWorkersMu sync.Mutex
 	runningWorkers   map[string]context.CancelFunc
+
+	// Async dispatch (the never-block invariant): dispatchWorker runs the provider
+	// agent turn, which can block for up to watchdogConfig.StallTimeout. It must
+	// NOT run inline under the supervisor's dispatchMu, or a slow turn wedges the
+	// periodic tick, HandleEnqueue, and the reaper. So DispatchNext launches each
+	// worker in its own goroutine, tracked by inflight (for shutdown drain) and
+	// bounded by the dispatchSem semaphore (to preserve the maxParallel cap that
+	// synchronous dispatch used to provide by blocking). See the design doc:
+	// docs/superpowers/specs/2026-07-17-async-dispatch-never-block-design.md.
+	inflight    sync.WaitGroup
+	dispatchSem chan struct{} // buffered to maxParallel; nil disables the bound
+
+	// heartbeatInterval overrides workerHeartbeatInterval for tests (so a test
+	// can prove the running-worker heartbeat fires without waiting 20s). Zero uses
+	// the production constant.
+	heartbeatInterval time.Duration
+
+	// baseCtx is the context the ASYNC dispatch goroutines run under — the
+	// provider turn, store writes, and verification. It must outlive the
+	// per-dispatch caller's ctx: DispatchNext is driven from HandleEnqueue, whose
+	// ctx is the IPC request context, cancelled the instant the request handler
+	// returns. If the goroutine used that ctx, runner.Run and every store write
+	// would run against a cancelled context and fail silently. So the goroutine
+	// derives its context from baseCtx (the supervisor's run context, via
+	// WithBaseContext) instead. Defaults to context.Background().
+	// baseCtxMu guards it: SetBaseContext writes it from Run while DispatchNext
+	// reads it concurrently from the tick / HandleEnqueue.
+	baseCtxMu sync.RWMutex
+	baseCtx   context.Context
+}
+
+// workerHeartbeatInterval is how often a running worker's store heartbeat is
+// refreshed during its (now asynchronous) provider turn. It MUST be well below
+// the supervisor's staleAfter (90s) or the reaper would reclaim a healthy
+// long-running worker mid-turn — a regression the async dispatch introduced,
+// since the reaper tick now runs concurrently with provider turns instead of
+// being blocked behind them. 20s gives several beats within the staleness
+// window.
+const workerHeartbeatInterval = 20 * time.Second
+
+// runWithHeartbeat runs fn (a provider turn) while periodically refreshing
+// workerID's store heartbeat, so the supervisor's reaper does not mistake a
+// legitimately long-running worker for a crashed one and reclaim its task
+// out from under it. The heartbeat goroutine stops the instant fn returns.
+// hbCtx bounds the heartbeat loop (the dispatch base context); heartbeat write
+// errors are ignored — a missed beat is self-correcting on the next tick, and a
+// heartbeat failure must never fail the turn.
+func (o *Orchestrator) runWithHeartbeat(hbCtx context.Context, workerID string, fn func() (provider.Result, error)) (provider.Result, error) {
+	interval := workerHeartbeatInterval
+	if o.heartbeatInterval > 0 {
+		interval = o.heartbeatInterval // test override
+	}
+	done := make(chan struct{})
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		t := time.NewTicker(interval)
+		defer t.Stop()
+		for {
+			select {
+			case <-done:
+				return
+			case <-hbCtx.Done():
+				return
+			case <-t.C:
+				_ = o.store.HeartbeatWorker(hbCtx, workerID)
+			}
+		}
+	}()
+	result, err := fn()
+	close(done)
+	wg.Wait()
+	return result, err
 }
 
 // registerWorker records cancel as the way to abort workerID's in-flight run
@@ -139,6 +213,25 @@ func WithClock(c Clock) Option {
 	return func(o *Orchestrator) { o.now = c }
 }
 
+// withHeartbeatInterval overrides the running-worker heartbeat cadence. Test-only
+// (unexported) so a test can observe a heartbeat within milliseconds instead of
+// the 20s production interval.
+func withHeartbeatInterval(d time.Duration) Option {
+	return func(o *Orchestrator) { o.heartbeatInterval = d }
+}
+
+// WithBaseContext sets the long-lived context the async dispatch goroutines run
+// under (provider turn + store writes + verification). The supervisor passes its
+// run context so dispatched work survives past the per-request IPC context that
+// drove it. A nil ctx is ignored (keeps the Background default).
+func WithBaseContext(ctx context.Context) Option {
+	return func(o *Orchestrator) {
+		if ctx != nil {
+			o.baseCtx = ctx
+		}
+	}
+}
+
 // WithMaxParallel bounds how many steps DispatchNext will dispatch in one
 // call for a parallel group. Zero/negative means unbounded (bounded only
 // by the number of ready steps).
@@ -191,9 +284,16 @@ func New(st *store.Store, opts ...Option) *Orchestrator {
 			StallTimeout: 5 * time.Minute,
 		},
 		acceptanceCheck: mechanicalAcceptanceCheck,
+		baseCtx:         context.Background(),
 	}
 	for _, opt := range opts {
 		opt(o)
+	}
+	// Size the dispatch semaphore from the resolved maxParallel so async dispatch
+	// keeps the same store-wide concurrency bound synchronous dispatch enforced by
+	// blocking. maxParallel <= 0 means "unbounded" (nil sem = no throttle).
+	if o.maxParallel > 0 {
+		o.dispatchSem = make(chan struct{}, o.maxParallel)
 	}
 	return o
 }
@@ -335,8 +435,25 @@ func (o *Orchestrator) DispatchNext(ctx context.Context, projectID, planID strin
 			return dispatched, fmt.Errorf("orch: resolve binding: %w", err)
 		}
 		if binding.Config.NativeFanout {
-			n, err := o.dispatchFanoutGroup(ctx, projectID, projectDir, planID, parsedPlan, storedPlan.Title, groupHeading, binding, readySteps[:limit], refs[:limit])
+			// A fan-out group is one worker / one provider turn, so it takes ONE
+			// dispatch slot. If the pipeline is full there's no capacity now —
+			// return without dispatching; the next pass retries.
+			if !o.acquireDispatchSlot() {
+				return dispatched, nil
+			}
+			slotReleased := false
+			releaseSlot := func() {
+				if !slotReleased {
+					o.releaseDispatchSlot()
+					slotReleased = true
+				}
+			}
+			n, err := o.dispatchFanoutGroup(ctx, projectID, projectDir, planID, parsedPlan, storedPlan.Title, groupHeading, binding, readySteps[:limit], refs[:limit], releaseSlot)
 			if err != nil {
+				// dispatchFanoutGroup only returns an error on a synchronous
+				// pre-launch failure (claim/spend); the async turn was never
+				// started, so release the slot here.
+				releaseSlot()
 				return dispatched, err
 			}
 			return n, nil
@@ -344,8 +461,24 @@ func (o *Orchestrator) DispatchNext(ctx context.Context, projectID, planID strin
 	}
 
 	for i := 0; i < limit; i++ {
+		// Try to acquire a dispatch slot BEFORE claiming a task. If the semaphore
+		// is full, there's no free capacity right now: stop the pass rather than
+		// claim a task we can't run or block the lock. The next tick / enqueue
+		// resumes from here. (nil sem = unbounded; acquire always succeeds.)
+		if !o.acquireDispatchSlot() {
+			break
+		}
+		releaseSlot := true // release inline on any pre-launch early exit below
+		release := func() {
+			if releaseSlot {
+				o.releaseDispatchSlot()
+				releaseSlot = false
+			}
+		}
+
 		binding, err := o.resolveBinding(ctx, projectID, parallel)
 		if err != nil {
+			release()
 			return dispatched, fmt.Errorf("orch: resolve binding: %w", err)
 		}
 
@@ -354,6 +487,7 @@ func (o *Orchestrator) DispatchNext(ctx context.Context, projectID, planID strin
 			// steps (possibly on an uncapped provider) may still be
 			// dispatchable. Record the refusal and move to the next ready
 			// step.
+			release()
 			_ = o.store.Emit(ctx, store.EmitOpts{
 				ProjectID: projectID,
 				PlanID:    planID,
@@ -368,6 +502,7 @@ func (o *Orchestrator) DispatchNext(ctx context.Context, projectID, planID strin
 
 		sessionID, workerID, err := o.spawnWorkerRows(ctx, binding)
 		if err != nil {
+			release()
 			return dispatched, err
 		}
 
@@ -375,6 +510,7 @@ func (o *Orchestrator) DispatchNext(ctx context.Context, projectID, planID strin
 		if err != nil {
 			// Release the worker row we just spawned — otherwise it leaks in
 			// 'running' with no task (CreateWorker hardcodes status='running').
+			release()
 			_ = o.store.ClearWorkerTask(ctx, workerID, "crashed")
 			return dispatched, err
 		}
@@ -384,10 +520,12 @@ func (o *Orchestrator) DispatchNext(ctx context.Context, projectID, planID strin
 			// claimStepTask). Not an error; just nothing to dispatch here.
 			// Release the worker row we just spawned since it will never
 			// be assigned a task.
+			release()
 			_ = o.store.ClearWorkerTask(ctx, workerID, "idle")
 			continue
 		}
 		if err := o.store.SetWorkerTask(ctx, workerID, planID, ds.task.ID); err != nil {
+			release()
 			return dispatched, fmt.Errorf("orch: set worker task: %w", err)
 		}
 
@@ -398,13 +536,94 @@ func (o *Orchestrator) DispatchNext(ctx context.Context, projectID, planID strin
 			StepDetail:   ds.step.Detail,
 		}
 
-		if err := o.dispatchWorker(ctx, projectID, projectDir, planID, sessionID, workerID, binding, ds, scoped); err != nil {
-			return dispatched, err
-		}
+		// Launch the provider turn asynchronously: the claim above (fast store
+		// I/O) has happened synchronously under the caller's dispatchMu, but the
+		// slow agent turn + verify must run off the lock. The slot and the
+		// inflight WaitGroup are released when the goroutine finishes; ownership of
+		// releaseSlot transfers to the goroutine here, so the loop's inline release
+		// no longer fires for this iteration.
+		releaseSlot = false
+		o.inflight.Add(1)
+		// Run under baseCtx, NOT the caller's ctx: HandleEnqueue's ctx is the IPC
+		// request context, cancelled the moment the request handler returns, which
+		// would kill this goroutine's run + store writes.
+		runCtx := o.dispatchBaseCtx()
+		go func() {
+			defer o.inflight.Done()
+			defer o.releaseDispatchSlot()
+			if err := o.dispatchWorker(runCtx, projectID, projectDir, planID, sessionID, workerID, binding, ds, scoped); err != nil {
+				// Async: no caller to return to. A dispatch error for one worker
+				// must never abort the pass or wedge the supervisor — log it as a
+				// store event (same shape as spend-cap refusal) and move on.
+				_ = o.store.Emit(runCtx, store.EmitOpts{
+					ProjectID:   projectID,
+					PlanID:      planID,
+					Kind:        "worker.dispatch_error",
+					Stream:      "service",
+					PayloadJSON: mustPayloadJSON(store.EventPayload{Reason: err.Error()}),
+				})
+			}
+		}()
 		dispatched++
 	}
 
 	return dispatched, nil
+}
+
+// acquireDispatchSlot try-acquires one dispatch slot without blocking, returning
+// true on success. A nil semaphore (maxParallel <= 0) means unbounded — always
+// true. Non-blocking so a full pipeline stops the dispatch pass instead of
+// blocking the caller's dispatchMu.
+func (o *Orchestrator) acquireDispatchSlot() bool {
+	if o.dispatchSem == nil {
+		return true
+	}
+	select {
+	case o.dispatchSem <- struct{}{}:
+		return true
+	default:
+		return false
+	}
+}
+
+// releaseDispatchSlot returns one dispatch slot. Safe to call once per successful
+// acquire; a no-op when the semaphore is nil.
+func (o *Orchestrator) releaseDispatchSlot() {
+	if o.dispatchSem == nil {
+		return
+	}
+	<-o.dispatchSem
+}
+
+// SetBaseContext sets the long-lived context async dispatch goroutines run
+// under. The supervisor calls this once at the top of Run with its run context —
+// the orchestrator is constructed before that context exists, so it can't be a
+// construction option there. Must be called before the first DispatchNext. A nil
+// ctx is ignored.
+func (o *Orchestrator) SetBaseContext(ctx context.Context) {
+	if ctx == nil {
+		return
+	}
+	o.baseCtxMu.Lock()
+	o.baseCtx = ctx
+	o.baseCtxMu.Unlock()
+}
+
+// dispatchBaseCtx returns the context async dispatch goroutines run under.
+func (o *Orchestrator) dispatchBaseCtx() context.Context {
+	o.baseCtxMu.RLock()
+	defer o.baseCtxMu.RUnlock()
+	return o.baseCtx
+}
+
+// Wait blocks until every in-flight dispatched worker goroutine has finished
+// (its provider turn + verification returned). The supervisor calls this during
+// shutdown AFTER cancelling the run context — cancellation aborts the in-flight
+// runner.Run subprocesses via the runningWorkers registry, so this drain is
+// bounded, not a hang. Tests also call it to observe dispatch results
+// deterministically now that dispatch is asynchronous.
+func (o *Orchestrator) Wait() {
+	o.inflight.Wait()
 }
 
 // doneSet builds the done-set plan.Decompose needs, keyed by StepRef.ID(),
@@ -616,7 +835,7 @@ func (o *Orchestrator) dispatchWorker(ctx context.Context, projectID, projectDir
 	// returns (not at function end) so the timeout resources aren't held
 	// through the slower post-run store writes + VerifyAndComplete, which use
 	// the parent ctx.
-	result, runErr := func() (provider.Result, error) {
+	result, runErr := o.runWithHeartbeat(ctx, workerID, func() (provider.Result, error) {
 		// A cancelable run context registered under workerID so an operator/GUI
 		// worker-kill can abort this provider turn (see KillWorker). The stall
 		// timeout, when set, layers on top of the same cancelable context.
@@ -630,13 +849,23 @@ func (o *Orchestrator) dispatchWorker(ctx context.Context, projectID, projectDir
 		deregister := o.registerWorker(workerID, cancel)
 		defer deregister()
 		return runner.Run(runCtx, binding, req)
-	}()
+	})
+
+	// Post-run store writes (usage, evidence, mark-failed/verify, clear-worker)
+	// run under persistCtx, NOT ctx. ctx is the supervisor's run context, which
+	// shutdown cancels to abort the in-flight provider turn — but once the turn
+	// has produced its result, that result MUST be recorded (spend accounting) and
+	// verified, or a nearly-complete turn is silently lost on shutdown and its
+	// task stuck 'running'. persistCtx is detached from ctx's cancellation with a
+	// bounded timeout so these writes land even as ctx is being torn down.
+	persistCtx, persistCancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+	defer persistCancel()
 
 	// Spend is real the moment tokens were billed, independent of whether
 	// the work is ultimately accepted by VerifyAndComplete — record it
 	// unconditionally so spend-cap accounting stays accurate even for
 	// rejected/failed turns.
-	if err := o.recordUsage(ctx, projectID, workerID, binding.Name, string(req.Model), result.Usage); err != nil {
+	if err := o.recordUsage(persistCtx, projectID, workerID, binding.Name, string(req.Model), result.Usage); err != nil {
 		return fmt.Errorf("orch: record usage: %w", err)
 	}
 
@@ -656,7 +885,7 @@ func (o *Orchestrator) dispatchWorker(ctx context.Context, projectID, projectDir
 	if err != nil {
 		return fmt.Errorf("orch: marshal evidence message: %w", err)
 	}
-	if err := o.store.AppendMessage(ctx, store.AppendMessageOpts{
+	if err := o.store.AppendMessage(persistCtx, store.AppendMessageOpts{
 		WorkerID:    workerID,
 		PlanID:      planID,
 		TaskID:      ds.task.ID,
@@ -670,17 +899,17 @@ func (o *Orchestrator) dispatchWorker(ctx context.Context, projectID, projectDir
 		// A stale failure report (the reaper reclaimed this worker's claim
 		// mid-run and possibly reassigned the task) is benign — the current
 		// owner keeps its work; we just release this now-defunct worker.
-		if _, err := o.store.MarkFailed(ctx, planID, ds.task.ID, sessionID, runErr.Error(), 3); err != nil && !errors.Is(err, store.ErrTaskNotOwnedRunning) {
+		if _, err := o.store.MarkFailed(persistCtx, planID, ds.task.ID, sessionID, runErr.Error(), 3); err != nil && !errors.Is(err, store.ErrTaskNotOwnedRunning) {
 			return fmt.Errorf("orch: mark failed after run error: %w", err)
 		}
-		_ = o.store.ClearWorkerTask(ctx, workerID, "crashed")
+		_ = o.store.ClearWorkerTask(persistCtx, workerID, "crashed")
 		return nil
 	}
 
-	if _, err := o.VerifyAndComplete(ctx, planID, ds.task.ID, ev); err != nil {
+	if _, err := o.VerifyAndComplete(persistCtx, planID, ds.task.ID, ev); err != nil {
 		return fmt.Errorf("orch: verify and complete: %w", err)
 	}
-	_ = o.store.ClearWorkerTask(ctx, workerID, "idle")
+	_ = o.store.ClearWorkerTask(persistCtx, workerID, "idle")
 	return nil
 }
 
@@ -699,8 +928,15 @@ func (o *Orchestrator) dispatchWorker(ctx context.Context, projectID, projectDir
 // Admission (spend-cap) is checked once for the whole group, since only
 // one provider turn is actually run — a group that can't be admitted
 // dispatches nothing and returns 0 rather than partially claiming tasks.
-func (o *Orchestrator) dispatchFanoutGroup(ctx context.Context, projectID, projectDir, planID string, parsedPlan *plan.Plan, storeTitle, groupHeading string, binding provider.Binding, steps []plan.Step, refs []plan.StepRef) (dispatched int, err error) {
+// dispatchFanoutGroup claims an entire ready parallel step-group under one
+// worker (fast, synchronous store I/O under the caller's dispatchMu), then
+// launches the single fan-out provider turn + verification asynchronously via
+// runFanoutGroup. releaseFanoutSlot returns the dispatch slot the caller
+// acquired; ownership transfers to the async goroutine on a successful launch,
+// and dispatchFanoutGroup releases it inline on any synchronous early exit.
+func (o *Orchestrator) dispatchFanoutGroup(ctx context.Context, projectID, projectDir, planID string, parsedPlan *plan.Plan, storeTitle, groupHeading string, binding provider.Binding, steps []plan.Step, refs []plan.StepRef, releaseFanoutSlot func()) (dispatched int, err error) {
 	if err := o.checkSpendCap(ctx, projectID, binding.Name); err != nil {
+		releaseFanoutSlot()
 		_ = o.store.Emit(ctx, store.EmitOpts{
 			ProjectID: projectID,
 			PlanID:    planID,
@@ -715,6 +951,7 @@ func (o *Orchestrator) dispatchFanoutGroup(ctx context.Context, projectID, proje
 
 	sessionID, workerID, err := o.spawnWorkerRows(ctx, binding)
 	if err != nil {
+		releaseFanoutSlot()
 		return 0, err
 	}
 
@@ -726,6 +963,7 @@ func (o *Orchestrator) dispatchFanoutGroup(ctx context.Context, projectID, proje
 			// worker ALREADY claimed (transitioned to 'running') wedged with
 			// no worker to complete them. Release them back to pending so the
 			// reaper/next dispatch can pick them up, then fail.
+			releaseFanoutSlot()
 			o.releaseClaimedTasks(ctx, planID, sessionID, claimed)
 			_ = o.store.ClearWorkerTask(ctx, workerID, "crashed")
 			return 0, err
@@ -742,10 +980,17 @@ func (o *Orchestrator) dispatchFanoutGroup(ctx context.Context, projectID, proje
 		// Every step in the group was claimed by someone else between
 		// DecomposeRefs computing readiness and this call landing its
 		// claims. Release the worker row; nothing to dispatch.
+		releaseFanoutSlot()
 		_ = o.store.ClearWorkerTask(ctx, workerID, "idle")
 		return 0, nil
 	}
 	if err := o.store.SetWorkerTask(ctx, workerID, planID, claimed[0].task.ID); err != nil {
+		// Don't leak: the tasks are already claimed ('running') under this worker,
+		// so requeue them and release the worker row, mirroring the mid-loop
+		// claim-error path above — otherwise they sit wedged until the reaper.
+		releaseFanoutSlot()
+		o.releaseClaimedTasks(ctx, planID, sessionID, claimed)
+		_ = o.store.ClearWorkerTask(ctx, workerID, "crashed")
 		return 0, fmt.Errorf("orch: set worker task: %w", err)
 	}
 
@@ -755,9 +1000,41 @@ func (o *Orchestrator) dispatchFanoutGroup(ctx context.Context, projectID, proje
 		Steps:        derefSteps(claimed),
 	}
 
+	// The claim phase above is fast store I/O and has run synchronously under the
+	// caller's dispatchMu. The slow fan-out turn + per-task verify must run off
+	// the lock — launch it asynchronously, bounded and drained the same way the
+	// per-step path is. The dispatch slot for a fan-out group was already acquired
+	// by the DispatchNext caller; ownership of its release transfers to this
+	// goroutine (see the releaseFanoutSlot passed in).
+	o.inflight.Add(1)
+	// Run under baseCtx, NOT the caller's ctx (which for HandleEnqueue dies when
+	// the IPC request returns).
+	runCtx := o.dispatchBaseCtx()
+	go func() {
+		defer o.inflight.Done()
+		defer releaseFanoutSlot()
+		if err := o.runFanoutGroup(runCtx, projectID, projectDir, planID, groupHeading, binding, sessionID, workerID, claimed, scoped); err != nil {
+			_ = o.store.Emit(runCtx, store.EmitOpts{
+				ProjectID:   projectID,
+				PlanID:      planID,
+				Kind:        "worker.dispatch_error",
+				Stream:      "service",
+				PayloadJSON: mustPayloadJSON(store.EventPayload{Reason: err.Error()}),
+			})
+		}
+	}()
+	return len(claimed), nil
+}
+
+// runFanoutGroup runs the ONE provider turn for a claimed fan-out group and maps
+// its evidence onto every claimed task's verification. Split out of
+// dispatchFanoutGroup so the slow turn + verify runs in a goroutine off the
+// caller's dispatchMu (the never-block invariant). Errors are returned to the
+// launching goroutine, which emits them as a store event.
+func (o *Orchestrator) runFanoutGroup(ctx context.Context, projectID, projectDir, planID, groupHeading string, binding provider.Binding, sessionID, workerID string, claimed []*dispatchedStep, scoped fanoutScopedContext) error {
 	runner, err := o.newRunner(binding)
 	if err != nil {
-		return 0, fmt.Errorf("orch: resolve runner for %q: %w", binding.Name, err)
+		return fmt.Errorf("orch: resolve runner for %q: %w", binding.Name, err)
 	}
 
 	req := provider.Request{
@@ -768,7 +1045,7 @@ func (o *Orchestrator) dispatchFanoutGroup(ctx context.Context, projectID, proje
 	// returns so it isn't held through the per-task verification below. The run
 	// context is also registered under workerID so a worker-kill cancels the
 	// whole fan-out turn (see KillWorker).
-	result, runErr := func() (provider.Result, error) {
+	result, runErr := o.runWithHeartbeat(ctx, workerID, func() (provider.Result, error) {
 		runCtx, cancel := context.WithCancel(ctx)
 		defer cancel()
 		if o.watchdogConfig.StallTimeout > 0 {
@@ -779,13 +1056,20 @@ func (o *Orchestrator) dispatchFanoutGroup(ctx context.Context, projectID, proje
 		deregister := o.registerWorker(workerID, cancel)
 		defer deregister()
 		return runner.Run(runCtx, binding, req)
-	}()
+	})
+
+	// Post-run writes run under persistCtx (detached from ctx's shutdown
+	// cancellation, bounded timeout) so a nearly-complete fan-out turn's evidence
+	// + verification still land even as the supervisor tears ctx down. See the
+	// same note in dispatchWorker.
+	persistCtx, persistCancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+	defer persistCancel()
 
 	// Spend is real the moment tokens were billed, independent of
 	// per-task verification outcome — record it once for the group's one
 	// provider turn.
-	if err := o.recordUsage(ctx, projectID, workerID, binding.Name, string(req.Model), result.Usage); err != nil {
-		return 0, fmt.Errorf("orch: record usage: %w", err)
+	if err := o.recordUsage(persistCtx, projectID, workerID, binding.Name, string(req.Model), result.Usage); err != nil {
+		return fmt.Errorf("orch: record usage: %w", err)
 	}
 
 	ev := a2a.Evidence{
@@ -804,16 +1088,16 @@ func (o *Orchestrator) dispatchFanoutGroup(ctx context.Context, projectID, proje
 		msg := a2a.NewEvidenceMessage(a2a.RoleAgent, ds.task.ID, planID, ev)
 		msgJSON, err := jsonMarshalMessage(msg)
 		if err != nil {
-			return 0, fmt.Errorf("orch: marshal evidence message: %w", err)
+			return fmt.Errorf("orch: marshal evidence message: %w", err)
 		}
-		if err := o.store.AppendMessage(ctx, store.AppendMessageOpts{
+		if err := o.store.AppendMessage(persistCtx, store.AppendMessageOpts{
 			WorkerID:    workerID,
 			PlanID:      planID,
 			TaskID:      ds.task.ID,
 			Role:        string(a2a.RoleAgent),
 			ContentJSON: msgJSON,
 		}); err != nil {
-			return 0, fmt.Errorf("orch: append evidence message: %w", err)
+			return fmt.Errorf("orch: append evidence message: %w", err)
 		}
 	}
 
@@ -821,12 +1105,12 @@ func (o *Orchestrator) dispatchFanoutGroup(ctx context.Context, projectID, proje
 		for _, ds := range claimed {
 			// Benign if the reaper already reclaimed/reassigned this task —
 			// don't stomp the new owner (see MarkFailed's owner guard).
-			if _, err := o.store.MarkFailed(ctx, planID, ds.task.ID, sessionID, runErr.Error(), 3); err != nil && !errors.Is(err, store.ErrTaskNotOwnedRunning) {
-				return 0, fmt.Errorf("orch: mark failed after run error: %w", err)
+			if _, err := o.store.MarkFailed(persistCtx, planID, ds.task.ID, sessionID, runErr.Error(), 3); err != nil && !errors.Is(err, store.ErrTaskNotOwnedRunning) {
+				return fmt.Errorf("orch: mark failed after run error: %w", err)
 			}
 		}
-		_ = o.store.ClearWorkerTask(ctx, workerID, "crashed")
-		return len(claimed), nil
+		_ = o.store.ClearWorkerTask(persistCtx, workerID, "crashed")
+		return nil
 	}
 
 	// Map the ONE turn's evidence back onto EVERY claimed task: each is
@@ -835,13 +1119,18 @@ func (o *Orchestrator) dispatchFanoutGroup(ctx context.Context, projectID, proje
 	// never completion for any of them — VerifyAndComplete still
 	// mechanically re-checks (or falls back to non-empty-evidence
 	// judgment) per task.
+	// Verify EVERY claimed task even if one errors: an early return would leave
+	// the group's remaining tasks wedged in 'running' until the reaper and skip
+	// the ClearWorkerTask below (leaking the worker row). Collect the first error
+	// and keep going, then always release the worker.
+	var verifyErr error
 	for _, ds := range claimed {
-		if _, err := o.VerifyAndComplete(ctx, planID, ds.task.ID, ev); err != nil {
-			return 0, fmt.Errorf("orch: verify and complete %s: %w", ds.task.ID, err)
+		if _, err := o.VerifyAndComplete(persistCtx, planID, ds.task.ID, ev); err != nil && verifyErr == nil {
+			verifyErr = fmt.Errorf("orch: verify and complete %s: %w", ds.task.ID, err)
 		}
 	}
-	_ = o.store.ClearWorkerTask(ctx, workerID, "idle")
-	return len(claimed), nil
+	_ = o.store.ClearWorkerTask(persistCtx, workerID, "idle")
+	return verifyErr
 }
 
 // releaseClaimedTasks requeues tasks a fan-out worker had already claimed

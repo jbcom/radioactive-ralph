@@ -4,6 +4,7 @@ import (
 	"context"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/jbcom/radioactive-ralph/internal/provider"
@@ -14,6 +15,9 @@ import (
 // agent CLI. It records every Request it was asked to run and returns a
 // canned Result/error per call, in order.
 type fakeRunner struct {
+	// mu guards calls/i: dispatch is asynchronous, so Run is invoked from the
+	// dispatched worker goroutines concurrently.
+	mu      sync.Mutex
 	results []provider.Result
 	errs    []error
 	calls   []provider.Request
@@ -21,6 +25,7 @@ type fakeRunner struct {
 }
 
 func (f *fakeRunner) Run(_ context.Context, _ provider.Binding, req provider.Request) (provider.Result, error) {
+	f.mu.Lock()
 	f.calls = append(f.calls, req)
 	idx := f.i
 	f.i++
@@ -32,7 +37,16 @@ func (f *fakeRunner) Run(_ context.Context, _ provider.Binding, req provider.Req
 	if idx < len(f.errs) {
 		err = f.errs[idx]
 	}
+	f.mu.Unlock()
 	return res, err
+}
+
+// callReqs returns a snapshot of the recorded requests (lock-safe). Tests read
+// this only after o.Wait(), so all dispatched turns have completed.
+func (f *fakeRunner) callReqs() []provider.Request {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]provider.Request(nil), f.calls...)
 }
 
 func newTestStore(t *testing.T) *store.Store {
@@ -129,10 +143,12 @@ func TestDispatchNextSequentialDispatchesOnlyFirstStep(t *testing.T) {
 	if dispatched != 1 {
 		t.Fatalf("dispatched = %d, want 1 (sequential group must gate on its first step)", dispatched)
 	}
-	if len(runner.calls) != 1 {
-		t.Fatalf("runner called %d times, want 1", len(runner.calls))
+	o.Wait() // dispatch is async — wait for the provider turn(s) to complete
+	calls := runner.callReqs()
+	if len(calls) != 1 {
+		t.Fatalf("runner called %d times, want 1", len(calls))
 	}
-	got := runner.calls[0].UserPrompt
+	got := calls[0].UserPrompt
 	if !containsAll(got, "Ship the feature", "write the code") {
 		t.Errorf("scoped prompt = %q, want it to mention plan title and step text", got)
 	}
@@ -187,6 +203,7 @@ func TestDispatchNextParallelDispatchesAllReadySteps(t *testing.T) {
 	if dispatched != 2 {
 		t.Fatalf("dispatched = %d, want 2 (parallel group dispatches all ready steps)", dispatched)
 	}
+	o.Wait() // dispatch is async — wait for both provider turns + verification
 
 	progress, err := o.PlanProgress(ctx, planID)
 	if err != nil {
@@ -240,12 +257,16 @@ func TestDispatchNextNothingReadyReturnsZero(t *testing.T) {
 		WithBindingResolver(fakeBindingResolver("claude", false)),
 	)
 
-	// Drain the sequential plan to completion.
+	// Drain the sequential plan to completion. Dispatch is async, so wait for
+	// each dispatched turn to complete (and its task to be marked done) before the
+	// next pass computes readiness — otherwise the next step's dependency may not
+	// yet be satisfied and the loop would exit early.
 	for {
 		n, err := o.DispatchNext(ctx, projectID, planID)
 		if err != nil {
 			t.Fatalf("DispatchNext: %v", err)
 		}
+		o.Wait()
 		if n == 0 {
 			break
 		}
@@ -290,8 +311,9 @@ func TestDispatchNextSpendCapRefusesDispatch(t *testing.T) {
 	if dispatched != 0 {
 		t.Errorf("dispatched = %d, want 0 (provider is at its spend cap)", dispatched)
 	}
-	if len(runner.calls) != 0 {
-		t.Errorf("runner was called %d times, want 0 — spend cap must refuse BEFORE dispatch", len(runner.calls))
+	o.Wait()
+	if calls := runner.callReqs(); len(calls) != 0 {
+		t.Errorf("runner was called %d times, want 0 — spend cap must refuse BEFORE dispatch", len(calls))
 	}
 
 	events, err := s.ListProjectEvents(ctx, projectID, 10)

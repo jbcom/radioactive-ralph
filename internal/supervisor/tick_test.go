@@ -243,11 +243,24 @@ func TestHostname(t *testing.T) {
 // tickFakeRunner is a canned successful provider.Runner for tick-dispatch
 // tests: it records call count and returns non-empty output so the
 // orchestrator's judgment-only acceptance fallback accepts the step.
-type tickFakeRunner struct{ calls int }
+type tickFakeRunner struct {
+	// mu guards nCall: dispatch is async, so Run is invoked from the dispatched
+	// worker goroutine concurrently with the test's assertions.
+	mu    sync.Mutex
+	nCall int
+}
 
 func (f *tickFakeRunner) Run(context.Context, provider.Binding, provider.Request) (provider.Result, error) {
-	f.calls++
+	f.mu.Lock()
+	f.nCall++
+	f.mu.Unlock()
 	return provider.Result{AssistantOutput: "did the work"}, nil
+}
+
+func (f *tickFakeRunner) calls() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.nCall
 }
 
 // TestTickDrivesDispatchForActivePlan proves the periodic tick — not just an
@@ -287,9 +300,10 @@ func TestTickDrivesDispatchForActivePlan(t *testing.T) {
 	}
 
 	sup.tick(ctx)
+	sup.orch.Wait() // dispatch is async — wait for the tick's dispatched turn
 
-	if runner.calls != 1 {
-		t.Fatalf("runner.calls = %d, want 1 — tick must dispatch the active plan's ready step", runner.calls)
+	if runner.calls() != 1 {
+		t.Fatalf("runner.calls = %d, want 1 — tick must dispatch the active plan's ready step", runner.calls())
 	}
 	task, err := sup.store.GetTask(ctx, planID, "0.0")
 	if err != nil {

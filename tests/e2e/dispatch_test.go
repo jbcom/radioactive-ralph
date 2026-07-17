@@ -132,6 +132,10 @@ func TestE2E_DispatchThroughRealSupervisorWithFakeProvider(t *testing.T) {
 	if dispatched != 1 {
 		t.Fatalf("DispatchNext dispatched = %d, want 1", dispatched)
 	}
+	// Dispatch is asynchronous (the never-block invariant) — DispatchNext returns
+	// once the worker is launched; wait for the provider turn + verification to
+	// complete before asserting the task reached done.
+	o.Wait()
 
 	// DispatchNext/claimStepTask materializes the task under the plan's
 	// own step-ID scheme (StepRef.ID(), a dot-joined GroupPath+Index) —

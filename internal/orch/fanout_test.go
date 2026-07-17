@@ -35,11 +35,13 @@ func TestDispatchNextNativeFanoutDelegatesWholeGroupToOneWorker(t *testing.T) {
 	if dispatched != 3 {
 		t.Fatalf("dispatched = %d, want 3 (all steps in the group count as dispatched even though delegated to one worker)", dispatched)
 	}
-	if len(runner.calls) != 1 {
-		t.Fatalf("runner called %d times, want EXACTLY 1 — a NativeFanout provider must get one dispatch for the whole group", len(runner.calls))
+	o.Wait() // dispatch is async — wait for the fan-out turn to complete
+	calls := runner.callReqs()
+	if len(calls) != 1 {
+		t.Fatalf("runner called %d times, want EXACTLY 1 — a NativeFanout provider must get one dispatch for the whole group", len(calls))
 	}
 
-	prompt := runner.calls[0].UserPrompt
+	prompt := calls[0].UserPrompt
 	if !containsAll(prompt, "task alpha", "task beta", "task gamma") {
 		t.Errorf("fan-out prompt = %q, want it to mention all three steps", prompt)
 	}
@@ -82,8 +84,9 @@ func TestDispatchNextNonFanoutProviderDispatchesOneWorkerPerStep(t *testing.T) {
 	if dispatched != 3 {
 		t.Fatalf("dispatched = %d, want 3", dispatched)
 	}
-	if len(runner.calls) != 3 {
-		t.Fatalf("runner called %d times, want EXACTLY 3 — a non-fanout provider must get one dispatch per step", len(runner.calls))
+	o.Wait() // dispatch is async — wait for all three per-step turns to complete
+	if calls := runner.callReqs(); len(calls) != 3 {
+		t.Fatalf("runner called %d times, want EXACTLY 3 — a non-fanout provider must get one dispatch per step", len(calls))
 	}
 
 	progress, err := o.PlanProgress(ctx, planID)
@@ -116,8 +119,9 @@ func TestDispatchNextNativeFanoutRunnerErrorFailsEveryTaskInGroup(t *testing.T) 
 	if dispatched != 3 {
 		t.Fatalf("dispatched = %d, want 3", dispatched)
 	}
-	if len(runner.calls) != 1 {
-		t.Fatalf("runner called %d times, want 1", len(runner.calls))
+	o.Wait() // dispatch is async — wait for the fan-out turn (and its per-task fails)
+	if calls := runner.callReqs(); len(calls) != 1 {
+		t.Fatalf("runner called %d times, want 1", len(calls))
 	}
 
 	tasks, err := s.ListTasks(ctx, planID, nil)
