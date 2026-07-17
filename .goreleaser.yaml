@@ -51,6 +51,32 @@ archives:
       - README.md
       - CHANGELOG.md
 
+# Native Linux packages (.deb / .rpm) for the CLI. CGO-off like the archives,
+# so they build in the same ubuntu goreleaser run and are cosign-signed via the
+# checksums entry below. The GUI app is packaged separately per-OS (fyne
+# package) — see the packaging design spec.
+nfpms:
+  - id: radioactive_ralph
+    ids: [radioactive_ralph]
+    package_name: radioactive-ralph
+    vendor: Jon Bogaty
+    homepage: https://github.com/jbcom/radioactive-ralph
+    maintainer: jbcom-bot <noreply@jonbogaty.com>
+    description: Supervised-execution runtime for local AI-agent CLIs
+    license: MIT
+    formats:
+      - deb
+      - rpm
+    bindir: /usr/bin
+    # Only the CLI binary is packaged; the per-user supervisor registers itself
+    # with the OS service manager via `radioactive_ralph service install`, so
+    # there is no system-wide unit file to ship here.
+    contents:
+      - src: LICENSE
+        dst: /usr/share/doc/radioactive-ralph/LICENSE
+      - src: README.md
+        dst: /usr/share/doc/radioactive-ralph/README.md
+
 checksum:
   name_template: "checksums.txt"
   algorithm: sha256
