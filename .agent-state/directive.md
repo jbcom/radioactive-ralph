@@ -208,10 +208,12 @@ Next concrete item (now runnable — #180/#182 merged):
   AttachArgs.AfterID, so no macro event is missed across a supervisor-blip gap
   (the one real limitation the #180/#182 reviews surfaced). +regression test
   (resume from id 14, not 0). CI; merge green.
-- [ ] Then rotate a fresh review lens (comprehensive-review / code-simplifier)
-  over the merged TUI subscription change, and pick the next product feature
-  (live macro plan-PROGRESS deltas; GUI true per-event delta apply; or a NEW
-  area — provider coverage, observability, DX) per directive 0.
+- [ ] [WAIT-AGENT] code-simplifier lens over the merged TUI subscription code
+  (model.go: ensureAttach/startAttach/liveFrameMsg/prependEvent/mergeEventTail)
+  — running background; fold any genuine simplification forward, else record
+  clean. Then pick the next product feature (live macro plan-PROGRESS deltas; GUI
+  true per-event delta apply; or a NEW area — provider coverage, observability,
+  DX) per directive 0.
 
 ## Notes
 
