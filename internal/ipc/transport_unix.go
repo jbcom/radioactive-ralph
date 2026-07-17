@@ -30,7 +30,7 @@ func listenEndpoint(endpoint string) (net.Listener, error) {
 	// the 0700 leaf blocks traversal) and NOT the natural XDG-state path
 	// (user-private, and legitimately 0755 for ~/.local/state).
 	if isFallbackSocketDir(dir) {
-		if err := os.Chmod(dir, 0o700); err != nil {
+		if err := os.Chmod(dir, 0o700); err != nil { //nolint:gosec // G302: this is a DIRECTORY — it needs the owner execute bit (0700) to be traversable; 0600 would make the socket unreachable. Group/other bits are intentionally cleared.
 			return nil, fmt.Errorf("ipc: secure fallback socket dir: %w", err)
 		}
 		if err := verifySecureDir(dir); err != nil {

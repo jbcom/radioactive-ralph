@@ -115,4 +115,3 @@ func TestAcceptLoopSurvivesTransientError(t *testing.T) {
 // ensure the fake satisfies net.Listener and net.Conn plumbing compiles.
 var _ net.Listener = (*transientOnceListener)(nil)
 var _ io.Closer = (*transientOnceListener)(nil)
-
