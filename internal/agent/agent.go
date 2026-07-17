@@ -77,6 +77,10 @@ func Start(ctx context.Context, opts Options) (*Agent, error) {
 	if opts.Env != nil {
 		cmd.Env = opts.Env
 	}
+	// Route the automatic ctx-cancel kill through the whole process group, not
+	// just the direct child (exec.CommandContext's default) — so a turn cancelled
+	// by KillWorker / shutdown / stall-timeout reaps grandchildren too.
+	setCancelKillsGroup(cmd)
 	ptmx, err := pty.Start(cmd)
 	if err != nil {
 		if errors.Is(err, pty.ErrUnsupported) {
@@ -91,7 +95,7 @@ func Start(ctx context.Context, opts Options) (*Agent, error) {
 		// stdin line the caller subsequently sends.
 		if err := disablePTYEcho(ptmx); err != nil {
 			_ = ptmx.Close()
-			_ = cmd.Process.Kill()
+			_ = killProcessTree(cmd.Process)
 			// Reap the killed child — readLoop (the only other Wait) hasn't
 			// started yet on this early-return path, so without this Wait the
 			// process would be left a zombie.
@@ -187,7 +191,11 @@ func (a *Agent) Kill() error {
 		return nil
 	}
 	if a.cmd.Process != nil {
-		_ = a.cmd.Process.Kill()
+		// Kill the whole process GROUP, not just the direct child: the agent CLI
+		// may have spawned grandchildren (shell tools, git, an MCP server) that
+		// would otherwise orphan against the checkout and keep running after this
+		// returns. See killProcessTree.
+		_ = killProcessTree(a.cmd.Process)
 	}
 	a.closePTY()
 	return nil

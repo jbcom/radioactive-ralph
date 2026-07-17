@@ -9,10 +9,74 @@ package agent
 
 import (
 	"context"
+	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
+
+// TestKillReapsGrandchildProcess proves Kill() takes down the whole process
+// GROUP, not just the direct child: an agent that spawns a long-lived grandchild
+// must have that grandchild reaped when the agent is killed, or it orphans
+// against the checkout (the never-block invariant's promise). The agent shell
+// backgrounds a `sleep`, prints its PID, then waits; after Kill() the printed PID
+// must no longer exist.
+func TestKillReapsGrandchildProcess(t *testing.T) {
+	ctx := context.Background()
+	// Background a long sleep (the "grandchild"), print its pid, then block so the
+	// agent (the direct child) stays alive holding the group open.
+	a, err := Start(ctx, Options{Command: "sh", Args: []string{"-c", "sleep 300 & echo $!; wait"}})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	// Read the grandchild pid from the first output line.
+	var gpid int
+	deadline := time.After(3 * time.Second)
+	for gpid == 0 {
+		select {
+		case line, ok := <-a.Output():
+			if !ok {
+				t.Fatal("agent output closed before printing the grandchild pid")
+			}
+			if p, perr := strconv.Atoi(strings.TrimSpace(string(line))); perr == nil && p > 1 {
+				gpid = p
+			}
+		case <-deadline:
+			t.Fatal("did not receive the grandchild pid within 3s")
+		}
+	}
+
+	// Sanity: the grandchild is alive now (signal 0 = existence check).
+	if err := syscall.Kill(gpid, 0); err != nil {
+		t.Fatalf("grandchild pid %d not alive before kill: %v", gpid, err)
+	}
+
+	agentPID := a.PID()
+	if err := a.Kill(); err != nil {
+		t.Fatalf("Kill: %v", err)
+	}
+
+	// BOTH the direct child (agent) and the grandchild must be gone — poll briefly
+	// for the group SIGKILL to land on the whole tree.
+	gone := func(pid int) bool {
+		for range 50 {
+			if err := syscall.Kill(pid, 0); err != nil {
+				return true // ESRCH (or EPERM after reap) — no longer signalable
+			}
+			time.Sleep(20 * time.Millisecond)
+		}
+		return false
+	}
+	if agentPID > 1 && !gone(agentPID) {
+		t.Errorf("agent pid %d survived Kill()", agentPID)
+	}
+	if !gone(gpid) {
+		_ = syscall.Kill(gpid, syscall.SIGKILL) // best-effort cleanup
+		t.Fatalf("grandchild pid %d survived agent Kill() — process group was not reaped", gpid)
+	}
+}
 
 func TestAgentStreamsOutputAndExits(t *testing.T) {
 	ctx := context.Background()
