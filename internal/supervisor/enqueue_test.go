@@ -3,6 +3,7 @@ package supervisor
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 
@@ -98,6 +99,82 @@ func TestHandleEnqueue_DispatchesSeededPlan(t *testing.T) {
 		}
 	case <-time.After(3 * time.Second):
 		t.Fatal("Run did not exit within 3s of ctx cancel")
+	}
+}
+
+// TestDispatchActivePlans_SkipsPausedPlan is the behavioral proof that the
+// drive API's pause control actually pauses. A plan with a ready step is
+// seeded and then PAUSED; a dispatch pass must dispatch NOTHING from it. Before
+// the fix, dispatchActivePlans used ListPlans' default filter (active AND
+// paused), so the periodic tick kept driving a "paused" plan — the pause was a
+// no-op. This test fails against that regression.
+func TestDispatchActivePlans_SkipsPausedPlan(t *testing.T) {
+	st := openTestStore(t)
+	ctx := context.Background()
+
+	projectID, err := st.CreateProject(ctx, "paused-project", []store.Fingerprint{
+		{Kind: store.FingerprintKindAbsPath, Value: "/tmp/paused-project"},
+	})
+	if err != nil {
+		t.Fatalf("CreateProject: %v", err)
+	}
+	planID, err := st.CreatePlan(ctx, store.CreatePlanOpts{
+		ProjectID:      projectID,
+		Slug:           "paused-plan",
+		Title:          "Paused",
+		SourceMarkdown: "# Paused\n\n1. should not run\n",
+	})
+	if err != nil {
+		t.Fatalf("CreatePlan: %v", err)
+	}
+	// Pause it — a paused plan must never be dispatched.
+	if err := st.SetPlanStatus(ctx, planID, store.PlanStatusPaused); err != nil {
+		t.Fatalf("SetPlanStatus paused: %v", err)
+	}
+
+	runner := &fakeRunner{}
+	o := orch.New(st,
+		orch.WithRunnerFactory(func(provider.Binding) (provider.Runner, error) { return runner, nil }),
+		orch.WithBindingResolver(func(context.Context, string, bool) (provider.Binding, error) {
+			return provider.Binding{Name: "claude", Config: provider.BindingConfig{Type: "claude", Binary: "true"}}, nil
+		}),
+	)
+	sessionID, err := st.CreateSession(ctx, store.SessionOpts{Role: "supervisor", PID: 1, PIDStartTime: "t0"})
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	sup := &Supervisor{
+		opts:      Options{RuntimeDir: t.TempDir(), Store: st},
+		store:     st,
+		orch:      o,
+		sessionID: sessionID,
+		startedAt: time.Now(),
+		log:       func(string, ...any) {},
+		stopCh:    make(chan struct{}),
+		stopOnce:  &sync.Once{},
+	}
+
+	n, err := sup.dispatchActivePlans(ctx)
+	if err != nil {
+		t.Fatalf("dispatchActivePlans: %v", err)
+	}
+	if n != 0 {
+		t.Errorf("dispatchActivePlans dispatched %d steps from a PAUSED plan, want 0", n)
+	}
+	if runner.calls != 0 {
+		t.Errorf("runner called %d times for a paused plan, want 0 — pause must halt dispatch", runner.calls)
+	}
+
+	// Sanity: re-activating the plan makes the same pass dispatch it, proving
+	// the skip is specifically the paused status, not a broken plan.
+	if err := st.SetPlanStatus(ctx, planID, store.PlanStatusActive); err != nil {
+		t.Fatalf("SetPlanStatus active: %v", err)
+	}
+	if _, err := sup.dispatchActivePlans(ctx); err != nil {
+		t.Fatalf("dispatchActivePlans (active): %v", err)
+	}
+	if runner.calls != 1 {
+		t.Errorf("runner called %d times after re-activation, want 1", runner.calls)
 	}
 }
 

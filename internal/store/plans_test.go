@@ -101,8 +101,14 @@ func TestSetPlanStatusAndListPlans(t *testing.T) {
 func TestSetPlanStatusNotFound(t *testing.T) {
 	ctx := context.Background()
 	s := openTestStore(t)
-	if err := s.SetPlanStatus(ctx, "nonexistent", PlanStatusActive); err == nil {
-		t.Error("SetPlanStatus on missing plan: want error, got nil")
+	err := s.SetPlanStatus(ctx, "nonexistent", PlanStatusActive)
+	if err == nil {
+		t.Fatal("SetPlanStatus on missing plan: want error, got nil")
+	}
+	// The drive API relies on this being the typed sentinel (matched with
+	// errors.Is) rather than a scraped message, so it can map to CodeNotFound.
+	if !errors.Is(err, ErrPlanNotFound) {
+		t.Errorf("SetPlanStatus err = %v, want errors.Is ErrPlanNotFound", err)
 	}
 }
 

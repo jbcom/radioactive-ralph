@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"time"
 )
@@ -166,4 +167,71 @@ func (s *Store) ClearWorkerTask(ctx context.Context, workerID, status string) er
 		return fmt.Errorf("store: clear worker task: %w", err)
 	}
 	return nil
+}
+
+// ReclaimWorker forcibly reclaims a worker's in-flight task and marks the
+// worker terminated — the store side of an operator/GUI "kill this worker"
+// action. It mirrors the reaper's reclaim: the worker's running task (if any)
+// goes back to 'pending' with its claim cleared (so it re-dispatches), and the
+// worker row is marked terminated. found=false (no error) when workerID is
+// unknown, so a kill of an already-gone worker is a benign no-op the caller
+// can surface as CodeNotFound. The actual subprocess is killed by the
+// orchestrator/provider layer that owns the pty; this only does the store-side
+// bookkeeping.
+func (s *Store) ReclaimWorker(ctx context.Context, workerID string) (found bool, err error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return false, fmt.Errorf("store: begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	// Confirm the worker exists; found=false lets the caller map a kill of an
+	// already-gone worker to CodeNotFound.
+	var exists int
+	err = tx.QueryRowContext(ctx,
+		`SELECT 1 FROM workers WHERE id = ?`, workerID,
+	).Scan(&exists)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("store: load worker: %w", err)
+	}
+
+	// Requeue EVERY running task this worker still holds — keyed on
+	// claimed_by_worker_id, not the worker's single current_task_id column. A
+	// native-fanout worker can hold several claimed tasks at once while
+	// current_task_id records only the first, so requeuing by current_task_id
+	// would strand the rest as running-but-orphaned until the reaper noticed.
+	// The claimed_by_worker_id = workerID guard also fixes the reaper race: if
+	// the stale-worker reaper already reclaimed and reassigned a task to a
+	// different worker, that row's claim no longer names this worker, so we
+	// leave it alone instead of stomping the new owner's task back to pending.
+	// reclaim_count is deliberately NOT incremented: a worker-kill is a
+	// system/operator action, not a task-execution failure, so it must not
+	// spend the task's retry budget.
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE tasks
+		SET status = 'pending',
+		    claimed_by_session = NULL,
+		    claimed_by_worker_id = NULL
+		WHERE claimed_by_worker_id = ? AND status = 'running'
+	`, workerID); err != nil {
+		return false, fmt.Errorf("store: requeue killed worker tasks: %w", err)
+	}
+
+	now := s.clock.Now().UTC().Format(time.RFC3339)
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE workers
+		SET current_plan_id = NULL, current_task_id = NULL,
+		    status = 'terminated', last_heartbeat = ?
+		WHERE id = ?
+	`, now, workerID); err != nil {
+		return false, fmt.Errorf("store: terminate worker: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return false, fmt.Errorf("store: commit: %w", err)
+	}
+	return true, nil
 }

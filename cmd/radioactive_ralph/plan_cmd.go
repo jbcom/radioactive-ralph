@@ -5,9 +5,10 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 
+	"github.com/jbcom/radioactive-ralph/internal/ipc"
+	"github.com/jbcom/radioactive-ralph/internal/plan"
 	"github.com/jbcom/radioactive-ralph/internal/store"
 	"github.com/jbcom/radioactive-ralph/internal/supervisor"
 	"github.com/jbcom/radioactive-ralph/internal/xdg"
@@ -31,12 +32,14 @@ func newPlanCmd() *cobra.Command {
 	return cmd
 }
 
-// planFrontmatterSlug and planFrontmatterTitle are pulled from a plan
-// markdown's leading content: the first level-1 heading is the title, and a
-// slug is derived from it (or the filename). No YAML frontmatter parser is
-// pulled in — this stays consistent with the heuristic-markdown plan
-// philosophy (goldmark structure, not a bespoke metadata grammar).
-var planHeadingRe = regexp.MustCompile(`(?m)^#\s+(.+?)\s*$`)
+// planTitleFallback is the title used when a plan markdown has no level-1
+// heading: the file's base name sans extension. Title/slug derivation itself
+// lives in internal/plan (plan.Title/plan.Slug) so the CLI and the supervisor's
+// plan-import handler produce identical results.
+func planTitleFallback(planPath string) string {
+	base := filepath.Base(planPath)
+	return strings.TrimSuffix(base, filepath.Ext(base))
+}
 
 func newPlanImportCmd() *cobra.Command {
 	var slug string
@@ -68,9 +71,9 @@ func runPlanImport(ctx context.Context, cmd *cobra.Command, planPath, slug strin
 		return fmt.Errorf("plan file %s is empty", planPath)
 	}
 
-	title := derivePlanTitle(markdown, planPath)
+	title := plan.Title(markdown, planTitleFallback(planPath))
 	if slug == "" {
-		slug = slugify(title)
+		slug = plan.Slug(title)
 	}
 
 	stateRoot, err := xdg.StateRoot()
@@ -84,6 +87,21 @@ func runPlanImport(ctx context.Context, cmd *cobra.Command, planPath, slug strin
 	projectID, err := ensureProjectKnown(ctx, cmd, stateRoot, cwd)
 	if err != nil {
 		return err
+	}
+
+	// Prefer the supervisor's plan-import IPC command when one is reachable so
+	// the supervisor is the single writer of record (same code path the GUI
+	// uses). Fall back to a direct store write only when offline.
+	if client, ferr := supervisor.Find(stateRoot); ferr == nil {
+		defer func() { _ = client.Close() }()
+		reply, cerr := client.PlanImport(ctx, ipc.PlanImportArgs{
+			Markdown: markdown, Slug: slug, Title: title, Project: projectID,
+		})
+		if cerr != nil {
+			return fmt.Errorf("import plan via supervisor: %w", cerr)
+		}
+		fmt.Printf("radioactive_ralph: imported plan %q (%s) — active\n", reply.Title, reply.Slug)
+		return nil
 	}
 
 	st, err := store.Open(ctx, store.Options{DSN: store.DSN(storeDBPath(stateRoot))})
@@ -174,41 +192,4 @@ func runPlanLs(ctx context.Context, cmd *cobra.Command, all bool) error {
 		fmt.Printf("%-10s  %-24s  %s\n", p.Status, p.Slug, p.Title)
 	}
 	return nil
-}
-
-// derivePlanTitle returns the plan's first level-1 heading, or the file's
-// base name (sans extension) when the markdown has no heading.
-func derivePlanTitle(markdown, planPath string) string {
-	if m := planHeadingRe.FindStringSubmatch(markdown); m != nil {
-		if t := strings.TrimSpace(m[1]); t != "" {
-			return t
-		}
-	}
-	base := filepath.Base(planPath)
-	return strings.TrimSuffix(base, filepath.Ext(base))
-}
-
-// slugify lower-cases a title and replaces every run of non-alphanumeric
-// characters with a single hyphen, trimming leading/trailing hyphens — a
-// stable, filesystem-and-URL-safe plan slug.
-func slugify(title string) string {
-	var b strings.Builder
-	prevHyphen := false
-	for _, r := range strings.ToLower(title) {
-		switch {
-		case (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9'):
-			b.WriteRune(r)
-			prevHyphen = false
-		default:
-			if !prevHyphen {
-				b.WriteByte('-')
-				prevHyphen = true
-			}
-		}
-	}
-	slug := strings.Trim(b.String(), "-")
-	if slug == "" {
-		return "plan"
-	}
-	return slug
 }

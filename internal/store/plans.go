@@ -51,6 +51,11 @@ type CreatePlanOpts struct {
 // exists. Callers either pick a new slug or update.
 var ErrDuplicateSlug = errors.New("store: plan with slug already exists in this project")
 
+// ErrPlanNotFound is returned when an operation targets a plan id that no row
+// matches. It is a typed sentinel so callers match with errors.Is rather than
+// scraping the formatted message (the drive API maps it to CodeNotFound).
+var ErrPlanNotFound = errors.New("store: plan not found")
+
 // CreatePlan inserts a fresh plan in draft status and returns the newly
 // generated UUID v7 id.
 func (s *Store) CreatePlan(ctx context.Context, o CreatePlanOpts) (string, error) {
@@ -107,7 +112,7 @@ func (s *Store) SetPlanStatus(ctx context.Context, id string, status PlanStatus)
 		return fmt.Errorf("store: update status rows affected: %w", err)
 	}
 	if n == 0 {
-		return fmt.Errorf("store: plan %q not found", id)
+		return fmt.Errorf("%w: %q", ErrPlanNotFound, id)
 	}
 	return nil
 }
