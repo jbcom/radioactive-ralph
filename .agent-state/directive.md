@@ -191,15 +191,25 @@ Structured attach event surface (the observe half goes live) — shipping arc:
   AND the pre-existing TUI macro pane + GUI event view; fixed by switching it to
   the shared eventProjectScope so all consumers agree with the live tail.
 
-Rolling (next product feature per directive 0):
-- [ ] [WAIT] #180 (docs: spec a session-long TUI live event tail) — CI; merge green.
-- [ ] Implement the session-long TUI live tail per #180's spec: move the Attach
-  subscription from micro-only (start on drill-in / stop on drill-out) to
-  session-long (start at Init), route liveFrameMsg by level — always apply the
-  lifecycle delta + a live macro planEvent tail (id-deduped vs the poll), add the
-  per-task filtered log only at micro. Makes macro/meso push-live (today poll-only)
-  and simplifies the subscription lifecycle. Reuses #173's applyEvent/renderEvent.
-  Build once #180 lands (both touch model.go — avoid a fork).
+Rolling (session-long TUI live tail — in flight):
+- [ ] [WAIT] #180 (docs: the session-long TUI live-tail spec) — CI. Spec revised
+  to match as-built #182 + 4 codex spec-review notes folded in (reconnect
+  cursor-gap + macro-progress-lag documented as known limitations; the two
+  already-fixed items point at #178/#182). Threads resolved; merge green.
+- [ ] [WAIT] #182 (feat: session-long TUI live tail — macro/meso go push-live).
+  Subscription starts once on first fetch (ensureAttach), routes liveFrameMsg by
+  level (always applyEvent delta + prependEvent macro tail; micro adds the
+  filtered log), drillOut no longer cancels, quit does. Code-review found ONE
+  real bug — the poll wholesale-replaced planEvent, dropping a live event whose
+  DB commit landed inside the poll's read window; fixed with mergeEventTail
+  (union deduped-by-id, +tests). Reconnect-after-blip verified + tested. Threads
+  resolved; CI on the fix; merge green.
+
+After #180/#182 land — the observe-half push-live work spans CLI/TUI/GUI. Next
+per directive 0: rotate a fresh review lens over the merged TUI subscription
+change, or pick a new product feature (candidates: cursor-aware TUI reconnect so
+no event is missed across a supervisor blip; live macro plan-PROGRESS deltas; GUI
+true per-event delta apply; or a NEW area — provider coverage, observability, DX).
 
 ## Notes
 
