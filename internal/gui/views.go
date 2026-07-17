@@ -99,6 +99,9 @@ func (u *ui) button(label string, tapped func()) *widget.Button {
 func (u *ui) drillTo(plan, task string) {
 	u.mu.Lock()
 	u.selectedPlan, u.selectedTask = plan, task
+	u.actionErr = "" // a prior view's action error must not follow the operator here
+	u.importing = false
+	u.viewToken++ // invalidate any in-flight drive issued from the prior view
 	u.mu.Unlock()
 	if u.syncRender {
 		u.refreshNow()
@@ -120,6 +123,9 @@ func (u *ui) drillBack() {
 		u.mu.Unlock()
 		return // already at macro
 	}
+	u.actionErr = "" // clear a prior view's action error when leaving it
+	u.importing = false
+	u.viewToken++ // invalidate any in-flight drive issued from the view we left
 	u.mu.Unlock()
 	if u.syncRender {
 		u.refreshNow()
@@ -243,23 +249,36 @@ func (u *ui) buildMicro(s snapshot) {
 	}
 }
 
-// drive runs a drive action off the main thread (it is an IPC round-trip),
-// surfaces any error in the banner, and refreshes on success. Called from a tap
-// handler; it spawns a goroutine so the click returns immediately.
+// drive runs a drive action off the main thread (it is an IPC round-trip) and
+// refreshes to surface the result. Called from a tap handler; it spawns a
+// goroutine so the click returns immediately. Both the success and failure paths
+// go through refreshNow → paint: a failure records actionErr (rendered with
+// precedence and persisting across refreshes until cleared), and a success clears
+// actionErr and repaints the fresh state. Routing errors through paint (rather
+// than a bare fyne.Do banner write) keeps them coordinated with the refreshSeq
+// staleness gate so a stale tick can neither erase a fresh error nor resurrect a
+// cleared one.
 func (u *ui) drive(label string, fn func() error) {
+	u.mu.Lock()
+	token := u.viewToken // the view this action was issued from
+	u.mu.Unlock()
 	work := func() {
-		if err := fn(); err != nil {
-			showErr := func() {
-				u.errBanner.SetText(fmt.Sprintf("%s failed: %v", label, err))
-				u.errBanner.Show()
-			}
-			if u.syncRender {
-				showErr()
-			} else {
-				fyne.Do(showErr)
-			}
+		err := fn()
+		u.mu.Lock()
+		// Drop the outcome if the operator drilled away while the RPC was in
+		// flight: a late completion must not resurrect a banner on — or clear the
+		// state of — the view they moved to.
+		if u.viewToken != token {
+			u.mu.Unlock()
 			return
 		}
+		if err != nil {
+			u.actionErr = fmt.Sprintf("%s failed: %v", label, err)
+		} else {
+			u.actionErr = ""
+		}
+		u.importing = false // an action leaves the import form
+		u.mu.Unlock()
 		u.refreshNow()
 	}
 	if u.syncRender {
@@ -279,6 +298,12 @@ func (u *ui) backButton(label, plan, task string) *widget.Button {
 // importButton opens a small form to import a markdown plan by pasting its text.
 func (u *ui) importButton() *widget.Button {
 	return u.button("Import plan…", func() {
+		// Mark that the imperative import form is up so the periodic paint stops
+		// rebuilding the body (which would wipe the form and any pasted text). The
+		// back button and a successful/failed import clear it via drill/drive.
+		u.mu.Lock()
+		u.importing = true
+		u.mu.Unlock()
 		entry := widget.NewMultiLineEntry()
 		entry.SetPlaceHolder("# Plan title\n\n1. first step\n2. second step\n")
 		u.body.Objects = nil

@@ -165,10 +165,32 @@ type ui struct {
 
 	// mu guards the drill selection, which is written by tap handlers on the
 	// main thread and read by gather() on the refresh/attach goroutine. It also
-	// guards refreshSeq (below).
+	// guards refreshSeq and actionErr (below).
 	mu           sync.Mutex
 	selectedPlan string
 	selectedTask string
+
+	// actionErr holds the last failed drive action's message ("" = none). Drive
+	// errors need their own slot because they don't come from the Status snapshot:
+	// a bare fyne.Do(showErr) would be silently erased by the next tick's
+	// setError(snap.err=nil), so a transient "kill failed" could flash and vanish
+	// or, conversely, never clear. paint() renders actionErr when set (it takes
+	// precedence over a Status error, since it's the thing the operator just did),
+	// and any subsequent successful drive or drill clears it. Guarded by mu.
+	actionErr string
+
+	// viewToken increments on every drill (drillTo/drillBack). A drive() captures
+	// it when the action starts and records its outcome only if the token is still
+	// current when the (off-thread) RPC returns — so an in-flight action that
+	// completes AFTER the operator has navigated away neither resurrects a banner
+	// on, nor clobbers the state of, the view they moved to. Guarded by mu.
+	viewToken uint64
+
+	// importing is set while the transient Import-plan form is on screen. That
+	// form is built imperatively (not from a snapshot), so a periodic paint's
+	// u.render(snap) would wipe it — and any pasted text — mid-edit. paint() skips
+	// the render step while importing is set; drills clear it. Guarded by mu.
+	importing bool
 
 	// refreshSeq orders concurrent refreshes. refreshNow is fired from four
 	// sources (1s ticker, each live event, each drive, each drill); their
@@ -253,11 +275,30 @@ func (u *ui) refreshNow() {
 			return
 		}
 		u.lastPaintedSeq = seq
+		// A failed drive action's message takes precedence over a Status error —
+		// it's the thing the operator just did — and persists across data refreshes
+		// until a successful drive/drill clears it.
+		actionErr := u.actionErr
+		importing := u.importing
 		u.mu.Unlock()
 
-		u.setError(snap.err)
+		switch {
+		case actionErr != "":
+			u.setBanner(actionErr)
+		case snap.err != nil:
+			u.setBanner("error: " + snap.err.Error())
+		default:
+			u.setBanner("")
+		}
 		u.header.SetText(headerText(snap.status, snap.err))
-		u.render(snap)
+		// While the transient import form is up, refresh the header/banner (so
+		// liveness and errors still update) but do NOT rebuild the body — that
+		// form is built imperatively, not from a snapshot, so re-rendering would
+		// wipe it and any half-typed plan text. A drill or a completed import
+		// clears importing and normal rendering resumes.
+		if !importing {
+			u.render(snap)
+		}
 	}
 	if u.syncRender {
 		paint() // tests: render inline so assertions see it immediately
@@ -345,12 +386,16 @@ func (u *ui) gather(plan, task string) snapshot {
 	return s
 }
 
-func (u *ui) setError(err error) {
-	if err == nil {
+// setBanner shows msg in the error banner, or hides it when msg is empty. The
+// single entry point for both Status-connection errors and drive-action errors
+// so exactly one of them is visible at a time (see paint's precedence). Main
+// thread only.
+func (u *ui) setBanner(msg string) {
+	if msg == "" {
 		u.errBanner.SetText("")
 		u.errBanner.Hide()
 		return
 	}
-	u.errBanner.SetText("error: " + err.Error())
+	u.errBanner.SetText(msg)
 	u.errBanner.Show()
 }

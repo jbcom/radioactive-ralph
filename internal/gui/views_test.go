@@ -61,6 +61,24 @@ func tapButton(t *testing.T, root fyne.CanvasObject, text string) {
 	test.Tap(b)
 }
 
+// firstMultiLineEntry returns the first *widget.Entry in the tree, or nil — used
+// to find the import form's text box.
+func firstMultiLineEntry(obj fyne.CanvasObject) *widget.Entry {
+	switch o := obj.(type) {
+	case *widget.Entry:
+		return o
+	case *fyne.Container:
+		for _, c := range o.Objects {
+			if e := firstMultiLineEntry(c); e != nil {
+				return e
+			}
+		}
+	case *container.Scroll:
+		return firstMultiLineEntry(o.Content)
+	}
+	return nil
+}
+
 // forEachLabel visits every *widget.Label in the tree.
 func forEachLabel(obj fyne.CanvasObject, fn func(*widget.Label)) {
 	switch o := obj.(type) {
@@ -223,6 +241,140 @@ func TestMeso_PauseCallsSetPlanStatus(t *testing.T) {
 	calls = f.setStatusCalls()
 	if len(calls) != 2 || calls[1] != [2]string{"p1", "abandoned"} {
 		t.Fatalf("after abandon, calls = %v, want second {p1 abandoned}", calls)
+	}
+}
+
+func TestDrive_FailureShowsBannerThatSurvivesRefresh(t *testing.T) {
+	// A failed drive action must show a banner that a subsequent same-view data
+	// refresh does NOT erase (the bug: the old bare-fyne.Do banner write was
+	// clobbered by the next tick's setError(snap.err=nil)).
+	f := newFakeController()
+	f.plans = []store.Plan{{ID: "p1", Title: "P", Status: store.PlanStatusActive}}
+	f.setPlanErr = errors.New("supervisor rejected")
+	u := newTestUI(t, f)
+	u.selectedPlan = "p1"
+	u.refreshNow()
+
+	tapButton(t, u.root, "Pause") // fails → records actionErr, repaints
+	if !u.errBanner.Visible() {
+		t.Fatal("drive failure did not show the error banner")
+	}
+	if !strings.Contains(u.errBanner.Text, "pause failed") {
+		t.Fatalf("banner text = %q, want it to mention the failed action", u.errBanner.Text)
+	}
+
+	// A plain data refresh (the 1s tick, no drive) must leave the banner up.
+	u.refreshNow()
+	if !u.errBanner.Visible() || !strings.Contains(u.errBanner.Text, "pause failed") {
+		t.Fatalf("same-view refresh erased the drive-error banner: visible=%v text=%q", u.errBanner.Visible(), u.errBanner.Text)
+	}
+}
+
+func TestDrive_SuccessClearsPriorFailureBanner(t *testing.T) {
+	// A successful drive after a failed one clears the banner.
+	f := newFakeController()
+	f.plans = []store.Plan{{ID: "p1", Title: "P", Status: store.PlanStatusActive}}
+	f.setPlanErr = errors.New("boom")
+	u := newTestUI(t, f)
+	u.selectedPlan = "p1"
+	u.refreshNow()
+
+	tapButton(t, u.root, "Pause") // fails → banner up
+	if !u.errBanner.Visible() {
+		t.Fatal("expected banner after failed drive")
+	}
+	f.setPlanErr = nil             // next action succeeds
+	tapButton(t, u.root, "Resume") // success → clears actionErr
+	if u.errBanner.Visible() {
+		t.Fatalf("successful drive did not clear the banner: text=%q", u.errBanner.Text)
+	}
+}
+
+func TestDrillBack_ClearsActionError(t *testing.T) {
+	// A drive error on one view must not follow the operator to another view.
+	f := newFakeController()
+	f.plans = []store.Plan{{ID: "p1", Title: "P", Status: store.PlanStatusActive}}
+	f.setPlanErr = errors.New("nope")
+	u := newTestUI(t, f)
+	u.selectedPlan = "p1"
+	u.refreshNow()
+
+	tapButton(t, u.root, "Pause") // fails at meso → banner up
+	if !u.errBanner.Visible() {
+		t.Fatal("expected banner after failed drive")
+	}
+	u.drillBack() // meso → macro; should clear the action error
+	if u.errBanner.Visible() {
+		t.Fatalf("drilling away did not clear the action-error banner: text=%q", u.errBanner.Text)
+	}
+}
+
+func TestImportForm_SurvivesPeriodicRefresh(t *testing.T) {
+	// The import form is built imperatively, not from a snapshot. A periodic
+	// refresh (the 1s ticker) must NOT rebuild the body and wipe the form or any
+	// pasted text while it's up.
+	f := newFakeController()
+	f.plans = []store.Plan{{ID: "p1", Title: "P", Status: store.PlanStatusActive}}
+	u := newTestUI(t, f)
+	u.refreshNow() // macro, with an "Import plan…" button
+
+	tapButton(t, u.root, "Import plan…") // opens the form; sets importing
+	entry := firstMultiLineEntry(u.root)
+	if entry == nil {
+		t.Fatal("import form did not render a text entry")
+	}
+	entry.SetText("# My plan\n1. do it")
+
+	u.refreshNow() // a plain tick must leave the form (and its text) intact
+	entryAfter := firstMultiLineEntry(u.root)
+	if entryAfter == nil {
+		t.Fatal("periodic refresh wiped the import form")
+	}
+	if entryAfter.Text != "# My plan\n1. do it" {
+		t.Fatalf("refresh lost the pasted text: got %q", entryAfter.Text)
+	}
+}
+
+func TestImportForm_BackButtonRestoresPlanList(t *testing.T) {
+	// Leaving the import form (back button) clears importing and returns to the
+	// normally-rendered plan list.
+	f := newFakeController()
+	f.plans = []store.Plan{{ID: "p1", Title: "MyPlan", Status: store.PlanStatusActive}}
+	u := newTestUI(t, f)
+	u.refreshNow()
+	tapButton(t, u.root, "Import plan…")
+	if firstMultiLineEntry(u.root) == nil {
+		t.Fatal("import form did not open")
+	}
+	tapButton(t, u.root, "← Plans") // leaves the form
+	if firstMultiLineEntry(u.root) != nil {
+		t.Fatal("back button did not leave the import form")
+	}
+	if findButton(u.root, "MyPlan") == nil {
+		t.Fatal("plan list did not re-render after leaving the import form")
+	}
+}
+
+func TestDrive_LateFailureAfterDrillAwayIsDropped(t *testing.T) {
+	// A drive RPC still in flight when the operator drills away must not set a
+	// banner on the new view when it finally returns. We reproduce the race
+	// deterministically: the SetPlanStatus RPC drills back (bumping viewToken)
+	// before it returns its error, so drive()'s token guard must drop the outcome.
+	f := newFakeController()
+	f.plans = []store.Plan{{ID: "p1", Title: "P", Status: store.PlanStatusActive}}
+	f.setPlanErr = errors.New("boom")
+	u := newTestUI(t, f)
+	u.selectedPlan = "p1"
+	u.refreshNow()
+
+	f.onSetPlan = func() { u.drillBack() } // operator navigates away mid-RPC
+
+	tapButton(t, u.root, "Pause") // fails, but the token was invalidated first
+	if u.actionErr != "" {
+		t.Fatalf("stale drive error leaked past the drill: actionErr=%q", u.actionErr)
+	}
+	if u.errBanner.Visible() {
+		t.Fatalf("stale drive error painted a banner on the new view: %q", u.errBanner.Text)
 	}
 }
 
