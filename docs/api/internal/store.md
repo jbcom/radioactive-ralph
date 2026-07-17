@@ -483,7 +483,7 @@ func (s *Store) AppendMessage(ctx context.Context, o AppendMessageOpts) error
 AppendMessage records one worker\<\-\>orchestrator A2A message \(most importantly, evidence a worker submits when it believes a task is done\). This ONLY logs the message — it never changes task status. Only internal/orch.VerifyAndComplete may transition a task to done.
 
 <a name="Store.ApproveTask"></a>
-### func \(\*Store\) [ApproveTask](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/tasks.go#L760>)
+### func \(\*Store\) [ApproveTask](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/tasks.go#L779>)
 
 ```go
 func (s *Store) ApproveTask(ctx context.Context, planID, taskID string) (found, changed bool, err error)
