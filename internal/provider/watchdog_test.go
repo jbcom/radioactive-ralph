@@ -134,6 +134,77 @@ sleep 300
 	}
 }
 
+// TestSuperviseAgentNoGoroutineGrowthAcrossOnLineDoneTurns exercises many
+// supervised turns that each return via onLine-done, all under ONE long-lived
+// ctx that is never cancelled (as the genesis refine loop reuses its ctx across
+// rounds) and never draining the abandoned signal stream. It asserts the
+// goroutine count returns to baseline — i.e. superviseAgent bounds agent.Watch's
+// lifetime to its OWN scope (the child ctx it cancels on return via cancelWatch)
+// rather than to the caller's. Today agent.Kill collapses the readLoop before a
+// post-result frame flood can become >16 queued signals, so this is primarily a
+// belt-and-suspenders guard on that scoping: if a future change to the
+// Kill/readLoop timing reopened the window, an unscoped Watch would leak one
+// goroutine per round and fail here.
+func TestSuperviseAgentNoGoroutineGrowthAcrossOnLineDoneTurns(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell-script fake CLI is Unix-only")
+	}
+	// Result line FIRST (so onLine returns done at once), then a flood far past
+	// the 16-slot signal buffer. Those trailing frames buffer in the pty, so
+	// agent.Watch keeps trying to emit after superviseAgent stops reading — the
+	// exact leak condition — then the process exits on its own.
+	bin := writeFakeCLI(t, "fake-flood-after-result.sh", `#!/bin/sh
+printf 'result-line\n'
+i=0
+while [ "$i" -lt 200 ]; do printf 'frame %s\n' "$i"; i=$((i+1)); done
+`)
+	// A caller ctx we deliberately never cancel: without superviseAgent reaping
+	// Watch itself, each round's goroutine would live until this ctx ends —
+	// i.e. forever here (the genesis long-lived-ctx leak).
+	ctx := context.Background()
+
+	settle := func() int {
+		for range 50 {
+			runtime.GC()
+			runtime.Gosched()
+		}
+		return runtime.NumGoroutine()
+	}
+	before := settle()
+
+	const rounds = 6
+	for round := range rounds {
+		a, err := agent.Start(ctx, agent.Options{Command: bin})
+		if err != nil {
+			t.Fatalf("round %d agent.Start: %v", round, err)
+		}
+		err = superviseAgent(ctx, a, agent.WatchdogConfig{StallTimeout: time.Minute}, func(line []byte) bool {
+			return strings.Contains(string(line), "result-line")
+		})
+		if err != nil {
+			t.Fatalf("round %d superviseAgent = %v, want nil on onLine-done", round, err)
+		}
+		_ = a.Kill()
+		<-a.Done()
+	}
+
+	// After several rounds under one never-cancelled ctx, goroutines must return
+	// near baseline. A per-round Watch leak would leave ~rounds extra goroutines
+	// parked on their emit; poll to absorb CI-timing noise.
+	deadline := time.After(5 * time.Second)
+	for {
+		if now := settle(); now <= before+2 {
+			return
+		}
+		select {
+		case <-deadline:
+			t.Fatalf("goroutines did not return to baseline after %d supervised rounds: before=%d now=%d (Watch goroutine leaked per turn on the onLine-done path)", rounds, before, runtime.NumGoroutine())
+		default:
+			runtime.Gosched()
+		}
+	}
+}
+
 // TestClaudeRunnerKilledByWatchdogOnPrompt is the end-to-end proof at the
 // runner level: ClaudeRunner.Run, driving a fake `claude` CLI that emits a
 // permission prompt and then sleeps, must return promptly with an
