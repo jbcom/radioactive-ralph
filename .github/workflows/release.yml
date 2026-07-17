@@ -128,16 +128,26 @@ jobs:
             echo "SignPath not configured — the Windows .exe ships unsigned."
             echo "sign=false" >> "$GITHUB_OUTPUT"
           fi
+      # SignPath v2 signs a GitHub Actions artifact: upload the unsigned .exe,
+      # submit it for signing, and the action downloads the signed .exe back in
+      # place (overwriting the unsigned one before the release upload below).
+      - name: Stage the unsigned .exe as an artifact (Windows/SignPath)
+        if: matrix.target == 'windows' && steps.signpath_prereq.outputs.sign == 'true'
+        id: exe_artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: radioactive-ralph-exe-unsigned
+          path: "*.exe"
       - name: Authenticode-sign the .exe (SignPath, Windows)
         if: matrix.target == 'windows' && steps.signpath_prereq.outputs.sign == 'true'
-        uses: signpath/github-action-submit-signing-request@4f13d373e8f0cd8d3c0465ff4877f7f917dcc42a # v1.2
+        uses: signpath/github-action-submit-signing-request@b9d91eadd323de506c0c81cf0c7fe7438f3360fd # v2.2
         with:
           api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
           organization-id: ${{ vars.SIGNPATH_ORG_ID }}
           project-slug: radioactive-ralph
           signing-policy-slug: release-signing
           artifact-configuration-slug: exe
-          github-artifact-id: ${{ github.run_id }}
+          github-artifact-id: ${{ steps.exe_artifact.outputs.artifact-id }}
           wait-for-completion: true
           output-artifact-directory: .
       - name: Upload GUI bundles + checksums to the release
