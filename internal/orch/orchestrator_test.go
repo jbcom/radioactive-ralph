@@ -188,8 +188,9 @@ func (panicRunner) Run(context.Context, provider.Binding, provider.Request) (pro
 // TestDispatchWorkerPanicIsContained confirms the control invariant that a
 // panicking worker turn can never crash the supervisor: the async dispatch
 // goroutine recovers, the process survives (o.Wait() returns instead of the
-// test binary aborting), and the panic is recorded as a worker.dispatch_panic
-// store event for the operator.
+// test binary aborting), the panic is recorded as a worker.dispatch_panic store
+// event, and the claimed task is reclaimed to 'pending' immediately (not left
+// wedged 'running' until the reaper) so it can be re-dispatched at once.
 func TestDispatchWorkerPanicIsContained(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
@@ -228,6 +229,39 @@ func TestDispatchWorkerPanicIsContained(t *testing.T) {
 	}
 	if !strings.Contains(panicEvent.PayloadJSON, "simulated provider turn panic") {
 		t.Errorf("panic event payload = %q, want it to carry the panic value", panicEvent.PayloadJSON)
+	}
+
+	// The claimed task must be reclaimed immediately, not stuck 'running' until
+	// the 90s reaper window. It returns to 'pending' (no retry penalty for an
+	// orchestrator-level failure) and no task should be left 'running'.
+	tasks, err := s.ListTasks(ctx, planID, nil)
+	if err != nil {
+		t.Fatalf("ListTasks: %v", err)
+	}
+	var running, pending int
+	for _, tk := range tasks {
+		switch tk.Status {
+		case store.TaskStatusRunning:
+			running++
+		case store.TaskStatusPending:
+			pending++
+		}
+	}
+	if running != 0 {
+		t.Errorf("running tasks = %d, want 0 (the panicked task must not be left wedged running)", running)
+	}
+	if pending != 1 {
+		t.Errorf("pending tasks = %d, want 1 (the panicked task reclaimed to pending)", pending)
+	}
+
+	// A second dispatch must be able to re-claim the reclaimed task right away.
+	redispatched, err := o.DispatchNext(ctx, projectID, planID)
+	if err != nil {
+		t.Fatalf("second DispatchNext: %v", err)
+	}
+	o.Wait()
+	if redispatched != 1 {
+		t.Errorf("re-dispatched = %d, want 1 (reclaimed task must be immediately dispatchable)", redispatched)
 	}
 }
 
