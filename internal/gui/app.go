@@ -206,17 +206,25 @@ type ui struct {
 	// and synchronously (no goroutine, no fyne.Do queueing) so a test can tap a
 	// button and immediately assert the result. Production is always async.
 	syncRender bool
+
+	// attachRetryDelay is how long runAttach waits before re-dialing the live
+	// event stream after it ends (see runAttach). A per-ui field (not a package
+	// var) so a test can shrink it on its OWN ui without racing another test's
+	// still-running runAttach goroutine reading a shared global. Defaults to
+	// defaultAttachRetryDelay in newUI.
+	attachRetryDelay time.Duration
 }
 
 func newUI(ctx context.Context, c Controller, project string, w fyne.Window) *ui {
 	u := &ui{
-		ctx:       ctx,
-		ctrl:      c,
-		project:   project,
-		win:       w,
-		header:    widget.NewLabel(""),
-		body:      container.NewVBox(),
-		errBanner: widget.NewLabel(""),
+		ctx:              ctx,
+		ctrl:             c,
+		project:          project,
+		win:              w,
+		header:           widget.NewLabel(""),
+		body:             container.NewVBox(),
+		errBanner:        widget.NewLabel(""),
+		attachRetryDelay: defaultAttachRetryDelay,
 	}
 	u.errBanner.Hide()
 	u.scroll = container.NewVScroll(u.body)
@@ -242,13 +250,38 @@ func (u *ui) runRefresh(ctx context.Context) {
 	}
 }
 
+// defaultAttachRetryDelay is the production value for ui.attachRetryDelay: how
+// long runAttach waits before re-dialing the live event stream after it ends
+// (supervisor not up yet, restarted, or dropped the socket). Short enough that
+// the stream feels continuous across a supervisor blip, long enough not to
+// hammer the socket while the supervisor is down; the 1s ticker keeps the view
+// fresh in the meantime regardless.
+const defaultAttachRetryDelay = 1 * time.Second
+
 // runAttach subscribes to the live event stream; each event triggers an
-// immediate refresh so the view feels live between ticks. Ends on ctx cancel.
+// immediate refresh so the view feels live between ticks. Attach returns on ANY
+// stream end — a failed dial (supervisor not up yet), an EOF (supervisor
+// restarts or drops the socket), or a decode error — so this RE-DIALS in a loop
+// until ctx is cancelled. Without the loop the stream was single-shot: the first
+// pre-supervisor launch or supervisor restart killed it permanently for the rest
+// of the session, silently degrading the GUI to 1s polling with no recovery.
 func (u *ui) runAttach(ctx context.Context) {
-	_ = u.ctrl.Attach(ctx, func(json.RawMessage) error {
-		u.refreshNow()
-		return nil
-	})
+	for {
+		if ctx.Err() != nil {
+			return
+		}
+		_ = u.ctrl.Attach(ctx, func(json.RawMessage) error {
+			u.refreshNow()
+			return nil
+		})
+		// Attach returned: the stream ended. Back off briefly, then reconnect —
+		// unless the app is shutting down.
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(u.attachRetryDelay):
+		}
+	}
 }
 
 // refreshNow gathers a complete data snapshot for the current drill level OFF
