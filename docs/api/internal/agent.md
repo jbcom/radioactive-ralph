@@ -40,7 +40,7 @@ var ErrPTYUnsupported = fmt.Errorf("agent: pty allocation is unsupported on %s; 
 ```
 
 <a name="Watch"></a>
-## func [Watch](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/agent/watchdog.go#L47>)
+## func [Watch](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/agent/watchdog.go#L49>)
 
 ```go
 func Watch(ctx context.Context, a *Agent, cfg WatchdogConfig) <-chan Signal
@@ -69,7 +69,7 @@ func Start(ctx context.Context, opts Options) (*Agent, error)
 Start launches opts.Command under a pty and begins streaming its output.
 
 <a name="Agent.Done"></a>
-### func \(\*Agent\) [Done](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/agent/agent.go#L175>)
+### func \(\*Agent\) [Done](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/agent/agent.go#L179>)
 
 ```go
 func (a *Agent) Done() <-chan struct{}
@@ -78,7 +78,7 @@ func (a *Agent) Done() <-chan struct{}
 Done is closed when the process exits.
 
 <a name="Agent.Kill"></a>
-### func \(\*Agent\) [Kill](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/agent/agent.go#L181>)
+### func \(\*Agent\) [Kill](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/agent/agent.go#L185>)
 
 ```go
 func (a *Agent) Kill() error
@@ -87,7 +87,7 @@ func (a *Agent) Kill() error
 Kill terminates the process immediately and releases the pty. Killing an agent that already exited on its own is a no\-op success — a normal shutdown that races an agent finishing its task must not surface a spurious "already closed" error.
 
 <a name="Agent.Output"></a>
-### func \(\*Agent\) [Output](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/agent/agent.go#L161>)
+### func \(\*Agent\) [Output](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/agent/agent.go#L165>)
 
 ```go
 func (a *Agent) Output() <-chan []byte
@@ -96,7 +96,7 @@ func (a *Agent) Output() <-chan []byte
 Output is the line\-oriented output stream; closed when the process exits.
 
 <a name="Agent.PID"></a>
-### func \(\*Agent\) [PID](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/agent/agent.go#L200>)
+### func \(\*Agent\) [PID](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/agent/agent.go#L208>)
 
 ```go
 func (a *Agent) PID() int
@@ -105,7 +105,7 @@ func (a *Agent) PID() int
 PID returns the subprocess PID \(0 before start / after release\).
 
 <a name="Agent.Wait"></a>
-### func \(\*Agent\) [Wait](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/agent/agent.go#L197>)
+### func \(\*Agent\) [Wait](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/agent/agent.go#L205>)
 
 ```go
 func (a *Agent) Wait() error
@@ -114,7 +114,7 @@ func (a *Agent) Wait() error
 Wait blocks until the process exits.
 
 <a name="Agent.WriteInput"></a>
-### func \(\*Agent\) [WriteInput](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/agent/agent.go#L169>)
+### func \(\*Agent\) [WriteInput](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/agent/agent.go#L173>)
 
 ```go
 func (a *Agent) WriteInput(b []byte) error
@@ -147,7 +147,7 @@ type Options struct {
 ```
 
 <a name="Signal"></a>
-## type [Signal](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/agent/watchdog.go#L23-L26>)
+## type [Signal](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/agent/watchdog.go#L25-L28>)
 
 Signal is one watchdog observation about an agent.
 
@@ -167,7 +167,7 @@ SignalKind classifies a watchdog observation.
 type SignalKind int
 ```
 
-<a name="Progress"></a>The recognized SignalKind values.
+<a name="Progress"></a>The recognized SignalKind values. \(There is deliberately no resource\-exceeded signal: Watch does no RSS/CPU sampling, so it could never emit one — a runaway agent is bounded by the stall timeout, not a resource ceiling. A real resource limiter would be its own feature.\)
 
 ```go
 const (
@@ -175,12 +175,11 @@ const (
     Stall
     Prompt
     Exited
-    ResourceExceeded
 )
 ```
 
 <a name="WatchdogConfig"></a>
-## type [WatchdogConfig](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/agent/watchdog.go#L29-L42>)
+## type [WatchdogConfig](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/agent/watchdog.go#L31-L44>)
 
 WatchdogConfig tunes stall and prompt detection.
 
