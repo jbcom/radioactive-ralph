@@ -112,3 +112,20 @@ install, incl. the Bash-3.2 associative-array fix (#106); and Escape-to-drill-
 back GUI keyboard navigation, focus-safe via the desktop KeyDown hook (#107).
 Each PR absorbed its bot + CI review before merge; captured in release v0.15.0
 and the ones after.
+
+## Perpetual-shipping run (post-v0.15.0)
+
+The autonomous loop (directive 0) continued shipping small, self-reviewed PRs.
+A directive + PILLARS baseline sync so branch-switch churn stops resurrecting a
+stale queue (#108); a GUI CI locale-flake fix pinning `LANG`/`LC_ALL=en-US`
+because a bare `C`/`C.UTF-8` locale made Fyne's harfbuzz shaper panic on an
+undefined language tag, verified locally (#110); a doctor DX check that surfaces
+the codex spend-cap metering blind spot — codex has no machine-readable usage
+stream so its cost isn't metered and a spend cap can't be enforced, with the
+account-level mitigation carried in the check's `Detail` (not `Remediate`, which
+`WriteText` drops for OK-severity checks) — v0.18.0 (#112); and a Dependabot
+security sweep clearing all four open alerts: `golang.org/x/image` 0.24.0→0.41.0
+(TIFF PackBits/OOM DoS), `protobuf` 4.25.9→6.33.6 (CVE-2026-0994, unblocked by
+bumping semgrep 1.136.0→1.170.0 to lift its pinned `opentelemetry-proto<protobuf-5`
+ceiling), and `js-yaml` 4.1.1→4.3.0 (merge-key quadratic DoS) (#114). Each PR
+absorbed its bot + CI review and self-merged green.
