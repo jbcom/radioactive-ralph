@@ -93,12 +93,22 @@ radioactive_ralph plan import plan.md
 
 # 4. Watch and drive: the read-only terminal cockpit …
 radioactive_ralph
-#    … or the desktop app (a GUI peer that can also approve/pause/kill/import)
+#    … or the desktop app (a GUI peer that can also approve/pause/kill/import).
+#    Install it from the "Desktop app" table above; `radioactive_ralph gui`
+#    (or double-clicking the installed app) opens it.
 radioactive_ralph gui
 ```
 
 The client refuses to run unless a supervisor is reachable, and tells you how to
 start one. Nothing is written into your repository.
+
+> The `gui` subcommand only opens a window in a **GUI-enabled build** — the
+> desktop-app installs (Homebrew cask, AppImage, `.dmg`/`.exe`). The CLI-only
+> installs (Homebrew formula, Scoop, winget, Chocolatey, `.deb`/`.rpm`, the curl
+> installer) ship the terminal client; running `gui` there prints a note telling
+> you to install the desktop app. The Windows `.exe` is signed only once the
+> project's free SignPath enrollment is configured — until then Windows
+> SmartScreen may warn on first launch.
 
 ## CLI surface
 

@@ -109,6 +109,11 @@ Linux `.AppImage`, or the Windows `.exe` from the
 double-clicking the installed app opens the GUI directly. It opens even before a
 supervisor is running and lights up when one appears.
 
+Launched from a project directory, the app scopes to that project; launched by
+double-clicking from a file manager (where the working directory isn't a repo)
+it opens project-agnostic and lists every project the supervisor knows — it
+never registers the launch directory as a new project.
+
 ## Check your environment
 
 ```bash
