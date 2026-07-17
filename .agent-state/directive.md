@@ -132,11 +132,22 @@ Completed this arc (audits → fixes, all shipped):
   checks before spawning worker rows (a bot P2 caught per-tick orphan-row
   accumulation, fixed) #154.
 
+Completed since (all shipped/in-flight):
+- [x] Agent watchdog audit (opus) → #156 (in flight): Kill no longer SIGKILLs a
+  reaped/recycled PID (reapMu guard), Watch no longer spurious-stalls on a
+  non-positive StallTimeout.
+- [x] Verified the app RUNS: built binary, `doctor` 11 OK/0 WARN/0 FAIL, all
+  three providers detected+authenticated. Cleared 20 stale branch-switch stashes.
+
 Next forward-exploration items:
-- [ ] [WAIT] #154 (approval-gate producer) — CI running; merge when green.
-- [ ] Next review lens: rotate to the agent watchdog internals or the TUI/GUI
-  with a fresh adversarial pass, OR a NEW product-improving feature (approval-gate
-  docs + a plan example, GUI richness, observability, DX). Agent's call next tick.
+- [ ] [WAIT] #156 (agent Kill-reaped-PID + zero-timeout-stall) — CI; merge green.
+- [ ] TUI audit (opus) findings — FIX next: C1 m.cursor not clamped/reconciled
+  after a background refresh mutates the plan/task list → wrong-entity drill-ins
+  + invisible cursor; C2 no in-flight guard on the 1s refresh tick → slow gathers
+  overlap, stack connections, land stale writes out of order. Plus P2 stale micro/
+  meso header (selectedTask/Plan captured at drill-in, never refreshed).
+- [ ] After the TUI fixes: rotate the lens again (GUI, supervisor IPC, or a NEW
+  product feature — approval-gate docs + plan example, observability, DX).
 
 ## Notes
 
