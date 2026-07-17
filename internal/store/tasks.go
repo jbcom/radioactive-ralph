@@ -236,8 +236,12 @@ func (s *Store) StatusCounts(ctx context.Context) (StatusCounts, error) {
 }
 
 // Ready returns tasks that are ready to run — every dependency is in a
-// terminal-satisfied state (`done`, `skipped`, or `decomposed`). Result is
-// ordered by created_at for stable test output.
+// terminal-satisfied state (`done`, `skipped`, or `decomposed`) — and are in a
+// claimable status: `pending` (ungated) or `ready` (a task that WAS gated
+// behind approval and has since been approved via ApproveTask). A task still in
+// `ready_pending_approval` is deliberately NOT returned: the approval gate
+// holds it until an operator approves it. Result is ordered by created_at for
+// stable test output.
 func (s *Store) Ready(ctx context.Context, planID string) ([]Task, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT id, plan_id, description, status, parallel_group, sequence_ordinal,
@@ -247,7 +251,7 @@ func (s *Store) Ready(ctx context.Context, planID string) ([]Task, error) {
 		       created_at, updated_at
 		FROM tasks
 		WHERE plan_id = ?
-		  AND status = 'pending'
+		  AND status IN ('pending', 'ready')
 		  AND NOT EXISTS (
 		    SELECT 1 FROM task_deps d
 		     JOIN tasks tdep ON tdep.plan_id = d.plan_id AND tdep.id = d.depends_on
@@ -284,7 +288,7 @@ func (s *Store) ClaimNextReady(ctx context.Context, planID, sessionID, workerID 
 	selectQ := `
 		SELECT id FROM tasks
 		WHERE plan_id = ?
-		  AND status = 'pending'
+		  AND status IN ('pending', 'ready')
 		  AND NOT EXISTS (
 		    SELECT 1 FROM task_deps d
 		     JOIN tasks tdep ON tdep.plan_id = d.plan_id AND tdep.id = d.depends_on
@@ -307,13 +311,16 @@ func (s *Store) ClaimNextReady(ctx context.Context, planID, sessionID, workerID 
 	}
 
 	// Atomic claim: set status=running, claimed_by_session,
-	// claimed_by_worker_id.
+	// claimed_by_worker_id. The status guard mirrors the SELECT's claimable
+	// set ('pending' or an approved 'ready') — if it only matched 'pending', a
+	// 'ready' task chosen by the SELECT would fail the UPDATE (RowsAffected=0)
+	// and be reported as ErrNoReadyTask, silently stranding every approved task.
 	res, err := tx.ExecContext(ctx, `
 		UPDATE tasks
 		SET status = 'running',
 		    claimed_by_session = ?,
 		    claimed_by_worker_id = ?
-		WHERE plan_id = ? AND id = ? AND status = 'pending'
+		WHERE plan_id = ? AND id = ? AND status IN ('pending', 'ready')
 	`, sessionID, workerID, planID, taskID)
 	if err != nil {
 		return nil, fmt.Errorf("store: claim update: %w", err)
