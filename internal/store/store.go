@@ -26,6 +26,12 @@ import (
 	_ "modernc.org/sqlite" // pure-Go driver; FTS5 compiled in
 )
 
+// maxDBConns caps the database/sql pool. Small enough to bound writer-lock
+// contention (see Open), large enough that a live VACUUM INTO backup or a
+// long-held reader can't starve concurrent store calls — and >1 to avoid
+// database/sql's single-connection deadlock.
+const maxDBConns = 4
+
 // Store is the user-level store handle. It wraps a *sql.DB plus a
 // deterministic clock + UUID provider (test-swappable).
 type Store struct {
@@ -98,17 +104,35 @@ func Open(ctx context.Context, opts Options) (*Store, error) {
 		return nil, fmt.Errorf("store: open: %w", err)
 	}
 
+	// Bound the connection pool to a small fixed size. _txlock=immediate makes
+	// every BeginTx take SQLite's one writer lock up front, so an UNCAPPED pool
+	// lets unbounded goroutines (the 1s dispatch tick, every per-connection IPC
+	// handler, each dispatched worker's store writes, the reaper) each open a
+	// fresh connection and pile onto that lock, with only busy_timeout(5s) as the
+	// backstop — a SQLITE_BUSY under load surfaces as a hard "database is locked"
+	// deep in a store call. A small cap keeps that contention bounded.
+	//
+	// NOT 1: a single connection deadlocks database/sql if any code issues a
+	// query while another is still using the sole connection (e.g. a long Rows
+	// held open), and it lets a long-running VACUUM INTO (Store.Backup) monopolize
+	// the DB, freezing every heartbeat/dispatch/reaper/IPC store call for the whole
+	// backup. maxDBConns leaves headroom for a live backup + concurrent readers
+	// (WAL allows concurrent reads; the single writer is still serialized by
+	// _txlock=immediate + busy_timeout). This is a low-throughput control-plane DB,
+	// so the exact number is not performance-critical — it exists to cap contention
+	// without the single-connection hazards.
+	db.SetMaxOpenConns(maxDBConns)
+
 	// Verify the connection is live. sql.Open is lazy.
 	if err := db.PingContext(ctx); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("store: ping: %w", err)
 	}
 
-	// Enable foreign keys on every connection (per-connection PRAGMA in
-	// SQLite). modernc.org/sqlite honors _pragma DSN params but
-	// SetMaxIdleConns > 0 can recycle connections that drop the pragma, so
-	// re-affirm on an init hook. For simplicity we just exec it once;
-	// Options callers pass the DSN pragmas.
+	// The DSN sets foreign_keys(1) as a per-connection _pragma, so every pooled
+	// connection enforces FKs. This one-time exec is a cheap belt-and-suspenders
+	// that documents the invariant at the Go layer (it lands on whichever pooled
+	// connection serves it; the DSN pragma covers the rest).
 	if _, err := db.ExecContext(ctx, "PRAGMA foreign_keys = ON"); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("store: enable FK: %w", err)

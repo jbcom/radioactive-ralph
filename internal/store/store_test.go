@@ -3,11 +3,101 @@ package store
 import (
 	"context"
 	"path/filepath"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/jonboulle/clockwork"
 )
+
+// TestOpenCapsConnectionPool pins the bounded pool: _txlock=immediate makes
+// every transaction take SQLite's writer lock up front, so an uncapped pool
+// would let unbounded goroutines pile onto that lock with only busy_timeout as
+// the backstop. The cap is >1 to avoid database/sql's single-connection deadlock
+// and to leave headroom for a live backup + concurrent readers.
+func TestOpenCapsConnectionPool(t *testing.T) {
+	s := openTestStore(t)
+	if got := s.DB().Stats().MaxOpenConnections; got != maxDBConns {
+		t.Fatalf("MaxOpenConnections = %d, want %d", got, maxDBConns)
+	}
+}
+
+// TestConcurrentWritersDoNotLock exercises many goroutines writing concurrently
+// through the bounded pool and asserts none hits "database is locked": WAL +
+// _txlock=immediate + busy_timeout serialize the single writer cleanly instead
+// of failing concurrent BEGIN IMMEDIATE attempts.
+func TestConcurrentWritersDoNotLock(t *testing.T) {
+	s := openTestStore(t)
+	ctx := context.Background()
+	projectID := mustCreateProject(t, s, "conc-writers")
+
+	const writers = 24
+	var wg sync.WaitGroup
+	errs := make(chan error, writers)
+	for range writers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			// Emit is a simple single-row write that BeginTx-es under the hood.
+			if err := s.Emit(ctx, EmitOpts{
+				ProjectID: projectID,
+				Kind:      "concurrency.probe",
+				Stream:    "service",
+			}); err != nil {
+				errs <- err
+			}
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if strings.Contains(err.Error(), "database is locked") {
+			t.Fatalf("concurrent write hit a lock error (pool not serializing): %v", err)
+		}
+		t.Fatalf("concurrent write failed: %v", err)
+	}
+}
+
+// TestWriteSucceedsDuringBackup proves the pool leaves headroom for concurrent
+// store calls while a backup's VACUUM INTO runs: with a single connection the
+// backup would monopolize the DB and this write would block for the backup's
+// whole duration. maxDBConns > 1 keeps the store responsive during a backup.
+func TestWriteSucceedsDuringBackup(t *testing.T) {
+	s := openTestStore(t)
+	ctx := context.Background()
+	projectID := mustCreateProject(t, s, "backup-project")
+	// Seed some rows so VACUUM INTO has real work to do.
+	for range 200 {
+		if err := s.Emit(ctx, EmitOpts{ProjectID: projectID, Kind: "seed", Stream: "service"}); err != nil {
+			t.Fatalf("seed emit: %v", err)
+		}
+	}
+
+	backupDone := make(chan error, 1)
+	go func() {
+		_, err := s.Backup(ctx, t.TempDir())
+		backupDone <- err
+	}()
+
+	// A concurrent write must complete promptly, not block until the backup ends.
+	writeDone := make(chan error, 1)
+	go func() {
+		writeDone <- s.Emit(ctx, EmitOpts{ProjectID: projectID, Kind: "during-backup", Stream: "service"})
+	}()
+	select {
+	case err := <-writeDone:
+		if err != nil {
+			t.Fatalf("concurrent write during backup failed: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("write blocked during backup — the pool has no headroom (single connection monopolized by VACUUM INTO)")
+	}
+
+	if err := <-backupDone; err != nil {
+		t.Fatalf("backup: %v", err)
+	}
+}
 
 func mustParseTime(t *testing.T, raw string) time.Time {
 	t.Helper()
