@@ -214,14 +214,16 @@ Next concrete item (now runnable — #180/#182 merged):
   clearest shape). One finding: a stale, misleading orphaned renderFrame doc
   comment (renamed to decodeEvent in #182, falsely claimed undecodable frames
   render as raw JSON) — deleted, folded into #184.
-- [ ] Independent next item (does NOT touch model.go, so it runs in parallel with
-  the #184 wait — routing around the external wait per directive 0): dependency
-  freshness + CVE sweep. `go list -m -u all` / `govulncheck ./...`, bump any
-  outdated/vulnerable module, land build+test+lint green. Self-contained
-  (go.mod/go.sum + any small API adjustment), zero overlap with #184.
+- [x] Dependency freshness + CVE sweep — DONE, clean: govulncheck ./... reports
+  0 vulnerabilities, and every DIRECT dep (fyne, bubbletea, lipgloss, cobra,
+  viper, goldmark, x/sys, modernc.org/sqlite, go-isatty, …) is already at latest.
+  The `go list -u all` "outdated" entries are all INDIRECT/transitive deps pinned
+  by Fyne's ecosystem — bumping them manually would risk the build for no
+  benefit; dependabot handles those routine transitive bumps (e.g. the open #95).
+  No PR warranted.
 - [ ] After #184 lands, the model.go-touching TUI features (live macro
-  plan-PROGRESS deltas; GUI per-event delta apply) or a NEW area become available;
-  pick per directive 0.
+  plan-PROGRESS deltas; GUI per-event delta apply) or a NEW area (provider
+  coverage, observability, DX) become available; pick per directive 0.
 
 ## Notes
 
