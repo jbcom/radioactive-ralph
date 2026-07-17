@@ -4,27 +4,34 @@
 # The cask delivers the ad-hoc-signed .dmg; Homebrew strips com.apple.quarantine
 # on install so Gatekeeper allows it without notarization — the OSS-app path.
 #
-#   publish-cask.sh <version> <dmg-path>
+#   publish-cask.sh <version>
+#
+# Both macOS release legs (arm64 + amd64) upload their arch-specific .dmg to the
+# release before this runs; the cask carries on_arm/on_intel URLs+shas so each
+# Mac architecture downloads the matching build.
 #
 # Requires: gh authenticated as a token with push access to jbcom/pkgs
 # (JBCOM_PKGS_GITHUB_TOKEN, exported as GH_TOKEN).
 set -euo pipefail
 
-VERSION="${1:?usage: publish-cask.sh <version> <dmg-path>}"
-DMG="${2:?usage: publish-cask.sh <version> <dmg-path>}"
+VERSION="${1:?usage: publish-cask.sh <version>}"
 REPO="jbcom/radioactive-ralph"
 PKGS="jbcom/pkgs"
+TAG="v${VERSION}"
 BRANCH="chore/update-radioactive-ralph-cask-${VERSION}"
-
-if [ ! -f "$DMG" ]; then
-  echo "publish-cask: dmg not found: $DMG" >&2
-  exit 1
-fi
-
-SHA="$(shasum -a 256 "$DMG" | awk '{print $1}')"
 
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT   # the clone carries a credentialed remote — always clean up
+
+# Download both arch dmgs from the release and hash them (the SHAs the cask
+# pins). The dmgs were uploaded by the gui-bundles macOS legs this cask job
+# `needs`, so they exist by now.
+declare -A SHA
+for arch in arm64 amd64; do
+  dmg="radioactive-ralph_${VERSION}_darwin_${arch}.dmg"
+  gh release download "$TAG" --repo "$REPO" --pattern "$dmg" --dir "$WORK" --clobber
+  SHA[$arch]="$(shasum -a 256 "$WORK/$dmg" | awk '{print $1}')"
+done
 
 # Keep the token out of the clone URL (it would leak in process listings / any
 # stored remote). Feed it via an in-memory askpass helper instead.
@@ -43,9 +50,16 @@ mkdir -p Casks
 cat > Casks/radioactive-ralph.rb <<CASK
 cask "radioactive-ralph" do
   version "${VERSION}"
-  sha256 "${SHA}"
 
-  url "https://github.com/${REPO}/releases/download/v#{version}/radioactive-ralph_#{version}_darwin.dmg"
+  on_arm do
+    sha256 "${SHA[arm64]}"
+    url "https://github.com/${REPO}/releases/download/v#{version}/radioactive-ralph_#{version}_darwin_arm64.dmg"
+  end
+  on_intel do
+    sha256 "${SHA[amd64]}"
+    url "https://github.com/${REPO}/releases/download/v#{version}/radioactive-ralph_#{version}_darwin_amd64.dmg"
+  end
+
   name "radioactive-ralph"
   desc "Supervised-execution runtime for local AI-agent CLIs"
   homepage "https://github.com/${REPO}"
@@ -84,7 +98,7 @@ git push --force-with-lease origin "$BRANCH"
 # benign no-op rather than a failure.
 if ! gh pr create --repo "$PKGS" --base main --head "$BRANCH" \
   --title "chore: update radioactive-ralph cask to ${VERSION}" \
-  --body "Automated cask update for radioactive-ralph ${VERSION} (ad-hoc-signed .app via .dmg)." 2>err.log; then
+  --body "Automated cask update for radioactive-ralph ${VERSION} (ad-hoc-signed .app; arm64 + amd64 dmgs)." 2>err.log; then
   if grep -qi "already exists" err.log; then
     echo "publish-cask: PR already open for ${BRANCH} — nothing to do"
   else
