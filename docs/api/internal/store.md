@@ -69,6 +69,7 @@ The schema is embedded under schema/\*.sql and applied in lexical order by Migra
   - [func \(s \*Store\) MarkDone\(ctx context.Context, planID, taskID, sessionID string, evidenceJSON string\) \(\[\]Task, error\)](<#Store.MarkDone>)
   - [func \(s \*Store\) MarkFailed\(ctx context.Context, planID, taskID, sessionID, reason string, maxRetries int\) \(retried bool, err error\)](<#Store.MarkFailed>)
   - [func \(s \*Store\) MarkFailedWithPayload\(ctx context.Context, planID, taskID, sessionID string, payload EventPayload, maxRetries int\) \(retried bool, err error\)](<#Store.MarkFailedWithPayload>)
+  - [func \(s \*Store\) ProjectAbsPath\(ctx context.Context, projectID string\) \(path string, found bool, err error\)](<#Store.ProjectAbsPath>)
   - [func \(s \*Store\) ProjectSpendByProvider\(ctx context.Context, projectID string\) \(map\[string\]float64, error\)](<#Store.ProjectSpendByProvider>)
   - [func \(s \*Store\) Ready\(ctx context.Context, planID string\) \(\[\]Task, error\)](<#Store.Ready>)
   - [func \(s \*Store\) ReclaimStale\(ctx context.Context, staleAfter time.Duration\) \(reclaimed int, err error\)](<#Store.ReclaimStale>)
@@ -266,7 +267,7 @@ type Fingerprint struct {
 ```
 
 <a name="Fingerprints"></a>
-### func [Fingerprints](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/projects.go#L137>)
+### func [Fingerprints](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/projects.go#L164>)
 
 ```go
 func Fingerprints(ctx context.Context, dir string) ([]Fingerprint, error)
@@ -658,6 +659,17 @@ func (s *Store) MarkFailedWithPayload(ctx context.Context, planID, taskID, sessi
 ```
 
 MarkFailedWithPayload transitions a running task to failed or retries while preserving structured payload details in the event log.
+
+<a name="Store.ProjectAbsPath"></a>
+### func \(\*Store\) [ProjectAbsPath](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/projects.go#L142>)
+
+```go
+func (s *Store) ProjectAbsPath(ctx context.Context, projectID string) (path string, found bool, err error)
+```
+
+ProjectAbsPath returns the most recently recorded absolute\-path fingerprint for a project, or found=false when the project has no abs\_path identifier. The orchestrator uses this to launch workers in the project's own checkout: supervisor mode's working directory is deliberately irrelevant \(§4\), so a dispatch must resolve the target repo explicitly rather than inheriting the supervisor process's cwd.
+
+A project can accumulate more than one abs\_path \(the same repo cloned to two locations, or moved\); the most recently added one is returned as the best current guess at where the operator is working now.
 
 <a name="Store.ProjectSpendByProvider"></a>
 ### func \(\*Store\) [ProjectSpendByProvider](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/spend.go#L43>)
