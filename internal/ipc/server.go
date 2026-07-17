@@ -411,7 +411,31 @@ func (s *Server) handleConn(conn net.Conn) {
 			_, werr := conn.Write(frame)
 			return werr
 		}
-		attachErr := s.handler.HandleAttach(ctx, emit)
+		// Detect the Attach client DISCONNECTING. HandleAttach blocks streaming
+		// (today it blocks on ctx.Done since the event surface emits nothing),
+		// and Attach is server→client only — the server never reads the conn
+		// again after the request line. So without this watcher a client that
+		// closes its socket is invisible: the handler blocks forever, leaking its
+		// goroutine + wg slot + fd for the life of the supervisor. Read from the
+		// conn on a goroutine: any result (EOF on client close, or any error)
+		// means the client is gone — cancel ctx so HandleAttach returns. A client
+		// that (protocol violation) sends bytes on an Attach conn is also treated
+		// as done, which is correct: there is no client→server Attach message.
+		attachCtx, attachCancel := context.WithCancel(ctx)
+		defer attachCancel()
+		go func() {
+			// One blocking read is enough to detect the client going away: EOF on
+			// a clean close, an error on a reset, or (protocol violation) an
+			// unexpected inbound byte — Attach is server→client only, so ANY of
+			// these means the subscription should end. No read deadline: this
+			// blocks until the client acts; when the handler returns for another
+			// reason, handleConn's deferred conn.Close() unblocks this read so the
+			// watcher goroutine is reaped too.
+			var buf [1]byte
+			_, _ = conn.Read(buf[:])
+			attachCancel()
+		}()
+		attachErr := s.handler.HandleAttach(attachCtx, emit)
 		// Final frame: single Response signals end-of-stream.
 		s.writeResponse(conn, Response{Ok: attachErr == nil, Error: errString(attachErr)})
 
