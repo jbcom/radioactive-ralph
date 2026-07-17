@@ -13,6 +13,13 @@ shipped. That means historical sections may still mention MCP, plugins,
 supervisors, or the archived Python implementation even though those are no
 longer part of the live contract.
 
+## [0.21.1](https://github.com/jbcom/radioactive-ralph/compare/v0.21.0...v0.21.1) (2026-07-17)
+
+
+### Bug Fixes
+
+* **orch:** dispatch provider turns asynchronously (never-block invariant) ([#127](https://github.com/jbcom/radioactive-ralph/issues/127)) ([f4627eb](https://github.com/jbcom/radioactive-ralph/commit/f4627ebb9074720191c1a08b623c865d778631bb))
+
 ## [0.21.0](https://github.com/jbcom/radioactive-ralph/compare/v0.20.0...v0.21.0) (2026-07-17)
 
 
