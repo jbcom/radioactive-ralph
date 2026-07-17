@@ -138,35 +138,72 @@ func TestRun_SecondRunRefuses(t *testing.T) {
 // same runtimeDir. Exactly one must succeed in binding; the other must see
 // ErrSupervisorRunning, never a silent double-bind.
 func TestRun_ConcurrentStartersOnlyOneWins(t *testing.T) {
+	// The invariant: two Run calls racing Acquire against the same runtimeDir
+	// must NEVER both bind — exactly one wins and the other sees
+	// ErrSupervisorRunning. This variant keeps the genuine simultaneous-start
+	// coverage but asserts only outcomes that hold regardless of who wins the
+	// race, with bounded waits (no flaky probe+cancel window): whichever binds
+	// first, at least one Run must refuse, and neither returns an unexpected
+	// error. (TestRun_SecondRunRefuses covers the sequential lock-held path.)
 	runtimeDir := t.TempDir()
 	st1 := openTestStore(t)
 	st2 := openTestStore(t)
 
-	// The invariant: while one supervisor holds the socket lock, a second Run
-	// against the same RuntimeDir is refused with ErrSupervisorRunning. Drive it
-	// DETERMINISTICALLY (start #1, wait until it's actually bound, THEN start #2)
-	// rather than racing two starters against a probe+cancel window — the latter
-	// flaked on slow CI runners where neither had bound before the teardown.
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// Supervisor #1: the winner. Start it and wait until it's serving.
-	winnerDone := make(chan error, 1)
-	go func() { winnerDone <- Run(ctx, Options{RuntimeDir: runtimeDir, Store: st1}) }()
-	probe := waitForSupervisor(t, runtimeDir, 5*time.Second) // blocks until #1 binds
+	results := make(chan error, 2)
+	go func() { results <- Run(ctx, Options{RuntimeDir: runtimeDir, Store: st1}) }()
+	go func() { results <- Run(ctx, Options{RuntimeDir: runtimeDir, Store: st2}) }()
+
+	// Wait until SOMETHING is serving (the winner bound), then cancel so the
+	// winner exits; the loser has already refused (or is about to). Cancelling
+	// BEFORE collecting both results means a hypothetical double-bind can't hang
+	// the test — both would just return nil and the refusal assertion fails.
+	probe := waitForSupervisor(t, runtimeDir, 5*time.Second)
 	_ = probe.Close()
-
-	// Supervisor #2: must be refused now that #1 holds the lock. Run it to
-	// completion (its own ctx) — it returns immediately with ErrSupervisorRunning,
-	// so no teardown race.
-	loserErr := Run(context.Background(), Options{RuntimeDir: runtimeDir, Store: st2})
-	if !errors.Is(loserErr, ErrSupervisorRunning) {
-		t.Errorf("second Run() = %v, want ErrSupervisorRunning", loserErr)
-	}
-
-	// Now tear #1 down; it exits cleanly (nil) on ctx cancel.
 	cancel()
-	if err := <-winnerDone; err != nil {
-		t.Errorf("winner Run() = %v, want nil (clean exit after ctx cancel)", err)
+
+	// Collect both results (bounded). Accept either ordering of winner/loser — the
+	// only forbidden outcomes are a double-bind (zero refusals) or an unexpected
+	// error.
+	var refusals, others int
+	classifyRunResult(t, waitResult(t, results), &refusals, &others)
+	classifyRunResult(t, waitResult(t, results), &refusals, &others)
+
+	if refusals < 1 {
+		t.Errorf("refusals = %d, want at least 1 (a double-bind must be impossible)", refusals)
+	}
+	if others != 0 {
+		t.Errorf("unexpected non-nil/non-refusal Run results: %d", others)
+	}
+}
+
+// waitResult reads one Run result with a bounded wait so a hung supervisor
+// shutdown fails the test instead of hanging it.
+func waitResult(t *testing.T, results <-chan error) error {
+	t.Helper()
+	select {
+	case err := <-results:
+		return err
+	case <-time.After(shutdownWait):
+		t.Fatal("a Run() did not return within the shutdown bound")
+		return nil
+	}
+}
+
+// classifyRunResult tallies a Run result: ErrSupervisorRunning → refusal, nil →
+// a clean bind+exit (the winner), anything else → an unexpected error the test
+// fails on.
+func classifyRunResult(t *testing.T, err error, refusals, others *int) {
+	t.Helper()
+	switch {
+	case errors.Is(err, ErrSupervisorRunning):
+		*refusals++
+	case err == nil:
+		// clean exit (winner, after ctx cancel) — not counted, not an error.
+	default:
+		t.Errorf("unexpected Run() error: %v", err)
+		*others++
 	}
 }
