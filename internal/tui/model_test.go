@@ -69,41 +69,75 @@ func TestModel_DrillInMacroToMeso(t *testing.T) {
 	}
 }
 
-func TestModel_DrillInMesoToMicroStartsAttach(t *testing.T) {
+// TestModel_FirstFetchStartsSessionAttach: the live subscription is session-long
+// — it starts on the FIRST completed fetch (not on micro drill-in), so the
+// macro/meso views are live from the start.
+func TestModel_FirstFetchStartsSessionAttach(t *testing.T) {
+	f := testFake()
+	m := newTestModel(t, f)
+	if m.attachCancel != nil {
+		t.Fatal("subscription should not be active before the first fetch")
+	}
+
+	updated, cmd := m.Update(fetchedMsg{snap: snapshot{plans: f.plans}})
+	m = updated.(Model)
+
+	if m.attachCancel == nil || m.attachFrames == nil {
+		t.Fatal("expected the session subscription to start on the first fetch")
+	}
+	if cmd == nil {
+		t.Fatal("expected an attachCmd after the first fetch starts the subscription")
+	}
+	// A second fetch must NOT start a second subscription (idempotent).
+	frames := m.attachFrames
+	updated, _ = m.Update(fetchedMsg{snap: snapshot{plans: f.plans}})
+	m = updated.(Model)
+	if m.attachFrames != frames {
+		t.Error("second fetch restarted the subscription; ensureAttach must be idempotent")
+	}
+	m.attachCancel()
+}
+
+// TestModel_DrillInMicroDoesNotRestartAttach: drilling into micro reuses the
+// session subscription (it doesn't start a new one) and resets the per-task log.
+func TestModel_DrillInMicroDoesNotRestartAttach(t *testing.T) {
 	f := testFake()
 	m := newTestModel(t, f)
 	m.snap.plans = f.plans
 	m.lvl = levelMeso
 	m.selectedPlan = f.plans[0]
 	m.snap.tasks = f.tasksByPlan["plan-1"]
+	// Simulate the already-running session subscription.
+	cancelled := false
+	m.attachCancel = func() { cancelled = true }
+	m.attachFrames = make(chan json.RawMessage)
+	m.snap.live = []liveLogLine{{text: "stale"}}
 
-	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m = updated.(Model)
 
-	if m.lvl != levelMicro {
-		t.Fatalf("expected level micro after drill-in, got %v", m.lvl)
+	if m.lvl != levelMicro || m.selectedTask.ID != "task-a" {
+		t.Fatalf("drill-in didn't reach micro/task-a: lvl=%v task=%q", m.lvl, m.selectedTask.ID)
 	}
-	if m.selectedTask.ID != "task-a" {
-		t.Fatalf("expected selectedTask task-a, got %q", m.selectedTask.ID)
+	if cancelled {
+		t.Error("drill-in cancelled the session subscription; it must be reused")
 	}
-	if m.attachCancel == nil {
-		t.Fatalf("expected attachCancel to be set once micro is entered")
+	if len(m.snap.live) != 0 {
+		t.Errorf("drill-in did not reset the per-task log: %d lines", len(m.snap.live))
 	}
-	if cmd == nil {
-		t.Fatalf("expected a batched fetch+attach command")
-	}
-	// Clean up the goroutine started by drilling in.
-	m.attachCancel()
 }
 
-func TestModel_DrillOutMicroToMesoStopsAttach(t *testing.T) {
+// TestModel_DrillOutMicroKeepsAttach: drilling out of micro does NOT stop the
+// session subscription — macro/meso stay live.
+func TestModel_DrillOutMicroKeepsAttach(t *testing.T) {
 	f := testFake()
 	m := newTestModel(t, f)
 	m.lvl = levelMicro
 	m.selectedPlan = f.plans[0]
 	m.selectedTask = f.tasksByPlan["plan-1"][0]
-	stopped := false
-	m.attachCancel = func() { stopped = true }
+	cancelled := false
+	m.attachCancel = func() { cancelled = true }
+	m.attachFrames = make(chan json.RawMessage)
 
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
 	m = updated.(Model)
@@ -111,11 +145,11 @@ func TestModel_DrillOutMicroToMesoStopsAttach(t *testing.T) {
 	if m.lvl != levelMeso {
 		t.Fatalf("expected level meso after drill-out, got %v", m.lvl)
 	}
-	if !stopped {
-		t.Fatalf("expected attachCancel to be invoked on drill-out")
+	if cancelled {
+		t.Error("drill-out cancelled the session subscription; it must stay live for macro/meso")
 	}
-	if m.attachCancel != nil {
-		t.Fatalf("expected attachCancel to be cleared after drill-out")
+	if m.attachCancel == nil {
+		t.Error("drill-out cleared attachCancel; the session subscription must persist")
 	}
 }
 
@@ -291,6 +325,36 @@ func TestModel_LiveFrameAppliesBlockedDelta(t *testing.T) {
 		if m.snap.tasks[0].Status != store.TaskStatusBlocked {
 			t.Errorf("%s: task-a status = %q, want blocked (live delta)", kind, m.snap.tasks[0].Status)
 		}
+	}
+}
+
+// TestModel_LiveFramePrependsToMacroTail: a live frame prepends to the macro
+// event pane (newest-first) at ANY level, deduped by id, so the macro overview
+// is a live feed and a poll landing after a live prepend doesn't double-count.
+func TestModel_LiveFramePrependsToMacroTail(t *testing.T) {
+	f := testFake()
+	m := newTestModel(t, f)
+	m.lvl = levelMacro // NOT micro — the macro tail must still update
+
+	updated, _ := m.Update(liveFrameMsg{raw: []byte(`{"id":7,"kind":"task.done","task_id":"t1"}`)})
+	m = updated.(Model)
+	if len(m.snap.planEvent) != 1 || m.snap.planEvent[0].Kind != "task.done" || m.snap.planEvent[0].ID != 7 {
+		t.Fatalf("macro tail = %+v, want [task.done id=7] after a live frame at macro level", m.snap.planEvent)
+	}
+
+	// The SAME event again (e.g. a poll re-including it, or a duplicate frame) is
+	// deduped by id — the pane must not show it twice.
+	updated, _ = m.Update(liveFrameMsg{raw: []byte(`{"id":7,"kind":"task.done","task_id":"t1"}`)})
+	m = updated.(Model)
+	if len(m.snap.planEvent) != 1 {
+		t.Errorf("duplicate id 7 was not deduped: macro tail has %d rows", len(m.snap.planEvent))
+	}
+
+	// A newer event prepends ahead of the older one (newest-first).
+	updated, _ = m.Update(liveFrameMsg{raw: []byte(`{"id":8,"kind":"task.claimed","task_id":"t2"}`)})
+	m = updated.(Model)
+	if len(m.snap.planEvent) != 2 || m.snap.planEvent[0].ID != 8 {
+		t.Fatalf("macro tail = %+v, want the newer id=8 first", m.snap.planEvent)
 	}
 }
 

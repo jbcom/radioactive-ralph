@@ -77,9 +77,10 @@ type Model struct {
 
 	err error
 
-	// attachCancel stops the current level's live Attach subscription
-	// (micro only) when drilling out or quitting. Nil when no
-	// subscription is active.
+	// attachCancel stops the session-long live Attach subscription, called on
+	// quit (the subscription runs for the whole session across all drill levels,
+	// not per-micro-drill). Nil until the first fetch starts it (see
+	// ensureAttach).
 	attachCancel context.CancelFunc
 
 	// attachFrames/attachDone are the current subscription's channels, held
@@ -149,11 +150,11 @@ type fetchedMsg struct {
 	err  error
 }
 
-// liveFrameMsg carries one Attach event frame back into Update. Only
-// produced while in levelMicro with a live subscription active. epoch tags
-// the subscription that produced it, so a late frame from a subscription the
-// user already drilled out of is ignored instead of re-arming (which would
-// start a duplicate loop on the NEW subscription's channels).
+// liveFrameMsg carries one Attach event frame back into Update. Produced for
+// the whole session by the session-long subscription (all drill levels consume
+// it). epoch tags the subscription that produced it, so a late frame from a
+// prior subscription (e.g. after a reconnect bumped the epoch) is ignored
+// instead of re-arming the current one's channels.
 type liveFrameMsg struct {
 	raw   json.RawMessage
 	epoch uint64
@@ -166,6 +167,26 @@ type liveFrameMsg struct {
 type attachEndedMsg struct {
 	err   error
 	epoch uint64
+}
+
+// ensureAttach starts the session-long live event subscription if one isn't
+// already running, and returns its command (or nil if already active). The
+// subscription is project-scoped and runs for the whole TUI session — macro,
+// meso, and micro all consume from it (routed by level in the liveFrameMsg
+// handler), so the macro plan-overview and meso task-list update from events as
+// they land, not just on the 1s poll. It is started lazily on the first
+// completed fetch rather than in Init because Init returns a Cmd and cannot hold
+// the subscription's channels on the model.
+func (m *Model) ensureAttach() tea.Cmd {
+	if m.attachFrames != nil {
+		return nil
+	}
+	frames, done, cancel := startAttach(m.ctx, m.source)
+	m.attachCancel = cancel
+	m.attachFrames = frames
+	m.attachDone = done
+	m.attachEpoch++
+	return attachCmd(m.ctx, frames, done, m.attachEpoch)
 }
 
 // startFetch marks a gather in flight and returns its command. EVERY path that
@@ -347,6 +368,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// the (still in-bounds) index selecting a DIFFERENT entity than the
 		// operator saw — so drilling in would open the wrong plan/task.
 		m.reconcileCursor(selectedID)
+		// Start the session-long live subscription now that the first gather has
+		// landed (idempotent: only the first call starts it). This makes the
+		// macro/meso event + state panes push-live, with this poll as the
+		// reconcile net.
+		if cmd := m.ensureAttach(); cmd != nil {
+			return m, cmd
+		}
 		return m, nil
 
 	case liveFrameMsg:
@@ -379,10 +407,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// source of truth that reconciles any missed or duplicated frame.
 		m.snap = applyEvent(m.snap, ev)
 
-		// Micro-view tail: only append frames relevant to the SELECTED task, so
-		// drilling into one task doesn't fill its one-worker log with unrelated
-		// tasks' activity. A task-agnostic frame (no task_id — plan/service
-		// level) is still shown as context.
+		// Macro event pane: prepend to the live project-event tail (newest-first,
+		// like the poll refill), so the macro overview is a live feed, not a 1s
+		// snapshot. De-dupe by id so a poll landing right after a live prepend
+		// doesn't show the same event twice.
+		m.snap.planEvent = prependEvent(m.snap.planEvent, ev)
+
+		// Micro-view per-task log: only append frames relevant to the SELECTED
+		// task, so drilling into one task doesn't fill its one-worker log with
+		// unrelated tasks' activity. A task-agnostic frame (no task_id — plan/
+		// service level) is still shown as context.
 		if m.lvl == levelMicro {
 			if ev.TaskID == "" || m.selectedTask.ID == "" || ev.TaskID == m.selectedTask.ID {
 				at := ev.OccurredAt
@@ -551,29 +585,25 @@ func (m Model) drillIn() (tea.Model, tea.Cmd) {
 		}
 		m.selectedTask = flat[m.cursor]
 		m.lvl = levelMicro
+		// Reset the per-task log; the SESSION-long subscription (started at the
+		// first fetch, see ensureAttach) keeps feeding — drilling in just changes
+		// which pane it also fills. No per-drill start/stop.
 		m.snap.live = nil
 		m.viewport = viewportState{}
-		frames, done, cancel := startAttach(m.ctx, m.source)
-		m.attachCancel = cancel
-		m.attachFrames = frames
-		m.attachDone = done
-		m.attachEpoch++
-		return m, tea.Batch(m.drillFetch(), attachCmd(m.ctx, frames, done, m.attachEpoch))
+		return m, m.drillFetch()
 
 	default:
 		return m, nil
 	}
 }
 
-// drillOut moves micro->meso->macro. Leaving micro stops the live Attach
-// subscription.
+// drillOut moves micro->meso->macro. The live Attach subscription is
+// session-long (see ensureAttach), so drilling out does NOT stop it — the
+// macro/meso views keep updating from the same stream; leaving micro just stops
+// filling the per-task log pane.
 func (m Model) drillOut() (tea.Model, tea.Cmd) {
 	switch m.lvl {
 	case levelMicro:
-		if m.attachCancel != nil {
-			m.attachCancel()
-			m.attachCancel = nil
-		}
 		m.lvl = levelMeso
 		m.cursor = 0
 		return m, m.drillFetch()
@@ -666,6 +696,38 @@ func taskDeltaStatus(kind string) store.TaskStatus {
 	default:
 		return ""
 	}
+}
+
+// macroEventCap bounds the macro-view live event tail. Matches the poll's fetch
+// limit (ListProjectEvents(..., 10)) so the live tail and a poll refill hold the
+// same number of rows.
+const macroEventCap = 10
+
+// prependEvent adds a live event to the newest-first macro event tail, deduped
+// by id (a poll landing just after a live prepend re-includes the same row;
+// dropping the duplicate keeps the pane from showing it twice) and capped at
+// macroEventCap. It maps the wire AttachEvent back to a store.Event so the macro
+// renderer (which reads []store.Event) is unchanged.
+func prependEvent(tail []store.Event, ev ipc.AttachEvent) []store.Event {
+	for i := range tail {
+		if tail[i].ID == ev.ID {
+			return tail // already present (from a poll or an earlier frame)
+		}
+	}
+	at := ev.OccurredAt
+	if at.IsZero() {
+		at = time.Now()
+	}
+	row := store.Event{
+		ID: ev.ID, PlanID: ev.PlanID, TaskID: ev.TaskID,
+		Kind: ev.Kind, Stream: ev.Stream, Actor: ev.Actor,
+		PayloadJSON: string(ev.Payload), OccurredAt: at,
+	}
+	tail = append([]store.Event{row}, tail...)
+	if len(tail) > macroEventCap {
+		tail = tail[:macroEventCap]
+	}
+	return tail
 }
 
 // applyEvent applies a live event as a delta to the snapshot's task list so a
