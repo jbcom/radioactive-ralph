@@ -1,6 +1,9 @@
 package tui
 
-import "github.com/charmbracelet/lipgloss"
+import (
+	"github.com/charmbracelet/lipgloss"
+	"github.com/jbcom/radioactive-ralph/internal/statusbucket"
+)
 
 // Palette is small and theme-neutral on purpose: the TUI runs in
 // whatever terminal color scheme the operator already has, so styling
@@ -46,28 +49,22 @@ var (
 			Padding(0, 1)
 )
 
-// statusStyle returns the style used to render a status string
-// consistently across macro/meso/micro views. It covers every real plan
-// status (store.PlanStatus*) and task status (store.TaskStatus*), so a
-// status is never rendered as undifferentiated muted gray by accident —
-// only a genuinely-unknown string falls through to muted.
+// statusStyle returns the style used to render a status string consistently
+// across macro/meso/micro views. The status→meaning classification lives in
+// internal/statusbucket (shared with the desktop GUI so a status carries the
+// same meaning in both surfaces); this function only maps each semantic bucket
+// to the TUI's lipgloss style. A genuinely-unknown status buckets to Muted.
 func statusStyle(status string) lipgloss.Style {
-	switch status {
-	// Terminal-success.
-	case "done":
+	switch statusbucket.Of(status) {
+	case statusbucket.Good:
 		return styleGood
-	// Active / in-flight.
-	case "running":
+	case statusbucket.Running:
 		return styleRunning
-	// Needs attention (blocked on a dependency, awaiting approval, or a
-	// partial/paused plan an operator should look at).
-	case "blocked", "ready_pending_approval", "paused", "failed_partial":
+	case statusbucket.Warn:
 		return styleWarn
-	// Terminal-failure / abandoned.
-	case "failed", "abandoned":
+	case statusbucket.Bad:
 		return styleBad
-	// Not-yet-started or benignly-skipped work: readable but low-emphasis.
-	case "pending", "ready", "draft", "skipped", "decomposed", "archived":
+	case statusbucket.Muted:
 		return styleMuted
 	default:
 		return styleMuted

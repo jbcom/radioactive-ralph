@@ -107,6 +107,10 @@ type StatusReply struct {
 
 // WorkerSummary is the runtime-facing status for one in-flight worker.
 type WorkerSummary struct {
+	// WorkerID is the store worker-row id — the value a client passes to the
+	// worker-kill drive command to target THIS worker. Distinct from any
+	// provider-session id.
+	WorkerID          string `json:"worker_id"`
 	PlanID            string `json:"plan_id"`
 	TaskID            string `json:"task_id"`
 	Provider          string `json:"provider,omitempty"`

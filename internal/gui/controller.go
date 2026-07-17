@@ -1,0 +1,62 @@
+// Package gui is the Fyne desktop client for radioactive-ralph: a peer to the
+// read-only TUI on the same supervisor socket, but one that can also DRIVE
+// (approve/pause/kill/import) via the v2 IPC drive API. See
+// docs/superpowers/specs/2026-07-17-fyne-gui-client-design.md.
+//
+// This file (controller.go) is deliberately Fyne-free so it compiles in the
+// default CGO-off build. Every file that imports Fyne carries a `//go:build
+// gui` tag (theme.go / app.go / the view files); the status→colour meaning is
+// shared with the TUI via internal/statusbucket so the two surfaces cannot
+// drift.
+package gui
+
+import (
+	"context"
+	"encoding/json"
+
+	"github.com/jbcom/radioactive-ralph/internal/ipc"
+	"github.com/jbcom/radioactive-ralph/internal/orch"
+	"github.com/jbcom/radioactive-ralph/internal/store"
+)
+
+// Controller is every read the GUI renders plus every drive action it can take.
+// The read methods mirror tui.DataSource so the two clients share one mental
+// model of the live supervisor state; the drive methods map 1:1 onto the ipc v2
+// drive commands so the GUI can act, not just watch. An in-memory fake
+// implementation (fakeController in tests) drives the views with no supervisor
+// and no store, recording the drive calls the widgets make.
+//
+// Controller is Fyne-free on purpose: it is the boundary between the (tagged,
+// CGO) view layer and the (untagged) IPC/store layer, so the view code depends
+// only on this interface and never on *ipc.Client or *store.Store directly.
+type Controller interface {
+	// --- reads (mirror tui.DataSource) ---
+
+	// Status returns the supervisor's current status snapshot.
+	Status(ctx context.Context) (ipc.StatusReply, error)
+	// ListPlans returns plans for the scoped project (empty projectID lists
+	// across all projects, matching store.Store.ListPlans).
+	ListPlans(ctx context.Context, projectID string) ([]store.Plan, error)
+	// PlanProgress reports done/total step counts for one plan.
+	PlanProgress(ctx context.Context, planID string) (orch.Progress, error)
+	// ListTasks returns a plan's tasks.
+	ListTasks(ctx context.Context, planID string) ([]store.Task, error)
+	// ListProjectEvents returns the most recent project-wide events, newest first.
+	ListProjectEvents(ctx context.Context, projectID string, limit int) ([]store.Event, error)
+	// ListTaskEvents returns the most recent events for one task, newest first.
+	ListTaskEvents(ctx context.Context, planID, taskID string, limit int) ([]store.Event, error)
+	// Attach subscribes to the live event stream. fn is invoked once per event
+	// frame until ctx is cancelled or the stream ends.
+	Attach(ctx context.Context, fn func(json.RawMessage) error) error
+
+	// --- drive (ipc v2) ---
+
+	// ImportPlan imports a markdown plan and activates it.
+	ImportPlan(ctx context.Context, args ipc.PlanImportArgs) (ipc.PlanImportReply, error)
+	// SetPlanStatus changes a plan's lifecycle status (paused|active|abandoned).
+	SetPlanStatus(ctx context.Context, planID, status string) error
+	// ApproveTask clears the approval gate on a ready_pending_approval task.
+	ApproveTask(ctx context.Context, planID, taskID string) error
+	// KillWorker kills a running worker via kill-and-reclaim.
+	KillWorker(ctx context.Context, workerID string) error
+}

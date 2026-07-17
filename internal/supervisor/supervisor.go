@@ -292,25 +292,54 @@ func (s *Supervisor) shutdown(ctx context.Context) error {
 
 // --- ipc.Handler ---
 
-// HandleStatus reports supervisor-level liveness. ActiveWorkers is sourced
-// from the store's real worker rows (store.CountRunningWorkers) rather
-// than an in-process map: no in-process structure could ever reflect this
-// count anyway, since agent subprocess lifetime is fully owned by whichever
-// provider runner orch dispatched, not by the supervisor itself. A query
-// failure degrades to 0 rather than failing the whole status reply — a
-// transient count-query error should never make `status` itself fail.
+// HandleStatus reports supervisor-level liveness. ActiveWorkers and the
+// per-worker detail are sourced from the store's real worker rows
+// (store.ListRunningWorkers) rather than an in-process map: no in-process
+// structure could ever reflect this anyway, since agent subprocess lifetime is
+// fully owned by whichever provider runner orch dispatched, not by the
+// supervisor itself. A query failure degrades to an empty list / 0 count rather
+// than failing the whole status reply — a transient error should never make
+// `status` itself fail.
 func (s *Supervisor) HandleStatus(ctx context.Context) (ipc.StatusReply, error) {
-	active, err := s.store.CountRunningWorkers(ctx)
+	// Source both the count AND the per-worker detail from one store read so a
+	// client (the GUI) can name a specific worker to kill. A query failure
+	// degrades to an empty list / 0 count rather than failing the whole status
+	// reply — a transient error should never make `status` itself fail.
+	running, err := s.store.ListRunningWorkers(ctx)
 	if err != nil {
-		s.log("count running workers failed", "err", err)
-		active = 0
+		s.log("list running workers failed", "err", err)
+		running = nil
+	}
+	workers := make([]ipc.WorkerSummary, 0, len(running))
+	for _, w := range running {
+		workers = append(workers, ipc.WorkerSummary{
+			WorkerID: w.ID,
+			PlanID:   w.PlanID,
+			TaskID:   w.TaskID,
+			Provider: w.Provider,
+		})
+	}
+
+	// Plan/task aggregate counters. Same degrade-not-fail policy: a failed
+	// count query leaves the counters at zero rather than failing `status`.
+	counts, err := s.store.StatusCounts(ctx)
+	if err != nil {
+		s.log("status counts failed", "err", err)
+		counts = store.StatusCounts{}
 	}
 
 	return ipc.StatusReply{
 		ProtoVersion:  ipc.ProtoVersion, // advertise the drive-surface version
 		PID:           os.Getpid(),
 		Uptime:        time.Since(s.startedAt),
-		ActiveWorkers: active,
+		ActiveWorkers: len(running),
+		Workers:       workers,
+		ActivePlans:   counts.ActivePlans,
+		ReadyTasks:    counts.Ready,
+		RunningTasks:  counts.Running,
+		ApprovalTasks: counts.Approval,
+		BlockedTasks:  counts.Blocked,
+		FailedTasks:   counts.Failed,
 	}, nil
 }
 

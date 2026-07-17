@@ -43,6 +43,51 @@ func mustCreateSessionAndWorker(t *testing.T, s *Store, tag string) (sessionID, 
 	return sessionID, workerID
 }
 
+func TestStatusCounts(t *testing.T) {
+	ctx := context.Background()
+	s := openTestStore(t)
+	projectID := mustCreateProject(t, s, "counts-project")
+	activePlan := mustCreatePlan(t, s, projectID, "active-plan")
+	if err := s.SetPlanStatus(ctx, activePlan, PlanStatusActive); err != nil {
+		t.Fatalf("SetPlanStatus active: %v", err)
+	}
+	// A second, paused plan must NOT be counted as active.
+	pausedPlan := mustCreatePlan(t, s, projectID, "paused-plan")
+	if err := s.SetPlanStatus(ctx, pausedPlan, PlanStatusPaused); err != nil {
+		t.Fatalf("SetPlanStatus paused: %v", err)
+	}
+
+	// Seed tasks across the statuses the reply surfaces, plus a 'done' and a
+	// 'pending' that must NOT appear in any of the counted fields.
+	seed := map[string]TaskStatus{
+		"r1":  TaskStatusReady,
+		"r2":  TaskStatusReady,
+		"run": TaskStatusRunning,
+		"ap":  TaskStatusReadyPendingApproval,
+		"bl":  TaskStatusBlocked,
+		"f1":  TaskStatusFailed,
+		"dn":  TaskStatusDone,
+		"pd":  TaskStatusPending,
+	}
+	for id, status := range seed {
+		if err := s.CreateTask(ctx, CreateTaskOpts{PlanID: activePlan, ID: id, Description: id}); err != nil {
+			t.Fatalf("CreateTask %s: %v", id, err)
+		}
+		if _, err := s.DB().ExecContext(ctx, `UPDATE tasks SET status=? WHERE plan_id=? AND id=?`, string(status), activePlan, id); err != nil {
+			t.Fatalf("set status %s: %v", id, err)
+		}
+	}
+
+	c, err := s.StatusCounts(ctx)
+	if err != nil {
+		t.Fatalf("StatusCounts: %v", err)
+	}
+	want := StatusCounts{ActivePlans: 1, Ready: 2, Running: 1, Approval: 1, Blocked: 1, Failed: 1}
+	if c != want {
+		t.Errorf("StatusCounts = %+v, want %+v", c, want)
+	}
+}
+
 func TestCreateTaskAndReady(t *testing.T) {
 	ctx := context.Background()
 	s := openTestStore(t)

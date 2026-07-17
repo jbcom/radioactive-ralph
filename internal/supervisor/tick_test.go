@@ -147,9 +147,9 @@ func TestHandleAttachBlocksUntilContextCancelled(t *testing.T) {
 	}
 }
 
-// TestHandleStatusDegradesOnCountError confirms a CountRunningWorkers
-// failure degrades HandleStatus's ActiveWorkers to 0 rather than failing
-// the whole status reply — closing the store out from under it is the
+// TestHandleStatusDegradesOnCountError confirms a ListRunningWorkers failure
+// degrades HandleStatus's ActiveWorkers to 0 (and Workers to empty) rather than
+// failing the whole status reply — closing the store out from under it is the
 // simplest way to force that query to fail deterministically.
 func TestHandleStatusDegradesOnCountError(t *testing.T) {
 	sup := newTestSupervisor(t, clockwork.NewRealClock())
@@ -157,13 +157,78 @@ func TestHandleStatusDegradesOnCountError(t *testing.T) {
 
 	status, err := sup.HandleStatus(context.Background())
 	if err != nil {
-		t.Fatalf("HandleStatus: want nil error even when the count query fails, got %v", err)
+		t.Fatalf("HandleStatus: want nil error even when the worker query fails, got %v", err)
 	}
 	if status.ActiveWorkers != 0 {
-		t.Errorf("ActiveWorkers = %d, want 0 (degraded on count failure)", status.ActiveWorkers)
+		t.Errorf("ActiveWorkers = %d, want 0 (degraded on query failure)", status.ActiveWorkers)
+	}
+	if len(status.Workers) != 0 {
+		t.Errorf("Workers = %v, want empty (degraded on query failure)", status.Workers)
 	}
 	if status.PID == 0 {
-		t.Error("PID = 0, want the real process pid regardless of the count failure")
+		t.Error("PID = 0, want the real process pid regardless of the query failure")
+	}
+}
+
+// TestHandleStatusPopulatesWorkers confirms HandleStatus exposes per-worker
+// detail — the store worker-row id plus its plan/task — so a client (the GUI)
+// can name a specific worker to kill. Before this the Workers slice was always
+// nil, leaving the kill affordance dead.
+func TestHandleStatusPopulatesWorkers(t *testing.T) {
+	sup := newTestSupervisor(t, clockwork.NewRealClock())
+	ctx := context.Background()
+
+	projectID, err := sup.store.CreateProject(ctx, "sw-proj", []store.Fingerprint{{Kind: store.FingerprintKindAbsPath, Value: t.TempDir()}})
+	if err != nil {
+		t.Fatalf("CreateProject: %v", err)
+	}
+	planID, err := sup.store.CreatePlan(ctx, store.CreatePlanOpts{ProjectID: projectID, Slug: "sw", Title: "SW", SourceMarkdown: "# SW\n\n1. step\n"})
+	if err != nil {
+		t.Fatalf("CreatePlan: %v", err)
+	}
+	if err := sup.store.SetPlanStatus(ctx, planID, store.PlanStatusActive); err != nil {
+		t.Fatalf("SetPlanStatus active: %v", err)
+	}
+	sessionID, err := sup.store.CreateSession(ctx, store.SessionOpts{Role: "supervisor", PID: 1, PIDStartTime: "t0"})
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	workerID, err := sup.store.CreateWorker(ctx, store.WorkerOpts{SessionID: sessionID, Provider: "claude", SubprocessPID: 1, SubprocessStartTime: "t0"})
+	if err != nil {
+		t.Fatalf("CreateWorker: %v", err)
+	}
+	if err := sup.store.CreateTask(ctx, store.CreateTaskOpts{PlanID: planID, ID: "t", Description: "d"}); err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+	if _, err := sup.store.ClaimNextReady(ctx, planID, sessionID, workerID); err != nil {
+		t.Fatalf("ClaimNextReady: %v", err)
+	}
+	if err := sup.store.SetWorkerTask(ctx, workerID, planID, "t"); err != nil {
+		t.Fatalf("SetWorkerTask: %v", err)
+	}
+
+	status, err := sup.HandleStatus(ctx)
+	if err != nil {
+		t.Fatalf("HandleStatus: %v", err)
+	}
+	if status.ActiveWorkers != 1 {
+		t.Fatalf("ActiveWorkers = %d, want 1", status.ActiveWorkers)
+	}
+	if len(status.Workers) != 1 {
+		t.Fatalf("Workers = %d, want 1", len(status.Workers))
+	}
+	w := status.Workers[0]
+	if w.WorkerID != workerID || w.PlanID != planID || w.TaskID != "t" {
+		t.Errorf("worker summary = %+v, want id=%s plan=%s task=t (WorkerID is the kill key)", w, workerID, planID)
+	}
+
+	// The plan/task counters must be populated too (they were always zero before
+	// StatusCounts was wired in): the plan is active and its one task is running.
+	if status.ActivePlans != 1 {
+		t.Errorf("ActivePlans = %d, want 1", status.ActivePlans)
+	}
+	if status.RunningTasks != 1 {
+		t.Errorf("RunningTasks = %d, want 1 (the claimed task)", status.RunningTasks)
 	}
 }
 

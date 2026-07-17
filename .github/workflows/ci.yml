@@ -289,6 +289,45 @@ jobs:
       - name: E2E (real binary, pty-driven, fake provider CLI — no RALPH_E2E_LIVE)
         run: go test ./tests/e2e/... -v -timeout 5m
 
+  gui:
+    name: GUI (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      # Fyne is a CGO GUI dependency. On Linux it needs the GL + X11 dev headers
+      # to link even against the headless test driver; macOS links Cocoa via the
+      # toolchain. The rest of CI builds CGO-off and excludes the `gui`-tagged
+      # package entirely — this job is the only place it is compiled.
+      - name: Install Linux GL/X11/Wayland dev headers
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          # Fyne's documented Linux build deps: GL + X11 (xorg-dev) AND the
+          # Wayland stack — glfw 3.4 compiles its Wayland backend unconditionally,
+          # so wayland-client-core.h (libwayland-dev) + wayland-protocols +
+          # libxkbcommon are all required even for a headless test-driver build.
+          sudo apt-get install -y \
+            libgl1-mesa-dev xorg-dev libxkbcommon-dev \
+            libwayland-dev wayland-protocols
+      - name: go mod download
+        run: go mod download
+      - name: Build GUI-enabled binary
+        env:
+          CGO_ENABLED: '1'
+        run: go build -tags gui ./...
+      - name: Test GUI package (headless test driver)
+        env:
+          CGO_ENABLED: '1'
+        run: go test -tags gui ./internal/gui/... -timeout 5m
+
   build-targets:
     name: Build (${{ matrix.goos }}/${{ matrix.goarch }})
     runs-on: ubuntu-latest
