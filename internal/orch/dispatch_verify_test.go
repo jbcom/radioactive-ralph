@@ -36,6 +36,7 @@ func TestDispatchNextWorkerTerminationAloneIsNotCompletion(t *testing.T) {
 	if dispatched != 1 {
 		t.Fatalf("dispatched = %d, want 1", dispatched)
 	}
+	o.Wait() // dispatch is async — wait for the turn + verification to land
 
 	task, err := s.GetTask(ctx, planID, "0.0")
 	if err != nil {
@@ -87,6 +88,7 @@ func TestDispatchNextRunnerErrorMarksFailedNotDone(t *testing.T) {
 	if dispatched != 1 {
 		t.Fatalf("dispatched = %d, want 1", dispatched)
 	}
+	o.Wait() // dispatch is async — wait for the turn + failure handling to land
 
 	task, err := s.GetTask(ctx, planID, "0.0")
 	if err != nil {

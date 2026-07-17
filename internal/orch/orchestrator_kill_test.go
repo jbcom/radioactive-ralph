@@ -40,12 +40,12 @@ func TestKillWorkerCancelsInFlightRun(t *testing.T) {
 		WithBindingResolver(fakeBindingResolver("claude", false)),
 	)
 
-	// Dispatch on a goroutine; it will block inside the runner until killed.
-	dispatchDone := make(chan error, 1)
-	go func() {
-		_, err := o.DispatchNext(context.Background(), projectID, planID)
-		dispatchDone <- err
-	}()
+	// Dispatch now launches the provider turn in its own goroutine and returns
+	// promptly (the never-block invariant), so DispatchNext itself does not block
+	// on the runner.
+	if _, err := o.DispatchNext(context.Background(), projectID, planID); err != nil {
+		t.Fatalf("DispatchNext: %v", err)
+	}
 
 	// Wait for the run to actually begin, then discover the live worker id and
 	// kill it.
@@ -60,18 +60,18 @@ func TestKillWorkerCancelsInFlightRun(t *testing.T) {
 		t.Fatalf("KillWorker(%s) = false, want true (a run should be registered)", workerID)
 	}
 
+	// Drain the in-flight dispatch goroutine: the kill cancelled the run, so this
+	// returns promptly rather than after the 5-min stall timeout.
+	done := make(chan struct{})
+	go func() { o.Wait(); close(done) }()
 	select {
-	case err := <-dispatchDone:
-		// DispatchNext returns nil even when the run errored — a worker
-		// terminating (here, via cancellation) is handled as a failed turn, not
-		// a DispatchNext error. The point is that it RETURNED promptly.
-		_ = err
+	case <-done:
 	case <-time.After(3 * time.Second):
-		t.Fatal("DispatchNext did not return after KillWorker cancelled the run")
+		t.Fatal("dispatched worker did not finish after KillWorker cancelled the run")
 	}
 
-	// After the run is cancelled, the worker is deregistered, so a second kill
-	// reports no live run.
+	// After the run is cancelled and the goroutine has finished, the worker is
+	// deregistered, so a second kill reports no live run.
 	if o.KillWorker(workerID) {
 		t.Errorf("KillWorker(%s) after run ended = true, want false (should be deregistered)", workerID)
 	}
@@ -106,6 +106,100 @@ func waitForRegisteredWorker(t *testing.T, o *Orchestrator) string {
 	}
 	t.Fatal("no worker registered within 3s")
 	return ""
+}
+
+// TestDispatchNextDoesNotBlockOnSlowProvider is the core proof of the never-block
+// invariant: DispatchNext launches the provider turn asynchronously, so even
+// when the turn blocks indefinitely, DispatchNext returns promptly (it does NOT
+// wait for runner.Run). Before the async-dispatch fix, runner.Run ran inline and
+// DispatchNext blocked for up to the stall timeout, wedging the supervisor's
+// dispatchMu (and thus the tick, HandleEnqueue, and the reaper).
+func TestDispatchNextDoesNotBlockOnSlowProvider(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	projectID := mustCreateTestProject(t, s, "slow-project")
+	planID := mustCreateTestPlan(t, s, projectID, "slow-plan", "Ship", twoStepSequentialPlan)
+
+	runner := &blockingRunner{started: make(chan string, 1)}
+	o := New(s,
+		WithRunnerFactory(func(provider.Binding) (provider.Runner, error) { return runner, nil }),
+		WithBindingResolver(fakeBindingResolver("claude", false)),
+	)
+
+	done := make(chan int, 1)
+	go func() {
+		n, err := o.DispatchNext(ctx, projectID, planID)
+		if err != nil {
+			t.Errorf("DispatchNext: %v", err)
+		}
+		done <- n
+	}()
+
+	select {
+	case n := <-done:
+		if n != 1 {
+			t.Fatalf("dispatched = %d, want 1", n)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("DispatchNext blocked on the slow provider turn — the never-block invariant is violated")
+	}
+
+	// The provider turn is still blocked (proving DispatchNext returned WITHOUT
+	// waiting for it). Cancel it and drain so the test doesn't leak a goroutine.
+	select {
+	case <-runner.started:
+	case <-time.After(time.Second):
+		t.Fatal("provider turn never started")
+	}
+	workerID := waitForRegisteredWorker(t, o)
+	o.KillWorker(workerID)
+	o.Wait()
+}
+
+// TestDispatchSemaphoreBoundsInFlightTurns proves the maxParallel bound survives
+// the move to async dispatch: with WithMaxParallel(1) and a blocking runner, only
+// ONE provider turn is in flight at a time even across multiple dispatch passes,
+// because the semaphore is not released until the running turn finishes.
+func TestDispatchSemaphoreBoundsInFlightTurns(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	projectID := mustCreateTestProject(t, s, "sem-project")
+	planID := mustCreateTestPlan(t, s, projectID, "sem-plan", "Fan", threeStepParallelPlan)
+
+	runner := &blockingRunner{started: make(chan string, 8)}
+	o := New(s,
+		WithRunnerFactory(func(provider.Binding) (provider.Runner, error) { return runner, nil }),
+		WithBindingResolver(fakeBindingResolver("claude", false)),
+		WithMaxParallel(1),
+	)
+
+	// First pass: maxParallel=1 caps this to a single dispatched (and now blocked)
+	// worker even though three steps are ready.
+	if _, err := o.DispatchNext(ctx, projectID, planID); err != nil {
+		t.Fatalf("DispatchNext #1: %v", err)
+	}
+	// A second pass must dispatch NOTHING: the one slot is held by the still-
+	// blocked turn, so acquireDispatchSlot fails and the pass is a no-op.
+	n2, err := o.DispatchNext(ctx, projectID, planID)
+	if err != nil {
+		t.Fatalf("DispatchNext #2: %v", err)
+	}
+	if n2 != 0 {
+		t.Fatalf("second pass dispatched %d, want 0 (the single slot is occupied by the blocked turn)", n2)
+	}
+
+	// Exactly one turn started.
+	<-runner.started
+	select {
+	case <-runner.started:
+		t.Fatal("a second provider turn started despite maxParallel=1")
+	case <-time.After(200 * time.Millisecond):
+	}
+
+	// Cancel the blocked turn and drain.
+	workerID := waitForRegisteredWorker(t, o)
+	o.KillWorker(workerID)
+	o.Wait()
 }
 
 // blockingRunner must satisfy provider.Runner.

@@ -19,12 +19,25 @@ import (
 // every call so DispatchNext's mechanical, judgment-only fallback
 // (non-empty evidence output) always accepts.
 type fakeRunner struct {
-	calls int
+	// mu guards calls: dispatch is asynchronous, so Run is invoked from the
+	// dispatched worker goroutines concurrently with the test's assertions.
+	mu    sync.Mutex
+	nCall int
 }
 
 func (f *fakeRunner) Run(context.Context, provider.Binding, provider.Request) (provider.Result, error) {
-	f.calls++
+	f.mu.Lock()
+	f.nCall++
+	f.mu.Unlock()
 	return provider.Result{AssistantOutput: "did the work"}, nil
+}
+
+// calls returns the recorded run count (lock-safe). Read only after draining the
+// orchestrator (sup.orch.Wait()) so all dispatched turns have completed.
+func (f *fakeRunner) calls() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.nCall
 }
 
 // TestHandleEnqueue_DispatchesSeededPlan is the proof for task 5 of the
@@ -79,8 +92,9 @@ func TestHandleEnqueue_DispatchesSeededPlan(t *testing.T) {
 	if !reply.Inserted {
 		t.Errorf("EnqueueReply.Inserted = false, want true (the seeded plan's ready step should have been dispatched)")
 	}
-	if runner.calls != 1 {
-		t.Fatalf("fakeRunner.calls = %d, want 1 — HandleEnqueue must actually dispatch, not no-op", runner.calls)
+	o.Wait() // dispatch is async — wait for the dispatched turn to complete
+	if runner.calls() != 1 {
+		t.Fatalf("fakeRunner.calls = %d, want 1 — HandleEnqueue must actually dispatch, not no-op", runner.calls())
 	}
 
 	task, err := st.GetTask(ctx, planID, "0.0")
@@ -161,8 +175,9 @@ func TestDispatchActivePlans_SkipsPausedPlan(t *testing.T) {
 	if n != 0 {
 		t.Errorf("dispatchActivePlans dispatched %d steps from a PAUSED plan, want 0", n)
 	}
-	if runner.calls != 0 {
-		t.Errorf("runner called %d times for a paused plan, want 0 — pause must halt dispatch", runner.calls)
+	o.Wait()
+	if runner.calls() != 0 {
+		t.Errorf("runner called %d times for a paused plan, want 0 — pause must halt dispatch", runner.calls())
 	}
 
 	// Sanity: re-activating the plan makes the same pass dispatch it, proving
@@ -173,8 +188,9 @@ func TestDispatchActivePlans_SkipsPausedPlan(t *testing.T) {
 	if _, err := sup.dispatchActivePlans(ctx); err != nil {
 		t.Fatalf("dispatchActivePlans (active): %v", err)
 	}
-	if runner.calls != 1 {
-		t.Errorf("runner called %d times after re-activation, want 1", runner.calls)
+	o.Wait() // dispatch is async — wait for the re-activated plan's turn
+	if runner.calls() != 1 {
+		t.Errorf("runner called %d times after re-activation, want 1", runner.calls())
 	}
 }
 

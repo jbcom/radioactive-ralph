@@ -153,6 +153,12 @@ func Run(ctx context.Context, opts Options) error {
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
+	// Async dispatch goroutines must run under the supervisor's run context, not
+	// the per-request IPC context that drives a given DispatchNext (that one is
+	// cancelled when its request handler returns). Cancelling runCtx on shutdown
+	// then aborts every in-flight provider turn so the drain is bounded.
+	sup.orch.SetBaseContext(runCtx)
+
 	ticker := time.NewTicker(reaperInterval)
 	defer ticker.Stop()
 
@@ -169,6 +175,12 @@ runLoop:
 	}
 
 	logf("supervisor shutting down")
+	// Cancel the run context BEFORE draining: dispatch now runs each provider
+	// turn in its own goroutine (the never-block invariant), so cancellation
+	// aborts the in-flight runner.Run subprocesses (via the orchestrator's
+	// worker-cancel registry) and makes the drain in shutdown bounded rather than
+	// a wait of up to StallTimeout per in-flight worker.
+	cancel()
 	return sup.shutdown(context.Background())
 }
 
@@ -273,6 +285,11 @@ func (s *Supervisor) shutdown(ctx context.Context) error {
 	if err := s.server.Stop(); err != nil {
 		errs = append(errs, fmt.Errorf("stop ipc server: %w", err))
 	}
+	// Drain in-flight dispatched worker goroutines (provider turn + verify) so
+	// their store writes land before we close the session/DB. The run context was
+	// cancelled just before this call, so each in-flight turn is already aborting;
+	// this wait is bounded.
+	s.orch.Wait()
 	if err := s.store.CloseSession(ctx, s.sessionID); err != nil {
 		errs = append(errs, fmt.Errorf("close session: %w", err))
 	}
