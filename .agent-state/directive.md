@@ -165,14 +165,18 @@ Structured attach event surface (the observe half goes live) — shipping arc:
 - [x] #167 approval-marker operator docs (merged); #168 the event-stream design
   spec (merged; three codex P1s folded in — plan-linked scoping, project id in
   AttachArgs, client-owned cursor to close the backlog↔attach race).
+- [x] Self-review of #169 (security + code-review agents) — DONE. Security:
+  clean (SQL parameterized, tail loop bounded, cross-project scope correct for
+  the single-user local socket). Code-review: two findings — one REAL (Printf
+  verbs in two s.log calls where s.log is structured slog → !BADKEY garbage;
+  fixed forward, commit 6fceb90) and one FALSE POSITIVE (a stale reviewer clone
+  claimed tick_test.go still used the 2-arg HandleAttach; the pushed tree has
+  the 3-arg fix, build/test green). The marshal-skip-and-advance tradeoff both
+  agents noted is intended (don't wedge the stream on one bad row).
 - [ ] [WAIT] #169 (feat: stream events over Attach) — store EventsAfter/MaxEventID
   tail queries + the supervisor HandleAttach tail loop + ipc AttachArgs/
-  AttachEvent/AttachEvents. Rebased onto main; CI running. Security self-review
-  came back clean (SQL parameterized, tail loop bounded, cross-project scope
-  correct for the single-user local socket). Merge when green + threads resolved.
-- [ ] [WAIT-AGENT] Code-review of the #169 diff (feature-dev:code-reviewer,
-  running background) — cursor skip/dup, scoping, leak, emit-contract. Fold any
-  confirmed finding forward before merge.
+  AttachEvent/AttachEvents, plus the slog fix. Rebased onto main; CI running.
+  Merge when green + threads resolved.
 
 Next after #169 lands:
 - [ ] Wire the TUI/GUI live view to APPLY attach deltas instead of poll-only:
