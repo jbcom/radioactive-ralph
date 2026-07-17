@@ -208,12 +208,17 @@ Next concrete item (now runnable — #180/#182 merged):
   AttachArgs.AfterID, so no macro event is missed across a supervisor-blip gap
   (the one real limitation the #180/#182 reviews surfaced). +regression test
   (resume from id 14, not 0). CI; merge green.
-- [ ] [WAIT-AGENT] code-simplifier lens over the merged TUI subscription code
-  (model.go: ensureAttach/startAttach/liveFrameMsg/prependEvent/mergeEventTail)
-  — running background; fold any genuine simplification forward, else record
-  clean. Then pick the next product feature (live macro plan-PROGRESS deltas; GUI
-  true per-event delta apply; or a NEW area — provider coverage, observability,
-  DX) per directive 0.
+- [x] code-simplifier lens over the merged TUI subscription code — DONE. The code
+  is at the right altitude (prependEvent vs mergeEventTail duplication is
+  load-bearing, not accidental; the rearm() closure + early-returns are the
+  clearest shape). One finding: a stale, misleading orphaned renderFrame doc
+  comment (renamed to decodeEvent in #182, falsely claimed undecodable frames
+  render as raw JSON) — deleted, folded into #184.
+- [ ] [WAIT] Next product feature — gated on #184 landing (it touches model.go,
+  so building the next TUI feature now would fork). Once #184 merges, pick per
+  directive 0: live macro plan-PROGRESS deltas (a done/failed frame recomputes
+  the plan's counter, not just the event pane); OR GUI true per-event delta
+  apply; OR a NEW area (provider coverage, observability, DX). Agent's call then.
 
 ## Notes
 
