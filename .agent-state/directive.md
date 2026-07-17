@@ -195,10 +195,12 @@ Attach live-consumers (push-live view) — #169 landed, consumers in flight:
   column's invariant is structural, not caller-discipline. CI running; merge green.
 
 Next after the arc lands (forward-exploration candidates):
-- [ ] Rotate a fresh review lens over the newly-merged attach surface once the
-  arc settles (comprehensive-review / security-sast / code-simplifier), then
-  pick the next product feature (GUI richness, provider coverage, observability,
-  DX, perf) per directive 0.
+- [ ] [WAIT-AGENT] code-simplifier lens over the merged attach surface (store
+  tail queries + supervisor HandleAttach loop + ipc Attach types/dispatch) —
+  running background; fold any genuine simplification forward, else record clean.
+- [ ] After that: pick the next product feature (GUI richness, provider coverage,
+  observability, DX, perf) per directive 0 — likely a security-sast pass on the
+  new IPC surface, then a fresh feature.
 
 ## Notes
 
