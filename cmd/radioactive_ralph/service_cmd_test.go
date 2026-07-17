@@ -30,7 +30,7 @@ func TestServiceInstallUninstallStatusRoundTrip(t *testing.T) {
 	}
 
 	installCmd := newRootCmd(context.Background())
-	installCmd.SetArgs([]string{"service", "install", "--radioactive_ralph-bin", "/usr/local/bin/radioactive_ralph"})
+	installCmd.SetArgs([]string{"service", "install", "--bin", "/usr/local/bin/radioactive_ralph"})
 	if err := installCmd.Execute(); err != nil {
 		t.Fatalf("service install: %v", err)
 	}
@@ -72,7 +72,7 @@ func TestServiceInstallDefaultsBinToOwnExecutable(t *testing.T) {
 	cmd := newRootCmd(context.Background())
 	cmd.SetArgs([]string{"service", "install"})
 	if err := cmd.Execute(); err != nil {
-		t.Fatalf("service install (no --radioactive_ralph-bin): %v", err)
+		t.Fatalf("service install (no --bin): %v", err)
 	}
 
 	exe, err := os.Executable()
@@ -118,7 +118,7 @@ func TestServiceInstallWithEnv(t *testing.T) {
 	cmd := newRootCmd(context.Background())
 	cmd.SetArgs([]string{
 		"service", "install",
-		"--radioactive_ralph-bin", "/usr/local/bin/radioactive_ralph",
+		"--bin", "/usr/local/bin/radioactive_ralph",
 		"--env", "RALPH_STATE_DIR=/tmp/isolated-state",
 		"--env", "FOO=bar",
 	})
@@ -158,7 +158,7 @@ func TestServiceInstallRejectsMalformedEnv(t *testing.T) {
 	t.Setenv("HOME", home)
 
 	cmd := newRootCmd(context.Background())
-	cmd.SetArgs([]string{"service", "install", "--radioactive_ralph-bin", "/bin/radioactive_ralph", "--env", "NOEQUALSSIGN"})
+	cmd.SetArgs([]string{"service", "install", "--bin", "/bin/radioactive_ralph", "--env", "NOEQUALSSIGN"})
 	if err := cmd.Execute(); err == nil {
 		t.Fatal("expected an error for a malformed --env value")
 	}

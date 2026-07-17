@@ -44,7 +44,7 @@ trap cleanup EXIT
 
 (cd "$project" && RALPH_STATE_DIR="$state" "$bin" --init >/dev/null)
 
-install_out="$("$bin" service install --radioactive_ralph-bin "$bin" --env "RALPH_STATE_DIR=$state")"
+install_out="$("$bin" service install --bin "$bin" --env "RALPH_STATE_DIR=$state")"
 install_path="$(echo "$install_out" | awk '{print $NF}')"
 if [[ ! -f "$install_path" ]]; then
   echo "expected installed unit at $install_path" >&2

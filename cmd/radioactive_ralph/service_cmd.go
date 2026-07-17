@@ -55,7 +55,7 @@ func newServiceInstallCmd() *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&ralphBin, "radioactive_ralph-bin", "", "path to the radioactive_ralph binary the service should exec (default: this process's own executable path)")
+	cmd.Flags().StringVar(&ralphBin, "bin", "", "path to the radioactive_ralph binary the service should exec (default: this process's own executable path)")
 	cmd.Flags().StringArrayVar(&envPairs, "env", nil, "extra KEY=VALUE environment variable for the service unit (repeatable)")
 	return cmd
 }

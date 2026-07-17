@@ -129,7 +129,7 @@ jobs:
           # Service-definition install/status/uninstall round trip (does
           # NOT start the service — that platform-specific path is
           # exercised by .github/workflows/service-managers.yml).
-          "$RALPH_BIN" service install --radioactive_ralph-bin "$RALPH_BIN" >/dev/null
+          "$RALPH_BIN" service install --bin "$RALPH_BIN" >/dev/null
           "$RALPH_BIN" service status | grep -qi "installed"
           "$RALPH_BIN" service uninstall >/dev/null
       - name: Build CLI (Windows)
@@ -245,7 +245,7 @@ jobs:
             Pop-Location
           }
 
-          & $env:RALPH_BIN service install --radioactive_ralph-bin $env:RALPH_BIN | Out-Null
+          & $env:RALPH_BIN service install --bin $env:RALPH_BIN | Out-Null
           $statusOut = & $env:RALPH_BIN service status
           if (($statusOut -join "`n") -notmatch "(?i)installed") { throw "service status did not report installed" }
           & $env:RALPH_BIN service uninstall | Out-Null

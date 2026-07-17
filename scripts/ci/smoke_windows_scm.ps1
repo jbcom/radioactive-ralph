@@ -84,7 +84,7 @@ try {
     Pop-Location
   }
 
-  $installLine = & $Bin service install --radioactive_ralph-bin $Bin --env "RALPH_STATE_DIR=$state"
+  $installLine = & $Bin service install --bin $Bin --env "RALPH_STATE_DIR=$state"
   $configPath = ($installLine -split '\s+')[-1]
   if (-not (Test-Path $configPath)) {
     throw "failed to parse install path from: $installLine"
