@@ -145,27 +145,27 @@ Completed since (all shipped):
 - [x] Verified the app RUNS: `doctor` 11 OK/0 WARN/0 FAIL, all three providers
   detected+authenticated. Cleared 20 stale branch-switch stashes.
 
-- [x] IPC-layer audit (opus) → 5 findings; the server had NO read/write
-  deadlines and NO request size cap, so a bad client could hang shutdown, leak
-  goroutines/fds, or OOM the supervisor. #160 (in flight) fixes C1/C2/C3
-  (request read deadline + 32MiB LimitReader; response/Attach write deadlines;
-  Stop closes all conns so shutdown drains promptly, skipping the stop-requester
-  so it still gets its reply) + C5 (proto-version guard before dispatch).
+- [x] IPC-layer audit (opus) — 5 findings, all MERGED: request read deadline +
+  32MiB LimitReader, response/Attach write deadlines, Stop closes all conns
+  (skipping the stop-requester so it keeps its reply), proto-version guard #160;
+  and the vanished-Attach-client leak — a read-side disconnect watcher cancels
+  the handler ctx on EOF #165.
+- [x] GUI audit (opus) — clean EXCEPT the single-shot live Attach stream (died
+  after the first supervisor blip); runAttach now reconnects in a loop #164
+  (merged). Confirmed the TUI'S wrong-entity-action class does NOT exist in the
+  GUI (drive buttons capture entities by identity), and thread-safety is sound.
+- [x] CI: the GUI-check flake was a go-text/typesetting harfbuzz panic on Fyne's
+  bundled font (NOT locale — the first theory was wrong); fixed by FYNE_FONT →
+  DejaVu Sans #162 (merged).
+
+Audit sweep COMPLETE across all major subsystems: orchestrator, store,
+provider-runners, agent-watchdog, TUI, IPC, GUI.
 
 Next forward-exploration items:
-- [ ] [WAIT] #160 (IPC deadlines/limits/conn-close) — CI; merge when green. Its
-  GUI check was flaking on an ungenerated en_US locale (harfbuzz panic, NOT the
-  IPC change) → fixed in #162 (generate the locale + POSIX name); merge #162
-  first to unblock.
-- [ ] [WAIT] #162 (CI: generate en_US.UTF-8 for the GUI shaper) — CI; merge green.
-- [ ] [WAIT-AGENT] GUI audit (opus) — adversarial review of the Fyne desktop
-  client for off-UI-thread widget races, wrong-entity drive actions (stale
-  index/pointer), stale renders, crashes, and connection/goroutine leaks.
-  Re-invokes on completion; fold confirmed findings into fresh items + ship.
-- [ ] IPC C4 follow-up (after #160): a vanished Attach client leaks its handler
-  until process exit — nothing observes the client disconnect. Add a read-side
-  disconnect probe in the server's CmdAttach path that cancels the handler ctx
-  on EOF. (Recorded in memory: project_ipc_c4_attach_disconnect.)
+- [ ] [WAIT] #167 (docs: [approval] marker operator guide) — CI; merge when green.
+- [ ] More new-feature candidates now the sweep is done: a runnable approval-gate
+  plan example; richer observability (a real structured event/attach surface —
+  today HandleAttach emits nothing); or a DX improvement. Agent's call next.
 
 ## Notes
 

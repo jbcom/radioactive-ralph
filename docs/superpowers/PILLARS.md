@@ -236,3 +236,29 @@ doesn't accumulate orphan session/worker rows per tick (#147 made 'ready'
 claimable; #154 wired the producer). Plus the dead-raw error-contract cleanup
 (#150) and the raw-error diagnostics polish. Runner-audit clean on frame
 parsing, usage accounting, kill correctness, and stall handling.
+
+## Agent-watchdog + IPC + GUI audits (v0.21.5+)
+
+The remaining three subsystems audited, completing an adversarial-audit sweep of
+the whole runtime (orchestrator, store, provider-runners, agent-watchdog, TUI,
+IPC, GUI). **Agent-watchdog:** Kill could SIGKILL an already-reaped/kernel-
+recycled PID (it decided via state that only reflects after cmd.Wait RETURNS,
+but Process.Wait reaps inside it) — a codex P1 disproved a mutex attempt, so the
+fix routes Kill through exec.Cmd's own Cancel→Wait via a private cancelable ctx,
+which never signals after the reap; and Watch no longer spurious-stalls on a
+non-positive StallTimeout (#156). **IPC:** the server had NO read/write deadlines
+and NO request size cap — a bad client could hang shutdown, leak goroutines/fds,
+or OOM the supervisor; fixed with a bounded request read (deadline + 32MiB
+LimitReader), response/Attach write deadlines, Stop closing all conns so shutdown
+drains promptly (skipping the stop-requester so it still gets its reply), and a
+proto-version guard before dispatch (#160); plus a read-side watcher that detects
+a vanished Attach client (EOF) and cancels its handler so it doesn't leak (#165).
+**GUI:** clean except the live Attach stream was single-shot — it died
+permanently after the first supervisor blip; runAttach now reconnects in a loop
+(#164). The GUI audit confirmed the TUI's wrong-entity-action class does NOT
+exist here (drive buttons capture entities by identity) and thread-safety is
+sound (all widget mutation on the Fyne main thread via fyne.Do). **CI:** the
+GUI-check flake was a go-text/typesetting harfbuzz panic on Fyne's bundled font
+(not locale — the first hypothesis was wrong); fixed via FYNE_FONT → DejaVu Sans
+(#162). The TUI audit earlier drove cursor identity-reconciliation + a refresh
+in-flight guard (#157).
