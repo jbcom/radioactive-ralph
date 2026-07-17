@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
-	"sync"
 	"testing"
 	"time"
 
@@ -143,43 +142,31 @@ func TestRun_ConcurrentStartersOnlyOneWins(t *testing.T) {
 	st1 := openTestStore(t)
 	st2 := openTestStore(t)
 
+	// The invariant: while one supervisor holds the socket lock, a second Run
+	// against the same RuntimeDir is refused with ErrSupervisorRunning. Drive it
+	// DETERMINISTICALLY (start #1, wait until it's actually bound, THEN start #2)
+	// rather than racing two starters against a probe+cancel window — the latter
+	// flaked on slow CI runners where neither had bound before the teardown.
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	var wg sync.WaitGroup
-	results := make(chan error, 2)
-	wg.Add(2)
-	go func() {
-		defer wg.Done()
-		results <- Run(ctx, Options{RuntimeDir: runtimeDir, Store: st1})
-	}()
-	go func() {
-		defer wg.Done()
-		results <- Run(ctx, Options{RuntimeDir: runtimeDir, Store: st2})
-	}()
-
-	// Let whichever one wins the race actually bind before we tear down.
-	probe := waitForSupervisor(t, runtimeDir, 2*time.Second)
+	// Supervisor #1: the winner. Start it and wait until it's serving.
+	winnerDone := make(chan error, 1)
+	go func() { winnerDone <- Run(ctx, Options{RuntimeDir: runtimeDir, Store: st1}) }()
+	probe := waitForSupervisor(t, runtimeDir, 5*time.Second) // blocks until #1 binds
 	_ = probe.Close()
-	cancel()
-	wg.Wait()
-	close(results)
 
-	var refusals, nils int
-	for err := range results {
-		switch {
-		case errors.Is(err, ErrSupervisorRunning):
-			refusals++
-		case err == nil:
-			nils++
-		default:
-			t.Errorf("unexpected Run() error: %v", err)
-		}
+	// Supervisor #2: must be refused now that #1 holds the lock. Run it to
+	// completion (its own ctx) — it returns immediately with ErrSupervisorRunning,
+	// so no teardown race.
+	loserErr := Run(context.Background(), Options{RuntimeDir: runtimeDir, Store: st2})
+	if !errors.Is(loserErr, ErrSupervisorRunning) {
+		t.Errorf("second Run() = %v, want ErrSupervisorRunning", loserErr)
 	}
-	if refusals != 1 {
-		t.Errorf("refusals = %d, want exactly 1", refusals)
-	}
-	if nils != 1 {
-		t.Errorf("clean exits = %d, want exactly 1 (the winner, after ctx cancel)", nils)
+
+	// Now tear #1 down; it exits cleanly (nil) on ctx cancel.
+	cancel()
+	if err := <-winnerDone; err != nil {
+		t.Errorf("winner Run() = %v, want nil (clean exit after ctx cancel)", err)
 	}
 }
