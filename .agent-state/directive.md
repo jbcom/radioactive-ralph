@@ -185,14 +185,16 @@ Attach live-consumers (push-live view) — #169 landed, consumers in flight:
   stays the reconcile net. Spec:
   docs/superpowers/specs/2026-07-17-attach-live-consumers-design.md. CI running;
   a code-review agent is examining the diff. Merge when green + threads resolved.
-- [ ] [WAIT-AGENT] Code-review of the #173 diff (feature-dev:code-reviewer,
-  running) — micro filter, re-arm on every path, applyEvent aliasing, GUI kind
-  gate, status mapping. Fold any confirmed finding forward before merge.
+- [x] Code-review of the #173 diff (feature-dev:code-reviewer) DONE — items 1-4
+  (micro filter, re-arm exhaustiveness, applyEvent aliasing, GUI kind gate) clean;
+  one real finding: taskDeltaStatus missing task.blocked/task.context_requested →
+  Blocked (running→blocked went stale until the poll). Fixed forward on #173 (+test).
+- [ ] [WAIT] #175 (fix(store): payload_json always valid JSON structurally) — the
+  LOW json.Valid hardening from the #169 security self-review, shipped as its own
+  PR: jsonOrEmptyObject wraps a malformed input as {"raw":...} so the events
+  column's invariant is structural, not caller-discipline. CI running; merge green.
 
-Next after #173 lands (forward-exploration candidates):
-- [ ] (from the #169 security self-review, LOW/pre-existing) harden
-  store.jsonOrEmptyObject with a json.Valid guard so the payload_json "always
-  valid JSON" invariant is structural, not caller-discipline. Not a blocker.
+Next after the arc lands (forward-exploration candidates):
 - [ ] Rotate a fresh review lens over the newly-merged attach surface once the
   arc settles (comprehensive-review / security-sast / code-simplifier), then
   pick the next product feature (GUI richness, provider coverage, observability,
