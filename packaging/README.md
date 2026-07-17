@@ -16,9 +16,12 @@ Native packaging assets and notes. See the design spec at
 | `.tar.gz`/`.zip` (CLI) | goreleaser archives | ubuntu | cosign (checksums) |
 | `.deb`/`.rpm` (CLI) | goreleaser nfpms | ubuntu | cosign (checksums) |
 | Homebrew / Scoop / Chocolatey / winget (CLI) | goreleaser publishers | ubuntu / windows | — (manifest) |
-| AppImage + `.desktop` (GUI) | `fyne package` + `appimagetool` | ubuntu (`-tags gui`, CGO) | unsigned by convention; verified by release checksum |
-| `.app` Homebrew cask (GUI) | `fyne package` + `codesign -s -` | macos (`-tags gui`, CGO) | ad-hoc (free); cask strips quarantine — no Apple account |
-| `.exe`/MSI (GUI) | `fyne package` + `wix` | windows (`-tags gui`, CGO) | SignPath Foundation OSS cert (free) — no purchase |
+| AppImage + `.desktop` (GUI) | `fyne package` + `appimagetool` (pinned+SHA-verified) | ubuntu (`-tags gui`, CGO) | unsigned by convention; per-bundle `.sha256` sidecar |
+| `.app` Homebrew cask (GUI) | `fyne package` + `codesign -s -` | macos (`-tags gui`, CGO) | ad-hoc (free); cask `postflight` strips quarantine — no Apple account |
+| `.exe` (GUI) | `fyne package` | windows (`-tags gui`, CGO) | optional SignPath OSS signing when the `SIGNPATH_*` secret is set (else unsigned) |
+
+(The `.deb`/`.rpm` rows above are CLI-only — there is no GUI deb/rpm build; the
+GUI Linux delivery is the AppImage.)
 
 ## Icon
 

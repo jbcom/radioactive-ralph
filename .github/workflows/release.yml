@@ -78,6 +78,7 @@ jobs:
         run: go install fyne.io/tools/cmd/fyne@latest
       - name: Package the GUI app
         shell: bash
+        timeout-minutes: 30
         env:
           CGO_ENABLED: "1"
         run: |
@@ -109,7 +110,37 @@ jobs:
           set -euo pipefail
           VERSION="${GITHUB_REF_NAME#v}"
           bash packaging/linux/build-appimage.sh "$VERSION"
-      - name: Upload GUI bundles to the release
+      # Windows: Authenticode-sign the .exe via the free SignPath Foundation OSS
+      # program WHEN enrolled (the SIGNPATH_* secrets are set). Absent the
+      # secrets this step is skipped and the .exe ships unsigned — SmartScreen
+      # will warn until the (free) enrollment token is added. Gated with a tiny
+      # bash check because `secrets.*` can't be used in a step `if:` directly.
+      - name: Check SignPath prerequisites (Windows)
+        id: signpath_prereq
+        if: matrix.target == 'windows'
+        shell: bash
+        env:
+          SIGNPATH_TOKEN_SET: ${{ secrets.SIGNPATH_API_TOKEN != '' }}
+        run: |
+          if [[ "$SIGNPATH_TOKEN_SET" == "true" ]]; then
+            echo "sign=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "SignPath not configured — the Windows .exe ships unsigned."
+            echo "sign=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Authenticode-sign the .exe (SignPath, Windows)
+        if: matrix.target == 'windows' && steps.signpath_prereq.outputs.sign == 'true'
+        uses: signpath/github-action-submit-signing-request@4f13d373e8f0cd8d3c0465ff4877f7f917dcc42a # v1.2
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORG_ID }}
+          project-slug: radioactive-ralph
+          signing-policy-slug: release-signing
+          artifact-configuration-slug: exe
+          github-artifact-id: ${{ github.run_id }}
+          wait-for-completion: true
+          output-artifact-directory: .
+      - name: Upload GUI bundles + checksums to the release
         env:
           GH_TOKEN: ${{ secrets.CI_GITHUB_TOKEN }}
         shell: bash
@@ -120,10 +151,22 @@ jobs:
           # intermediate; the .dmg / .AppImage / .exe are what users install).
           assets=( *.dmg *.AppImage *.exe )
           if [ ${#assets[@]} -eq 0 ]; then
-            echo "::warning::no GUI bundle produced for ${{ matrix.target }}"
-            exit 0
+            # A bare warning would hide a real build failure. Every target is
+            # expected to produce at least one bundle, so treat "nothing" as an
+            # error unless the fyne build was legitimately skipped.
+            echo "::error::no GUI bundle produced for ${{ matrix.target }}"
+            exit 1
           fi
-          gh release upload "$GITHUB_REF_NAME" "${assets[@]}" --clobber
+          # goreleaser's signed checksums.txt was generated before this job, so
+          # the GUI bundles can't join it. Publish a per-bundle .sha256 sidecar
+          # instead so each download is independently verifiable.
+          sha_tool="sha256sum"; command -v sha256sum >/dev/null || sha_tool="shasum -a 256"
+          checksums=()
+          for a in "${assets[@]}"; do
+            $sha_tool "$a" > "${a}.sha256"
+            checksums+=( "${a}.sha256" )
+          done
+          gh release upload "$GITHUB_REF_NAME" "${assets[@]}" "${checksums[@]}" --clobber
 
       # Publish the Homebrew cask AFTER the .dmg is uploaded (the cask points at
       # the release asset URL + its sha). This is the recommended macOS install:

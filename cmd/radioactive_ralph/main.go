@@ -116,6 +116,14 @@ func dispatchRoot(ctx context.Context, cmd *cobra.Command, flags rootFlags) erro
 	if flags.initFlag {
 		return runInitMode(ctx, cmd)
 	}
+	// A bare launch from a desktop context (double-clicked .app / AppImage / .exe
+	// — no controlling terminal) opens the GUI, not the read-only TUI, which
+	// would have no interactive terminal to draw into. Only the GUI-tagged build
+	// can do this; the default build's hook always returns (false, nil) so a
+	// bare terminal launch still goes to the client path below.
+	if handled, err := maybeLaunchDesktopGUI(ctx, cmd); handled {
+		return err
+	}
 	return runClientMode(ctx, cmd)
 }
 

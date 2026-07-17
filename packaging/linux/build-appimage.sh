@@ -51,13 +51,23 @@ APPRUN
 chmod +x "$APPDIR/AppRun"
 
 # Fetch appimagetool if not already present.
-TOOL="$(command -v appimagetool || true)"
-if [ -z "$TOOL" ]; then
-  TOOL="$(mktemp -d)/appimagetool"
-  curl -sSL -o "$TOOL" \
-    "https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-${ARCH}.AppImage"
-  chmod +x "$TOOL"
-fi
+# Pin appimagetool to a specific release + verify its SHA-256. The `continuous`
+# tag is mutable (a compromised or updated build would run unverified), so we
+# fetch a fixed version and refuse to run it if the hash doesn't match.
+APPIMAGETOOL_VERSION="1.9.1"
+case "$ARCH" in
+  x86_64)  TOOL_SHA="ed4ce84f0d9caff66f50bcca6ff6f35aae54ce8135408b3fa33abfc3cb384eb0" ;;
+  aarch64) TOOL_SHA="f0837e7448a0c1e4e650a93bb3e85802546e60654ef287576f46c71c126a9158" ;;
+  *) echo "build-appimage: no pinned appimagetool for arch $ARCH" >&2; exit 1 ;;
+esac
+TOOL="$(mktemp -d)/appimagetool"
+curl -sSL -o "$TOOL" \
+  "https://github.com/AppImage/appimagetool/releases/download/${APPIMAGETOOL_VERSION}/appimagetool-${ARCH}.AppImage"
+echo "${TOOL_SHA}  ${TOOL}" | sha256sum -c - || {
+  echo "build-appimage: appimagetool SHA-256 mismatch — refusing to run" >&2
+  exit 1
+}
+chmod +x "$TOOL"
 
 OUT="radioactive-ralph_${VERSION}_linux_${ARCH}.AppImage"
 # ARCH env is what appimagetool stamps into the runtime.
