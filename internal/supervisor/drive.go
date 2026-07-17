@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
 
 	"github.com/jbcom/radioactive-ralph/internal/ipc"
 	"github.com/jbcom/radioactive-ralph/internal/plan"
@@ -14,12 +13,8 @@ import (
 // isDuplicateSlug reports whether err is the store's duplicate-slug sentinel.
 func isDuplicateSlug(err error) bool { return errors.Is(err, store.ErrDuplicateSlug) }
 
-// isPlanNotFound reports whether err is a store "plan not found" error.
-// SetPlanStatus surfaces this as a RowsAffected==0 formatted error rather than
-// a typed sentinel, so match on its stable message.
-func isPlanNotFound(err error) bool {
-	return err != nil && strings.Contains(err.Error(), "not found")
-}
+// isPlanNotFound reports whether err is the store's plan-not-found sentinel.
+func isPlanNotFound(err error) bool { return errors.Is(err, store.ErrPlanNotFound) }
 
 // The Supervisor implements ipc.DriveHandler (the v2 drive surface) in
 // addition to the v1 observe Handler. These mutations funnel through the
