@@ -122,6 +122,43 @@ func TestMacro_RendersPlansAndDrillsToMeso(t *testing.T) {
 	}
 }
 
+func TestRender_FocusesFirstActionAtMacro(t *testing.T) {
+	f := newFakeController()
+	f.plans = []store.Plan{{ID: "p1", Title: "Ship It", Status: store.PlanStatusActive}}
+	u := newTestUI(t, f)
+
+	u.refreshNow()
+
+	// The first plan button should hold keyboard focus so a keyboard-only
+	// operator can act (Enter to drill) without blind-Tabbing.
+	want := findButton(u.root, "Ship It")
+	if want == nil {
+		t.Fatal("macro view did not render the plan button")
+	}
+	if got := u.win.Canvas().Focused(); got != fyne.Focusable(want) {
+		t.Fatalf("focused widget = %#v, want the first plan button", got)
+	}
+}
+
+func TestRender_FocusesBackButtonAtMeso(t *testing.T) {
+	f := newFakeController()
+	f.plans = []store.Plan{{ID: "p1", Title: "P", Status: store.PlanStatusActive}}
+	f.tasks["p1"] = []store.Task{{ID: "t1", Description: "do the thing", Status: store.TaskStatusPending}}
+	u := newTestUI(t, f)
+	u.selectedPlan = "p1"
+
+	u.refreshNow()
+
+	// At meso the back button is added first, so focus should land on it.
+	want := findButton(u.root, "← Plans")
+	if want == nil {
+		t.Fatal("meso view did not render the back button")
+	}
+	if got := u.win.Canvas().Focused(); got != fyne.Focusable(want) {
+		t.Fatalf("focused widget = %#v, want the back button", got)
+	}
+}
+
 func TestMeso_PauseCallsSetPlanStatus(t *testing.T) {
 	f := newFakeController()
 	f.plans = []store.Plan{{ID: "p1", Title: "P", Status: store.PlanStatusActive}}
