@@ -205,11 +205,19 @@ Rolling (session-long TUI live tail — in flight):
   (union deduped-by-id, +tests). Reconnect-after-blip verified + tested. Threads
   resolved; CI on the fix; merge green.
 
-After #180/#182 land — the observe-half push-live work spans CLI/TUI/GUI. Next
-per directive 0: rotate a fresh review lens over the merged TUI subscription
-change, or pick a new product feature (candidates: cursor-aware TUI reconnect so
-no event is missed across a supervisor blip; live macro plan-PROGRESS deltas; GUI
-true per-event delta apply; or a NEW area — provider coverage, observability, DX).
+Next concrete item (runnable once #180/#182 land — the observe-half push-live
+work spans CLI/TUI/GUI):
+- [ ] Cursor-aware TUI reconnect: the session subscription currently re-seeds
+  from the current MaxEventID on reconnect, so events during a supervisor-blip
+  gap arrive only via the poll, not the live stream (the one real limitation the
+  #180/#182 reviews surfaced repeatedly). Have the model remember its
+  last-processed event id and thread it into the resubscribe (startAttach →
+  AttachArgs.AfterID) so no macro event is missed across a blip. This closes the
+  documented gap and makes the "no event missed" contract true.
+- [ ] Then rotate a fresh review lens (comprehensive-review / code-simplifier)
+  over the merged TUI subscription change, and pick the next product feature
+  (live macro plan-PROGRESS deltas; GUI true per-event delta apply; or a NEW
+  area — provider coverage, observability, DX) per directive 0.
 
 ## Notes
 
