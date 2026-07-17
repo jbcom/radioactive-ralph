@@ -96,8 +96,12 @@ func Run(d Deps) (Outcome, error) {
 	}
 
 	if install {
-		if err := d.InstallService(); err != nil {
-			_, _ = fmt.Fprintf(d.Out, "\nCould not install the service: %v\n", err)
+		// An install failure is a SOFT failure by design: on a locked-down
+		// machine (no launchd/systemd/SCM access) we don't abort — we show
+		// the reason and route the user to the foreground fallback. The error
+		// is surfaced to the user, not propagated as a hard Run error.
+		if installErr := d.InstallService(); installErr != nil {
+			_, _ = fmt.Fprintf(d.Out, "\nCould not install the service: %v\n", installErr)
 			return offerForeground(d)
 		}
 		_, _ = fmt.Fprintln(d.Out, "\nService installed — waiting for the supervisor to come up...")

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -38,7 +39,7 @@ func onboardingInteractive() bool {
 // the caller should re-discover the now-running supervisor and continue to the
 // TUI; false means the user chose the foreground/manual path (the caller
 // returns errNoSupervisorListening). A non-nil err is a hard failure.
-func runFirstRunWizard(stateRoot string) (supervisorReady bool, err error) {
+func runFirstRunWizard(ctx context.Context, stateRoot string) (supervisorReady bool, err error) {
 	plan, err := buildOnboardPlan(stateRoot)
 	if err != nil {
 		return false, err
@@ -50,7 +51,7 @@ func runFirstRunWizard(stateRoot string) (supervisorReady bool, err error) {
 		Plan:           plan,
 		InstallService: func() error { return installSupervisorService(stateRoot) },
 		WaitReachable: func(timeout time.Duration) bool {
-			return waitSupervisorReachable(stateRoot, timeout)
+			return waitSupervisorReachable(ctx, stateRoot, timeout)
 		},
 		ForegroundCmd:  "radioactive_ralph --supervisor",
 		ManualCommands: noSupervisorMessage,
@@ -67,14 +68,20 @@ func runFirstRunWizard(stateRoot string) (supervisorReady bool, err error) {
 // service, so the consent prompt names concrete paths.
 func buildOnboardPlan(stateRoot string) (onboard.Plan, error) {
 	backend := service.DetectBackend()
-	home, _ := os.UserHomeDir()
 	plan := onboard.Plan{
 		StateDir: stateRoot,
 		DBPath:   storeDBPath(stateRoot),
 	}
 	if backend != service.BackendUnsupported {
-		plan.ServiceUnit = service.UnitName(backend)
-		plan.ServiceUnitPath = service.UnitPath(backend, home)
+		home, err := os.UserHomeDir()
+		if err != nil {
+			// Don't show a broken/empty unit path — degrade to naming the
+			// unit without its path rather than presenting a misleading one.
+			plan.ServiceUnit = service.UnitName(backend)
+		} else {
+			plan.ServiceUnit = service.UnitName(backend)
+			plan.ServiceUnitPath = service.UnitPath(backend, home)
+		}
 	}
 	return plan, nil
 }
@@ -94,16 +101,23 @@ func installSupervisorService(stateRoot string) error {
 	return err
 }
 
-// waitSupervisorReachable polls supervisor.Find until one answers or the
-// timeout elapses.
-func waitSupervisorReachable(stateRoot string, timeout time.Duration) bool {
+// waitSupervisorReachable polls supervisor.Find until one answers, the
+// timeout elapses, or ctx is cancelled (e.g. the user hits Ctrl+C).
+func waitSupervisorReachable(ctx context.Context, stateRoot string, timeout time.Duration) bool {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
+		if ctx.Err() != nil {
+			return false
+		}
 		if client, err := supervisor.Find(stateRoot); err == nil {
 			_ = client.Close()
 			return true
 		}
-		time.Sleep(250 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			return false
+		case <-time.After(250 * time.Millisecond):
+		}
 	}
 	return false
 }

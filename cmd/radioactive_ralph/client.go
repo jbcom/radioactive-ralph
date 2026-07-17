@@ -56,30 +56,31 @@ func runClientMode(ctx context.Context, cmd *cobra.Command) error {
 	// session redials per call instead of reusing this one.
 	client, err := supervisor.Find(stateRoot)
 	if err != nil {
-		if errors.Is(err, supervisor.ErrNoSupervisor) {
-			// No supervisor. On an interactive terminal, OFFER to set one up
-			// (guided, consent-gated). On a non-interactive stdin/stdout
-			// (pipe, CI, go test) the wizard is skipped and we keep the exact
-			// print-commands-and-exit-nonzero behavior the tests assert.
-			if onboardingInteractive() {
-				reready, oerr := runFirstRunWizard(stateRoot)
-				if oerr != nil {
-					return oerr
-				}
-				if reready {
-					// A supervisor is now up — re-discover and continue to the TUI.
-					client, err = supervisor.Find(stateRoot)
-				}
-				if !reready || err != nil {
-					// User chose foreground/manual, or re-discovery failed.
-					return errNoSupervisorListening
-				}
-			} else {
-				fmt.Fprintln(os.Stderr, noSupervisorMessage)
-				return errNoSupervisorListening
-			}
-		} else {
+		if !errors.Is(err, supervisor.ErrNoSupervisor) {
 			return fmt.Errorf("find supervisor: %w", err)
+		}
+		// No supervisor. On a non-interactive stdin/stdout (pipe, CI, go test)
+		// the wizard is skipped: keep the exact print-commands-and-exit-nonzero
+		// behavior the tests assert.
+		if !onboardingInteractive() {
+			fmt.Fprintln(os.Stderr, noSupervisorMessage)
+			return errNoSupervisorListening
+		}
+		// Interactive: OFFER to set one up (guided, consent-gated).
+		reready, oerr := runFirstRunWizard(ctx, stateRoot)
+		if oerr != nil {
+			return oerr
+		}
+		if !reready {
+			// User chose the foreground/manual path.
+			return errNoSupervisorListening
+		}
+		// A supervisor should now be up — re-discover it. A nil/failed
+		// re-Find here means it didn't actually come up in time; surface the
+		// same no-supervisor error rather than proceeding with a nil client.
+		client, err = supervisor.Find(stateRoot)
+		if err != nil {
+			return errNoSupervisorListening
 		}
 	}
 
