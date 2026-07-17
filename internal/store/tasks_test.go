@@ -527,3 +527,53 @@ func TestReleaseClaimDoesNotChargeRetry(t *testing.T) {
 		t.Errorf("stale ReleaseClaim err = %v, want ErrTaskNotOwnedRunning", err)
 	}
 }
+
+// TestMarkDoneIgnoresStaleCompletionFromReclaimedSession is the regression
+// for the second-pass audit's high finding: the acceptance path must carry
+// the SAME owner guard as the failure path, or a stale completion from a
+// reclaimed+reassigned worker marks the task done with the wrong evidence
+// and clears the new owner's live claim.
+func TestMarkDoneIgnoresStaleCompletionFromReclaimedSession(t *testing.T) {
+	ctx := context.Background()
+	s := openTestStore(t)
+	projectID := mustCreateProject(t, s, "markdone-stale-project")
+	planID := mustCreatePlan(t, s, projectID, "markdone-stale-plan")
+	sessionA, workerA := mustCreateSessionAndWorker(t, s, "A")
+	sessionB, workerB := mustCreateSessionAndWorker(t, s, "B")
+
+	if err := s.CreateTask(ctx, CreateTaskOpts{PlanID: planID, ID: "t", Description: "work"}); err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+
+	// A claims; reaper reclaims; B re-claims and is the live owner.
+	if _, err := s.ClaimNextReady(ctx, planID, sessionA, workerA); err != nil {
+		t.Fatalf("A claim: %v", err)
+	}
+	if _, err := s.db.ExecContext(ctx, `
+		UPDATE tasks SET status='pending', reclaim_count=reclaim_count+1,
+		                 claimed_by_session=NULL, claimed_by_worker_id=NULL
+		WHERE plan_id=? AND id=?`, planID, "t"); err != nil {
+		t.Fatalf("simulate reclaim: %v", err)
+	}
+	if _, err := s.ClaimNextReady(ctx, planID, sessionB, workerB); err != nil {
+		t.Fatalf("B claim: %v", err)
+	}
+
+	// A's stale completion must be a benign no-op (ErrTaskNotOwnedRunning),
+	// leaving the task running under B.
+	if _, err := s.MarkDone(ctx, planID, "t", sessionA, `{"exit_code":0}`); !errors.Is(err, ErrTaskNotOwnedRunning) {
+		t.Fatalf("stale MarkDone err = %v, want ErrTaskNotOwnedRunning", err)
+	}
+	got, err := s.GetTask(ctx, planID, "t")
+	if err != nil {
+		t.Fatalf("GetTask: %v", err)
+	}
+	if got.Status != TaskStatusRunning || got.ClaimedBySession != sessionB {
+		t.Errorf("A's stale MarkDone stomped B: status=%q owner=%q, want running under B", got.Status, got.ClaimedBySession)
+	}
+
+	// B's real completion still works.
+	if _, err := s.MarkDone(ctx, planID, "t", sessionB, `{"exit_code":0}`); err != nil {
+		t.Fatalf("B MarkDone (real owner): %v", err)
+	}
+}

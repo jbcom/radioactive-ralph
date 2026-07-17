@@ -32,6 +32,15 @@ type Options struct {
 	Dir        string
 	Env        []string
 	ResultPath string // file the CLI is told to write its structured result to
+
+	// DisableEcho turns OFF the pty's terminal echo before the child starts.
+	// Providers that drive the CLI over stdin (claude/opencode stream-json)
+	// MUST set this: otherwise the pty echoes every stdin line back onto the
+	// output stream, where the never-block watchdog pattern-matches the
+	// operator's OWN prompt text ("do you want to…", "approve", …) as an
+	// interactive prompt and kills the turn. Disabling echo removes the
+	// echoed line at the source. No effect on native Windows (no pty there).
+	DisableEcho bool
 }
 
 // Agent is a pty-owned agent subprocess.
@@ -74,6 +83,17 @@ func Start(ctx context.Context, opts Options) (*Agent, error) {
 			return nil, ErrPTYUnsupported
 		}
 		return nil, err
+	}
+	if opts.DisableEcho {
+		// Ordered correctly: providers write to stdin only AFTER Start
+		// returns, and echo is a line-discipline property applied to those
+		// later writes — so disabling it here removes the echo of every
+		// stdin line the caller subsequently sends.
+		if err := disablePTYEcho(ptmx); err != nil {
+			_ = ptmx.Close()
+			_ = cmd.Process.Kill()
+			return nil, fmt.Errorf("agent: disable pty echo: %w", err)
+		}
 	}
 	a := &Agent{
 		ctx:    ctx,

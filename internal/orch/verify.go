@@ -214,6 +214,14 @@ func (o *Orchestrator) VerifyAndComplete(ctx context.Context, planID, taskID str
 		return false, fmt.Errorf("orch: marshal evidence for MarkDone: %w", err)
 	}
 	if _, err := o.store.MarkDone(ctx, planID, taskID, sessionID, evJSON); err != nil {
+		// If the task was reclaimed and reassigned to another session while
+		// this (possibly slow) acceptance check ran, MarkDone is a benign
+		// no-op — the current owner's attempt stands; we must NOT report this
+		// stale completion as done. Mirrors the rejection path's handling of
+		// the same race.
+		if errors.Is(err, store.ErrTaskNotOwnedRunning) {
+			return false, nil
+		}
 		return false, fmt.Errorf("orch: mark done: %w", err)
 	}
 	if err := o.store.Emit(ctx, store.EmitOpts{
