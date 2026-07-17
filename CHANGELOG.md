@@ -13,6 +13,13 @@ shipped. That means historical sections may still mention MCP, plugins,
 supervisors, or the archived Python implementation even though those are no
 longer part of the live contract.
 
+## [0.16.2](https://github.com/jbcom/radioactive-ralph/compare/v0.16.1...v0.16.2) (2026-07-17)
+
+
+### Bug Fixes
+
+* **packaging:** macOS cask ships both arm64 + amd64 (Intel Macs) ([#106](https://github.com/jbcom/radioactive-ralph/issues/106)) ([68ca1e6](https://github.com/jbcom/radioactive-ralph/commit/68ca1e6a6512e9cdd420336f1db4c1d99cbd4aaf))
+
 ## [0.16.1](https://github.com/jbcom/radioactive-ralph/compare/v0.16.0...v0.16.1) (2026-07-17)
 
 
