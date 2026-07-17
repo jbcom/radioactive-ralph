@@ -313,3 +313,141 @@ func TestModel_ViewRendersAtEachLevelWithoutPanicking(t *testing.T) {
 	m.snap.taskEvent = f.taskEvents["plan-1/task-a"]
 	_ = m.View() // micro
 }
+
+// TestModel_CursorClampedWhenListShrinks is the regression for the audit's C1:
+// a background refresh that shrinks the plan list must re-bound the cursor so
+// the selection stays visible and drillIn opens a row that still exists —
+// rather than silently pointing past the end (invisible cursor) or, worse,
+// selecting a different row than the operator saw.
+func TestModel_CursorClampedWhenListShrinks(t *testing.T) {
+	f := testFake()
+	m := newTestModel(t, f)
+	m.snap.plans = f.plans // 2 plans
+	m.cursor = 1           // second plan selected
+
+	// A refresh returns only ONE plan now (the second was removed).
+	shrunk := snapshot{
+		status: ipc.StatusReply{},
+		plans:  []store.Plan{{ID: "plan-1", Title: "First plan", Status: store.PlanStatusActive}},
+	}
+	updated, _ := m.Update(fetchedMsg{snap: shrunk})
+	m = updated.(Model)
+
+	if m.cursor != 0 {
+		t.Fatalf("cursor = %d after list shrank 2→1, want 0 (clamped to last index)", m.cursor)
+	}
+	// And drilling in must open the surviving plan, never panic.
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(Model)
+	if m.lvl != levelMeso || m.selectedPlan.ID != "plan-1" {
+		t.Fatalf("after clamp+drill: lvl=%v selectedPlan=%q, want meso/plan-1", m.lvl, m.selectedPlan.ID)
+	}
+}
+
+// TestModel_CursorPreservesIdentityWhenRowRemovedAhead is the regression for the
+// audit's identity-vs-index case: when a refresh removes a row BEFORE the
+// selected one, the numeric index would still be in bounds but point at a
+// DIFFERENT entity. The cursor must follow the SELECTED ENTITY by ID, not the
+// index — e.g. [A,B,C] cursor=1 (B) → [B,C] must keep B selected (cursor 0),
+// not leave cursor 1 on C.
+func TestModel_CursorPreservesIdentityWhenRowRemovedAhead(t *testing.T) {
+	f := testFake()
+	m := newTestModel(t, f)
+	m.snap.plans = []store.Plan{
+		{ID: "A", Title: "Alpha", Status: store.PlanStatusActive},
+		{ID: "B", Title: "Bravo", Status: store.PlanStatusActive},
+		{ID: "C", Title: "Charlie", Status: store.PlanStatusActive},
+	}
+	m.cursor = 1 // B selected
+
+	// Refresh removes A (the row ahead of the cursor): [B, C].
+	updated, _ := m.Update(fetchedMsg{snap: snapshot{
+		status: ipc.StatusReply{},
+		plans: []store.Plan{
+			{ID: "B", Title: "Bravo", Status: store.PlanStatusActive},
+			{ID: "C", Title: "Charlie", Status: store.PlanStatusActive},
+		},
+	}})
+	m = updated.(Model)
+
+	// The cursor must now be on B (index 0), NOT still on index 1 (which is C).
+	if m.cursor != 0 {
+		t.Fatalf("cursor = %d after A removed ahead of B, want 0 (follow B by identity)", m.cursor)
+	}
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(Model)
+	if m.selectedPlan.ID != "B" {
+		t.Fatalf("drilled into %q, want B (the entity the operator had selected)", m.selectedPlan.ID)
+	}
+}
+
+// TestModel_AllGatherPathsSetInFlight confirms the drill paths also mark the
+// in-flight guard — so a drill can't stack an overlapping gather on top of a
+// slow periodic one (the audit's "all gather launch paths must participate"
+// point). A drill while a gather is outstanding must fire NO new gather.
+func TestModel_AllGatherPathsSetInFlight(t *testing.T) {
+	f := testFake()
+	m := newTestModel(t, f)
+	m.snap.plans = f.plans
+
+	// A drill-in from macro→meso with no gather outstanding must mark fetching.
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(Model)
+	if !m.fetching {
+		t.Fatal("drill-in should mark fetching=true (its gather must be tracked)")
+	}
+	if cmd == nil {
+		t.Fatal("drill-in should return a fetch command")
+	}
+
+	// Now a drill-out while that gather is still in flight must NOT start another.
+	m.fetching = true
+	before := m.lvl
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = updated.(Model)
+	if m.lvl == before {
+		t.Fatal("drill-out should still navigate up even when a gather is in flight")
+	}
+	if !m.fetching {
+		t.Fatal("fetching must remain true — drill-out must not clear it or start a second gather")
+	}
+}
+
+// TestModel_RefreshTickSkipsFetchWhileInFlight is the regression for the audit's
+// C2: the 1s tick must NOT start a second gather while a prior one is still
+// outstanding (which would stack supervisor connections and let stale results
+// land out of order). The first tick starts a fetch; a second tick before the
+// fetchedMsg returns must only re-arm the timer, not fire another fetch.
+func TestModel_RefreshTickSkipsFetchWhileInFlight(t *testing.T) {
+	m := newTestModel(t, testFake())
+	m.fetching = false
+
+	// First tick: not fetching → starts a gather (batch of fetch + tick).
+	updated, cmd1 := m.Update(refreshMsg(time.Now()))
+	m = updated.(Model)
+	if !m.fetching {
+		t.Fatal("first refresh tick should mark fetching=true")
+	}
+	if cmd1 == nil {
+		t.Fatal("first refresh tick should return a command (fetch + tick)")
+	}
+
+	// Second tick while still fetching: must NOT start another gather. We can't
+	// easily assert the batch contents, so assert fetching stays true and a
+	// command (the re-armed tick) is still returned.
+	updated, cmd2 := m.Update(refreshMsg(time.Now()))
+	m = updated.(Model)
+	if !m.fetching {
+		t.Fatal("fetching must stay true across an overlapping tick")
+	}
+	if cmd2 == nil {
+		t.Fatal("second tick should still re-arm the timer")
+	}
+
+	// The gather returns: fetching clears, so the next tick can fetch again.
+	updated, _ = m.Update(fetchedMsg{snap: snapshot{status: ipc.StatusReply{}}})
+	m = updated.(Model)
+	if m.fetching {
+		t.Fatal("fetchedMsg must clear fetching")
+	}
+}

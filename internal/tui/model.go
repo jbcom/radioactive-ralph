@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"encoding/json"
+	"maps"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -93,6 +94,14 @@ type Model struct {
 	// of) is dropped rather than re-arming the current one.
 	attachEpoch uint64
 
+	// fetching is true while a refresh gather is in flight. The 1s refresh
+	// tick fires unconditionally, so without this guard a gather that outlives
+	// its interval (large plan set, contended SQLite, slow supervisor) would
+	// have the next tick dispatch a SECOND overlapping gather — stacking
+	// supervisor connections and letting an older gather's result land after a
+	// newer one. The tick skips fetchCmd while a gather is outstanding.
+	fetching bool
+
 	quitting bool
 }
 
@@ -114,9 +123,18 @@ func NewModel(ctx context.Context, source DataSource, projectID string) Model {
 	}
 }
 
-// Init kicks off the first fetch and starts the refresh tick.
+// Init starts the refresh loop. It fires an IMMEDIATE refresh tick rather than
+// launching a fetch directly, so the very first gather goes through the same
+// in-flight-guarded path as every periodic tick (Init returns a Cmd and cannot
+// set m.fetching, so a direct fetch here could overlap the first periodic tick
+// if the initial gather is slow).
 func (m Model) Init() tea.Cmd {
-	return tea.Batch(m.fetchCmd(), tickCmd())
+	return immediateTickCmd()
+}
+
+// immediateTickCmd fires a refreshMsg with no delay, to prime the refresh loop.
+func immediateTickCmd() tea.Cmd {
+	return func() tea.Msg { return refreshMsg(time.Time{}) }
 }
 
 func tickCmd() tea.Cmd {
@@ -150,6 +168,17 @@ type attachEndedMsg struct {
 	epoch uint64
 }
 
+// startFetch marks a gather in flight and returns its command. EVERY path that
+// launches a gather (periodic refresh, drill-in, drill-out) must go through this
+// so the in-flight guard tracks all of them — otherwise an untracked gather
+// overlaps the periodic one and its fetchedMsg clears the shared flag out from
+// under the tracked gather. Caller must have already decided a gather is wanted
+// (e.g. the refresh path skips when m.fetching is already set).
+func (m *Model) startFetch() tea.Cmd {
+	m.fetching = true
+	return m.fetchCmd()
+}
+
 // fetchCmd re-fetches everything the current level needs.
 func (m Model) fetchCmd() tea.Cmd {
 	lvl := m.lvl
@@ -161,15 +190,20 @@ func (m Model) fetchCmd() tea.Cmd {
 	prevProgress := m.snap.progress
 
 	return func() tea.Msg {
+		// Bound the whole gather so a slow/hung supervisor degrades to an error
+		// (surfaced in the header) instead of blocking forever — which, with the
+		// in-flight guard, would otherwise stall all future refreshes. A few
+		// refresh intervals is plenty of headroom for a healthy round trip.
+		ctx, cancel := context.WithTimeout(ctx, fetchTimeout)
+		defer cancel()
+
 		status, err := source.Status(ctx)
 		if err != nil {
 			return fetchedMsg{err: err}
 		}
 
 		snap := snapshot{status: status, progress: map[string]orch.Progress{}}
-		for k, v := range prevProgress {
-			snap.progress[k] = v
-		}
+		maps.Copy(snap.progress, prevProgress)
 
 		switch lvl {
 		case levelMacro:
@@ -266,14 +300,26 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleKey(msg)
 
 	case refreshMsg:
-		return m, tea.Batch(m.fetchCmd(), tickCmd())
+		// Always keep the tick going, but only start a new gather when the prior
+		// one has returned — otherwise a slow gather lets ticks stack overlapping
+		// fetches (see Model.fetching).
+		if m.fetching {
+			return m, tickCmd()
+		}
+		return m, tea.Batch(m.startFetch(), tickCmd())
 
 	case fetchedMsg:
+		m.fetching = false
 		if msg.err != nil {
 			m.err = msg.err
 			return m, nil
 		}
 		m.err = nil
+		// Capture the identity of the currently-selected row BEFORE the merge
+		// replaces the list, so we can re-find it afterwards (a refresh that
+		// removes/reorders rows must keep the SAME entity selected, not just an
+		// in-bounds index — see reconcileCursor).
+		selectedID := m.selectedRowID()
 		// Merge rather than replace: a fetch for one level should not
 		// clobber fields owned by another level (e.g. a macro refresh
 		// while the operator is mid-drill should not blank meso/micro
@@ -295,6 +341,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.snap.taskEvent != nil {
 			m.snap.taskEvent = msg.snap.taskEvent
 		}
+		// Re-point the cursor at the SAME entity it was on before the refresh
+		// (by ID), falling back to a clamp if that entity is gone. Without this,
+		// a refresh that removes/reorders a row ahead of the cursor would leave
+		// the (still in-bounds) index selecting a DIFFERENT entity than the
+		// operator saw — so drilling in would open the wrong plan/task.
+		m.reconcileCursor(selectedID)
 		return m, nil
 
 	case liveFrameMsg:
@@ -386,6 +438,67 @@ func (m Model) currentListLen() int {
 	}
 }
 
+// selectableIDs returns the stable IDs of the current level's rows, in the
+// SAME order the cursor walks and the view renders (macro: plans as-is; meso:
+// tasks in flattened grouped order). Returns nil at micro (no row selection).
+func (m Model) selectableIDs() []string {
+	switch m.lvl {
+	case levelMacro:
+		ids := make([]string, len(m.snap.plans))
+		for i, p := range m.snap.plans {
+			ids[i] = p.ID
+		}
+		return ids
+	case levelMeso:
+		flat := flattenGroupedTasks(m.snap.tasks)
+		ids := make([]string, len(flat))
+		for i, t := range flat {
+			ids[i] = t.ID
+		}
+		return ids
+	default:
+		return nil
+	}
+}
+
+// selectedRowID is the ID of the row the cursor currently points at, or ""
+// when there is no such row (empty list / out of range / micro level).
+func (m Model) selectedRowID() string {
+	ids := m.selectableIDs()
+	if m.cursor < 0 || m.cursor >= len(ids) {
+		return ""
+	}
+	return ids[m.cursor]
+}
+
+// reconcileCursor re-points the cursor at wantID in the (possibly refreshed)
+// current list, preserving the SELECTED ENTITY across a refresh that removed or
+// reordered rows — not merely a numeric index. If wantID is gone (or was empty),
+// it clamps the existing index in-bounds so the highlight stays visible. An
+// empty list parks the cursor at 0.
+func (m *Model) reconcileCursor(wantID string) {
+	ids := m.selectableIDs()
+	if len(ids) == 0 {
+		m.cursor = 0
+		return
+	}
+	if wantID != "" {
+		for i, id := range ids {
+			if id == wantID {
+				m.cursor = i
+				return
+			}
+		}
+	}
+	// Entity gone (or none was selected): clamp the index in-bounds.
+	if m.cursor >= len(ids) {
+		m.cursor = len(ids) - 1
+	}
+	if m.cursor < 0 {
+		m.cursor = 0
+	}
+}
+
 // drillIn moves macro->meso->micro, recording the selected row so the
 // next level's fetch knows what to load. Drilling into micro starts the
 // live Attach subscription.
@@ -398,7 +511,7 @@ func (m Model) drillIn() (tea.Model, tea.Cmd) {
 		m.selectedPlan = m.snap.plans[m.cursor]
 		m.lvl = levelMeso
 		m.cursor = 0
-		return m, m.fetchCmd()
+		return m, m.drillFetch()
 
 	case levelMeso:
 		// Select from the SAME grouped order the meso view renders and the
@@ -417,7 +530,7 @@ func (m Model) drillIn() (tea.Model, tea.Cmd) {
 		m.attachFrames = frames
 		m.attachDone = done
 		m.attachEpoch++
-		return m, tea.Batch(m.fetchCmd(), attachCmd(m.ctx, frames, done, m.attachEpoch))
+		return m, tea.Batch(m.drillFetch(), attachCmd(m.ctx, frames, done, m.attachEpoch))
 
 	default:
 		return m, nil
@@ -435,16 +548,29 @@ func (m Model) drillOut() (tea.Model, tea.Cmd) {
 		}
 		m.lvl = levelMeso
 		m.cursor = 0
-		return m, m.fetchCmd()
+		return m, m.drillFetch()
 
 	case levelMeso:
 		m.lvl = levelMacro
 		m.cursor = 0
-		return m, m.fetchCmd()
+		return m, m.drillFetch()
 
 	default:
 		return m, nil
 	}
+}
+
+// drillFetch launches the new level's gather after a drill, respecting the
+// in-flight guard: if a gather is already outstanding it fires nothing (the
+// navigation already took effect via the level/cursor change, and the next
+// periodic tick fetches the new level's data once the outstanding gather
+// clears). This keeps every gather tracked by m.fetching so drills can't stack
+// an overlapping fetch on top of a slow periodic one.
+func (m *Model) drillFetch() tea.Cmd {
+	if m.fetching {
+		return nil
+	}
+	return m.startFetch()
 }
 
 // View delegates to the level renderer.
