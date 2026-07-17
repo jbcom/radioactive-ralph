@@ -173,21 +173,25 @@ Structured attach event surface (the observe half goes live) — shipping arc:
   claimed tick_test.go still used the 2-arg HandleAttach; the pushed tree has
   the 3-arg fix, build/test green). The marshal-skip-and-advance tradeoff both
   agents noted is intended (don't wedge the stream on one bad row).
-- Attach event stream — the observe half goes live (compressed →
-  docs/superpowers/PILLARS.md): producer #169 (store tail queries + supervisor
-  HandleAttach loop + ipc AttachArgs/AttachEvent/AttachEvents; 3 codex spec P1s +
-  5 review threads folded in), consumers #173 (TUI decode + selected-task filter
-  + status deltas incl. blocked; GUI per-frame refresh gate), json.Valid
-  hardening #175. Code-simplifier pass found ONE clean change (below).
+- Attach event stream — the observe half goes live (COMPLETE, compressed →
+  docs/superpowers/PILLARS.md): producer #169, consumers #173, json.Valid
+  hardening #175, arc compression #174, code-simplifier's one clean change #176
+  (collapse pass-through Client.Attach) — all merged. Two review lenses over the
+  merged surface came back with no open findings: security-auditor CLEAN (bounded
+  resources, parameterized SQL, total input validation, correct scoping — the
+  prior #160/#165/#169 fixes closed the real exposure); code-simplifier → #176.
 
-Rolling (attach follow-ups):
-- [ ] [WAIT] #174 (chore: directive/PILLARS sync for the attach arc) — CI; merge green.
-- [ ] Fold the code-simplifier finding: collapse the pure pass-through
-  Client.Attach → private attach into one method and point AttachEvents at the
-  public Attach (internal/ipc/client.go) — zero behavior change. (AttachEvents'
-  zero-caller state is BY DESIGN: the spec designates it the GUI's consumer path,
-  keep it.) Then pick the next product feature per directive 0 (a security-sast
-  pass on the new IPC surface is the leading candidate).
+Rolling (next product feature per directive 0):
+- [ ] [WAIT] #178 (feat: `radioactive_ralph events` — headless live event tail).
+  Gives the observe API its first CLI consumer + Client.AttachEvents its first
+  production caller: tails the project's events to stdout (--backlog N, --json),
+  client-owned cursor so no gap/dup. Pure consumer, no core change. Fully
+  fake-tested via an eventSource seam. Code-review running; merge when green.
+- [ ] After #178: next feature candidate — a live macro-view event tail in the
+  TUI (today the Attach subscription only starts at MICRO drill level; the macro
+  plan overview shows events via a 10-item poll, never live). Or GUI true
+  per-event delta apply (currently full-refresh per lifecycle frame — but the
+  reviews judged that model clean, so lower priority). Agent's call at that point.
 
 ## Notes
 
