@@ -78,6 +78,16 @@ docs/superpowers/specs/2026-07-16-supervisor-architecture-design.md.
   check #120, destructive-action confirm dialogs #122, GUI scroll-to-top #123,
   doctor claude-auth ErrNotFound classification #125 (releases v0.19–v0.21).
 
+- Never-block / async-dispatch arc (supervisor/store review → 2 findings +
+  cascade): async dispatch so a slow provider turn can't wedge the
+  tick/enqueue/reaper — goroutine-per-worker + maxParallel semaphore + shutdown
+  drain + baseCtx, plus a running-worker heartbeat (so the reaper doesn't reclaim
+  a healthy long turn), persistCtx (results survive shutdown), and fan-out leak
+  fixes #127; SQLite pool cap at 4 (not 1 — avoids the single-conn deadlock +
+  backup-freeze) #129; per-project spend reservation so a capped provider can't
+  overspend under concurrency #131; supervisor concurrent-start test de-flaked
+  #132 (releases v0.21.0–v0.21.2).
+
 Detail lives in PILLARS.md; consult .agent-state/decisions.ndjson for the why
 behind any load-bearing call.
 
@@ -87,13 +97,15 @@ Kept CURRENT each tick (do NOT commit this file onto feature branches — the
 branch-switch churn keeps resurrecting a stale version; this baseline is synced
 periodically via a chore/directive-sync PR, of which THIS is one).
 
-- [ ] [WAIT-REVIEW] Async dispatch — never-block invariant fix — PR #127. dispatchWorker ran the provider turn (up to 5-min StallTimeout) INLINE under dispatchMu, wedging the tick/enqueue/reaper; the doc comment already promised goroutine-per-dispatch. Fix: goroutine-per-worker + maxParallel semaphore + shutdown-drain WaitGroup + baseCtx (async work runs under the supervisor run ctx, not the IPC request ctx that dies on return). Full suite + -race green. Load-bearing core change — address bot review carefully → self squash-merge.
+- [ ] [WAIT-REVIEW] Spend-cap per-project reservation — PR #131. CI green + threads resolved → self squash-merge.
+- [ ] [WAIT-REVIEW] Supervisor concurrent-start test de-flake — PR #132. CI green + threads resolved → self squash-merge.
 
 ## Rolling improvement queue (directive 0 appends here)
 
 Next forward-exploration items:
-- [ ] store: no db.SetMaxOpenConns — the SQLite pool is uncapped, so with _txlock=immediate every concurrent BeginTx races for the single writer lock, relying on busy_timeout(5s) as the only backstop under load. Set SetMaxOpenConns(1) (WAL single-writer pattern) so Go's pool is the serialization point. (Finding #2 of the supervisor/store review; lower-probability latent risk, verify current store.Open first.)
-- [ ] After #127 merges, re-run a supervisor/store review pass to confirm the async change didn't open a new race, and forward-explore the next surface (provider runners / agent watchdog / TUI).
+- [ ] Fresh multi-lens review on the now-async surface (supervisor/orch/store)
+      to confirm no residual race the async change introduced, then forward-explore
+      the next unreviewed surface (provider runners / agent watchdog / TUI).
 
 ## Notes
 
