@@ -66,7 +66,12 @@ docs/superpowers/specs/2026-07-16-supervisor-architecture-design.md.
 - Desktop app + packaging + GUI polish (v0.15.0 + since) — native installers #92,
   desktop-app docs #94, GUI macro-view richness #96, deps #97, TUI liveness
   header #98, GUI guide #101, GUI+packaging correctness #102 (P1 AppImage-FUSE
-  release-blocker), API-docs regen #104.
+  release-blocker), API-docs regen #104, arch cask #106, GUI Escape-back nav #107,
+  directive/PILLARS baseline #108, GUI CI locale-flake fix #110.
+- Doctor codex-metering blind-spot check (guidance in Detail, not the dropped
+  OK-check Remediate) — PR #112 (v0.18.0).
+- Dependabot security sweep: x/image 0.41.0, protobuf 6.33.6 (via semgrep
+  1.170.0 lifting the OTel<protobuf-5 ceiling), js-yaml 4.3.0 — PR #114.
 
 Detail lives in PILLARS.md; consult .agent-state/decisions.ndjson for the why
 behind any load-bearing call.
@@ -75,16 +80,17 @@ behind any load-bearing call.
 
 Kept CURRENT each tick (do NOT commit this file onto feature branches — the
 branch-switch churn keeps resurrecting a stale version; this baseline is synced
-periodically via a chore/directive-sync PR).
+periodically via a chore/directive-sync PR, of which THIS is one).
 
-- [ ] [WAIT-REVIEW] macOS cask arm64+amd64 (Intel Macs) — PR #106. Fixed the Bash-3.2 associative-array P1 + macos-13→macos-15-intel actionlint. CI green → self squash-merge.
-- [ ] [WAIT-REVIEW] GUI Escape-to-drill-back keyboard nav (a11y) — PR #107. CI green → self squash-merge.
+- [ ] [WAIT-REVIEW] GUI focus-first-action on drill render (a11y) — PR #116. render() focuses the first actionable control after each rebuild (back button at meso/micro, else first plan/task, else Import) so keyboard users don't blind-Tab. Completes the keyboard loop (Tab/Enter + Escape-back + focus-on-arrival). CI green → self squash-merge.
 
 ## Rolling improvement queue (directive 0 appends here)
 
 Next forward-exploration items:
-- [ ] TUI/GUI keyboard-nav completeness — GUI has Escape-back now; consider arrow/Enter drill-in for full parity + focus indicators.
-- [ ] Doctor/observability DX: surface known provider-metering limits (codex usage isn't parseable → spend-cap blind spot) in `doctor` output.
+- [ ] Fresh multi-lens forward-exploration pass on newest merged surface (doctor,
+      deps, GUI focus) — comprehensive-review / security-sast / code-simplifier —
+      to surface the NEXT real polish item. Keyboard-nav is now complete (Tab/Enter
+      + Escape + focus-on-arrival); no custom arrow selector (would fight Fyne).
 - [ ] Perf is fine (StatusCounts/ListRunningWorkers are single-query, no waste) — skip unless a real bottleneck appears.
 
 ## Notes
