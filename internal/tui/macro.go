@@ -14,6 +14,16 @@ func renderMacro(m Model) string {
 	b.WriteString(styleHeader.Render("radioactive_ralph — plans"))
 	b.WriteString("\n")
 
+	// Supervisor liveness. On a healthy fetch, "connected · up <dur>" (parity
+	// with the desktop GUI header). But if the last refresh FAILED (supervisor
+	// exited or became unreachable mid-session), the status snapshot is stale —
+	// don't keep claiming "connected" with a frozen uptime; show the real state.
+	if m.err != nil {
+		b.WriteString(styleBad.Render("disconnected") + styleMuted.Render(" — retrying…") + "\n")
+	} else {
+		fmt.Fprintf(&b, "%s · up %s\n",
+			styleGood.Render("connected"), humanizeUptime(m.snap.status.Uptime))
+	}
 	fmt.Fprintf(&b, "active workers: %s   ready: %d  approval: %d  blocked: %d  running: %d  failed: %d\n\n",
 		styleRunning.Render(fmt.Sprintf("%d", m.snap.status.ActiveWorkers)),
 		m.snap.status.ReadyTasks, m.snap.status.ApprovalTasks,
