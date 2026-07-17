@@ -224,6 +224,39 @@ func TestRender_RefocusesWhenDrillViewChanges(t *testing.T) {
 	}
 }
 
+func TestConfirmDrive_SyncRunsDirectly(t *testing.T) {
+	// Under the headless test driver (syncRender) confirmDrive skips the modal and
+	// runs the drive directly, so the wrapped Abandon/Kill actions are testable.
+	f := newFakeController()
+	f.plans = []store.Plan{{ID: "p1", Title: "P", Status: store.PlanStatusActive}}
+	u := newTestUI(t, f)
+	u.selectedPlan = "p1"
+	u.refreshNow()
+
+	tapButton(t, u.root, "Abandon")
+	if calls := f.setStatusCalls(); len(calls) != 1 || calls[0] != [2]string{"p1", "abandoned"} {
+		t.Fatalf("Abandon (confirm-wrapped) calls = %v, want one {p1 abandoned}", calls)
+	}
+}
+
+func TestConfirmDrive_ProductionWaitsForConfirmation(t *testing.T) {
+	// In production mode confirmDrive must NOT invoke the action synchronously — it
+	// pops a modal and only drives on a "yes". We can't dismiss a modal headlessly,
+	// so we assert the action has NOT fired immediately after the call.
+	f := newFakeController()
+	f.plans = []store.Plan{{ID: "p1", Title: "P", Status: store.PlanStatusActive}}
+	u := newTestUI(t, f)
+	u.syncRender = false // production path: dialog, not direct
+	fired := false
+	u.confirmDrive("Kill worker?", "Kill worker w-1?", "kill", func() error {
+		fired = true
+		return nil
+	})
+	if fired {
+		t.Fatal("confirmDrive invoked the destructive action without confirmation")
+	}
+}
+
 func TestMeso_PauseCallsSetPlanStatus(t *testing.T) {
 	f := newFakeController()
 	f.plans = []store.Plan{{ID: "p1", Title: "P", Status: store.PlanStatusActive}}

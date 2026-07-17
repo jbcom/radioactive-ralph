@@ -9,6 +9,7 @@ import (
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/container"
+	"fyne.io/fyne/v2/dialog"
 	"fyne.io/fyne/v2/widget"
 	"github.com/jbcom/radioactive-ralph/internal/ipc"
 	"github.com/jbcom/radioactive-ralph/internal/store"
@@ -204,7 +205,11 @@ func (u *ui) buildMeso(s snapshot) {
 	u.body.Add(container.NewHBox(
 		widget.NewButton("Pause", func() { u.drive("pause", func() error { return u.ctrl.SetPlanStatus(u.ctx, planID, "paused") }) }),
 		widget.NewButton("Resume", func() { u.drive("resume", func() error { return u.ctrl.SetPlanStatus(u.ctx, planID, "active") }) }),
-		widget.NewButton("Abandon", func() { u.drive("abandon", func() error { return u.ctrl.SetPlanStatus(u.ctx, planID, "abandoned") }) }),
+		widget.NewButton("Abandon", func() {
+			u.confirmDrive("Abandon plan?",
+				"Abandon plan "+planID+"? Its unfinished tasks stop and it cannot be resumed.",
+				"abandon", func() error { return u.ctrl.SetPlanStatus(u.ctx, planID, "abandoned") })
+		}),
 	))
 
 	if len(s.tasks) == 0 {
@@ -235,7 +240,9 @@ func (u *ui) buildMicro(s snapshot) {
 	if s.killID != "" {
 		killID := s.killID
 		u.body.Add(widget.NewButton("Kill worker", func() {
-			u.drive("kill", func() error { return u.ctrl.KillWorker(u.ctx, killID) })
+			u.confirmDrive("Kill worker?",
+				"Kill worker "+killID+"? Its running task is interrupted and requeued.",
+				"kill", func() error { return u.ctrl.KillWorker(u.ctx, killID) })
 		}))
 	}
 
@@ -286,6 +293,24 @@ func (u *ui) drive(label string, fn func() error) {
 		return
 	}
 	go work()
+}
+
+// confirmDrive gates a drive behind a modal yes/no confirmation — for the
+// irreversible one-click actions (abandon a plan, kill a running worker) where a
+// stray click has no undo. `prompt` should name exactly what will happen,
+// including any id (e.g. the worker being killed), so the operator can verify
+// before committing. Under the headless test driver (syncRender) the dialog is
+// skipped and the drive runs directly, since that driver can't dismiss a modal.
+func (u *ui) confirmDrive(title, prompt, label string, fn func() error) {
+	if u.syncRender {
+		u.drive(label, fn)
+		return
+	}
+	dialog.ShowConfirm(title, prompt, func(ok bool) {
+		if ok {
+			u.drive(label, fn)
+		}
+	}, u.win)
 }
 
 // backButton returns a button that drills back to (plan, task). It routes
