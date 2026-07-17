@@ -98,6 +98,46 @@ func TestModel_FirstFetchStartsSessionAttach(t *testing.T) {
 	m.attachCancel()
 }
 
+// TestModel_ReconnectsAfterStreamEnds: because the subscription is now
+// session-long, a stream end (supervisor blip) must not permanently kill the
+// live feed — attachEndedMsg drops the channels, and the next fetch restarts the
+// subscription via ensureAttach. Without this the macro/meso views would
+// silently degrade to poll-only after the first blip for the rest of the session.
+func TestModel_ReconnectsAfterStreamEnds(t *testing.T) {
+	f := testFake()
+	m := newTestModel(t, f)
+
+	// First fetch starts the session subscription.
+	updated, _ := m.Update(fetchedMsg{snap: snapshot{plans: f.plans}})
+	m = updated.(Model)
+	if m.attachFrames == nil {
+		t.Fatal("subscription did not start on first fetch")
+	}
+	epoch1 := m.attachEpoch
+	m.attachCancel()
+
+	// The stream ends (EOF / supervisor restart) for the CURRENT subscription.
+	updated, _ = m.Update(attachEndedMsg{epoch: epoch1})
+	m = updated.(Model)
+	if m.attachFrames != nil {
+		t.Fatal("attachEndedMsg should drop the channel references")
+	}
+
+	// The next fetch must RESTART the subscription (reconnect), not leave it dead.
+	updated, cmd := m.Update(fetchedMsg{snap: snapshot{plans: f.plans}})
+	m = updated.(Model)
+	if m.attachFrames == nil {
+		t.Fatal("subscription was not restarted after the stream ended — the live feed would be dead for the rest of the session")
+	}
+	if m.attachEpoch <= epoch1 {
+		t.Errorf("epoch did not advance on reconnect: was %d, now %d", epoch1, m.attachEpoch)
+	}
+	if cmd == nil {
+		t.Fatal("expected an attachCmd for the restarted subscription")
+	}
+	m.attachCancel()
+}
+
 // TestModel_DrillInMicroDoesNotRestartAttach: drilling into micro reuses the
 // session subscription (it doesn't start a new one) and resets the per-task log.
 func TestModel_DrillInMicroDoesNotRestartAttach(t *testing.T) {
