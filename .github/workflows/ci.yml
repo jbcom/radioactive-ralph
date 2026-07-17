@@ -186,10 +186,12 @@ jobs:
           }
           $tmp = Join-Path $env:RUNNER_TEMP "ralph-smoke"
           $project = Join-Path $tmp "project"
-          $home = Join-Path $tmp "home"
+          # NB: $HOME is a read-only PowerShell automatic variable — assigning
+          # to it throws WriteError, so use $homeDir for the isolated home.
+          $homeDir = Join-Path $tmp "home"
           $state = Join-Path $tmp "state"
-          New-Item -ItemType Directory -Force -Path $project, $home, $state | Out-Null
-          $env:HOME = $home
+          New-Item -ItemType Directory -Force -Path $project, $homeDir, $state | Out-Null
+          $env:HOME = $homeDir
           $env:RALPH_STATE_DIR = $state
 
           Push-Location $project
