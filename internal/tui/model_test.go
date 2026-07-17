@@ -398,6 +398,59 @@ func TestModel_LiveFramePrependsToMacroTail(t *testing.T) {
 	}
 }
 
+// TestModel_PollDoesNotDropLiveEvent: a live event prepended to the macro tail
+// must SURVIVE a subsequent poll whose snapshot was read before that event hit
+// the DB. A wholesale replace would silently lose it (one-shot stream frame,
+// never re-delivered); the merge keeps both, deduped.
+func TestModel_PollDoesNotDropLiveEvent(t *testing.T) {
+	f := testFake()
+	m := newTestModel(t, f)
+	m.lvl = levelMacro
+
+	// A live event id=9 arrives and is prepended.
+	updated, _ := m.Update(liveFrameMsg{raw: []byte(`{"id":9,"kind":"task.done","task_id":"t1"}`)})
+	m = updated.(Model)
+
+	// A poll lands whose snapshot predates id=9 (contains only id=8) — a
+	// wholesale replace would drop id=9.
+	updated, _ = m.Update(fetchedMsg{snap: snapshot{
+		plans:     f.plans,
+		planEvent: []store.Event{{ID: 8, Kind: "task.claimed"}},
+	}})
+	m = updated.(Model)
+
+	haveIDs := map[int64]bool{}
+	for _, ev := range m.snap.planEvent {
+		haveIDs[ev.ID] = true
+	}
+	if !haveIDs[9] {
+		t.Errorf("poll dropped the live event id=9: macro tail = %+v", m.snap.planEvent)
+	}
+	if !haveIDs[8] {
+		t.Errorf("poll's own event id=8 missing: macro tail = %+v", m.snap.planEvent)
+	}
+	// Newest-first: id=9 must be ahead of id=8.
+	if m.snap.planEvent[0].ID != 9 {
+		t.Errorf("macro tail not newest-first: head is id=%d, want 9", m.snap.planEvent[0].ID)
+	}
+	m.attachCancel()
+}
+
+func TestMergeEventTail(t *testing.T) {
+	live := []store.Event{{ID: 9}, {ID: 7}} // newest-first
+	poll := []store.Event{{ID: 8}, {ID: 7}, {ID: 6}}
+	got := mergeEventTail(live, poll)
+	wantIDs := []int64{9, 8, 7, 6}
+	if len(got) != len(wantIDs) {
+		t.Fatalf("merged len = %d (%+v), want %d", len(got), got, len(wantIDs))
+	}
+	for i, id := range wantIDs {
+		if got[i].ID != id {
+			t.Errorf("merged[%d].ID = %d, want %d (newest-first, deduped)", i, got[i].ID, id)
+		}
+	}
+}
+
 func TestModel_LiveFrameUnknownKindIsSnapshotNoop(t *testing.T) {
 	f := testFake()
 	m := newTestModel(t, f)

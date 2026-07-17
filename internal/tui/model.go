@@ -354,7 +354,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.snap.progress = msg.snap.progress
 		}
 		if msg.snap.planEvent != nil {
-			m.snap.planEvent = msg.snap.planEvent
+			// MERGE the poll's events with the live-built tail rather than
+			// replacing it. A wholesale replace would drop a live event whose DB
+			// commit landed AFTER this poll's read began: that event was prepended
+			// live but isn't in the poll snapshot, so an assign would permanently
+			// lose it (it's a one-shot stream frame, never re-delivered). The
+			// merge keeps both, deduped by id, so the poll reconciles WITHOUT
+			// regressing the live tail.
+			m.snap.planEvent = mergeEventTail(m.snap.planEvent, msg.snap.planEvent)
 		}
 		if msg.snap.tasks != nil {
 			m.snap.tasks = msg.snap.tasks
@@ -728,6 +735,50 @@ func prependEvent(tail []store.Event, ev ipc.AttachEvent) []store.Event {
 		tail = tail[:macroEventCap]
 	}
 	return tail
+}
+
+// mergeEventTail unions the live-built macro tail with a poll's fresh snapshot,
+// deduped by id and kept newest-first (highest id first), capped at
+// macroEventCap. Both inputs are already newest-first. It reconciles the pane
+// toward the poll (the DB is truth) WITHOUT dropping a live event the poll's
+// read predates — the union keeps that event; the cap trims the oldest. A live
+// event still absent from the DB (impossible in practice — events are persisted
+// before they stream) would simply age out as newer rows arrive.
+func mergeEventTail(live, poll []store.Event) []store.Event {
+	seen := make(map[int64]bool, len(live)+len(poll))
+	merged := make([]store.Event, 0, len(live)+len(poll))
+	// Merge two newest-first lists by descending id, skipping duplicates.
+	i, j := 0, 0
+	for i < len(live) && j < len(poll) {
+		var pick store.Event
+		if live[i].ID >= poll[j].ID {
+			pick = live[i]
+			i++
+		} else {
+			pick = poll[j]
+			j++
+		}
+		if !seen[pick.ID] {
+			seen[pick.ID] = true
+			merged = append(merged, pick)
+		}
+	}
+	for ; i < len(live); i++ {
+		if !seen[live[i].ID] {
+			seen[live[i].ID] = true
+			merged = append(merged, live[i])
+		}
+	}
+	for ; j < len(poll); j++ {
+		if !seen[poll[j].ID] {
+			seen[poll[j].ID] = true
+			merged = append(merged, poll[j])
+		}
+	}
+	if len(merged) > macroEventCap {
+		merged = merged[:macroEventCap]
+	}
+	return merged
 }
 
 // applyEvent applies a live event as a delta to the snapshot's task list so a
