@@ -11,6 +11,7 @@ import (
 	"context"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -255,5 +256,43 @@ done:
 	}
 	if !strings.Contains(got.String(), "READ_DONE") {
 		t.Errorf("expected READ_DONE sentinel on output, got %q", got.String())
+	}
+}
+
+// TestKillRacingNaturalExitDoesNotSignalReapedPID stresses the window where a
+// Kill races readLoop's own reaping of a naturally-exiting child. Before the
+// reapMu guard, Kill gated on a.done (closed two defers AFTER cmd.Wait())
+// could call killProcessTree on a PID already reaped by readLoop — and possibly
+// recycled by the kernel — sending SIGKILL to a bystander. Each iteration a
+// short-lived agent exits on its own while a concurrent goroutine hammers
+// Kill; run under -race, this must stay clean and every Kill must return nil.
+func TestKillRacingNaturalExitDoesNotSignalReapedPID(t *testing.T) {
+	for i := range 50 {
+		a, err := Start(context.Background(), Options{
+			Command: "sh", Args: []string{"-c", "printf 'x\\n'"},
+		})
+		if err != nil {
+			t.Fatalf("iter %d Start: %v", i, err)
+		}
+
+		var wg sync.WaitGroup
+		// Concurrent Kills racing the natural exit + reaping.
+		for range 3 {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				if err := a.Kill(); err != nil {
+					t.Errorf("Kill during natural-exit race = %v, want nil", err)
+				}
+			}()
+		}
+		// Drain output so the process can exit and readLoop reaches its reaper.
+		for line := range a.Output() {
+			_ = line
+		}
+		wg.Wait()
+		<-a.Done()
+		// ExitErr must be readable and consistent after the dust settles.
+		_ = a.ExitErr()
 	}
 }
