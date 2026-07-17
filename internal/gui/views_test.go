@@ -4,7 +4,9 @@ package gui
 
 import (
 	"context"
+	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/container"
@@ -160,5 +162,27 @@ func TestMacro_EmptyStateShowsImport(t *testing.T) {
 	u.refreshNow()
 	if findButton(u.root, "Import plan…") == nil {
 		t.Error("empty macro view should offer plan import")
+	}
+}
+
+func TestTaskLabel_TruncatesOnRuneBoundary(t *testing.T) {
+	// A long description made of multi-byte runes must not be sliced mid-rune
+	// (which would produce invalid UTF-8). 70 emoji → truncated to 57 runes + …
+	long := store.Task{Description: strings.Repeat("🚀", 70)}
+	got := taskLabel(long)
+	if !utf8.ValidString(got) {
+		t.Fatalf("taskLabel produced invalid UTF-8: %q", got)
+	}
+	if r := []rune(got); len(r) != 58 { // 57 + the ellipsis
+		t.Errorf("truncated label = %d runes, want 58 (57 + ellipsis)", len(r))
+	}
+
+	// A short description is returned unchanged.
+	if got := taskLabel(store.Task{Description: "short"}); got != "short" {
+		t.Errorf("taskLabel(short) = %q, want short", got)
+	}
+	// An empty description falls back to the task id.
+	if got := taskLabel(store.Task{ID: "t7"}); got != "t7" {
+		t.Errorf("taskLabel(empty) = %q, want the id t7", got)
 	}
 }

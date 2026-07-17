@@ -62,6 +62,10 @@ func Run(ctx context.Context, o Opts) error {
 	if desk, ok := a.(desktop.App); ok {
 		menu := fyne.NewMenu("radioactive-ralph",
 			fyne.NewMenuItem("Open Ralph", func() { w.Show() }),
+			// Once the window is hidden to the tray, the menu is the only GUI
+			// affordance left — it MUST offer a way to quit, or the app can only
+			// be killed from a terminal.
+			fyne.NewMenuItem("Quit", func() { a.Quit() }),
 		)
 		desk.SetSystemTrayMenu(menu)
 		// Closing the window hides to tray rather than quitting, so the ambient
@@ -73,6 +77,16 @@ func Run(ctx context.Context, o Opts) error {
 	// goroutines; both end when ctx is cancelled (window close / app stop).
 	go ui.runRefresh(ctx)
 	go ui.runAttach(ctx)
+
+	// If the caller cancels ctx (signal, supervisor shutdown), tear the window
+	// down too — otherwise ShowAndRun would keep a stale, non-functional window
+	// on screen after the background goroutines have already exited.
+	if o.fyneApp == nil {
+		go func() {
+			<-ctx.Done()
+			fyne.Do(func() { a.Quit() })
+		}()
+	}
 
 	ui.refreshNow() // first paint before the ticker's first tick
 

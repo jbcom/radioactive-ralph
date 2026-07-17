@@ -136,7 +136,8 @@ func (u *ui) buildMicro(s snapshot) {
 		return
 	}
 	for _, e := range s.events {
-		u.body.Add(widget.NewLabel(fmt.Sprintf("%s  %s  %s", e.OccurredAt.Format("15:04:05"), e.Kind, e.Actor)))
+		// Events are stored UTC; show them in the operator's local time.
+		u.body.Add(widget.NewLabel(fmt.Sprintf("%s  %s  %s", e.OccurredAt.Local().Format("15:04:05"), e.Kind, e.Actor)))
 	}
 }
 
@@ -192,8 +193,10 @@ func (u *ui) importButton() *widget.Button {
 
 func taskLabel(t store.Task) string {
 	desc := t.Description
-	if len(desc) > 60 {
-		desc = desc[:57] + "…"
+	// Truncate on rune boundaries — byte-slicing could split a multi-byte
+	// UTF-8 character and render as garbage.
+	if r := []rune(desc); len(r) > 60 {
+		desc = string(r[:57]) + "…"
 	}
 	if desc == "" {
 		desc = t.ID
