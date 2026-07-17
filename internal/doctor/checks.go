@@ -69,6 +69,19 @@ func checkClaudeAuth(ctx context.Context, cfg RunOptions) Check {
 		return cfg.runCommand(ctx, "claude", "auth", "status")
 	})
 	if err != nil {
+		// Distinguish "binary missing" from "not authenticated" (mirrors
+		// checkCodexAuth): telling an operator to run `claude auth login` when the
+		// claude CLI isn't even installed is misleading. The missing-binary case is
+		// already surfaced by checkClaudeVersion, so here we just report it honestly
+		// rather than prescribing a login.
+		if errors.Is(err, exec.ErrNotFound) {
+			return Check{
+				Name:      "claude auth",
+				Severity:  WARN,
+				Detail:    "claude CLI not found on PATH; auth check skipped",
+				Remediate: "install Claude Code: `npm install -g @anthropic-ai/claude-code`",
+			}
+		}
 		return Check{
 			Name:      "claude auth",
 			Severity:  WARN,

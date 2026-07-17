@@ -115,6 +115,54 @@ func TestClaudeAuthUsesAPIKey(t *testing.T) {
 	}
 }
 
+func TestClaudeAuthMissingCLIReportsMissingBinary(t *testing.T) {
+	// With no API key and the claude binary absent, the auth check must report a
+	// missing binary + install guidance — NOT "not authenticated / run claude auth
+	// login", which would mislead an operator who hasn't installed the CLI.
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	runner := fakeRunner(map[string]struct {
+		out string
+		err error
+	}{
+		"claude auth status": {err: exec.ErrNotFound},
+	})
+	check := checkClaudeAuth(context.Background(), RunOptions{runCommand: runner})
+	if check.Severity != WARN {
+		t.Fatalf("checkClaudeAuth severity = %v, want WARN", check.Severity)
+	}
+	if !strings.Contains(check.Detail, "not found") {
+		t.Fatalf("checkClaudeAuth detail = %q, want it to say the binary is missing", check.Detail)
+	}
+	if strings.Contains(check.Remediate, "claude auth login") {
+		t.Fatalf("checkClaudeAuth remediate = %q, want install guidance not a login prompt", check.Remediate)
+	}
+	if !strings.Contains(check.Remediate, "npm install") {
+		t.Fatalf("checkClaudeAuth remediate = %q, want install guidance", check.Remediate)
+	}
+}
+
+func TestClaudeAuthNotAuthenticatedPromptsLogin(t *testing.T) {
+	// With no API key and the CLI present but failing (a plain non-ErrNotFound
+	// error), the check reports "not authenticated" and prompts a login.
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	runner := fakeRunner(map[string]struct {
+		out string
+		err error
+	}{
+		"claude auth status": {err: errors.New("not logged in")},
+	})
+	check := checkClaudeAuth(context.Background(), RunOptions{runCommand: runner})
+	if check.Severity != WARN {
+		t.Fatalf("checkClaudeAuth severity = %v, want WARN", check.Severity)
+	}
+	if !strings.Contains(check.Detail, "not authenticated") {
+		t.Fatalf("checkClaudeAuth detail = %q, want 'not authenticated'", check.Detail)
+	}
+	if !strings.Contains(check.Remediate, "claude auth login") {
+		t.Fatalf("checkClaudeAuth remediate = %q, want a login prompt", check.Remediate)
+	}
+}
+
 func TestCodexAuthUsesLoginStatus(t *testing.T) {
 	check := checkCodexAuth(context.Background(), RunOptions{runCommand: fakeRunner(nil)})
 	if check.Severity != OK {
