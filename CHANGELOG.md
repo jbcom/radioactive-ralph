@@ -13,6 +13,13 @@ shipped. That means historical sections may still mention MCP, plugins,
 supervisors, or the archived Python implementation even though those are no
 longer part of the live contract.
 
+## [0.17.0](https://github.com/jbcom/radioactive-ralph/compare/v0.16.2...v0.17.0) (2026-07-17)
+
+
+### Features
+
+* **gui:** Escape-to-drill-back keyboard navigation ([#107](https://github.com/jbcom/radioactive-ralph/issues/107)) ([98dcce6](https://github.com/jbcom/radioactive-ralph/commit/98dcce6ab1cbec5856a6b1e8b2d75d9dac6d9978))
+
 ## [0.16.2](https://github.com/jbcom/radioactive-ralph/compare/v0.16.1...v0.16.2) (2026-07-17)
 
 
