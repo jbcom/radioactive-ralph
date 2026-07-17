@@ -94,9 +94,12 @@ docs/superpowers/specs/2026-07-16-supervisor-architecture-design.md.
   #146; oversized stream-json line FAILS the turn (retryable) instead of masking
   a killed worker as a done step, + process-tree reap so it can't hang #144;
   approval-gate dead-end closed — an approved 'ready' task is now claimable #147;
-  ResourceExceeded purged from generated API docs #143 (v0.21.3+). The
-  orchestrator audit otherwise gave async dispatch a clean bill (no races/leaks);
-  the store audit's C2 (reaper NULL-worker branch) is recorded as latent.
+  ResourceExceeded purged from generated API docs #143; and the store audit's C2,
+  which a codex P1 on the follow-up proved a LIVE reaper double-execution bug
+  (unheartbeated worker session → step-2 delete → cascade-kill live worker →
+  re-dispatch), fixed via worker-session heartbeat + a step-2 session-delete
+  guard #149. Dead-raw error-contract cleanup #150 (v0.21.3+). The orchestrator
+  audit otherwise gave async dispatch a clean bill (no races/leaks).
 
 Detail lives in PILLARS.md; consult .agent-state/decisions.ndjson for the why
 behind any load-bearing call.
@@ -117,21 +120,27 @@ Completed this arc:
 - [x] Orchestrator async-dispatch concurrency audit (opus) — clean on races/
   leaks/semaphore/WaitGroup/ctx/deadlock; surfaced the panic-crash gap → #146.
 - [x] Store claim-path/SQLite audit (opus) — core claim path race-safe; found
-  the approval-gate dead-end (C1 → #147) + a latent reaper NULL-worker branch
-  (C2 → #149, documented-invariant not code-change: a guard would break the
-  legitimate orphan-recovery, and it's not reachable today).
+  the approval-gate dead-end (C1 → #147) and, via a codex P1 on the follow-up,
+  a LIVE reaper double-execution bug (C2 → #149): a worker's own session was
+  never heartbeated, so a turn > 270s let the reaper delete the session, cascade-
+  kill the live worker, and re-dispatch its running task. Fixed by beating the
+  worker session (HeartbeatWorkerAndSession) + guarding step-2 session-delete.
+- [x] Dead `raw` return on the oversized-line path → #150 (in flight): raw is now
+  empty on every error path of runStreamJSONCommand (contract: valid only on
+  success), and the ErrStreamJSONLineTooLong doc corrected to match.
 
 Next forward-exploration items:
-- [ ] Dead `raw` return on the oversized-line path: runStreamJSONCommand returns
-  raw alongside ErrStreamJSONLineTooLong, but runDeclarativeAttempt discards it
-  (returns Result{}, err), so raw is a dead value on that error path. Micro-fix:
-  drop the unused return or actually persist it. (Surfaced by a #148 bot thread.)
+- [ ] [WAIT] #150 (declarative raw-error contract) — CI running; merge when green.
+- [ ] [WAIT-AGENT] Provider-runner audit (opus) — adversarial review of the
+  pty-backed claude/codex/opencode runners + watchdog enforcement for misparse,
+  control-invariant holes, hangs, kill correctness, leaks, usage accounting.
+  Re-invokes on completion; fold confirmed findings into fresh items + ship.
 - [ ] Approval-gate producer: nothing yet sets ready_pending_approval, so the
   now-safe Approve button has no live trigger. Decide whether the gate is a real
   product feature (wire a producer — e.g. plan-level approval flag) or dead
   surface to remove (YAGNI). Architecture call for the agent.
-- [ ] Next unreviewed surface: forward-explore provider runners (claude/codex/
-  opencode framing) or the agent watchdog / TUI with a fresh review lens.
+- [ ] After the runner audit: rotate the review lens to the agent watchdog / TUI,
+  or a NEW product-improving feature (GUI richness, observability, DX).
 
 ## Notes
 
