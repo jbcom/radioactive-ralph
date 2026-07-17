@@ -136,6 +136,7 @@ func Run(ctx context.Context, opts ...Option) Report {
 		checkGhVersion,
 		checkGhAuth,
 		checkServicePlatform,
+		checkStateDir,
 	}
 
 	checks := make([]Check, len(checkFns))

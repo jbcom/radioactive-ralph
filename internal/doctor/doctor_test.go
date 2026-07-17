@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
@@ -54,6 +56,7 @@ func TestSeverityString(t *testing.T) {
 func TestRunAllGreen(t *testing.T) {
 	t.Setenv("OPENAI_API_KEY", "test-token")
 	t.Setenv("ANTHROPIC_API_KEY", "test-token")
+	t.Setenv("RALPH_STATE_DIR", t.TempDir()) // writable, roomy → state-dir check is OK
 	runner := fakeRunner(map[string]struct {
 		out string
 		err error
@@ -75,6 +78,7 @@ func TestRunAllGreen(t *testing.T) {
 func TestRunCommandTimeoutOption(t *testing.T) {
 	t.Setenv("OPENAI_API_KEY", "test-token")
 	t.Setenv("ANTHROPIC_API_KEY", "test-token")
+	t.Setenv("RALPH_STATE_DIR", t.TempDir()) // isolate checkStateDir from the real state root
 	base := fakeRunner(map[string]struct {
 		out string
 		err error
@@ -140,6 +144,64 @@ func TestCodexMeteringIsInformational(t *testing.T) {
 	}
 }
 
+func TestCheckStateDir_OKWhenWritable(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("RALPH_STATE_DIR", dir)
+
+	check := checkStateDir(context.Background(), RunOptions{})
+	if check.Severity != OK {
+		t.Fatalf("state dir severity = %v (detail %q), want OK for a writable temp dir", check.Severity, check.Detail)
+	}
+	if !strings.Contains(check.Detail, dir) {
+		t.Errorf("state dir detail = %q, want it to name the resolved root", check.Detail)
+	}
+	// No probe file (random-suffixed via CreateTemp) must be left behind.
+	if leftovers, _ := filepath.Glob(filepath.Join(dir, ".doctor-write-probe-*")); len(leftovers) != 0 {
+		t.Errorf("checkStateDir left write probe(s) behind: %v", leftovers)
+	}
+}
+
+func TestCheckStateDir_CreatesMissingRoot(t *testing.T) {
+	// A not-yet-created root (fresh machine) should be created and pass, not FAIL.
+	dir := filepath.Join(t.TempDir(), "nested", "state")
+	t.Setenv("RALPH_STATE_DIR", dir)
+
+	check := checkStateDir(context.Background(), RunOptions{})
+	if check.Severity != OK {
+		t.Fatalf("state dir severity = %v (detail %q), want OK after creating a missing root", check.Severity, check.Detail)
+	}
+	if info, err := os.Stat(dir); err != nil || !info.IsDir() {
+		t.Errorf("checkStateDir did not create the missing root: stat err=%v", err)
+	}
+}
+
+func TestCheckStateDir_FailsWhenNotWritable(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX mode bits don't gate directory writes the same way on Windows")
+	}
+	if os.Geteuid() == 0 {
+		t.Skip("root bypasses the write-permission check")
+	}
+	parent := t.TempDir()
+	root := filepath.Join(parent, "ro")
+	if err := os.Mkdir(root, 0o500); err != nil { // read+execute, no write
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(root, 0o700) }) // let TempDir cleanup remove it
+	t.Setenv("RALPH_STATE_DIR", root)
+
+	check := checkStateDir(context.Background(), RunOptions{})
+	if check.Severity != FAIL {
+		t.Fatalf("state dir severity = %v (detail %q), want FAIL for a non-writable root", check.Severity, check.Detail)
+	}
+	if !strings.Contains(check.Detail, "not writable") {
+		t.Errorf("state dir detail = %q, want it to say the root is not writable", check.Detail)
+	}
+	if check.Remediate == "" {
+		t.Error("a FAIL state-dir check must carry remediation")
+	}
+}
+
 func TestCodexAuthRequiresCLILoginWithAPIKey(t *testing.T) {
 	t.Setenv("OPENAI_API_KEY", "test-token")
 	runner := fakeRunner(map[string]struct {
@@ -181,6 +243,7 @@ func TestCodexAuthMissingCLIReportsMissingBinary(t *testing.T) {
 }
 
 func TestRunMissingGit(t *testing.T) {
+	t.Setenv("RALPH_STATE_DIR", t.TempDir()) // isolate checkStateDir from the real state root
 	runner := fakeRunner(map[string]struct {
 		out string
 		err error
@@ -219,6 +282,7 @@ func TestRunMissingGit(t *testing.T) {
 }
 
 func TestRunMissingGhWarnsNotFails(t *testing.T) {
+	t.Setenv("RALPH_STATE_DIR", t.TempDir()) // isolate checkStateDir from the real state root
 	runner := fakeRunner(map[string]struct {
 		out string
 		err error
@@ -239,6 +303,7 @@ func TestRunMissingGhWarnsNotFails(t *testing.T) {
 }
 
 func TestRunIncludesServicePlatformCheck(t *testing.T) {
+	t.Setenv("RALPH_STATE_DIR", t.TempDir()) // isolate checkStateDir from the real state root
 	runner := fakeRunner(map[string]struct {
 		out string
 		err error
@@ -267,6 +332,7 @@ func TestRunIncludesServicePlatformCheck(t *testing.T) {
 }
 
 func TestRunClaudeVersionTooOldWarnsNotFails(t *testing.T) {
+	t.Setenv("RALPH_STATE_DIR", t.TempDir()) // isolate checkStateDir from the real state root
 	runner := fakeRunner(map[string]struct {
 		out string
 		err error
@@ -293,6 +359,7 @@ func TestRunClaudeVersionTooOldWarnsNotFails(t *testing.T) {
 }
 
 func TestRunGitTooOldFails(t *testing.T) {
+	t.Setenv("RALPH_STATE_DIR", t.TempDir()) // isolate checkStateDir from the real state root
 	runner := fakeRunner(map[string]struct {
 		out string
 		err error
