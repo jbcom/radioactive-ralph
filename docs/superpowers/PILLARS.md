@@ -152,21 +152,6 @@ checkClaudeAuth distinguishes a missing CLI from an unauthenticated one, mirrori
 checkCodexAuth's ErrNotFound branch (#125). Directive/PILLARS reconciled to main
 via #117. Releases v0.19.0–v0.21.0.
 
-## Async dispatch — never-block invariant restored (in flight)
-
-A supervisor/store review found the central never-block invariant violated on the
-hottest path: dispatchWorker ran the provider agent turn (up to the 5-min
-StallTimeout) inline under the supervisor's dispatchMu, so a slow turn wedged the
-periodic tick, every HandleEnqueue client, and the reaper — while the DispatchNext
-doc comment already (falsely) promised goroutine-per-dispatch. The fix moves the
-slow turn+verify into a goroutine (per-step and native-fanout paths) behind a
-maxParallel try-acquire semaphore, with a WaitGroup the supervisor drains on
-shutdown after cancelling the run context; the goroutines run under a base context
-(the supervisor run ctx) rather than the per-request IPC ctx that dies when the
-request returns. A test proves DispatchNext returns promptly while a provider turn
-blocks. Design: docs/superpowers/specs/2026-07-17-async-dispatch-never-block-design.md.
-PR #127.
-
 ## Never-block / async-dispatch (v0.21.0–v0.21.2)
 
 A supervisor/store review found the central never-block invariant violated on the

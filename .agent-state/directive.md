@@ -97,15 +97,14 @@ Kept CURRENT each tick (do NOT commit this file onto feature branches — the
 branch-switch churn keeps resurrecting a stale version; this baseline is synced
 periodically via a chore/directive-sync PR, of which THIS is one).
 
-- [ ] [WAIT-REVIEW] Spend-cap per-project reservation — PR #131. CI green + threads resolved → self squash-merge.
-- [ ] [WAIT-REVIEW] Supervisor concurrent-start test de-flake — PR #132. CI green + threads resolved → self squash-merge.
+(The never-block arc — #127/#129/#131/#132 — is in the Shipped ledger above.
+#131 merged; #132 green. This directive-sync PR itself is the current in-flight
+concrete item.)
 
 ## Rolling improvement queue (directive 0 appends here)
 
 Next forward-exploration items:
-- [ ] Fresh multi-lens review on the now-async surface (supervisor/orch/store)
-      to confirm no residual race the async change introduced, then forward-explore
-      the next unreviewed surface (provider runners / agent watchdog / TUI).
+- [ ] [WAIT-AGENT] Async-surface race review — a code-reviewer agent is checking the async dispatch path for slot/reservation/wg leaks, WaitGroup misuse, ctx bugs, and shutdown deadlock. Fold findings into fresh items on completion, then forward-explore the next unreviewed surface (provider runners / agent watchdog / TUI).
 
 ## Notes
 
