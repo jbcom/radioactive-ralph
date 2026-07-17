@@ -64,11 +64,22 @@ func runDeclarativeAttempt(ctx context.Context, binding Binding, req Request) (R
 		}
 	}()
 
+	// Bound the declarative turn. Unlike the pty-backed providers (claude/codex/
+	// opencode), declarative modes run a batch CLI directly via exec.CommandContext
+	// with no stall watchdog — so without a timeout a hung declarative CLI (one
+	// that wedges or waits on an interactive prompt) would block FOREVER, violating
+	// the never-block invariant. An explicit turn_timeout wins; otherwise default
+	// to DefaultStallTimeout so every declarative binding gets the guarantee with
+	// no operator action.
+	timeout := DefaultStallTimeout
 	if binding.Config.TurnTimeout != "" {
-		timeout, err := time.ParseDuration(binding.Config.TurnTimeout)
+		parsed, err := time.ParseDuration(binding.Config.TurnTimeout)
 		if err != nil {
 			return Result{}, fmt.Errorf("provider %q: parse turn_timeout: %w", binding.Name, err)
 		}
+		timeout = parsed
+	}
+	if timeout > 0 {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, timeout)
 		defer cancel()
@@ -311,6 +322,7 @@ func validateArgTemplate(input string) error {
 func runStreamJSONCommand(ctx context.Context, dir, bin string, args []string) (assistantText, rawOutput string, err error) {
 	cmd := exec.CommandContext(ctx, bin, args...) //nolint:gosec // argv is runtime-controlled
 	cmd.Dir = dir
+	setProcessGroupKill(cmd) // ctx-cancel must reap the whole tree, not just the CLI
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return "", "", fmt.Errorf("provider: stdout pipe: %w", err)

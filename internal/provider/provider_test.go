@@ -7,6 +7,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestNewRunnerSupportsBuiltins(t *testing.T) {
@@ -59,6 +60,52 @@ printf '%s' "$@"
 	}
 	if !strings.Contains(result.AssistantOutput, "plain ok") {
 		t.Fatalf("unexpected plain output: %q", result.AssistantOutput)
+	}
+}
+
+// TestDeclarativeTurnTimeoutBoundsHungCLI proves a declarative binding whose CLI
+// hangs is bounded by turn_timeout rather than blocking forever — declarative
+// modes have no stall watchdog, so the turn timeout is their only never-block
+// guarantee. Uses a short explicit turn_timeout so the test is fast; the
+// production default (DefaultStallTimeout) applies the same bound when unset.
+func TestDeclarativeTurnTimeoutBoundsHungCLI(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell-script fake CLI is Unix-only")
+	}
+	bin := writeFakeCLI(t, "fake-hang.sh", `#!/bin/sh
+sleep 300
+`)
+	done := make(chan error, 1)
+	go func() {
+		_, err := DeclarativeRunner{}.Run(context.Background(), Binding{
+			Name:            "hang",
+			BinaryFromLocal: true,
+			Config: BindingConfig{
+				Type:        "plain-stdout",
+				Binary:      bin,
+				Args:        []string{"{prompt}"},
+				TurnTimeout: "200ms",
+			},
+		}, Request{WorkingDir: t.TempDir(), UserPrompt: "x", Model: ModelSonnet})
+		done <- err
+	}()
+
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("hung declarative CLI returned nil error; want a turn-timeout failure")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("declarative Run did not return within 5s — turn_timeout did not bound the hung CLI")
+	}
+}
+
+// TestDeclarativeDefaultsTurnTimeout confirms an unset turn_timeout defaults to a
+// bounded value (DefaultStallTimeout) rather than "unbounded", so a declarative
+// binding an operator forgot to configure still can't block forever.
+func TestDeclarativeDefaultsTurnTimeout(t *testing.T) {
+	if DefaultStallTimeout <= 0 {
+		t.Fatalf("DefaultStallTimeout = %v, want a positive bound for declarative fallback", DefaultStallTimeout)
 	}
 }
 

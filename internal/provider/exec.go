@@ -27,6 +27,7 @@ func combinePrompt(req Request) string {
 func runCommand(ctx context.Context, dir, bin string, args []string) (string, error) {
 	cmd := exec.CommandContext(ctx, bin, args...) //nolint:gosec // argv is runtime-controlled
 	cmd.Dir = dir
+	setProcessGroupKill(cmd) // ctx-cancel must reap the whole tree, not just the CLI
 	// Capture stdout and stderr separately so on the success path, some
 	// CLIs don't get warnings/progress lines folded into AssistantOutput.
 	// On failure we surface stderr in the wrapped error so operators can
