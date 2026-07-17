@@ -36,15 +36,25 @@ func maybeLaunchDesktopGUI(ctx context.Context, cmd *cobra.Command) (handled boo
 	if err != nil {
 		return true, fmt.Errorf("resolve state root: %w", err)
 	}
-	projectID, err := ensureProjectKnown(ctx, cmd, stateRoot, cwd)
-	if err != nil {
-		return true, err
-	}
 	st, err := store.Open(ctx, store.Options{DSN: store.DSN(storeDBPath(stateRoot))})
 	if err != nil {
 		return true, fmt.Errorf("open store: %w", err)
 	}
 	defer func() { _ = st.Close() }()
+
+	// A desktop launch (Finder / Explorer / a file manager) has an arbitrary
+	// working directory — usually NOT a repo. So resolve the project
+	// NON-MUTATINGLY: if the launch dir happens to be a known project, scope the
+	// GUI to it; otherwise open project-agnostic (empty id → the GUI lists every
+	// project). We must NOT auto-init the launch directory the way the CLI path
+	// does — that would register "/" (or wherever Finder launched us) as a
+	// bogus project.
+	projectID := ""
+	if fps, ferr := store.Fingerprints(ctx, cwd); ferr == nil {
+		if id, found, rerr := st.ResolveProject(ctx, fps); rerr == nil && found {
+			projectID = id
+		}
+	}
 
 	ctrl := gui.NewLiveController(stateRoot, st, projectID)
 	return true, gui.Run(ctx, gui.Opts{Controller: ctrl, ProjectID: projectID})

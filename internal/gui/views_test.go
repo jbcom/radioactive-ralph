@@ -4,8 +4,10 @@ package gui
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
+	"time"
 	"unicode/utf8"
 
 	"fyne.io/fyne/v2"
@@ -13,6 +15,7 @@ import (
 	"fyne.io/fyne/v2/test"
 	"fyne.io/fyne/v2/widget"
 	"github.com/jbcom/radioactive-ralph/internal/ipc"
+	"github.com/jbcom/radioactive-ralph/internal/orch"
 	"github.com/jbcom/radioactive-ralph/internal/store"
 )
 
@@ -56,6 +59,42 @@ func tapButton(t *testing.T, root fyne.CanvasObject, text string) {
 		t.Fatalf("button %q not found in view", text)
 	}
 	test.Tap(b)
+}
+
+// forEachLabel visits every *widget.Label in the tree.
+func forEachLabel(obj fyne.CanvasObject, fn func(*widget.Label)) {
+	switch o := obj.(type) {
+	case *widget.Label:
+		fn(o)
+	case *fyne.Container:
+		for _, c := range o.Objects {
+			forEachLabel(c, fn)
+		}
+	case *container.Scroll:
+		forEachLabel(o.Content, fn)
+	}
+}
+
+// labelExists reports whether some label's text equals text exactly.
+func labelExists(root fyne.CanvasObject, text string) bool {
+	found := false
+	forEachLabel(root, func(l *widget.Label) {
+		if l.Text == text {
+			found = true
+		}
+	})
+	return found
+}
+
+// labelContains reports whether some label's text contains substr.
+func labelContains(root fyne.CanvasObject, substr string) bool {
+	found := false
+	forEachLabel(root, func(l *widget.Label) {
+		if strings.Contains(l.Text, substr) {
+			found = true
+		}
+	})
+	return found
 }
 
 func TestMacro_RendersPlansAndDrillsToMeso(t *testing.T) {
@@ -184,12 +223,123 @@ func TestMicro_NoKillButtonWhenNoWorker(t *testing.T) {
 	}
 }
 
+func TestHeaderText_ConnectedAndWaiting(t *testing.T) {
+	// Connected: leads with the uptime + counters.
+	st := ipc.StatusReply{Uptime: 2 * time.Hour, ActivePlans: 3, ActiveWorkers: 1}
+	got := headerText(st, nil)
+	if !strings.Contains(got, "connected") || !strings.Contains(got, "up 2h0m") {
+		t.Errorf("connected header = %q, want it to lead with connected + uptime", got)
+	}
+	if !strings.Contains(got, "plans 3 active") {
+		t.Errorf("connected header = %q, want the plan counter", got)
+	}
+	// Waiting: a Status error → the calm waiting-for-supervisor line, no stale counters.
+	if w := headerText(ipc.StatusReply{}, errors.New("no supervisor")); !strings.Contains(w, "waiting for supervisor") {
+		t.Errorf("error header = %q, want the waiting-for-supervisor state", w)
+	}
+}
+
+func TestHumanizeUptime(t *testing.T) {
+	cases := map[time.Duration]string{
+		45 * time.Second: "45s",
+		5 * time.Minute:  "5m",
+		90 * time.Minute: "1h30m",
+	}
+	for d, want := range cases {
+		if got := humanizeUptime(d); got != want {
+			t.Errorf("humanizeUptime(%s) = %q, want %q", d, got, want)
+		}
+	}
+}
+
+func TestMacro_RendersProjectEventsFeed(t *testing.T) {
+	f := newFakeController()
+	f.plans = []store.Plan{{ID: "p1", Title: "P", Status: store.PlanStatusActive}}
+	f.pEvents = []store.Event{
+		{Kind: "task.done", Actor: "worker-1"},
+		{Kind: "plan.imported", Actor: "cli"},
+	}
+	u := newTestUI(t, f)
+	u.refreshNow()
+
+	// The macro view must show the "Recent activity" section header and at least
+	// one event kind — the parity feature the TUI's macro view has.
+	if !labelExists(u.root, "Recent activity") {
+		t.Error("macro view missing the Recent activity header")
+	}
+	if !labelContains(u.root, "task.done") {
+		t.Error("macro view did not render a project event (task.done)")
+	}
+}
+
+func TestMacro_ProjectEventsEmptyState(t *testing.T) {
+	f := newFakeController()
+	f.plans = []store.Plan{{ID: "p1", Title: "P", Status: store.PlanStatusActive}}
+	// no pEvents
+	u := newTestUI(t, f)
+	u.refreshNow()
+	if !labelContains(u.root, "no activity yet") {
+		t.Error("macro view should show an empty-activity state when there are no events")
+	}
+}
+
 func TestMacro_EmptyStateShowsImport(t *testing.T) {
 	f := newFakeController() // no plans
 	u := newTestUI(t, f)
 	u.refreshNow()
 	if findButton(u.root, "Import plan…") == nil {
 		t.Error("empty macro view should offer plan import")
+	}
+}
+
+// TestMacro_RenderedStructure is a visual-regression guard: it renders the full
+// macro view to Fyne's markup and asserts the intended structure is present and
+// in order (status header → plans with status chips + progress → import → the
+// activity separator + feed). Rendering the real widget tree catches layout
+// regressions a per-widget assertion would miss. (Verified by reading the markup
+// during the visuals-ownership pass — the palette and drill controls render as
+// intended.)
+func TestMacro_RenderedStructure(t *testing.T) {
+	f := newFakeController()
+	f.status = ipc.StatusReply{Uptime: 90 * time.Minute, ActivePlans: 1}
+	f.plans = []store.Plan{{ID: "p1", Title: "Ship it", Status: store.PlanStatusActive}}
+	f.progr = map[string]orch.Progress{"p1": {Done: 2, Total: 3}}
+	f.pEvents = []store.Event{{Kind: "task.done", Actor: "w1"}}
+	u := newTestUI(t, f)
+	u.refreshNow()
+
+	markup := test.RenderToMarkup(u.win.Canvas())
+	for _, want := range []string{
+		"connected · up 1h30m", // live status header
+		"Ship it",              // the plan
+		"2/3",                  // progress
+		"Import plan…",         // import affordance
+		"Separator",            // the activity divider
+		"Recent activity",      // the feed header
+		"task.done",            // an event
+	} {
+		if !strings.Contains(markup, want) {
+			t.Errorf("macro render missing %q", want)
+		}
+	}
+	// Ordering: the activity feed comes AFTER the plans.
+	if strings.Index(markup, "Ship it") > strings.Index(markup, "Recent activity") {
+		t.Error("plan list should render before the Recent activity feed")
+	}
+}
+
+func TestMacro_ActivityFeedShownWithNoPlans(t *testing.T) {
+	// With zero plans, the recent-activity feed must still render (parity with
+	// the TUI, which shows events even before the first plan).
+	f := newFakeController()
+	f.pEvents = []store.Event{{Kind: "service.started", Actor: "supervisor"}}
+	u := newTestUI(t, f)
+	u.refreshNow()
+	if !labelExists(u.root, "Recent activity") {
+		t.Error("no-plans macro view is missing the Recent activity feed")
+	}
+	if !labelContains(u.root, "service.started") {
+		t.Error("no-plans macro view did not render the project event")
 	}
 }
 

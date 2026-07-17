@@ -4,6 +4,7 @@ package gui
 
 import (
 	"fmt"
+	"time"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/canvas"
@@ -18,14 +19,32 @@ import (
 // performs IPC/store reads itself. That keeps all blocking work off the Fyne
 // main thread — a slow socket can stale the view but never freeze it.
 
-// headerText renders the project-wide status summary from a StatusReply — the
-// always-visible top line, mirroring the TUI's macro header.
-func headerText(st ipc.StatusReply) string {
+// headerText renders the always-visible top line. When the supervisor is
+// reachable (statusErr==nil) it leads with a live "connected · up <dur>"
+// indicator plus the project-wide counters; when it is not, it shows a calm
+// "waiting for supervisor…" instead of just leaving stale counters — the GUI is
+// designed to open before a supervisor is up and light up when one appears.
+func headerText(st ipc.StatusReply, statusErr error) string {
+	if statusErr != nil {
+		return "waiting for supervisor…  (start one with:  radioactive_ralph service install)"
+	}
 	return fmt.Sprintf(
-		"plans %d active   workers %d   running %d   ready %d   approval %d   blocked %d   failed %d",
+		"connected · up %s   ·   plans %d active   workers %d   running %d   ready %d   approval %d   blocked %d   failed %d",
+		humanizeUptime(st.Uptime),
 		st.ActivePlans, st.ActiveWorkers, st.RunningTasks, st.ReadyTasks,
 		st.ApprovalTasks, st.BlockedTasks, st.FailedTasks,
 	)
+}
+
+// humanizeUptime renders a supervisor uptime compactly (e.g. "3h12m", "45s").
+func humanizeUptime(d time.Duration) string {
+	if d < time.Minute {
+		return fmt.Sprintf("%ds", int(d.Seconds()))
+	}
+	if d < time.Hour {
+		return fmt.Sprintf("%dm", int(d.Minutes()))
+	}
+	return fmt.Sprintf("%dh%dm", int(d.Hours()), int(d.Minutes())%60)
 }
 
 // render swaps the center content to the view for the snapshot's drill level.
@@ -70,21 +89,41 @@ func (u *ui) buildMacro(s snapshot) {
 	if len(s.plans) == 0 {
 		u.body.Add(widget.NewLabel("No plans yet. Import a markdown plan to begin."))
 		u.body.Add(u.importButton())
+		// The activity feed is still worth showing with zero plans (the TUI does
+		// too) — a fresh project may have supervisor/service events before its
+		// first plan. Fall through to addRecentActivity rather than returning.
+	} else {
+		u.body.Add(widget.NewLabelWithStyle("Plans", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}))
+		for _, p := range s.plans {
+			planID := p.ID
+			prog := s.progress[p.ID]
+			open := widget.NewButton(p.Title, func() { u.drillTo(planID, "") })
+			open.Alignment = widget.ButtonAlignLeading
+			u.body.Add(container.NewHBox(
+				statusChip(string(p.Status)),
+				open,
+				widget.NewLabel(fmt.Sprintf("%d/%d", prog.Done, prog.Total)),
+			))
+		}
+		u.body.Add(u.importButton())
+	}
+	u.addRecentActivity(s.projEvents)
+}
+
+// addRecentActivity renders the ambient project-wide event feed under the plan
+// list — the GUI twin of the TUI macro view's "recent events" section.
+func (u *ui) addRecentActivity(events []store.Event) {
+	u.body.Add(widget.NewSeparator())
+	u.body.Add(widget.NewLabelWithStyle("Recent activity", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}))
+	if len(events) == 0 {
+		u.body.Add(widget.NewLabel("(no activity yet)"))
 		return
 	}
-	u.body.Add(widget.NewLabelWithStyle("Plans", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}))
-	for _, p := range s.plans {
-		planID := p.ID
-		prog := s.progress[p.ID]
-		open := widget.NewButton(p.Title, func() { u.drillTo(planID, "") })
-		open.Alignment = widget.ButtonAlignLeading
-		u.body.Add(container.NewHBox(
-			statusChip(string(p.Status)),
-			open,
-			widget.NewLabel(fmt.Sprintf("%d/%d", prog.Done, prog.Total)),
-		))
+	for _, e := range events {
+		// Newest-first (ListProjectEvents contract); show local time + kind +
+		// actor, mirroring the micro timeline's format.
+		u.body.Add(widget.NewLabel(fmt.Sprintf("%s  %s  %s", e.OccurredAt.Local().Format("15:04:05"), e.Kind, e.Actor)))
 	}
-	u.body.Add(u.importButton())
 }
 
 // buildMeso shows one plan's tasks with per-task status, plan-level drive
