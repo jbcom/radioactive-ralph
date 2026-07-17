@@ -89,8 +89,9 @@ periodically via a chore/directive-sync PR, of which THIS is one).
 Next forward-exploration items:
 - [ ] Fresh multi-lens forward-exploration pass on newest merged surface (doctor,
       deps, GUI focus) — comprehensive-review / security-sast / code-simplifier —
-      to surface the NEXT real polish item. Keyboard-nav is now complete (Tab/Enter
-      + Escape + focus-on-arrival); no custom arrow selector (would fight Fyne).
+      to surface the NEXT real polish item. Once #116 merges, keyboard-nav is
+      complete (Tab/Enter + Escape + focus-on-arrival); no custom arrow selector
+      (would fight Fyne). Until #116 lands, focus-on-arrival is still in review.
 - [ ] Perf is fine (StatusCounts/ListRunningWorkers are single-query, no waste) — skip unless a real bottleneck appears.
 
 ## Notes
