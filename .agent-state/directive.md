@@ -72,6 +72,11 @@ docs/superpowers/specs/2026-07-16-supervisor-architecture-design.md.
   OK-check Remediate) — PR #112 (v0.18.0).
 - Dependabot security sweep: x/image 0.41.0, protobuf 6.33.6 (via semgrep
   1.170.0 lifting the OTel<protobuf-5 ceiling), js-yaml 4.3.0 — PR #114.
+- GUI+doctor forward-exploration arc (2-reviewer pass → 6 findings, all shipped):
+  focus-first-action + its focus-steal fix #116, directive-sync #117, drive-error
+  coordination + nav-token + import-form fix #119, doctor state-dir usability
+  check #120, destructive-action confirm dialogs #122, GUI scroll-to-top #123,
+  doctor claude-auth ErrNotFound classification #125 (releases v0.19–v0.21).
 
 Detail lives in PILLARS.md; consult .agent-state/decisions.ndjson for the why
 behind any load-bearing call.
@@ -82,17 +87,13 @@ Kept CURRENT each tick (do NOT commit this file onto feature branches — the
 branch-switch churn keeps resurrecting a stale version; this baseline is synced
 periodically via a chore/directive-sync PR, of which THIS is one).
 
-- [ ] [WAIT-REVIEW] GUI focus-first-action on drill render (a11y) — PR #116. render() focuses the first actionable control after each rebuild (back button at meso/micro, else first plan/task, else Import) so keyboard users don't blind-Tab. Completes the keyboard loop (Tab/Enter + Escape-back + focus-on-arrival). CI green → self squash-merge.
+- [ ] [WAIT-REVIEW] Async dispatch — never-block invariant fix — PR #127. dispatchWorker ran the provider turn (up to 5-min StallTimeout) INLINE under dispatchMu, wedging the tick/enqueue/reaper; the doc comment already promised goroutine-per-dispatch. Fix: goroutine-per-worker + maxParallel semaphore + shutdown-drain WaitGroup + baseCtx (async work runs under the supervisor run ctx, not the IPC request ctx that dies on return). Full suite + -race green. Load-bearing core change — address bot review carefully → self squash-merge.
 
 ## Rolling improvement queue (directive 0 appends here)
 
 Next forward-exploration items:
-- [ ] Fresh multi-lens forward-exploration pass on newest merged surface (doctor,
-      deps, GUI focus) — comprehensive-review / security-sast / code-simplifier —
-      to surface the NEXT real polish item. Once #116 merges, keyboard-nav is
-      complete (Tab/Enter + Escape + focus-on-arrival); no custom arrow selector
-      (would fight Fyne). Until #116 lands, focus-on-arrival is still in review.
-- [ ] Perf is fine (StatusCounts/ListRunningWorkers are single-query, no waste) — skip unless a real bottleneck appears.
+- [ ] store: no db.SetMaxOpenConns — the SQLite pool is uncapped, so with _txlock=immediate every concurrent BeginTx races for the single writer lock, relying on busy_timeout(5s) as the only backstop under load. Set SetMaxOpenConns(1) (WAL single-writer pattern) so Go's pool is the serialization point. (Finding #2 of the supervisor/store review; lower-probability latent risk, verify current store.Open first.)
+- [ ] After #127 merges, re-run a supervisor/store review pass to confirm the async change didn't open a new race, and forward-explore the next surface (provider runners / agent watchdog / TUI).
 
 ## Notes
 

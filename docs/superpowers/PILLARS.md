@@ -129,3 +129,40 @@ security sweep clearing all four open alerts: `golang.org/x/image` 0.24.0→0.41
 bumping semgrep 1.136.0→1.170.0 to lift its pinned `opentelemetry-proto<protobuf-5`
 ceiling), and `js-yaml` 4.1.1→4.3.0 (merge-key quadratic DoS) (#114). Each PR
 absorbed its bot + CI review and self-merged green.
+
+## GUI + doctor forward-exploration arc (v0.19–v0.21)
+
+A two-reviewer multi-lens pass over the merged GUI + doctor surface surfaced six
+real findings, each shipped as its own self-reviewed PR. GUI: focus the first
+actionable control on each drill so keyboard users don't blind-Tab — gated on the
+view-identity change so the 1s tick doesn't yank focus mid-Tab (#116); coordinate
+drive-action errors with the paint loop (a failed Approve/Pause/Kill banner was
+silently erased by the next refresh) plus a viewToken so an in-flight action that
+completes after the operator navigates away can't resurrect a banner, and an
+importing flag so the periodic paint stops wiping the imperative Import form
+mid-edit (#119); modal confirmations on the two irreversible one-click actions
+(Abandon plan, Kill worker, with the worker id in the prompt), wording corrected
+to match the supervisor's real HandlePlanSetStatus semantics — running tasks
+finish, and it's resumable (#122); scroll-to-top on drill (#123). Doctor:
+checkStateDir verifies the XDG state root is resolvable/writable (exclusive
+CreateTemp probe) with a low-disk WARN, catching full-disk/wrong-perms installs
+that previously passed doctor then threw a cryptic SQLite error at first run, with
+a per-platform diskFreeBytes helper guarded against gosec G115 (#120); and
+checkClaudeAuth distinguishes a missing CLI from an unauthenticated one, mirroring
+checkCodexAuth's ErrNotFound branch (#125). Directive/PILLARS reconciled to main
+via #117. Releases v0.19.0–v0.21.0.
+
+## Async dispatch — never-block invariant restored (in flight)
+
+A supervisor/store review found the central never-block invariant violated on the
+hottest path: dispatchWorker ran the provider agent turn (up to the 5-min
+StallTimeout) inline under the supervisor's dispatchMu, so a slow turn wedged the
+periodic tick, every HandleEnqueue client, and the reaper — while the DispatchNext
+doc comment already (falsely) promised goroutine-per-dispatch. The fix moves the
+slow turn+verify into a goroutine (per-step and native-fanout paths) behind a
+maxParallel try-acquire semaphore, with a WaitGroup the supervisor drains on
+shutdown after cancelling the run context; the goroutines run under a base context
+(the supervisor run ctx) rather than the per-request IPC ctx that dies when the
+request returns. A test proves DispatchNext returns promptly while a provider turn
+blocks. Design: docs/superpowers/specs/2026-07-17-async-dispatch-never-block-design.md.
+PR #127.
