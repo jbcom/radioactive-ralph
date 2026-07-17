@@ -68,6 +68,15 @@ type Agent struct {
 	// returned on ctx.Done before the process fully exits) doesn't leak the
 	// reader on a[.out send that no one will ever drain.
 	ctx context.Context
+
+	// exitErr records cmd.Wait()'s result — the process's exit status. It is
+	// written once by readLoop (the sole Wait) and read via ExitErr() after
+	// Done() closes. exitMu guards the cross-goroutine handoff. A nonzero exit
+	// (auth failure, model error, mid-run crash) surfaces here so a runner
+	// WITHOUT a terminal-frame gate (codex) can fail the turn instead of
+	// laundering a failed CLI's partial output into a successful result.
+	exitMu  sync.Mutex
+	exitErr error
 }
 
 // Start launches opts.Command under a pty and begins streaming its output.
@@ -122,7 +131,12 @@ func (a *Agent) readLoop() {
 	defer close(a.out)
 	defer close(a.done)
 	defer a.closePTY()
-	defer func() { _ = a.cmd.Wait() }()
+	defer func() {
+		err := a.cmd.Wait()
+		a.exitMu.Lock()
+		a.exitErr = err
+		a.exitMu.Unlock()
+	}()
 	scanner := bufio.NewScanner(a.ptmx)
 	scanner.Buffer(make([]byte, 0, 64*1024), 1<<20)
 	for scanner.Scan() {
@@ -203,6 +217,25 @@ func (a *Agent) Kill() error {
 
 // Wait blocks until the process exits.
 func (a *Agent) Wait() error { <-a.done; return nil }
+
+// ExitErr returns the subprocess's exit status once it has exited on its own
+// (nil if it exited 0). It returns nil while the process is still running and
+// nil when the process was KILLED by this Agent (a signal-death from Kill /
+// ctx-cancel / a stall-or-prompt watchdog kill is not a real failure — the
+// caller already knows it forced the exit). Call only after Output() closes /
+// Done() fires. This lets a runner without a structured terminal frame (codex)
+// distinguish a clean completion from a failed CLI exit, rather than treating
+// any exit as success.
+func (a *Agent) ExitErr() error {
+	select {
+	case <-a.killed:
+		return nil // we forced the exit; the signal error is not a turn failure
+	default:
+	}
+	a.exitMu.Lock()
+	defer a.exitMu.Unlock()
+	return a.exitErr
+}
 
 // PID returns the subprocess PID (0 before start / after release).
 func (a *Agent) PID() int {

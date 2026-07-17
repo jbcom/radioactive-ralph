@@ -82,6 +82,16 @@ func (CodexRunner) Run(ctx context.Context, binding Binding, req Request) (Resul
 		return Result{}, fmt.Errorf("provider: codex run: %w", err)
 	}
 
+	// codex has no structured terminal frame, so superviseAgent returns nil the
+	// moment the process exits — INCLUDING a nonzero exit (auth/model error,
+	// mid-run crash). Without this gate, a failed codex that wrote a partial
+	// diagnostic to outPath would be laundered into a successful, zero-cost turn
+	// (also defeating spend accounting). Fail the turn on a nonzero exit; a kill
+	// is reported as nil by ExitErr (superviseAgent already surfaced it above).
+	if exitErr := a.ExitErr(); exitErr != nil {
+		return Result{}, fmt.Errorf("provider: codex exited nonzero: %w", exitErr)
+	}
+
 	raw, err := os.ReadFile(outPath) //nolint:gosec // temporary file owned by this process
 	if err != nil {
 		return Result{}, fmt.Errorf("provider: read codex output: %w", err)
