@@ -50,6 +50,13 @@ type Recorder struct {
 	realStdin  io.WriteCloser // pipe to claude's stdin
 	realStdout io.ReadCloser  // pipe from claude's stdout
 
+	// pumpWG joins the pumpStdin/pumpStdout goroutines. Close waits on it
+	// before snapshotting frames so no frame the subprocess emitted is lost:
+	// per the os/exec contract, cmd.Wait closes the stdout pipe, so pumpStdout
+	// must be allowed to reach natural EOF BEFORE Wait, and its final appends
+	// must be joined before the snapshot.
+	pumpWG sync.WaitGroup
+
 	mu     sync.Mutex
 	frames []Frame
 	args   []string
@@ -86,9 +93,9 @@ func NewRecorder(ctx context.Context, cassettePath, bin string, args []string) (
 	}
 
 	// Goroutine 1: client writes → tee to cassette + forward to claude.
-	go r.pumpStdin(clientStdinR, realStdin)
+	r.pumpWG.Go(func() { r.pumpStdin(clientStdinR, realStdin) })
 	// Goroutine 2: claude emits → tee to cassette + forward to client.
-	go r.pumpStdout(realStdout, clientStdoutW)
+	r.pumpWG.Go(func() { r.pumpStdout(realStdout, clientStdoutW) })
 
 	return r, nil
 }
@@ -134,23 +141,31 @@ func (r *Recorder) Wait() error { return r.cmd.Wait() }
 // Close stops the subprocess, flushes the cassette to disk, and
 // returns any write error.
 func (r *Recorder) Close() error {
-	if r.cmd != nil && r.cmd.Process != nil {
-		_ = r.cmd.Process.Kill()
-		_ = r.cmd.Wait()
-	}
-	// Shut the client pipe ends so the pump goroutines terminate and no
-	// consumer hangs: closing clientStdinR makes pumpStdin's scanner return
-	// (goroutine would leak otherwise); closing clientStdoutW makes a
-	// consumer reading clientStdout see EOF instead of blocking forever now
-	// that the subprocess is dead.
+	// Shut the CLIENT pipe ends first so pumpStdin's reader (blocked on
+	// clientStdinR) unblocks and any consumer of clientStdout sees EOF.
 	if r.clientStdinR != nil {
 		_ = r.clientStdinR.Close()
 	}
 	if r.clientStdoutW != nil {
 		_ = r.clientStdoutW.Close()
 	}
-	// Snapshot frames under the mutex: a pump goroutine may still be draining
-	// a buffered line and calling append() concurrently with this read.
+	// Kill the subprocess: this closes its stdout write end, so pumpStdout's
+	// scanner drains whatever the process already emitted and then reaches
+	// natural EOF and returns. Do NOT cmd.Wait() yet — per the os/exec
+	// contract Wait closes the stdout pipe, which would race pumpStdout and
+	// discard the tail of the recording.
+	if r.cmd != nil && r.cmd.Process != nil {
+		_ = r.cmd.Process.Kill()
+	}
+	// Join both pumps: every frame the subprocess emitted has now been
+	// appended (pumpStdout reached EOF; pumpStdin's reader was closed above).
+	r.pumpWG.Wait()
+	// Now reap the process — safe because both pumps have finished reading.
+	if r.cmd != nil && r.cmd.Process != nil {
+		_ = r.cmd.Wait()
+	}
+	// Snapshot frames under the mutex (the pumps are done, but keep the lock
+	// discipline consistent with append()).
 	r.mu.Lock()
 	frames := append([]Frame(nil), r.frames...)
 	r.mu.Unlock()
