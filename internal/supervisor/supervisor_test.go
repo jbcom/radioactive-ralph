@@ -12,6 +12,14 @@ import (
 	"github.com/jbcom/radioactive-ralph/internal/store"
 )
 
+// shutdownWait bounds how long a test waits for Run to return after ctx
+// cancel / Stop. This is a CORRECTNESS bound ("shutdown eventually
+// completes"), not a performance assertion — a tight bound flaked on loaded
+// Windows CI runners where the named-pipe unlink + DB CloseSession +
+// PID-lock release round-trip occasionally took several seconds. Kept
+// generous so only a genuinely-hung shutdown ever trips it.
+const shutdownWait = 15 * time.Second
+
 func openTestStore(t *testing.T) *store.Store {
 	t.Helper()
 	dbPath := filepath.Join(t.TempDir(), "store.db")
@@ -74,8 +82,8 @@ func TestRun_StartsAndAnswersStatus(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Run returned error after ctx cancel: %v", err)
 		}
-	case <-time.After(3 * time.Second):
-		t.Fatal("Run did not exit within 3s of ctx cancel")
+	case <-time.After(shutdownWait):
+		t.Fatal("Run did not exit within the shutdown bound of ctx cancel")
 	}
 }
 
@@ -97,8 +105,8 @@ func TestRun_StopCommandShutsDown(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Run returned error after Stop: %v", err)
 		}
-	case <-time.After(3 * time.Second):
-		t.Fatal("Run did not exit within 3s of Stop")
+	case <-time.After(shutdownWait):
+		t.Fatal("Run did not exit within the shutdown bound of Stop")
 	}
 }
 
@@ -121,8 +129,8 @@ func TestRun_SecondRunRefuses(t *testing.T) {
 	cancel1()
 	select {
 	case <-done1:
-	case <-time.After(3 * time.Second):
-		t.Fatal("first Run did not exit within 3s of ctx cancel")
+	case <-time.After(shutdownWait):
+		t.Fatal("first Run did not exit within the shutdown bound of ctx cancel")
 	}
 }
 

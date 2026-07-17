@@ -14,10 +14,17 @@ import (
 // implementation in flock.go. See that file's doc comment for the role
 // this lock plays alongside the IPC socket bind.
 func acquirePIDLock(path string) (*os.File, error) {
+	// Share READ|WRITE|DELETE: mutual exclusion comes from LockFileEx below,
+	// NOT from a zero share-mode. Sharing DELETE in particular lets another
+	// process (or t.TempDir cleanup on CI) remove/rename the pid file while
+	// this handle is still open, instead of failing with "the process cannot
+	// access the file because it is being used by another process"; sharing
+	// READ lets shouldReclaim's readPIDFile open it to inspect a possibly
+	// stale pid.
 	handle, err := windows.CreateFile(
 		windows.StringToUTF16Ptr(path),
 		windows.GENERIC_READ|windows.GENERIC_WRITE,
-		0,
+		windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE,
 		nil,
 		windows.OPEN_ALWAYS,
 		windows.FILE_ATTRIBUTE_NORMAL,
