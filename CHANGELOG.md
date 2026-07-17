@@ -13,6 +13,13 @@ shipped. That means historical sections may still mention MCP, plugins,
 supervisors, or the archived Python implementation even though those are no
 longer part of the live contract.
 
+## [0.13.0](https://github.com/jbcom/radioactive-ralph/compare/v0.12.0...v0.13.0) (2026-07-17)
+
+
+### Features
+
+* Fyne desktop GUI client ([#89](https://github.com/jbcom/radioactive-ralph/issues/89)) ([e969551](https://github.com/jbcom/radioactive-ralph/commit/e969551bbb93a5cc929f36e8eb84ceb23c67c33b))
+
 ## [0.12.0](https://github.com/jbcom/radioactive-ralph/compare/v0.11.0...v0.12.0) (2026-07-17)
 
 
