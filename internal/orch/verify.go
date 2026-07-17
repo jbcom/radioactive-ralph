@@ -3,6 +3,7 @@ package orch
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -184,10 +185,13 @@ func (o *Orchestrator) VerifyAndComplete(ctx context.Context, planID, taskID str
 	}
 
 	if !ok {
+		// If the task was reclaimed/reassigned out from under this session
+		// while acceptance ran, MarkFailed is a benign no-op — the current
+		// owner's attempt stands (see store.ErrTaskNotOwnedRunning).
 		if _, err := o.store.MarkFailedWithPayload(ctx, planID, taskID, sessionID, store.EventPayload{
 			Reason:    reason,
 			Retryable: true,
-		}, 3); err != nil {
+		}, 3); err != nil && !errors.Is(err, store.ErrTaskNotOwnedRunning) {
 			return false, fmt.Errorf("orch: mark failed on verification rejection: %w", err)
 		}
 		if err := o.store.Emit(ctx, store.EmitOpts{

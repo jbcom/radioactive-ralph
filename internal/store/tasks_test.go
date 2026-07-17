@@ -402,3 +402,87 @@ func TestClaimNextReadyNoTasksInPlan(t *testing.T) {
 		t.Errorf("ClaimNextReady on empty plan: err = %v, want ErrNoReadyTask", err)
 	}
 }
+
+// TestMarkFailedIgnoresStaleReportFromReclaimedSession is the regression for
+// the audit's high-severity finding: a failure report from a worker whose
+// claim was already reclaimed (and reassigned to a new session) must NOT
+// stomp the new owner. MarkFailed is guarded on the reporting session still
+// owning the running task; a stale report returns ErrTaskNotOwnedRunning and
+// changes nothing.
+func TestMarkFailedIgnoresStaleReportFromReclaimedSession(t *testing.T) {
+	ctx := context.Background()
+	s := openTestStore(t)
+	projectID := mustCreateProject(t, s, "stale-project")
+	planID := mustCreatePlan(t, s, projectID, "stale-plan")
+	sessionA, workerA := mustCreateSessionAndWorker(t, s, "A")
+	sessionB, workerB := mustCreateSessionAndWorker(t, s, "B")
+
+	if err := s.CreateTask(ctx, CreateTaskOpts{PlanID: planID, ID: "t", Description: "work"}); err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+
+	// Worker A claims the task, then the reaper reclaims it (back to pending,
+	// claim cleared) — simulated here with the same UPDATE ReclaimStale runs —
+	// then worker B claims it and is now the running owner.
+	if _, err := s.ClaimNextReady(ctx, planID, sessionA, workerA); err != nil {
+		t.Fatalf("A ClaimNextReady: %v", err)
+	}
+	if _, err := s.db.ExecContext(ctx, `
+		UPDATE tasks SET status = 'pending', reclaim_count = reclaim_count + 1,
+		                 claimed_by_session = NULL, claimed_by_worker_id = NULL
+		WHERE plan_id = ? AND id = ?`, planID, "t"); err != nil {
+		t.Fatalf("simulate reclaim: %v", err)
+	}
+	claimedByB, err := s.ClaimNextReady(ctx, planID, sessionB, workerB)
+	if err != nil {
+		t.Fatalf("B ClaimNextReady: %v", err)
+	}
+	if claimedByB.ID != "t" {
+		t.Fatalf("B claimed %q, want t", claimedByB.ID)
+	}
+
+	// A's stale failure report lands: it must be a benign no-op, NOT a stomp.
+	retried, err := s.MarkFailed(ctx, planID, "t", sessionA, "A's late crash", 3)
+	if !errors.Is(err, ErrTaskNotOwnedRunning) {
+		t.Fatalf("stale MarkFailed err = %v, want ErrTaskNotOwnedRunning", err)
+	}
+	if retried {
+		t.Error("stale MarkFailed reported retried=true; must be a no-op")
+	}
+
+	// The task must still be running under B, with B's claim intact.
+	got, err := s.GetTask(ctx, planID, "t")
+	if err != nil {
+		t.Fatalf("GetTask: %v", err)
+	}
+	if got.Status != TaskStatusRunning {
+		t.Errorf("task status = %q, want running (B's claim must survive A's stale report)", got.Status)
+	}
+	if got.ClaimedBySession != sessionB {
+		t.Errorf("claimed_by_session = %q, want B's session %q", got.ClaimedBySession, sessionB)
+	}
+
+	// B's own MarkFailed still works (owner guard matches).
+	if _, err := s.MarkFailed(ctx, planID, "t", sessionB, "B's real failure", 3); err != nil {
+		t.Fatalf("B MarkFailed (real owner): %v", err)
+	}
+}
+
+// TestCreateTaskDuplicateIsDistinguishable is the regression for the audit's
+// swallowed-error finding: CreateTask must return ErrDuplicateTask (not a
+// generic error) on a (plan_id, id) collision, so callers can tolerate the
+// benign race while still surfacing real insert failures.
+func TestCreateTaskDuplicateIsDistinguishable(t *testing.T) {
+	ctx := context.Background()
+	s := openTestStore(t)
+	projectID := mustCreateProject(t, s, "dup-project")
+	planID := mustCreatePlan(t, s, projectID, "dup-plan")
+
+	if err := s.CreateTask(ctx, CreateTaskOpts{PlanID: planID, ID: "x", Description: "first"}); err != nil {
+		t.Fatalf("first CreateTask: %v", err)
+	}
+	err := s.CreateTask(ctx, CreateTaskOpts{PlanID: planID, ID: "x", Description: "again"})
+	if !errors.Is(err, ErrDuplicateTask) {
+		t.Fatalf("duplicate CreateTask err = %v, want ErrDuplicateTask", err)
+	}
+}

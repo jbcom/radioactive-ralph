@@ -12,6 +12,7 @@ package orch
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -437,12 +438,18 @@ func (o *Orchestrator) claimStepTask(ctx context.Context, planID string, p *plan
 		if jsonErr != nil {
 			return nil, fmt.Errorf("orch: build acceptance for %s: %w", taskID, jsonErr)
 		}
-		_ = o.store.CreateTask(ctx, store.CreateTaskOpts{
+		// Only the benign "another dispatcher already created this row" race
+		// (ErrDuplicateTask) is tolerable here — the loser falls through to
+		// the race-safe claim below. A REAL insert failure (disk full, DB
+		// busy, I/O) must surface, not be swallowed into a silent stall.
+		if err := o.store.CreateTask(ctx, store.CreateTaskOpts{
 			PlanID:         planID,
 			ID:             taskID,
 			Description:    step.Text,
 			AcceptanceJSON: acceptance,
-		})
+		}); err != nil && !errors.Is(err, store.ErrDuplicateTask) {
+			return nil, fmt.Errorf("orch: materialize task %s: %w", taskID, err)
+		}
 	}
 
 	claimed, err := o.store.ClaimNextReady(ctx, planID, sessionID, workerID)
@@ -586,7 +593,10 @@ func (o *Orchestrator) dispatchWorker(ctx context.Context, projectID, projectDir
 	}
 
 	if runErr != nil {
-		if _, err := o.store.MarkFailed(ctx, planID, ds.task.ID, sessionID, runErr.Error(), 3); err != nil {
+		// A stale failure report (the reaper reclaimed this worker's claim
+		// mid-run and possibly reassigned the task) is benign — the current
+		// owner keeps its work; we just release this now-defunct worker.
+		if _, err := o.store.MarkFailed(ctx, planID, ds.task.ID, sessionID, runErr.Error(), 3); err != nil && !errors.Is(err, store.ErrTaskNotOwnedRunning) {
 			return fmt.Errorf("orch: mark failed after run error: %w", err)
 		}
 		_ = o.store.ClearWorkerTask(ctx, workerID, "crashed")
@@ -721,7 +731,9 @@ func (o *Orchestrator) dispatchFanoutGroup(ctx context.Context, projectID, proje
 
 	if runErr != nil {
 		for _, ds := range claimed {
-			if _, err := o.store.MarkFailed(ctx, planID, ds.task.ID, sessionID, runErr.Error(), 3); err != nil {
+			// Benign if the reaper already reclaimed/reassigned this task —
+			// don't stomp the new owner (see MarkFailed's owner guard).
+			if _, err := o.store.MarkFailed(ctx, planID, ds.task.ID, sessionID, runErr.Error(), 3); err != nil && !errors.Is(err, store.ErrTaskNotOwnedRunning) {
 				return 0, fmt.Errorf("orch: mark failed after run error: %w", err)
 			}
 		}

@@ -14,6 +14,11 @@ import (
 	"time"
 )
 
+// acceptRetryDelay is the pause after a transient Accept() error before
+// retrying, so a persistent condition (e.g. sustained fd exhaustion) backs
+// off instead of busy-spinning the accept goroutine.
+const acceptRetryDelay = 50 * time.Millisecond
+
 // Handler handles a single client request. Attach streams events by
 // calling emit repeatedly; other commands return (reply, nil) and the
 // server transmits a single Response frame.
@@ -167,13 +172,24 @@ func (s *Server) acceptLoop() {
 				return
 			default:
 			}
-			// Accept errors during normal operation: log and continue.
-			// The only fatal case is a closed listener, which we already
-			// skipped via the select above.
-			if !errors.Is(err, net.ErrClosed) {
-				s.logger.Warn("ipc accept error", "err", err)
+			// A closed listener is the only FATAL case (shutdown, already
+			// handled above via stopCh, or the listener closed out from under
+			// us) — stop accepting. Every OTHER Accept error (EMFILE/ENFILE
+			// "too many open files", ECONNABORTED, EINTR, ...) is transient:
+			// log it and KEEP accepting, or a momentary fd-pressure blip would
+			// permanently wedge the entire control plane. A short backoff
+			// avoids busy-spinning if the condition persists. This mirrors the
+			// stdlib http.Server.Serve retry loop.
+			if errors.Is(err, net.ErrClosed) {
+				return
 			}
-			return
+			s.logger.Warn("ipc accept error (transient; continuing)", "err", err)
+			select {
+			case <-s.stopCh:
+				return
+			case <-time.After(acceptRetryDelay):
+			}
+			continue
 		}
 		s.wg.Add(1)
 		go func() {

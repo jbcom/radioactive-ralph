@@ -72,6 +72,14 @@ type CreateTaskOpts struct {
 	ParentTaskID    string
 }
 
+// ErrDuplicateTask is returned by CreateTask when a task with the same
+// (plan_id, id) already exists. It is the ONE benign CreateTask failure a
+// concurrent dispatcher expects (two dispatchers racing to materialize the
+// same step); callers match it via errors.Is and fall through to the claim
+// attempt. Every OTHER CreateTask error (disk full, DB busy, I/O, a
+// validation failure) is a real fault that must NOT be silently swallowed.
+var ErrDuplicateTask = errors.New("store: task with this id already exists in this plan")
+
 // CreateTask inserts a pending task. Callers wire dependencies via AddDep.
 func (s *Store) CreateTask(ctx context.Context, o CreateTaskOpts) error {
 	if o.PlanID == "" || o.ID == "" || o.Description == "" {
@@ -99,6 +107,9 @@ func (s *Store) CreateTask(ctx context.Context, o CreateTaskOpts) error {
 	`, o.ID, o.PlanID, o.Description, parallelGroup, sequenceOrdinal,
 		nullIfEmpty(o.AcceptanceJSON), parent)
 	if err != nil {
+		if isUniqueViolation(err) {
+			return fmt.Errorf("%w: %s (plan=%s)", ErrDuplicateTask, o.ID, o.PlanID)
+		}
 		return fmt.Errorf("store: insert task: %w", err)
 	}
 	return nil
@@ -415,13 +426,33 @@ func (s *Store) MarkDone(ctx context.Context, planID, taskID, sessionID string, 
 	return s.Ready(ctx, planID)
 }
 
-// MarkFailed transitions a running task to failed or retries.
+// ErrTaskNotOwnedRunning is returned by MarkFailed* when the task is no
+// longer both running AND claimed by the reporting session — i.e. it was
+// reclaimed by the reaper and (possibly) reassigned to another worker
+// between dispatch and this failure report. It is a BENIGN outcome, not a
+// hard error: the stale report is correctly dropped instead of stomping the
+// current owner. Callers distinguish it via errors.Is and treat it as
+// "someone else owns this now; nothing to do."
+var ErrTaskNotOwnedRunning = errors.New("store: task not running under the reporting session (stale failure report)")
+
+// MarkFailed transitions a running task, owned by sessionID, to failed or
+// retries. See MarkFailedWithPayload.
 func (s *Store) MarkFailed(ctx context.Context, planID, taskID, sessionID, reason string, maxRetries int) (retried bool, err error) {
 	return s.MarkFailedWithPayload(ctx, planID, taskID, sessionID, EventPayload{Reason: reason}, maxRetries)
 }
 
 // MarkFailedWithPayload transitions a running task to failed or retries
 // while preserving structured payload details in the event log.
+//
+// Both UPDATEs are guarded by `status = 'running' AND claimed_by_session =
+// sessionID`, mirroring MarkDone/MarkBlocked's running-guard. Without the
+// owner guard a stale failure report from a worker whose claim the reaper
+// already reclaimed (and possibly reassigned to a new worker) would flip the
+// task back to pending / failed and clear the NEW owner's claim — double
+// execution plus a dropped completion. When the guard matches nothing the
+// task has moved on under a different session; MarkFailed returns
+// ErrTaskNotOwnedRunning so the caller can drop the stale report rather than
+// resurrect the task.
 func (s *Store) MarkFailedWithPayload(ctx context.Context, planID, taskID, sessionID string, payload EventPayload, maxRetries int) (retried bool, err error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -431,8 +462,11 @@ func (s *Store) MarkFailedWithPayload(ctx context.Context, planID, taskID, sessi
 
 	var retries int
 	if err := tx.QueryRowContext(ctx,
-		`SELECT retry_count FROM tasks WHERE plan_id = ? AND id = ?`,
-		planID, taskID).Scan(&retries); err != nil {
+		`SELECT retry_count FROM tasks WHERE plan_id = ? AND id = ? AND status = 'running' AND claimed_by_session = ?`,
+		planID, taskID, sessionID).Scan(&retries); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return false, ErrTaskNotOwnedRunning
+		}
 		return false, fmt.Errorf("store: read retry_count: %w", err)
 	}
 
@@ -443,15 +477,15 @@ func (s *Store) MarkFailedWithPayload(ctx context.Context, planID, taskID, sessi
 			    retry_count = retry_count + 1,
 			    claimed_by_session = NULL,
 			    claimed_by_worker_id = NULL
-			WHERE plan_id = ? AND id = ?
-		`, planID, taskID)
+			WHERE plan_id = ? AND id = ? AND status = 'running' AND claimed_by_session = ?
+		`, planID, taskID, sessionID)
 		if err != nil {
 			return false, fmt.Errorf("store: requeue: %w", err)
 		}
 		if n, err := res.RowsAffected(); err != nil {
 			return false, fmt.Errorf("store: requeue rows affected: %w", err)
 		} else if n == 0 {
-			return false, fmt.Errorf("store: task %q not found", taskID)
+			return false, ErrTaskNotOwnedRunning
 		}
 		if _, err := tx.ExecContext(ctx, `
 			INSERT INTO events(plan_id, task_id, kind, actor, stream, payload_json)
@@ -467,15 +501,15 @@ func (s *Store) MarkFailedWithPayload(ctx context.Context, planID, taskID, sessi
 		UPDATE tasks SET status = 'failed',
 		                 claimed_by_session = NULL,
 		                 claimed_by_worker_id = NULL
-		WHERE plan_id = ? AND id = ?
-	`, planID, taskID)
+		WHERE plan_id = ? AND id = ? AND status = 'running' AND claimed_by_session = ?
+	`, planID, taskID, sessionID)
 	if err != nil {
 		return false, fmt.Errorf("store: mark failed: %w", err)
 	}
 	if n, err := res.RowsAffected(); err != nil {
 		return false, fmt.Errorf("store: mark failed rows affected: %w", err)
 	} else if n == 0 {
-		return false, fmt.Errorf("store: task %q not found", taskID)
+		return false, ErrTaskNotOwnedRunning
 	}
 	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO events(plan_id, task_id, kind, actor, stream, payload_json)
