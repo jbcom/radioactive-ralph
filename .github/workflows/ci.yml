@@ -317,23 +317,43 @@ jobs:
           sudo apt-get install -y \
             libgl1-mesa-dev xorg-dev libxkbcommon-dev \
             libwayland-dev wayland-protocols
+      - name: Generate the en_US.UTF-8 locale
+        if: matrix.os == 'ubuntu-latest'
+        # The GUI test sets LANG/LC_ALL=en-US so Fyne's BCP-47 locale parse is
+        # well-formed, but the underlying OS locale must ALSO exist — otherwise
+        # setlocale silently fails ("cannot change locale (en-US)"), the shaper
+        # falls back to the undefined tag, and go-text/typesetting's harfbuzz
+        # panics (index out of range in applyGPOSPair2). GitHub's ubuntu runners
+        # don't ship a generated en_US locale, so generate it here.
+        run: |
+          sudo apt-get install -y locales
+          sudo locale-gen en_US.UTF-8
+          sudo update-locale
       - name: go mod download
         run: go mod download
       - name: Build GUI-enabled binary
         env:
           CGO_ENABLED: '1'
         run: go build -tags gui ./...
+      - name: Install a shaper-safe font for the headless GUI test
+        if: matrix.os == 'ubuntu-latest'
+        # Fyne's bundled default font trips a crash inside go-text/typesetting@0.3.4's
+        # pure-Go harfbuzz shaper on Linux (index-out-of-range in otShapeNormalize/
+        # applyGPOSPair2) during the headless render — a bug in the pinned shaper,
+        # NOT in our code (the test passes on macOS, which uses CoreText). Point
+        # FYNE_FONT at DejaVu Sans, which that shaper processes without crashing.
+        run: sudo apt-get install -y fonts-dejavu-core
       - name: Test GUI package (headless test driver)
         env:
           CGO_ENABLED: '1'
-          # Fyne 2.8 parses the user locale with golang.org/x/text at startup; a
-          # bare `C`/unset locale (as GitHub runners sometimes have) — and even
-          # `C.UTF-8` — is not a well-formed BCP-47 tag, so it resolves to the
-          # undefined tag and the harfbuzz text shaper panics (index out of
-          # range). `en-US` parses cleanly (verified), so the headless render is
-          # deterministic. (macOS already has a well-formed locale.)
-          LANG: en-US
-          LC_ALL: en-US
+          # A well-formed locale so Fyne's BCP-47 parse is valid (the OS locale is
+          # generated in the step above).
+          LANG: en_US.UTF-8
+          LC_ALL: en_US.UTF-8
+          # Use a font the go-text harfbuzz shaper handles cleanly (see the
+          # install step's comment) instead of Fyne's bundled default, which
+          # panics that shaper on Linux.
+          FYNE_FONT: /usr/share/fonts/truetype/dejavu/DejaVuSans.ttf
         run: go test -tags gui ./internal/gui/... -timeout 5m
 
   build-targets:
