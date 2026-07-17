@@ -81,6 +81,27 @@ func (u *ui) drillTo(plan, task string) {
 	go u.refreshNow()
 }
 
+// drillBack navigates up one level (micro→meso→macro), the keyboard (Escape)
+// equivalent of the on-screen back buttons. A no-op at macro.
+func (u *ui) drillBack() {
+	u.mu.Lock()
+	switch {
+	case u.selectedTask != "":
+		u.selectedTask = "" // micro → meso
+	case u.selectedPlan != "":
+		u.selectedPlan = "" // meso → macro
+	default:
+		u.mu.Unlock()
+		return // already at macro
+	}
+	u.mu.Unlock()
+	if u.syncRender {
+		u.refreshNow()
+		return
+	}
+	go u.refreshNow()
+}
+
 // statusChip is a small coloured label rendering a status in its Ralph identity
 // colour — the shared status palette applied to a Fyne canvas text object.
 func statusChip(status string) fyne.CanvasObject {

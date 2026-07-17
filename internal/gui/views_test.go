@@ -208,6 +208,28 @@ func TestMicro_KillButtonForFanoutSecondTask(t *testing.T) {
 	}
 }
 
+func TestDrillBack_MicroToMesoToMacro(t *testing.T) {
+	// Escape (drillBack) walks up one level at a time, the keyboard equivalent
+	// of the back buttons.
+	f := newFakeController()
+	f.plans = []store.Plan{{ID: "p1", Title: "P", Status: store.PlanStatusActive}}
+	u := newTestUI(t, f)
+	u.selectedPlan, u.selectedTask = "p1", "t1" // start at micro
+
+	u.drillBack() // micro → meso
+	if u.selectedPlan != "p1" || u.selectedTask != "" {
+		t.Fatalf("after 1 drillBack: plan=%q task=%q, want p1/'' (meso)", u.selectedPlan, u.selectedTask)
+	}
+	u.drillBack() // meso → macro
+	if u.selectedPlan != "" || u.selectedTask != "" {
+		t.Fatalf("after 2 drillBack: plan=%q task=%q, want ''/'' (macro)", u.selectedPlan, u.selectedTask)
+	}
+	u.drillBack() // macro → no-op
+	if u.selectedPlan != "" || u.selectedTask != "" {
+		t.Errorf("drillBack at macro should be a no-op, got plan=%q task=%q", u.selectedPlan, u.selectedTask)
+	}
+}
+
 func TestMicro_NoKillButtonWhenNoWorker(t *testing.T) {
 	f := newFakeController()
 	f.plans = []store.Plan{{ID: "p1", Title: "P", Status: store.PlanStatusActive}}
