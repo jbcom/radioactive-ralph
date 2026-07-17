@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=radioactive-ralph
+GenericName=AI-agent supervisor
+Comment=Watch and control local AI-agent CLIs under Ralph's supervisor
+Exec=radioactive_ralph gui
+Icon=radioactive-ralph
+Terminal=false
+Categories=Development;Utility;
+Keywords=AI;agent;claude;codex;supervisor;automation;
+StartupWMClass=radioactive-ralph
