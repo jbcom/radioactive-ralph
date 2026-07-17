@@ -13,6 +13,13 @@ shipped. That means historical sections may still mention MCP, plugins,
 supervisors, or the archived Python implementation even though those are no
 longer part of the live contract.
 
+## [0.21.4](https://github.com/jbcom/radioactive-ralph/compare/v0.21.3...v0.21.4) (2026-07-17)
+
+
+### Bug Fixes
+
+* **agent:** stop the watchdog goroutine after a stall (goroutine leak) ([#136](https://github.com/jbcom/radioactive-ralph/issues/136)) ([e24aa51](https://github.com/jbcom/radioactive-ralph/commit/e24aa51a242aff478fa9ea8a53c62625a31e27b7))
+
 ## [0.21.3](https://github.com/jbcom/radioactive-ralph/compare/v0.21.2...v0.21.3) (2026-07-17)
 
 
