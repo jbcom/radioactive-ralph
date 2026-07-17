@@ -83,6 +83,8 @@ docs/superpowers/specs/2026-07-16-supervisor-architecture-design.md.
 - [x] Remove AI-design-trope / extraneous docs (adjective soup, over-explained obvious, marketing filler); every doc matches code
 - [x] tox -e docs builds clean; no residual mention of variant/kong/plandag/per-repo-config/durable-daemon
 
+- [ ] [WAIT-REVIEW] Babysit PR #73 to green squash-merge: wait CI, address every review thread, resolve, merge; then flip Status to RELEASED
+
 ## Notes
 - [x] Interim review of Phases 1-6a — DONE (found+fixed agent Kill double-close; doc-comment fixes; dead-code removal)
 - Just-in-time step expansion: expand each phase's TDD micro-steps against the then-current tree at phase start (recorded strategy).
