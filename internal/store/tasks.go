@@ -698,11 +698,30 @@ func payloadJSON(payload EventPayload) string {
 	return string(raw)
 }
 
+// jsonOrEmptyObject normalizes a payload string destined for the events table's
+// payload_json column so that column ALWAYS holds valid JSON — the invariant the
+// Attach event stream and every other JSON consumer rely on. An empty input
+// becomes "{}". Valid JSON passes through untouched. A malformed input is
+// WRAPPED as {"raw": "<original>"} rather than written verbatim (which would
+// corrupt the column) or dropped to "{}" (which would silently lose data): the
+// original text survives, decodably, and the invariant is structural rather than
+// dependent on every caller having pre-validated its input.
 func jsonOrEmptyObject(raw string) string {
 	if raw == "" {
 		return "{}"
 	}
-	return raw
+	if json.Valid([]byte(raw)) {
+		return raw
+	}
+	wrapped, err := json.Marshal(struct {
+		Raw string `json:"raw"`
+	}{Raw: raw})
+	if err != nil {
+		// json.Marshal of a struct with a single string field cannot fail; the
+		// "{}" fallback exists only to keep the invariant total.
+		return "{}"
+	}
+	return string(wrapped)
 }
 
 func isZeroPayload(payload EventPayload) bool {
