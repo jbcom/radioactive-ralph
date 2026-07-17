@@ -63,29 +63,29 @@ docs/superpowers/specs/2026-07-16-supervisor-architecture-design.md.
 - Guided first-run onboarding — PR #85 (80daad9).
 - Versioned IPC drive+observe API — PR #87 (2f20adf).
 - Fyne desktop GUI client — PR #89 (e969551).
+- Desktop app + packaging + GUI polish (v0.15.0 + since) — native installers #92,
+  desktop-app docs #94, GUI macro-view richness #96, deps #97, TUI liveness
+  header #98, GUI guide #101, GUI+packaging correctness #102 (P1 AppImage-FUSE
+  release-blocker), API-docs regen #104.
 
 Detail lives in PILLARS.md; consult .agent-state/decisions.ndjson for the why
 behind any load-bearing call.
 
 ## Concrete queue (current)
 
-- [ ] User-facing docs for the desktop app + GUI (forward-explored: the GUI #89
-  and packaging #92 merged but README/AGENTS/getting-started had ZERO mention of
-  the desktop app, `gui` subcommand, or the cask/AppImage/dmg install). On
-  docs/desktop-app-and-gui: README Install split into CLI + Desktop-app tables
-  (cask/AppImage/dmg/winget/deb-rpm), Quick-start + CLI-surface `gui` line,
-  AGENTS command surface, getting-started "Or use the desktop app" section.
-  Bundles the #92 PILLARS.md compression. → PR + babysit.
+Kept CURRENT each tick (do NOT commit this file onto feature branches — the
+branch-switch churn keeps resurrecting a stale version; this baseline is synced
+periodically via a chore/directive-sync PR).
+
+- [ ] [WAIT-REVIEW] macOS cask arm64+amd64 (Intel Macs) — PR #106. Fixed the Bash-3.2 associative-array P1 + macos-13→macos-15-intel actionlint. CI green → self squash-merge.
+- [ ] [WAIT-REVIEW] GUI Escape-to-drill-back keyboard nav (a11y) — PR #107. CI green → self squash-merge.
 
 ## Rolling improvement queue (directive 0 appends here)
 
-Forward-exploration candidates surfaced this pass (pick next after the docs PR):
-- [ ] TUI/GUI parity audit — does the GUI surface everything the TUI does
-  (project-wide event feed, plan progress detail)? Close any gaps.
-- [ ] GUI UX polish pass — run the app, screenshot, compare to intent; richer
-  status header, keyboard nav, empty/error states.
-- [ ] Provider coverage / observability / DX sweep on the newest surfaces.
-- [ ] Dependency freshness + CVE sweep (govulncheck already in CI; audit deps).
+Next forward-exploration items:
+- [ ] TUI/GUI keyboard-nav completeness — GUI has Escape-back now; consider arrow/Enter drill-in for full parity + focus indicators.
+- [ ] Doctor/observability DX: surface known provider-metering limits (codex usage isn't parseable → spend-cap blind spot) in `doctor` output.
+- [ ] Perf is fine (StatusCounts/ListRunningWorkers are single-query, no waste) — skip unless a real bottleneck appears.
 
 ## Notes
 
