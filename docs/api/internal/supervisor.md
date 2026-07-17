@@ -137,7 +137,7 @@ type Supervisor struct {
 ```
 
 <a name="Supervisor.HandleAttach"></a>
-### func \(\*Supervisor\) [HandleAttach](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/supervisor/supervisor.go#L311>)
+### func \(\*Supervisor\) [HandleAttach](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/supervisor/supervisor.go#L340>)
 
 ```go
 func (s *Supervisor) HandleAttach(ctx context.Context, _ func(json.RawMessage) error) error
@@ -146,7 +146,7 @@ func (s *Supervisor) HandleAttach(ctx context.Context, _ func(json.RawMessage) e
 HandleAttach streams no events yet — the durable event/attach surface is part of the plan\-orchestration work in a later phase. It blocks until ctx is cancelled so a connected client simply sees a quiet, still\-open stream rather than an immediate close.
 
 <a name="Supervisor.HandleEnqueue"></a>
-### func \(\*Supervisor\) [HandleEnqueue](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/supervisor/supervisor.go#L261>)
+### func \(\*Supervisor\) [HandleEnqueue](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/supervisor/supervisor.go#L303>)
 
 ```go
 func (s *Supervisor) HandleEnqueue(ctx context.Context, args ipc.EnqueueArgs) (ipc.EnqueueReply, error)
@@ -157,7 +157,7 @@ HandleEnqueue drives one real dispatch pass via internal/orch instead of returni
 args.Description/args.TaskID name the work the caller wanted enqueued, but a store task cannot be created without a plan\_id \(tasks.plan\_id is a NOT NULL foreign key\) and EnqueueArgs carries no plan reference — so HandleEnqueue's job today is exactly "wake up dispatch for whatever is already ready", the same effect an enqueue is meant to have \(make already\-known work actually run\), not "materialize a new ad hoc task with no plan to belong to". EnqueueReply.Inserted reports whether anything was actually dispatched; TaskID echoes args.TaskID \(or, if unset, the number of steps dispatched, best\-effort\) so a caller has some return value acknowledging its enqueue signal was acted upon.
 
 <a name="Supervisor.HandleReloadConfig"></a>
-### func \(\*Supervisor\) [HandleReloadConfig](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/supervisor/supervisor.go#L303>)
+### func \(\*Supervisor\) [HandleReloadConfig](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/supervisor/supervisor.go#L332>)
 
 ```go
 func (s *Supervisor) HandleReloadConfig(_ context.Context) error
@@ -166,7 +166,7 @@ func (s *Supervisor) HandleReloadConfig(_ context.Context) error
 HandleReloadConfig is a no\-op today: config reload semantics belong to vconfig's virtual\-layer resolution \(spec §5a\), which this minimal supervisor does not yet wire into a running process's live config.
 
 <a name="Supervisor.HandleStatus"></a>
-### func \(\*Supervisor\) [HandleStatus](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/supervisor/supervisor.go#L224>)
+### func \(\*Supervisor\) [HandleStatus](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/supervisor/supervisor.go#L266>)
 
 ```go
 func (s *Supervisor) HandleStatus(ctx context.Context) (ipc.StatusReply, error)
@@ -175,7 +175,7 @@ func (s *Supervisor) HandleStatus(ctx context.Context) (ipc.StatusReply, error)
 HandleStatus reports supervisor\-level liveness. ActiveWorkers is sourced from the store's real worker rows \(store.CountRunningWorkers\) rather than an in\-process map: no in\-process structure could ever reflect this count anyway, since agent subprocess lifetime is fully owned by whichever provider runner orch dispatched, not by the supervisor itself. A query failure degrades to 0 rather than failing the whole status reply — a transient count\-query error should never make \`status\` itself fail.
 
 <a name="Supervisor.HandleStop"></a>
-### func \(\*Supervisor\) [HandleStop](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/supervisor/supervisor.go#L295>)
+### func \(\*Supervisor\) [HandleStop](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/supervisor/supervisor.go#L324>)
 
 ```go
 func (s *Supervisor) HandleStop(_ context.Context, _ ipc.StopArgs) error

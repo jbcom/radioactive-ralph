@@ -78,7 +78,7 @@ HandleWatchdogSignal reacts to one agent.Signal from agent.Watch per the control
 Returns true if the caller should kill a and release the task claim \(via HandleContextEnd or an equivalent MarkFailed/MarkBlocked call\).
 
 <a name="Acceptance"></a>
-## type [Acceptance](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/orch/verify.go#L25-L40>)
+## type [Acceptance](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/orch/verify.go#L26-L41>)
 
 Acceptance is the done\-criteria a task's acceptance\_json column describes. A task with an empty/absent Acceptance is judgment\-only: its completion cannot be mechanically re\-verified, so VerifyAndComplete treats a present, non\-empty Evidence.Output as sufficient \(there is no stronger signal available without a verifier agent — see the package doc's "prefer pure\-Go verification where mechanical; a Ralph verifier only for judgment criteria" note. A judgment verifier is not implemented in this phase\).
 
@@ -102,7 +102,7 @@ type Acceptance struct {
 ```
 
 <a name="AcceptanceChecker"></a>
-## type [AcceptanceChecker](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/orch/verify.go#L57>)
+## type [AcceptanceChecker](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/orch/verify.go#L91>)
 
 AcceptanceChecker re\-runs a task's acceptance criteria in pure Go and reports whether it passes. dir is the project working directory the check should run in.
 
@@ -292,7 +292,7 @@ func (o *Orchestrator) PlanProgress(ctx context.Context, planID string) (Progres
 PlanProgress computes Progress for planID by parsing its stored markdown and comparing the full step\-id universe \(plan.Plan.StepIDs\) against the store's done\-set \(the same done\-set DispatchNext feeds into plan.DecomposeRefs\).
 
 <a name="Orchestrator.VerifyAndComplete"></a>
-### func \(\*Orchestrator\) [VerifyAndComplete](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/orch/verify.go#L129>)
+### func \(\*Orchestrator\) [VerifyAndComplete](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/orch/verify.go#L163>)
 
 ```go
 func (o *Orchestrator) VerifyAndComplete(ctx context.Context, planID, taskID string, ev a2a.Evidence) (done bool, err error)

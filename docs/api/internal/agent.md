@@ -15,6 +15,7 @@ Package agent runs a single AI\-agent CLI subprocess under Ralph's own pty, so R
 
 ## Index
 
+- [Variables](<#variables>)
 - [func Watch\(ctx context.Context, a \*Agent, cfg WatchdogConfig\) \<\-chan Signal](<#Watch>)
 - [type Agent](<#Agent>)
   - [func Start\(ctx context.Context, opts Options\) \(\*Agent, error\)](<#Start>)
@@ -30,6 +31,14 @@ Package agent runs a single AI\-agent CLI subprocess under Ralph's own pty, so R
 - [type WatchdogConfig](<#WatchdogConfig>)
 
 
+## Variables
+
+<a name="ErrPTYUnsupported"></a>ErrPTYUnsupported is returned by Start on platforms where creack/pty cannot allocate a pseudo\-terminal — in practice, native Windows, where pty.Start returns pty.ErrUnsupported because there is no ConPTY\-backed implementation. Ralph's control model requires owning the agent's pty, so on Windows operators run Ralph under WSL. Callers can match this with errors.Is to distinguish "this host can't host agents" from a transient spawn failure.
+
+```go
+var ErrPTYUnsupported = fmt.Errorf("agent: pty allocation is unsupported on %s; run radioactive-ralph under WSL on Windows", runtime.GOOS)
+```
+
 <a name="Watch"></a>
 ## func [Watch](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/agent/watchdog.go#L36>)
 
@@ -40,7 +49,7 @@ func Watch(ctx context.Context, a *Agent, cfg WatchdogConfig) <-chan Signal
 Watch observes an agent and emits Signals. It NEVER blocks waiting on the agent: a prompt pattern or a stall is surfaced immediately so the caller can kill\-and\-reclaim. The channel closes when the agent exits.
 
 <a name="Agent"></a>
-## type [Agent](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/agent/agent.go#L26-L36>)
+## type [Agent](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/agent/agent.go#L38-L48>)
 
 Agent is a pty\-owned agent subprocess.
 
@@ -51,7 +60,7 @@ type Agent struct {
 ```
 
 <a name="Start"></a>
-### func [Start](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/agent/agent.go#L39>)
+### func [Start](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/agent/agent.go#L51>)
 
 ```go
 func Start(ctx context.Context, opts Options) (*Agent, error)
@@ -60,7 +69,7 @@ func Start(ctx context.Context, opts Options) (*Agent, error)
 Start launches opts.Command under a pty and begins streaming its output.
 
 <a name="Agent.Done"></a>
-### func \(\*Agent\) [Done](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/agent/agent.go#L110>)
+### func \(\*Agent\) [Done](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/agent/agent.go#L125>)
 
 ```go
 func (a *Agent) Done() <-chan struct{}
@@ -69,7 +78,7 @@ func (a *Agent) Done() <-chan struct{}
 Done is closed when the process exits.
 
 <a name="Agent.Kill"></a>
-### func \(\*Agent\) [Kill](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/agent/agent.go#L116>)
+### func \(\*Agent\) [Kill](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/agent/agent.go#L131>)
 
 ```go
 func (a *Agent) Kill() error
@@ -78,7 +87,7 @@ func (a *Agent) Kill() error
 Kill terminates the process immediately and releases the pty. Killing an agent that already exited on its own is a no\-op success — a normal shutdown that races an agent finishing its task must not surface a spurious "already closed" error.
 
 <a name="Agent.Output"></a>
-### func \(\*Agent\) [Output](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/agent/agent.go#L96>)
+### func \(\*Agent\) [Output](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/agent/agent.go#L111>)
 
 ```go
 func (a *Agent) Output() <-chan []byte
@@ -87,7 +96,7 @@ func (a *Agent) Output() <-chan []byte
 Output is the line\-oriented output stream; closed when the process exits.
 
 <a name="Agent.PID"></a>
-### func \(\*Agent\) [PID](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/agent/agent.go#L132>)
+### func \(\*Agent\) [PID](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/agent/agent.go#L147>)
 
 ```go
 func (a *Agent) PID() int
@@ -96,7 +105,7 @@ func (a *Agent) PID() int
 PID returns the subprocess PID \(0 before start / after release\).
 
 <a name="Agent.Wait"></a>
-### func \(\*Agent\) [Wait](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/agent/agent.go#L129>)
+### func \(\*Agent\) [Wait](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/agent/agent.go#L144>)
 
 ```go
 func (a *Agent) Wait() error
@@ -105,7 +114,7 @@ func (a *Agent) Wait() error
 Wait blocks until the process exits.
 
 <a name="Agent.WriteInput"></a>
-### func \(\*Agent\) [WriteInput](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/agent/agent.go#L104>)
+### func \(\*Agent\) [WriteInput](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/agent/agent.go#L119>)
 
 ```go
 func (a *Agent) WriteInput(b []byte) error
@@ -114,7 +123,7 @@ func (a *Agent) WriteInput(b []byte) error
 WriteInput writes raw bytes to the agent's pty stdin. Per spec §1, agents run non\-interactively and need little/no input; this exists for the providers that drive a CLI's stdin\-based protocol \(e.g. \`claude \-p \-\-input\-format stream\-json\`, which reads one JSON\-line user message per turn\) rather than passing the whole prompt as an argv/file. Direct Write\(\) to the ptmx, per spec §2.
 
 <a name="Options"></a>
-## type [Options](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/agent/agent.go#L17-L23>)
+## type [Options](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/agent/agent.go#L29-L35>)
 
 Options configures one agent subprocess.
 

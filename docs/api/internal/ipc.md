@@ -104,13 +104,15 @@ func NewServer(opts ServerOptions) (*Server, error)
 NewServer constructs a Server. It does NOT bind the socket — call Start to begin accepting connections.
 
 <a name="ServiceEndpoint"></a>
-## func [ServiceEndpoint](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/paths.go#L13>)
+## func [ServiceEndpoint](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/paths.go#L31>)
 
 ```go
 func ServiceEndpoint(sessionsDir string) (endpoint, heartbeat string)
 ```
 
 ServiceEndpoint returns the local control\-plane endpoint plus its heartbeat file for one repo workspace.
+
+On POSIX the endpoint is normally sessionsDir/service.sock. But a deeply nested sessionsDir — a long XDG/App Support path, a deep RALPH\_STATE\_DIR, or a macOS /var/folders/... temp root under test — can push that path past the kernel's sun\_path limit, so bind\(\) fails with EINVAL. When that would happen we fall back to a short, collision\-resistant socket path under the system temp dir keyed by a hash of sessionsDir. The heartbeat file always stays in sessionsDir \(it is a plain file, not a socket, so it has no path limit\) which keeps discovery/liveness colocated with the workspace.
 
 <a name="SocketAlive"></a>
 ## func [SocketAlive](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/server.go#L305>)
