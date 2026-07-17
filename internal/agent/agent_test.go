@@ -143,3 +143,53 @@ func TestKillUnblocksParkedReadLoop(t *testing.T) {
 		t.Fatal("readLoop did not exit within 3s of Kill — blocking send leaked the reader")
 	}
 }
+
+// TestDisableEchoSuppressesStdinEcho is the regression for the second-pass
+// audit's high finding: with DisableEcho set, a line written to the agent's
+// stdin must NOT be reflected back on Output() — otherwise the watchdog
+// pattern-matches the operator's own prompt text and kills a valid turn.
+func TestDisableEchoSuppressesStdinEcho(t *testing.T) {
+	// `cat` echoes stdin to stdout at the APPLICATION level, so to isolate
+	// PTY-line-discipline echo we use a shell that reads a line and discards
+	// it, producing a sentinel on stdout instead. If pty echo were on, the
+	// input line would also appear on Output(); with it off, only the
+	// sentinel appears.
+	a, err := Start(context.Background(), Options{
+		Command:     "sh",
+		Args:        []string{"-c", "read -r line; printf 'READ_DONE\\n'"},
+		DisableEcho: true,
+	})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer func() { _ = a.Kill() }()
+
+	const marker = "do-you-want-to-approve-this"
+	if err := a.WriteInput([]byte(marker + "\n")); err != nil {
+		t.Fatalf("WriteInput: %v", err)
+	}
+
+	var got strings.Builder
+	deadline := time.After(3 * time.Second)
+	for {
+		select {
+		case line, ok := <-a.Output():
+			if !ok {
+				goto done
+			}
+			got.WriteString(string(line))
+			if strings.Contains(got.String(), "READ_DONE") {
+				goto done
+			}
+		case <-deadline:
+			goto done
+		}
+	}
+done:
+	if strings.Contains(got.String(), marker) {
+		t.Errorf("stdin was echoed onto Output() despite DisableEcho; output=%q", got.String())
+	}
+	if !strings.Contains(got.String(), "READ_DONE") {
+		t.Errorf("expected READ_DONE sentinel on output, got %q", got.String())
+	}
+}

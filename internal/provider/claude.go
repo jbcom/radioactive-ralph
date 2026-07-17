@@ -71,6 +71,10 @@ func (ClaudeRunner) Run(ctx context.Context, binding Binding, req Request) (Resu
 		Args:       args,
 		Dir:        req.WorkingDir,
 		ResultPath: resultPath,
+		// claude is driven over stdin (stream-json). Disable pty echo so our
+		// own prompt text isn't reflected back and pattern-matched by the
+		// watchdog as an interactive prompt (which would kill the turn).
+		DisableEcho: true,
 	}
 	a, err := agent.Start(ctx, opts)
 	if err != nil {

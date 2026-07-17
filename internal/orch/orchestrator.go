@@ -15,6 +15,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/jbcom/radioactive-ralph/internal/a2a"
@@ -64,6 +65,10 @@ type Orchestrator struct {
 	// dispatchWorker). Lazily created on first use since tasks.
 	// claimed_by_session has a foreign key into sessions(id): the
 	// orchestrator needs a real row to reference, not a bare string.
+	// orchSessionMu guards the lazy init: DispatchNext is driven concurrently
+	// from the supervisor's periodic tick AND its IPC HandleEnqueue handler,
+	// so two goroutines could otherwise race to create the session row.
+	orchSessionMu sync.Mutex
 	orchSessionID string
 }
 
@@ -321,6 +326,9 @@ func (o *Orchestrator) DispatchNext(ctx context.Context, projectID, planID strin
 
 		ds, err := o.claimStepTask(ctx, planID, parsedPlan, refs[i], readySteps[i], sessionID, workerID)
 		if err != nil {
+			// Release the worker row we just spawned — otherwise it leaks in
+			// 'running' with no task (CreateWorker hardcodes status='running').
+			_ = o.store.ClearWorkerTask(ctx, workerID, "crashed")
 			return dispatched, err
 		}
 		if ds == nil {
@@ -379,6 +387,8 @@ func (o *Orchestrator) doneSet(ctx context.Context, planID string) (map[string]b
 // sentinel string like "orch" cannot satisfy it — the orchestrator needs a
 // real, durable session row to reference.
 func (o *Orchestrator) ensureOrchSession(ctx context.Context) (string, error) {
+	o.orchSessionMu.Lock()
+	defer o.orchSessionMu.Unlock()
 	if o.orchSessionID != "" {
 		return o.orchSessionID, nil
 	}
@@ -545,18 +555,29 @@ func (o *Orchestrator) dispatchWorker(ctx context.Context, projectID, projectDir
 		return fmt.Errorf("orch: resolve runner for %q: %w", binding.Name, err)
 	}
 
-	if o.watchdogConfig.StallTimeout > 0 {
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, o.watchdogConfig.StallTimeout)
-		defer cancel()
-	}
-
+	// The stall timeout bounds ONLY the agent turn (runner.Run), not the
+	// post-run store writes and verification below. Threading the shrinking
+	// timeout ctx into VerifyAndComplete made a near-timeout run's acceptance
+	// re-check (which re-runs real shell commands) fail spuriously against an
+	// already-expired deadline. Use runCtx for Run; keep the parent ctx after.
 	req := provider.Request{
 		WorkingDir: projectDir,
 		UserPrompt: scoped.prompt(),
 	}
 
-	result, runErr := runner.Run(ctx, binding, req)
+	// The stall timeout bounds ONLY the agent turn: cancel it the instant Run
+	// returns (not at function end) so the timeout resources aren't held
+	// through the slower post-run store writes + VerifyAndComplete, which use
+	// the parent ctx.
+	result, runErr := func() (provider.Result, error) {
+		runCtx := ctx
+		if o.watchdogConfig.StallTimeout > 0 {
+			var cancel context.CancelFunc
+			runCtx, cancel = context.WithTimeout(ctx, o.watchdogConfig.StallTimeout)
+			defer cancel()
+		}
+		return runner.Run(runCtx, binding, req)
+	}()
 
 	// Spend is real the moment tokens were billed, independent of whether
 	// the work is ultimately accepted by VerifyAndComplete — record it
@@ -686,18 +707,21 @@ func (o *Orchestrator) dispatchFanoutGroup(ctx context.Context, projectID, proje
 		return 0, fmt.Errorf("orch: resolve runner for %q: %w", binding.Name, err)
 	}
 
-	runCtx := ctx
-	if o.watchdogConfig.StallTimeout > 0 {
-		var cancel context.CancelFunc
-		runCtx, cancel = context.WithTimeout(ctx, o.watchdogConfig.StallTimeout)
-		defer cancel()
-	}
-
 	req := provider.Request{
 		WorkingDir: projectDir,
 		UserPrompt: scoped.prompt(),
 	}
-	result, runErr := runner.Run(runCtx, binding, req)
+	// Stall timeout bounds ONLY the fan-out turn; cancel it the instant Run
+	// returns so it isn't held through the per-task verification below.
+	result, runErr := func() (provider.Result, error) {
+		runCtx := ctx
+		if o.watchdogConfig.StallTimeout > 0 {
+			var cancel context.CancelFunc
+			runCtx, cancel = context.WithTimeout(ctx, o.watchdogConfig.StallTimeout)
+			defer cancel()
+		}
+		return runner.Run(runCtx, binding, req)
+	}()
 
 	// Spend is real the moment tokens were billed, independent of
 	// per-task verification outcome — record it once for the group's one

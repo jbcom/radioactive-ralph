@@ -79,9 +79,12 @@ func (s *Store) CreateProject(ctx context.Context, displayName string, fps []Fin
 }
 
 // AddProjectIdentifiers accumulates additional fingerprints onto an
-// existing project. Idempotent: fingerprints already present (for this or
-// any other project) are silently skipped via INSERT OR IGNORE, since
-// (kind, value) is the primary key of project_identifiers.
+// existing project. Idempotent and safe to call repeatedly: re-adding a
+// fingerprint THIS project already owns refreshes its added_at (so
+// most-recent-wins ordering stays correct after a move); a fingerprint owned
+// by a DIFFERENT project is left untouched (never stolen), since (kind,
+// value) is the primary key and the UPSERT is guarded on the owning
+// project_id — see insertIdentifiers.
 func (s *Store) AddProjectIdentifiers(ctx context.Context, projectID string, fps []Fingerprint) error {
 	if projectID == "" {
 		return fmt.Errorf("store: projectID required")
@@ -113,19 +116,23 @@ func insertIdentifiers(ctx context.Context, tx *sql.Tx, projectID string, fps []
 		if fp.Kind == "" || fp.Value == "" {
 			continue
 		}
-		// UPSERT rather than INSERT OR IGNORE: re-adding an existing
-		// fingerprint must REFRESH added_at (and re-point it at this project),
-		// so a project moved A -> B -> A has its abs_path A recognized as the
-		// most recent again. INSERT OR IGNORE left the stale original
-		// timestamp, breaking ProjectAbsPath's most-recent-wins ordering.
-		// The (kind, value) primary key still guarantees a fingerprint maps
-		// to at most one project.
+		// UPSERT rather than INSERT OR IGNORE so re-adding a fingerprint that
+		// ALREADY belongs to THIS project refreshes its added_at — needed so
+		// a project moved A -> B -> A has abs_path A recognized as most recent
+		// again (INSERT OR IGNORE left the stale timestamp, breaking
+		// ProjectAbsPath ordering). The `WHERE project_identifiers.project_id
+		// = excluded.project_id` guard is critical: WITHOUT it the UPSERT
+		// would silently STEAL a fingerprint already owned by a DIFFERENT
+		// project (re-pointing its project_id), corrupting that project's
+		// identity. With the guard, a conflicting row owned by another project
+		// is left untouched (the UPDATE matches nothing) — same effective
+		// no-op as the old INSERT OR IGNORE for the cross-project case.
 		_, err := tx.ExecContext(ctx, `
 			INSERT INTO project_identifiers(project_id, kind, value, added_at)
 			VALUES (?, ?, ?, ?)
 			ON CONFLICT(kind, value) DO UPDATE SET
-				project_id = excluded.project_id,
-				added_at   = excluded.added_at
+				added_at = excluded.added_at
+			WHERE project_identifiers.project_id = excluded.project_id
 		`, projectID, fp.Kind, fp.Value, addedAt)
 		if err != nil {
 			return fmt.Errorf("store: insert identifier %s=%s: %w", fp.Kind, fp.Value, err)

@@ -68,6 +68,15 @@ type Supervisor struct {
 	startedAt time.Time
 	log       func(msg string, args ...any)
 
+	// dispatchMu serializes dispatchActivePlans so the periodic tick (Run's
+	// goroutine) and HandleEnqueue (an IPC per-connection handler goroutine)
+	// never drive the shared orchestrator's DispatchNext concurrently.
+	dispatchMu sync.Mutex
+	// dispatchCursor rotates the starting offset across dispatch passes so
+	// active plans ranked beyond maxEnqueueDispatchPlans aren't starved by a
+	// stable ordering that always dispatches the same head of the list.
+	dispatchCursor int
+
 	stopCh   chan struct{}
 	stopOnce *sync.Once
 }
@@ -206,21 +215,41 @@ func (s *Supervisor) tick(ctx context.Context) {
 // surface or swallow it). A per-plan DispatchNext failure, by contrast, is
 // logged and skipped: one bad plan must not stop the others from advancing.
 func (s *Supervisor) dispatchActivePlans(ctx context.Context) (int, error) {
+	// Serialize: the tick and HandleEnqueue must not run DispatchNext against
+	// the shared orchestrator concurrently.
+	s.dispatchMu.Lock()
+	defer s.dispatchMu.Unlock()
+
 	plans, err := s.store.ListPlans(ctx, "", nil)
 	if err != nil {
 		return 0, fmt.Errorf("supervisor: list active plans: %w", err)
 	}
 	total := 0
-	for i, p := range plans {
-		if i >= maxEnqueueDispatchPlans {
-			break
-		}
+	// Dispatch at most maxEnqueueDispatchPlans plans per pass, but ROTATE the
+	// starting offset each pass so that when more than that many plans are
+	// active, plans ranked beyond the cap still get their turn instead of
+	// being permanently starved by a stable ordering.
+	limit := len(plans)
+	if limit > maxEnqueueDispatchPlans {
+		limit = maxEnqueueDispatchPlans
+	}
+	start := 0
+	if len(plans) > 0 {
+		start = s.dispatchCursor % len(plans)
+	}
+	for i := 0; i < limit; i++ {
+		p := plans[(start+i)%len(plans)]
 		n, err := s.orch.DispatchNext(ctx, p.ProjectID, p.ID)
 		if err != nil {
 			s.log("dispatch failed", "plan", p.ID, "err", err)
 			continue
 		}
 		total += n
+	}
+	// Advance the cursor past the window we just covered so the next pass
+	// starts where this one left off.
+	if len(plans) > 0 {
+		s.dispatchCursor = (start + limit) % len(plans)
 	}
 	return total, nil
 }

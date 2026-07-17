@@ -423,3 +423,38 @@ func TestProjectAbsPathMoveBackRefreshesTimestamp(t *testing.T) {
 		t.Errorf("after move back to A, abs path = %q, want /path/A (re-add must refresh added_at)", p)
 	}
 }
+
+// TestAddProjectIdentifiersDoesNotStealFromOtherProject is the regression for
+// the second-pass audit finding: the UPSERT must NOT re-point a fingerprint
+// already owned by a DIFFERENT project — that would corrupt the other
+// project's identity.
+func TestAddProjectIdentifiersDoesNotStealFromOtherProject(t *testing.T) {
+	ctx := context.Background()
+	s := openTestStore(t)
+
+	shared := Fingerprint{Kind: FingerprintKindGitRemote, Value: "git@github.com:me/shared.git"}
+	owner, err := s.CreateProject(ctx, "Owner", []Fingerprint{shared})
+	if err != nil {
+		t.Fatalf("CreateProject owner: %v", err)
+	}
+	other, err := s.CreateProject(ctx, "Other", []Fingerprint{
+		{Kind: FingerprintKindAbsPath, Value: "/other"},
+	})
+	if err != nil {
+		t.Fatalf("CreateProject other: %v", err)
+	}
+
+	// Other tries to add the fingerprint Owner already holds — must be a
+	// no-op, NOT a theft.
+	if err := s.AddProjectIdentifiers(ctx, other, []Fingerprint{shared}); err != nil {
+		t.Fatalf("AddProjectIdentifiers: %v", err)
+	}
+
+	gotID, found, err := s.ResolveProject(ctx, []Fingerprint{shared})
+	if err != nil || !found {
+		t.Fatalf("ResolveProject: found=%v err=%v", found, err)
+	}
+	if gotID != owner {
+		t.Errorf("shared fingerprint now resolves to %q, want the original owner %q (must not be stolen)", gotID, owner)
+	}
+}

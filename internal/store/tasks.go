@@ -393,12 +393,18 @@ func (s *Store) MarkDone(ctx context.Context, planID, taskID, sessionID string, 
 	}
 	defer func() { _ = tx.Rollback() }()
 
+	// Owner-guarded like MarkFailed: guard on the reporting session STILL
+	// owning the running task. Without `claimed_by_session = ?`, a completion
+	// from a session whose claim the reaper already reclaimed and reassigned
+	// to a new worker would mark the task done with the STALE session's
+	// evidence and clear the NEW owner's live claim — double execution plus a
+	// dropped completion, the exact race the failure-side guard closes.
 	res, err := tx.ExecContext(ctx, `
 		UPDATE tasks SET status = 'done',
 		                 claimed_by_session = NULL,
 		                 claimed_by_worker_id = NULL
-		WHERE plan_id = ? AND id = ? AND status = 'running'
-	`, planID, taskID)
+		WHERE plan_id = ? AND id = ? AND status = 'running' AND claimed_by_session = ?
+	`, planID, taskID, sessionID)
 	if err != nil {
 		return nil, fmt.Errorf("store: update: %w", err)
 	}
@@ -407,7 +413,11 @@ func (s *Store) MarkDone(ctx context.Context, planID, taskID, sessionID string, 
 		return nil, fmt.Errorf("store: rows affected: %w", err)
 	}
 	if n == 0 {
-		return nil, fmt.Errorf("store: task %q not in running state", taskID)
+		// Either the task isn't running or it's owned by a different session
+		// now (reclaimed + reassigned). Surface the same sentinel as
+		// MarkFailed so the caller can treat a stale completion as a benign
+		// no-op rather than a hard error.
+		return nil, ErrTaskNotOwnedRunning
 	}
 
 	if _, err := tx.ExecContext(ctx, `
@@ -445,7 +455,7 @@ func (s *Store) MarkFailed(ctx context.Context, planID, taskID, sessionID, reaso
 // while preserving structured payload details in the event log.
 //
 // Both UPDATEs are guarded by `status = 'running' AND claimed_by_session =
-// sessionID`, mirroring MarkDone/MarkBlocked's running-guard. Without the
+// sessionID`, the same owner guard MarkDone and MarkBlocked carry. Without the
 // owner guard a stale failure report from a worker whose claim the reaper
 // already reclaimed (and possibly reassigned to a new worker) would flip the
 // task back to pending / failed and clear the NEW owner's claim — double
@@ -564,13 +574,15 @@ func (s *Store) MarkBlocked(ctx context.Context, planID, taskID, sessionID strin
 	}
 	defer func() { _ = tx.Rollback() }()
 
+	// Owner-guarded like MarkDone/MarkFailed: a stale context-end report from
+	// a reclaimed+reassigned worker must not block the NEW owner's live task.
 	res, err := tx.ExecContext(ctx, `
 		UPDATE tasks
 		SET status = 'blocked',
 		    claimed_by_session = NULL,
 		    claimed_by_worker_id = NULL
-		WHERE plan_id = ? AND id = ? AND status = 'running'
-	`, planID, taskID)
+		WHERE plan_id = ? AND id = ? AND status = 'running' AND claimed_by_session = ?
+	`, planID, taskID, sessionID)
 	if err != nil {
 		return fmt.Errorf("store: block task: %w", err)
 	}
@@ -579,7 +591,7 @@ func (s *Store) MarkBlocked(ctx context.Context, planID, taskID, sessionID strin
 		return fmt.Errorf("store: block task rows affected: %w", err)
 	}
 	if n == 0 {
-		return fmt.Errorf("store: task %q not in running state", taskID)
+		return ErrTaskNotOwnedRunning
 	}
 
 	kind := "task.blocked"

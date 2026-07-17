@@ -358,10 +358,14 @@ func (m Model) drillIn() (tea.Model, tea.Cmd) {
 		return m, m.fetchCmd()
 
 	case levelMeso:
-		if m.cursor >= len(m.snap.tasks) {
+		// Select from the SAME grouped order the meso view renders and the
+		// cursor walks — not the raw m.snap.tasks order — so the highlighted
+		// row and the drilled-into task are always the same one.
+		flat := flattenGroupedTasks(m.snap.tasks)
+		if m.cursor >= len(flat) {
 			return m, nil
 		}
-		m.selectedTask = m.snap.tasks[m.cursor]
+		m.selectedTask = flat[m.cursor]
 		m.lvl = levelMicro
 		m.snap.live = nil
 		m.viewport = viewportState{}

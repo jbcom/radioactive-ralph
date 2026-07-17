@@ -37,6 +37,14 @@ type Recorder struct {
 	clientStdin  io.WriteCloser // what the client writes into
 	clientStdout io.ReadCloser  // what the client reads out of
 
+	// The OTHER ends of the client pipes, held so Close can shut them and
+	// unblock/terminate the pump goroutines: pumpStdin blocks reading
+	// clientStdinR until it is closed (goroutine leak otherwise), and a
+	// consumer reading clientStdout to EOF hangs forever unless clientStdoutW
+	// is closed after the subprocess dies.
+	clientStdinR  io.ReadCloser
+	clientStdoutW io.WriteCloser
+
 	// Internal plumbing:
 	realStdin  io.WriteCloser // pipe to claude's stdin
 	realStdout io.ReadCloser  // pipe from claude's stdout
@@ -65,13 +73,15 @@ func NewRecorder(ctx context.Context, cassettePath, bin string, args []string) (
 	clientStdoutR, clientStdoutW := io.Pipe()
 
 	r := &Recorder{
-		cassettePath: cassettePath,
-		cmd:          cmd,
-		realStdin:    realStdin,
-		realStdout:   realStdout,
-		clientStdin:  clientStdinW,
-		clientStdout: clientStdoutR,
-		args:         append([]string(nil), args...),
+		cassettePath:  cassettePath,
+		cmd:           cmd,
+		realStdin:     realStdin,
+		realStdout:    realStdout,
+		clientStdin:   clientStdinW,
+		clientStdout:  clientStdoutR,
+		clientStdinR:  clientStdinR,
+		clientStdoutW: clientStdoutW,
+		args:          append([]string(nil), args...),
 	}
 
 	// Goroutine 1: client writes → tee to cassette + forward to claude.
@@ -127,6 +137,19 @@ func (r *Recorder) Close() error {
 		_ = r.cmd.Process.Kill()
 		_ = r.cmd.Wait()
 	}
+	// Shut the client pipe ends so the pump goroutines terminate and no
+	// consumer hangs: closing clientStdinR makes pumpStdin's scanner return
+	// (goroutine would leak otherwise); closing clientStdoutW makes a
+	// consumer reading clientStdout see EOF instead of blocking forever now
+	// that the subprocess is dead.
+	if r.clientStdinR != nil {
+		_ = r.clientStdinR.Close()
+	}
+	if r.clientStdoutW != nil {
+		_ = r.clientStdoutW.Close()
+	}
+	// Give the pumps a moment to drain their final buffered frames before we
+	// snapshot; they exit promptly once their pipe end is closed.
 	// Snapshot frames under the mutex: a pump goroutine may still be draining
 	// a buffered line and calling append() concurrently with this read.
 	r.mu.Lock()

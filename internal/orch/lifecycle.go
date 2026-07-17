@@ -2,6 +2,7 @@ package orch
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -69,7 +70,8 @@ func (o *Orchestrator) HandleContextEnd(ctx context.Context, a *agent.Agent, pla
 		Reason:         "worker hit context end; killed for fresh re-dispatch",
 		Retryable:      true,
 		OperatorAction: "requeue",
-	}); err != nil {
+	}); err != nil && !errors.Is(err, store.ErrTaskNotOwnedRunning) {
+		// A reclaimed+reassigned task's stale context-end is a benign no-op.
 		return fmt.Errorf("orch: mark blocked on context end: %w", err)
 	}
 	return nil
