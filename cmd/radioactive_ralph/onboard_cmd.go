@@ -86,19 +86,31 @@ func buildOnboardPlan(stateRoot string) (onboard.Plan, error) {
 	return plan, nil
 }
 
-// installSupervisorService installs (and, where the platform does so, starts)
-// the per-user supervisor service, pointing it at this executable and the
-// resolved state root.
+// installSupervisorService installs the per-user supervisor service (pointing
+// it at this executable + the resolved state root) AND starts it, so the
+// supervisor actually comes up. If the unit is already installed (its process
+// merely stopped), it skips the write and just (re)starts it — idempotent.
 func installSupervisorService(stateRoot string) error {
 	exe, err := os.Executable()
 	if err != nil {
 		return fmt.Errorf("resolve own executable: %w", err)
 	}
-	_, err = service.Install(service.InstallOptions{
+	opts := service.InstallOptions{
 		RalphBin: exe,
 		ExtraEnv: map[string]string{"RALPH_STATE_DIR": stateRoot},
-	})
-	return err
+	}
+
+	// Install the unit unless it's already present (Inspect reports the
+	// definition on disk). Writing over an existing unit is harmless, but
+	// skipping it keeps the flow honest about "already installed, just start".
+	if status, ierr := service.Inspect(opts); ierr != nil || !status.Installed {
+		if _, err := service.Install(opts); err != nil {
+			return err
+		}
+	}
+	// Install only writes the definition; Start loads/starts it so the
+	// supervisor process actually comes up (see service.Start).
+	return service.Start(opts)
 }
 
 // waitSupervisorReachable polls supervisor.Find until one answers, the

@@ -87,7 +87,10 @@ func Run(d Deps) (Outcome, error) {
 	}
 	_, _ = fmt.Fprintln(d.Out)
 
-	install, err := d.Prompt.Confirm("Install the background service and start it now?", true)
+	// defaultYes=false: installing a persistent background service is an
+	// outward-facing action, so per the spec's non-negotiable consent rule
+	// bare Enter must NOT approve it — the user has to type an explicit y.
+	install, err := d.Prompt.Confirm("Install the background service and start it now?", false)
 	if err != nil {
 		if errors.Is(err, ErrQuit) {
 			return printManual(d), nil

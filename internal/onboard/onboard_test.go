@@ -175,3 +175,39 @@ func TestStdinPrompter(t *testing.T) {
 		}
 	}
 }
+
+// recordingPrompter captures the defaultYes it was asked with for each
+// question, so a test can assert the consent rule (install must not default
+// to yes).
+type recordingPrompter struct {
+	defaults []bool
+	answers  []bool
+	i        int
+}
+
+func (r *recordingPrompter) Confirm(_ string, defaultYes bool) (bool, error) {
+	r.defaults = append(r.defaults, defaultYes)
+	if r.i >= len(r.answers) {
+		return false, nil
+	}
+	a := r.answers[r.i]
+	r.i++
+	return a, nil
+}
+
+// TestRun_InstallPromptDefaultsToNo is the consent-rule regression: bare Enter
+// must NOT approve installing a persistent background service. The FIRST
+// prompt (install) must be asked with defaultYes=false.
+func TestRun_InstallPromptDefaultsToNo(t *testing.T) {
+	rp := &recordingPrompter{answers: []bool{false, false}} // decline both
+	d, _ := baseDeps(rp)
+	if _, err := Run(d); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(rp.defaults) == 0 {
+		t.Fatal("no prompts were issued")
+	}
+	if rp.defaults[0] {
+		t.Error("the service-install prompt defaulted to YES; consent rule requires an explicit y (defaultYes=false)")
+	}
+}
