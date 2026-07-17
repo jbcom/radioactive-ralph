@@ -15,6 +15,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/jbcom/radioactive-ralph/internal/a2a"
@@ -64,6 +65,10 @@ type Orchestrator struct {
 	// dispatchWorker). Lazily created on first use since tasks.
 	// claimed_by_session has a foreign key into sessions(id): the
 	// orchestrator needs a real row to reference, not a bare string.
+	// orchSessionMu guards the lazy init: DispatchNext is driven concurrently
+	// from the supervisor's periodic tick AND its IPC HandleEnqueue handler,
+	// so two goroutines could otherwise race to create the session row.
+	orchSessionMu sync.Mutex
 	orchSessionID string
 }
 
@@ -379,6 +384,8 @@ func (o *Orchestrator) doneSet(ctx context.Context, planID string) (map[string]b
 // sentinel string like "orch" cannot satisfy it — the orchestrator needs a
 // real, durable session row to reference.
 func (o *Orchestrator) ensureOrchSession(ctx context.Context) (string, error) {
+	o.orchSessionMu.Lock()
+	defer o.orchSessionMu.Unlock()
 	if o.orchSessionID != "" {
 		return o.orchSessionID, nil
 	}
@@ -545,9 +552,15 @@ func (o *Orchestrator) dispatchWorker(ctx context.Context, projectID, projectDir
 		return fmt.Errorf("orch: resolve runner for %q: %w", binding.Name, err)
 	}
 
+	// The stall timeout bounds ONLY the agent turn (runner.Run), not the
+	// post-run store writes and verification below. Threading the shrinking
+	// timeout ctx into VerifyAndComplete made a near-timeout run's acceptance
+	// re-check (which re-runs real shell commands) fail spuriously against an
+	// already-expired deadline. Use runCtx for Run; keep the parent ctx after.
+	runCtx := ctx
 	if o.watchdogConfig.StallTimeout > 0 {
 		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, o.watchdogConfig.StallTimeout)
+		runCtx, cancel = context.WithTimeout(ctx, o.watchdogConfig.StallTimeout)
 		defer cancel()
 	}
 
@@ -556,7 +569,7 @@ func (o *Orchestrator) dispatchWorker(ctx context.Context, projectID, projectDir
 		UserPrompt: scoped.prompt(),
 	}
 
-	result, runErr := runner.Run(ctx, binding, req)
+	result, runErr := runner.Run(runCtx, binding, req)
 
 	// Spend is real the moment tokens were billed, independent of whether
 	// the work is ultimately accepted by VerifyAndComplete — record it

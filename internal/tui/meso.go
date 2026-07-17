@@ -57,6 +57,18 @@ type taskGroup struct {
 	tasks []store.Task
 }
 
+// flattenGroupedTasks returns tasks in the SAME order the meso view renders
+// them (ungrouped first, then each parallel group in first-seen order). The
+// meso cursor indexes this order, so drillIn MUST select from it too — using
+// the raw m.snap.tasks order would highlight one task but drill into another.
+func flattenGroupedTasks(tasks []store.Task) []store.Task {
+	out := make([]store.Task, 0, len(tasks))
+	for _, g := range groupTasks(tasks) {
+		out = append(out, g.tasks...)
+	}
+	return out
+}
+
 // groupTasks buckets tasks by parallel_group for meso rendering. Tasks
 // without a parallel_group render in document order under no label.
 func groupTasks(tasks []store.Task) []taskGroup {
