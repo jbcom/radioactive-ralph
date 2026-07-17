@@ -3,10 +3,12 @@ package supervisor
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/jbcom/radioactive-ralph/internal/ipc"
 	"github.com/jbcom/radioactive-ralph/internal/orch"
 	"github.com/jbcom/radioactive-ralph/internal/provider"
 	"github.com/jbcom/radioactive-ralph/internal/store"
@@ -125,25 +127,169 @@ func TestHandleReloadConfigIsANoOp(t *testing.T) {
 	}
 }
 
-// TestHandleAttachBlocksUntilContextCancelled confirms HandleAttach's
-// documented behavior: no events yet, but it blocks (rather than
-// returning immediately) until ctx is cancelled, and then returns nil
-// (the durable event/attach surface is a later phase — a connected
-// client sees a quiet, cleanly-ended stream, not an error).
-func TestHandleAttachBlocksUntilContextCancelled(t *testing.T) {
+// TestHandleAttachRequiresProjectID confirms an attach with no project scope is
+// rejected rather than streaming another project's (or every project's) events.
+func TestHandleAttachRequiresProjectID(t *testing.T) {
 	sup := newTestSupervisor(t, clockwork.NewRealClock())
-	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	err := sup.HandleAttach(context.Background(), ipc.AttachArgs{}, func(_ json.RawMessage) error { return nil })
+	if err == nil {
+		t.Error("HandleAttach with empty ProjectID: want error, got nil")
+	}
+}
+
+// TestHandleAttachBlocksOnEmptyProjectUntilCancelled confirms that with no
+// matching events the stream stays open (a quiet, still-live feed) and ends
+// cleanly when ctx is cancelled — the client never sees an error or a premature
+// close.
+func TestHandleAttachBlocksOnEmptyProjectUntilCancelled(t *testing.T) {
+	ctx := context.Background()
+	sup := newTestSupervisor(t, clockwork.NewRealClock())
+	projectID, err := sup.store.CreateProject(ctx, "attach-empty", []store.Fingerprint{
+		{Kind: store.FingerprintKindAbsPath, Value: t.TempDir()},
+	})
+	if err != nil {
+		t.Fatalf("CreateProject: %v", err)
+	}
+
+	runCtx, cancel := context.WithTimeout(ctx, 300*time.Millisecond)
 	defer cancel()
 
 	start := time.Now()
-	err := sup.HandleAttach(ctx, func(_ json.RawMessage) error { return nil })
+	err = sup.HandleAttach(runCtx, ipc.AttachArgs{ProjectID: projectID}, func(_ json.RawMessage) error {
+		t.Error("no events exist; emit must not be called")
+		return nil
+	})
 	elapsed := time.Since(start)
 
 	if err != nil {
 		t.Errorf("HandleAttach: want nil once ctx is done, got %v", err)
 	}
-	if elapsed < 90*time.Millisecond {
-		t.Errorf("HandleAttach returned after %s, want it to block until ctx was done (~100ms)", elapsed)
+	if elapsed < 250*time.Millisecond {
+		t.Errorf("HandleAttach returned after %s, want it to block until ctx was done (~300ms)", elapsed)
+	}
+}
+
+// TestHandleAttachEmitsNewEvents confirms the tail delivers events that land
+// AFTER the attach begins, in id order, and that AfterID=0 also delivers a
+// pre-existing event (the client owns the cursor; 0 means from the beginning).
+func TestHandleAttachEmitsNewEvents(t *testing.T) {
+	ctx := context.Background()
+	sup := newTestSupervisor(t, clockwork.NewRealClock())
+	projectID, err := sup.store.CreateProject(ctx, "attach-emits", []store.Fingerprint{
+		{Kind: store.FingerprintKindAbsPath, Value: t.TempDir()},
+	})
+	if err != nil {
+		t.Fatalf("CreateProject: %v", err)
+	}
+	// One event exists before the attach; with AfterID=0 it must be delivered.
+	if err := sup.store.Emit(ctx, store.EmitOpts{ProjectID: projectID, Kind: "project.created"}); err != nil {
+		t.Fatalf("Emit pre-existing: %v", err)
+	}
+
+	runCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	got := make(chan ipc.AttachEvent, 8)
+	done := make(chan error, 1)
+	go func() {
+		done <- sup.HandleAttach(runCtx, ipc.AttachArgs{ProjectID: projectID}, func(raw json.RawMessage) error {
+			var ev ipc.AttachEvent
+			if err := json.Unmarshal(raw, &ev); err != nil {
+				return err
+			}
+			got <- ev
+			return nil
+		})
+	}()
+
+	// First: the pre-existing event.
+	select {
+	case ev := <-got:
+		if ev.Kind != "project.created" {
+			t.Errorf("first event Kind = %q, want project.created", ev.Kind)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for the pre-existing event")
+	}
+
+	// Now emit a new one; the live tail must pick it up.
+	if err := sup.store.Emit(ctx, store.EmitOpts{ProjectID: projectID, Kind: "project.touched"}); err != nil {
+		t.Fatalf("Emit new: %v", err)
+	}
+	select {
+	case ev := <-got:
+		if ev.Kind != "project.touched" {
+			t.Errorf("second event Kind = %q, want project.touched", ev.Kind)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for the newly-emitted event")
+	}
+
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Errorf("HandleAttach returned %v, want nil on ctx cancel", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("HandleAttach did not return after ctx cancel")
+	}
+}
+
+// TestHandleAttachPermanentStoreErrorEndsStream confirms a permanent store
+// failure (here: a closed DB) ends the stream with an error rather than
+// spinning forever, logging every tick, and leaving the client attached to a
+// permanently stale feed.
+func TestHandleAttachPermanentStoreErrorEndsStream(t *testing.T) {
+	ctx := context.Background()
+	sup := newTestSupervisor(t, clockwork.NewRealClock())
+	projectID, err := sup.store.CreateProject(ctx, "attach-permerr", []store.Fingerprint{
+		{Kind: store.FingerprintKindAbsPath, Value: t.TempDir()},
+	})
+	if err != nil {
+		t.Fatalf("CreateProject: %v", err)
+	}
+	// Close the store so EventsAfter returns a permanent (connection-done) error.
+	if err := sup.store.Close(); err != nil {
+		t.Fatalf("Close store: %v", err)
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		done <- sup.HandleAttach(ctx, ipc.AttachArgs{ProjectID: projectID}, func(_ json.RawMessage) error { return nil })
+	}()
+
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Error("HandleAttach: want an error when the store is permanently broken, got nil")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("HandleAttach spun instead of ending on a permanent store error")
+	}
+}
+
+// TestHandleAttachEmitStopEndsStream confirms that when emit reports the client
+// is gone (returns an error), the tail ends cleanly with a nil error — the
+// documented emit contract the IPC server relies on.
+func TestHandleAttachEmitStopEndsStream(t *testing.T) {
+	ctx := context.Background()
+	sup := newTestSupervisor(t, clockwork.NewRealClock())
+	projectID, err := sup.store.CreateProject(ctx, "attach-emitstop", []store.Fingerprint{
+		{Kind: store.FingerprintKindAbsPath, Value: t.TempDir()},
+	})
+	if err != nil {
+		t.Fatalf("CreateProject: %v", err)
+	}
+	if err := sup.store.Emit(ctx, store.EmitOpts{ProjectID: projectID, Kind: "project.created"}); err != nil {
+		t.Fatalf("Emit: %v", err)
+	}
+
+	err = sup.HandleAttach(ctx, ipc.AttachArgs{ProjectID: projectID}, func(_ json.RawMessage) error {
+		return fmt.Errorf("client gone")
+	})
+	if err != nil {
+		t.Errorf("HandleAttach: want nil when emit ends the stream, got %v", err)
 	}
 }
 

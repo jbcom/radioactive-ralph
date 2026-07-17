@@ -35,8 +35,11 @@ For commands that stream \(attach\), the server sends N \>= 0 frames of \{"event
 - [func NewServer\(opts ServerOptions\) \(\*Server, error\)](<#NewServer>)
 - [func ServiceEndpoint\(sessionsDir string\) \(endpoint, heartbeat string\)](<#ServiceEndpoint>)
 - [func SocketAlive\(heartbeatPath string, maxAge time.Duration\) bool](<#SocketAlive>)
+- [type AttachArgs](<#AttachArgs>)
+- [type AttachEvent](<#AttachEvent>)
 - [type Client](<#Client>)
-  - [func \(c \*Client\) Attach\(ctx context.Context, fn func\(json.RawMessage\) error\) error](<#Client.Attach>)
+  - [func \(c \*Client\) Attach\(ctx context.Context, args AttachArgs, fn func\(json.RawMessage\) error\) error](<#Client.Attach>)
+  - [func \(c \*Client\) AttachEvents\(ctx context.Context, args AttachArgs, fn func\(AttachEvent\) error\) error](<#Client.AttachEvents>)
   - [func \(c \*Client\) Close\(\) error](<#Client.Close>)
   - [func \(c \*Client\) Enqueue\(ctx context.Context, args EnqueueArgs\) \(EnqueueReply, error\)](<#Client.Enqueue>)
   - [func \(c \*Client\) NegotiatedVersion\(ctx context.Context\) \(int, error\)](<#Client.NegotiatedVersion>)
@@ -146,7 +149,7 @@ func IsCode(err error, code string) bool
 IsCode reports whether err carries the given error class. It matches any error implementing the Coded interface \(Code\(\) string\) — both the client's \*CodedError \(decoded from a wire Response.Code\) and a handler\-side coded error returned by a direct in\-process call.
 
 <a name="NewServer"></a>
-## func [NewServer](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/server.go#L105>)
+## func [NewServer](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/server.go#L141>)
 
 ```go
 func NewServer(opts ServerOptions) (*Server, error)
@@ -166,13 +169,43 @@ ServiceEndpoint returns the local control\-plane endpoint plus its heartbeat fil
 On POSIX the endpoint is normally sessionsDir/service.sock. But a deeply nested sessionsDir — a long XDG/App Support path, a deep RALPH\_STATE\_DIR, or a macOS /var/folders/... temp root under test — can push that path past the kernel's sun\_path limit, so bind\(\) fails with EINVAL. When that would happen we fall back to a short, collision\-resistant socket path under the system temp dir keyed by a hash of sessionsDir. The heartbeat file always stays in sessionsDir \(it is a plain file, not a socket, so it has no path limit\) which keeps discovery/liveness colocated with the workspace.
 
 <a name="SocketAlive"></a>
-## func [SocketAlive](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/server.go#L445>)
+## func [SocketAlive](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/server.go#L611>)
 
 ```go
 func SocketAlive(heartbeatPath string, maxAge time.Duration) bool
 ```
 
 SocketAlive reports whether the heartbeat file at path was touched within maxAge. Clients \(\`radioactive\_ralph status\`\) call this before attempting a socket connection so they can distinguish "service dead" from "service slow to respond."
+
+<a name="AttachArgs"></a>
+## type [AttachArgs](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/protocol.go#L143-L146>)
+
+AttachArgs is the client's payload when opening an event stream via CmdAttach. ProjectID scopes the stream — the IPC connection carries no implicit project \(the supervisor serves every project on one socket\), so the client names it, as the drive commands do. AfterID is the client\-owned resume cursor: the stream carries every event with id strictly greater than AfterID. AfterID=0 means "from the beginning" — the CLIENT, not the server, picks the live\-tail cursor by first reading MaxEventID \(or the backlog's max id\) and passing it here. A reconnecting client passes the highest id it has processed, resuming with no gap and no duplicate.
+
+```go
+type AttachArgs struct {
+    ProjectID string `json:"project_id"`
+    AfterID   int64  `json:"after_id,omitempty"`
+}
+```
+
+<a name="AttachEvent"></a>
+## type [AttachEvent](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/protocol.go#L153-L162>)
+
+AttachEvent is one event streamed over an Attach connection: the public, versioned shape of an events\-table row. It is deliberately NOT the raw store row — Payload is the kind\-specific JSON passed through verbatim, so adding a new event kind never requires a transport change. ID lets a client persist its resume cursor for reconnects.
+
+```go
+type AttachEvent struct {
+    ID         int64           `json:"id"`
+    Kind       string          `json:"kind"`
+    Stream     string          `json:"stream,omitempty"`
+    PlanID     string          `json:"plan_id,omitempty"`
+    TaskID     string          `json:"task_id,omitempty"`
+    Actor      string          `json:"actor,omitempty"`
+    Payload    json.RawMessage `json:"payload,omitempty"`
+    OccurredAt time.Time       `json:"occurred_at"`
+}
+```
 
 <a name="Client"></a>
 ## type [Client](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/client.go#L18-L21>)
@@ -186,13 +219,22 @@ type Client struct {
 ```
 
 <a name="Client.Attach"></a>
-### func \(\*Client\) [Attach](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/client.go#L134>)
+### func \(\*Client\) [Attach](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/client.go#L149>)
 
 ```go
-func (c *Client) Attach(ctx context.Context, fn func(json.RawMessage) error) error
+func (c *Client) Attach(ctx context.Context, args AttachArgs, fn func(json.RawMessage) error) error
 ```
 
-Attach issues an attach request and streams event frames through fn until the repo service closes the stream or ctx is cancelled. The returned error is nil for a clean end\-of\-stream.
+Attach issues an attach request and streams event frames through fn until the repo service closes the stream or ctx is cancelled. The returned error is nil for a clean end\-of\-stream. It scopes the stream via args \(the project id is required; a zero AfterID starts from the beginning\).
+
+<a name="Client.AttachEvents"></a>
+### func \(\*Client\) [AttachEvents](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/client.go#L135>)
+
+```go
+func (c *Client) AttachEvents(ctx context.Context, args AttachArgs, fn func(AttachEvent) error) error
+```
+
+AttachEvents is the typed convenience over Attach: it opens the stream with the given args \(project scope \+ resume cursor\) and decodes each frame into an AttachEvent before handing it to fn. Prefer this to raw Attach for the event stream; Attach stays available for callers that want the raw frames.
 
 <a name="Client.Close"></a>
 ### func \(\*Client\) [Close](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/client.go#L47>)
@@ -285,7 +327,7 @@ func (c *Client) WorkerKill(ctx context.Context, args WorkerKillArgs) error
 WorkerKill kills a running worker via kill\-and\-reclaim.
 
 <a name="Coded"></a>
-## type [Coded](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/server.go#L389-L391>)
+## type [Coded](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/server.go#L551-L553>)
 
 Coded is implemented by handler errors that carry a stable machine\-readable error class \(Code\* consts\). writeResult copies it into Response.Code so the client can branch on the failure kind.
 
@@ -326,7 +368,7 @@ func (e *CodedError) Error() string
 
 
 <a name="DriveHandler"></a>
-## type [DriveHandler](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/server.go#L56-L65>)
+## type [DriveHandler](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/server.go#L78-L87>)
 
 DriveHandler is the OPTIONAL v2 drive surface. A Handler that also implements DriveHandler gains the plan\-import/plan\-set\-status/task\-approve/ worker\-kill commands; one that does not still serves the v1 observe surface, and the server answers a drive command with an unsupported\_command response. Keeping it a separate interface means existing v1 Handler implementations \(and their test doubles\) compile unchanged.
 
@@ -369,7 +411,7 @@ type EnqueueReply struct {
 ```
 
 <a name="Handler"></a>
-## type [Handler](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/server.go#L29-L48>)
+## type [Handler](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/server.go#L49-L70>)
 
 Handler handles a single client request. Attach streams events by calling emit repeatedly; other commands return \(reply, nil\) and the server transmits a single Response frame.
 
@@ -390,14 +432,16 @@ type Handler interface {
     HandleReloadConfig(ctx context.Context) error
 
     // HandleAttach streams events to the client until either the
-    // service exits or the client disconnects. The implementation
-    // should return when ctx is cancelled.
-    HandleAttach(ctx context.Context, emit func(json.RawMessage) error) error
+    // service exits or the client disconnects. args.AfterID is the resume
+    // cursor — the handler emits events with id greater than it (0 means
+    // start from the live tail). The implementation should return when ctx
+    // is cancelled.
+    HandleAttach(ctx context.Context, args AttachArgs, emit func(json.RawMessage) error) error
 }
 ```
 
 <a name="OKReply"></a>
-## type [OKReply](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/protocol.go#L187-L189>)
+## type [OKReply](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/protocol.go#L217-L219>)
 
 OKReply is the trivial success payload for drive commands that only need to confirm the action landed.
 
@@ -408,7 +452,7 @@ type OKReply struct {
 ```
 
 <a name="PlanImportArgs"></a>
-## type [PlanImportArgs](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/protocol.go#L145-L150>)
+## type [PlanImportArgs](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/protocol.go#L175-L180>)
 
 PlanImportArgs imports a markdown plan and activates it \(CmdPlanImport\). The server runs the same CreatePlan \+ activate logic the \`plan import\` CLI does, so the GUI needn't open the DB itself and there is one writer of record.
 
@@ -422,7 +466,7 @@ type PlanImportArgs struct {
 ```
 
 <a name="PlanImportReply"></a>
-## type [PlanImportReply](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/protocol.go#L153-L157>)
+## type [PlanImportReply](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/protocol.go#L183-L187>)
 
 PlanImportReply reports the created plan.
 
@@ -435,7 +479,7 @@ type PlanImportReply struct {
 ```
 
 <a name="PlanSetStatusArgs"></a>
-## type [PlanSetStatusArgs](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/protocol.go#L161-L164>)
+## type [PlanSetStatusArgs](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/protocol.go#L191-L194>)
 
 PlanSetStatusArgs changes a plan's lifecycle status \(CmdPlanSetStatus\), e.g. pause/resume/abandon. The server validates the transition.
 
@@ -447,7 +491,7 @@ type PlanSetStatusArgs struct {
 ```
 
 <a name="PlanSetStatusReply"></a>
-## type [PlanSetStatusReply](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/protocol.go#L167-L170>)
+## type [PlanSetStatusReply](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/protocol.go#L197-L200>)
 
 PlanSetStatusReply echoes the applied status.
 
@@ -490,7 +534,7 @@ type Response struct {
 ```
 
 <a name="Server"></a>
-## type [Server](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/server.go#L68-L78>)
+## type [Server](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/server.go#L90-L114>)
 
 Server is the repo\-service IPC server. One instance per repo service.
 
@@ -501,7 +545,7 @@ type Server struct {
 ```
 
 <a name="Server.Start"></a>
-### func \(\*Server\) [Start](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/server.go#L138>)
+### func \(\*Server\) [Start](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/server.go#L219>)
 
 ```go
 func (s *Server) Start() error
@@ -510,7 +554,7 @@ func (s *Server) Start() error
 Start binds the socket and begins accepting connections in a background goroutine. Safe to call once. Returns the listener error if bind fails. The heartbeat interval comes from ServerOptions.HeartbeatInterval \(set at NewServer\), not a parameter here — a single source of truth.
 
 <a name="Server.Stop"></a>
-### func \(\*Server\) [Stop](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/server.go#L153>)
+### func \(\*Server\) [Stop](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/server.go#L234>)
 
 ```go
 func (s *Server) Stop() error
@@ -519,7 +563,7 @@ func (s *Server) Stop() error
 Stop shuts the server down and waits for goroutines to exit.
 
 <a name="ServerOptions"></a>
-## type [ServerOptions](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/server.go#L81-L101>)
+## type [ServerOptions](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/server.go#L117-L137>)
 
 ServerOptions configures a Server.
 
@@ -574,7 +618,7 @@ type StatusReply struct {
 ```
 
 <a name="StopArgs"></a>
-## type [StopArgs](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/protocol.go#L135-L138>)
+## type [StopArgs](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/protocol.go#L165-L168>)
 
 StopArgs controls the termination mode for CmdStop.
 
@@ -597,7 +641,7 @@ type StreamEvent struct {
 ```
 
 <a name="TaskApproveArgs"></a>
-## type [TaskApproveArgs](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/protocol.go#L174-L177>)
+## type [TaskApproveArgs](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/protocol.go#L204-L207>)
 
 TaskApproveArgs clears the approval gate on a ready\_pending\_approval task \(CmdTaskApprove\), transitioning it to ready so dispatch can pick it up.
 
@@ -609,7 +653,7 @@ type TaskApproveArgs struct {
 ```
 
 <a name="WorkerKillArgs"></a>
-## type [WorkerKillArgs](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/protocol.go#L181-L183>)
+## type [WorkerKillArgs](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/protocol.go#L211-L213>)
 
 WorkerKillArgs kills a running worker \(CmdWorkerKill\) via the same kill\-and\-reclaim path a watchdog kill uses, so the task returns to ready.
 

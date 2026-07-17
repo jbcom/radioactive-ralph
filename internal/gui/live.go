@@ -89,7 +89,15 @@ func (l *liveController) Attach(ctx context.Context, fn func(json.RawMessage) er
 		return err
 	}
 	defer func() { _ = c.Close() }()
-	return c.Attach(ctx, fn)
+	// Seed the cursor to the current max so a launch/reconnect starts from "now"
+	// rather than replaying the whole project history — runAttach calls
+	// refreshNow() per frame, so replaying thousands of historical events would
+	// hammer the supervisor with redundant reads. A read error falls back to 0.
+	afterID, err := l.store.MaxEventID(ctx, l.projectID)
+	if err != nil {
+		afterID = 0
+	}
+	return c.Attach(ctx, ipc.AttachArgs{ProjectID: l.projectID, AfterID: afterID}, fn)
 }
 
 func (l *liveController) ImportPlan(ctx context.Context, args ipc.PlanImportArgs) (ipc.PlanImportReply, error) {

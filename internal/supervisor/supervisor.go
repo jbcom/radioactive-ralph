@@ -2,9 +2,12 @@ package supervisor
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -416,11 +419,129 @@ func (s *Supervisor) HandleReloadConfig(_ context.Context) error {
 	return nil
 }
 
-// HandleAttach streams no events yet — the durable event/attach surface is
-// part of the plan-orchestration work in a later phase. It blocks until
-// ctx is cancelled so a connected client simply sees a quiet, still-open
-// stream rather than an immediate close.
-func (s *Supervisor) HandleAttach(ctx context.Context, _ func(json.RawMessage) error) error {
-	<-ctx.Done()
-	return nil
+// attachTailInterval is how often HandleAttach polls the events table for new
+// rows. Short enough that a live view feels immediate, long enough that an idle
+// stream is nearly free. The events table is the single ordered source of
+// truth (see docs/superpowers/specs/2026-07-17-attach-event-stream-design.md);
+// tailing it reuses that ordering with no change to any emit site.
+const attachTailInterval = 250 * time.Millisecond
+
+// attachTailBatch caps how many events one tail tick emits, so a burst can't
+// make a single tick unbounded. The next tick drains the remainder immediately.
+const attachTailBatch = 256
+
+// HandleAttach streams the project's events to the client as they are written,
+// turning the observe half of the drive+observe API from a stub into a live
+// feed. It TAILS the append-only events table: each tick it reads rows with id
+// greater than the cursor (scoped to args.ProjectID, including plan-linked
+// rows), emits each, and advances the cursor. The cursor starts at
+// args.AfterID — the client owns it (it obtains an initial value from
+// MaxEventID/backlog), so there is no server-side seed and no lost-event race.
+// The loop returns when ctx is cancelled (client disconnect — #165's watcher —
+// or supervisor shutdown) or when emit reports the client is gone.
+func (s *Supervisor) HandleAttach(ctx context.Context, args ipc.AttachArgs, emit func(json.RawMessage) error) error {
+	if args.ProjectID == "" {
+		return fmt.Errorf("supervisor: attach requires a project id")
+	}
+	cursor := args.AfterID
+
+	ticker := time.NewTicker(attachTailInterval)
+	defer ticker.Stop()
+
+	for {
+		// Drain everything currently past the cursor before waiting again, so a
+		// burst larger than one batch doesn't wait a full tick between batches.
+		for {
+			events, err := s.store.EventsAfter(ctx, args.ProjectID, cursor, attachTailBatch)
+			if err != nil {
+				// Cancellation is a clean end, not an error to surface.
+				if ctx.Err() != nil {
+					return nil
+				}
+				// A PERMANENT store failure (closed DB, corruption, schema error)
+				// won't fix itself: retrying every tick would just spin, log
+				// forever, and leave the client attached to a permanently stale
+				// stream. End the subscription with the error so the client sees
+				// the stream close rather than hang silently. Only a TRANSIENT
+				// error (momentary pool contention) is retried: log, stop
+				// draining, wait for the next tick with the cursor unchanged so
+				// nothing is skipped.
+				if !isTransientStoreErr(err) {
+					s.log("attach tail: permanent store error, ending stream", "err", err)
+					return fmt.Errorf("supervisor: attach tail: %w", err)
+				}
+				s.log("attach tail: transient error, retrying next tick", "err", err)
+				break
+			}
+			if len(events) == 0 {
+				break
+			}
+			for _, ev := range events {
+				frame, err := json.Marshal(attachEventFrame(ev))
+				if err != nil {
+					// A single un-marshalable row must not wedge the stream;
+					// skip it but still advance past it so the tail progresses.
+					s.log("attach tail: marshal event", "event_id", ev.ID, "err", err)
+					cursor = ev.ID
+					continue
+				}
+				if err := emit(frame); err != nil {
+					// Client gone / write deadline — end the subscription. This
+					// is the emit contract the IPC server relies on.
+					return nil
+				}
+				cursor = ev.ID
+			}
+			if len(events) < attachTailBatch {
+				break // fully drained
+			}
+		}
+
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-ticker.C:
+		}
+	}
+}
+
+// isTransientStoreErr reports whether a store read error is worth retrying on
+// the next tail tick (momentary contention) versus a permanent failure that
+// should end the stream. SQLite surfaces contention as SQLITE_BUSY /
+// SQLITE_LOCKED — recoverable. A closed DB / done connection / done transaction
+// (sql.ErrConnDone, sql.ErrTxDone) or anything else is treated as permanent, so
+// the tail ends rather than spinning forever against a broken store. Context
+// cancellation is handled by the caller before this is consulted.
+func isTransientStoreErr(err error) bool {
+	if errors.Is(err, sql.ErrConnDone) || errors.Is(err, sql.ErrTxDone) {
+		return false
+	}
+	// modernc.org/sqlite reports lock contention via an error whose message
+	// carries the SQLITE_BUSY/SQLITE_LOCKED token; match on that rather than the
+	// driver's un-exported error type so we don't couple to its internals.
+	msg := err.Error()
+	return strings.Contains(msg, "SQLITE_BUSY") ||
+		strings.Contains(msg, "SQLITE_LOCKED") ||
+		strings.Contains(msg, "database is locked") ||
+		strings.Contains(msg, "database table is locked")
+}
+
+// attachEventFrame maps a store event row to the public wire shape. Payload is
+// the row's payload_json passed through verbatim as raw JSON — the stream stays
+// kind-agnostic so a new event kind needs no transport change.
+func attachEventFrame(ev store.Event) ipc.AttachEvent {
+	var payload json.RawMessage
+	if ev.PayloadJSON != "" {
+		payload = json.RawMessage(ev.PayloadJSON)
+	}
+	return ipc.AttachEvent{
+		ID:         ev.ID,
+		Kind:       ev.Kind,
+		Stream:     ev.Stream,
+		PlanID:     ev.PlanID,
+		TaskID:     ev.TaskID,
+		Actor:      ev.Actor,
+		Payload:    payload,
+		OccurredAt: ev.OccurredAt,
+	}
 }

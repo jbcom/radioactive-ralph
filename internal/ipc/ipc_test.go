@@ -48,6 +48,9 @@ type fakeHandler struct {
 	// is closed when HandleAttach returns, so the test can await it.
 	attachBlock    bool
 	attachReturned chan struct{}
+	// lastAttachAfterID records the AfterID the last CmdAttach carried, so a
+	// test can prove the client's resume cursor reaches the handler.
+	lastAttachAfterID int64
 }
 
 func (f *fakeHandler) HandleStatus(_ context.Context) (StatusReply, error) {
@@ -78,9 +81,10 @@ func (f *fakeHandler) HandleReloadConfig(_ context.Context) error {
 	return f.reloadErr
 }
 
-func (f *fakeHandler) HandleAttach(ctx context.Context, emit func(json.RawMessage) error) error {
+func (f *fakeHandler) HandleAttach(ctx context.Context, args AttachArgs, emit func(json.RawMessage) error) error {
 	f.attachCount.Add(1)
 	f.mu.Lock()
+	f.lastAttachAfterID = args.AfterID
 	events := f.attachEvents
 	delay := f.attachDelay
 	retErr := f.attachErr
@@ -283,7 +287,7 @@ func TestRoundTripAttachStreamsEvents(t *testing.T) {
 	defer func() { _ = c.Close() }()
 
 	var received []json.RawMessage
-	err = c.Attach(context.Background(), func(e json.RawMessage) error {
+	err = c.Attach(context.Background(), AttachArgs{ProjectID: "p1"}, func(e json.RawMessage) error {
 		// Copy because the reader's buffer may be reused.
 		buf := append(json.RawMessage(nil), e...)
 		received = append(received, buf)
@@ -327,7 +331,7 @@ func TestRoundTripAttachCancellation(t *testing.T) {
 
 	// Client cancels before server finishes streaming. Expect a
 	// context-related error OR ErrClosed (server closed on its side).
-	attachErr := c.Attach(ctx, func(_ json.RawMessage) error { return nil })
+	attachErr := c.Attach(ctx, AttachArgs{ProjectID: "p1"}, func(_ json.RawMessage) error { return nil })
 	if attachErr == nil {
 		t.Error("expected cancellation or closed error")
 	}
