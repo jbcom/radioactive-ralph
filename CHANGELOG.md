@@ -13,6 +13,13 @@ shipped. That means historical sections may still mention MCP, plugins,
 supervisors, or the archived Python implementation even though those are no
 longer part of the live contract.
 
+## [0.19.0](https://github.com/jbcom/radioactive-ralph/compare/v0.18.0...v0.19.0) (2026-07-17)
+
+
+### Features
+
+* **gui:** focus the first action after each drill render (a11y) ([#116](https://github.com/jbcom/radioactive-ralph/issues/116)) ([e7c473f](https://github.com/jbcom/radioactive-ralph/commit/e7c473f6cf60843ec82e6552412b09a6ae78e468))
+
 ## [0.18.0](https://github.com/jbcom/radioactive-ralph/compare/v0.17.1...v0.18.0) (2026-07-17)
 
 
