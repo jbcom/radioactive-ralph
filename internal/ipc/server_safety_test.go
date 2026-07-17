@@ -197,6 +197,54 @@ func TestServerStopRequestStillGetsResponse(t *testing.T) {
 	}
 }
 
+// TestServerAttachClientDisconnectReleasesHandler is the regression for the IPC
+// audit's C4: an Attach client that closes its socket (without the supervisor
+// stopping) must have its handler released — otherwise HandleAttach, which
+// blocks streaming, leaks its goroutine + wg slot + fd for the life of the
+// supervisor because nothing observes the disconnect. The server's read-side
+// watcher must cancel the handler ctx on EOF.
+func TestServerAttachClientDisconnectReleasesHandler(t *testing.T) {
+	h := &fakeHandler{attachBlock: true, attachReturned: make(chan struct{})}
+	srv, sock := newTestServer(t, h)
+	defer func() { _ = srv.Stop() }()
+
+	conn, err := net.Dial("unix", sock)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+
+	// Send an Attach request, then read the initial handshake so we know the
+	// handler is running and blocked.
+	req := Request{Cmd: CmdAttach}
+	frame, err := encodeJSONLine(req)
+	if err != nil {
+		t.Fatalf("encode: %v", err)
+	}
+	if _, err := conn.Write(frame); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	// Wait until the handler is actually running (blocked in HandleAttach).
+	deadline := time.After(3 * time.Second)
+	for h.attachCount.Load() == 0 {
+		select {
+		case <-deadline:
+			t.Fatal("HandleAttach never started")
+		default:
+			time.Sleep(time.Millisecond)
+		}
+	}
+
+	// Disconnect — close the client socket. The server's read watcher must see
+	// EOF and cancel the handler ctx, so HandleAttach returns.
+	_ = conn.Close()
+	select {
+	case <-h.attachReturned:
+		// HandleAttach returned — the disconnect was detected. Correct.
+	case <-time.After(5 * time.Second):
+		t.Fatal("HandleAttach did not return after the client disconnected — the handler leaked")
+	}
+}
+
 // readLine reads a single newline-delimited frame from conn.
 func readLine(conn net.Conn) ([]byte, error) {
 	var out []byte

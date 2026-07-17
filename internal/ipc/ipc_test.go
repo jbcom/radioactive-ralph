@@ -42,6 +42,12 @@ type fakeHandler struct {
 	attachEvents [][]byte
 	attachDelay  time.Duration
 	attachErr    error
+	// attachBlock makes HandleAttach block on ctx.Done (like the real
+	// supervisor, whose event surface emits nothing yet) — so a test can prove
+	// the server cancels ctx when the Attach client disconnects. attachReturned
+	// is closed when HandleAttach returns, so the test can await it.
+	attachBlock    bool
+	attachReturned chan struct{}
 }
 
 func (f *fakeHandler) HandleStatus(_ context.Context) (StatusReply, error) {
@@ -78,7 +84,20 @@ func (f *fakeHandler) HandleAttach(ctx context.Context, emit func(json.RawMessag
 	events := f.attachEvents
 	delay := f.attachDelay
 	retErr := f.attachErr
+	block := f.attachBlock
+	returned := f.attachReturned
 	f.mu.Unlock()
+
+	if block {
+		// Mimic the real supervisor: stream nothing, block until ctx is
+		// cancelled (by server Stop OR — the thing under test — the client
+		// disconnecting).
+		<-ctx.Done()
+		if returned != nil {
+			close(returned)
+		}
+		return ctx.Err()
+	}
 
 	for _, e := range events {
 		if delay > 0 {
