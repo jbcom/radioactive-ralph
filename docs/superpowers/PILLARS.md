@@ -94,3 +94,21 @@ cask push, per-bundle checksums) and fixed two P1s the review caught: the
 double-click-opens-TUI bug and the wrong quarantine assumption. Merged PR #92
 (a1df782). The one optional follow-up is the user's free SignPath enrollment,
 which flips the Windows `.exe` from unsigned to signed with no code change.
+
+## Desktop-app polish arc (post-packaging)
+
+A perpetual-shipping run of small, self-reviewed PRs hardening and documenting
+the desktop app. User-facing docs for the GUI + desktop installs (#94, 0716a92);
+a GUI macro-view "Recent activity" project-events feed + a live "connected · up
+<dur>"/"waiting for supervisor"/"disconnected" status header + a non-mutating
+desktop-launch project resolution + a RenderToMarkup visual-regression test
+(#96); the same liveness header backported to the TUI (#98); a dedicated GUI
+guide page (#101); a comprehensive-review-driven correctness batch — the P1
+AppImage-FUSE release-blocker (APPIMAGE_EXTRACT_AND_RUN), import hidden in
+project-agnostic mode, a refreshNow stale-paint seq-guard, "all projects" count
+labeling (#102); an API-docs regen adding the GUI-tagged surface + dropping
+dead-model index text (#104); a two-arch macOS cask so Intel Macs get a working
+install, incl. the Bash-3.2 associative-array fix (#106); and Escape-to-drill-
+back GUI keyboard navigation, focus-safe via the desktop KeyDown hook (#107).
+Each PR absorbed its bot + CI review before merge; captured in release v0.15.0
+and the ones after.
