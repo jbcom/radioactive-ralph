@@ -161,39 +161,23 @@ Completed since (all shipped):
 Audit sweep COMPLETE across all major subsystems: orchestrator, store,
 provider-runners, agent-watchdog, TUI, IPC, GUI.
 
-Structured attach event surface (the observe half goes live) — shipping arc:
-- [x] #167 approval-marker operator docs (merged); #168 the event-stream design
-  spec (merged; three codex P1s folded in — plan-linked scoping, project id in
-  AttachArgs, client-owned cursor to close the backlog↔attach race).
-- [x] Self-review of #169 (security + code-review agents) — DONE. Security:
-  clean (SQL parameterized, tail loop bounded, cross-project scope correct for
-  the single-user local socket). Code-review: two findings — one REAL (Printf
-  verbs in two s.log calls where s.log is structured slog → !BADKEY garbage;
-  fixed forward, commit 6fceb90) and one FALSE POSITIVE (a stale reviewer clone
-  claimed tick_test.go still used the 2-arg HandleAttach; the pushed tree has
-  the 3-arg fix, build/test green). The marshal-skip-and-advance tradeoff both
-  agents noted is intended (don't wedge the stream on one bad row).
-- [ ] [WAIT] #169 (feat: stream events over Attach) — store EventsAfter/MaxEventID
-  tail queries + the supervisor HandleAttach tail loop + ipc AttachArgs/
-  AttachEvent/AttachEvents. All 5 review threads resolved: slog fix; store
-  scope-precedence (explicit project_id wins over plan linkage, +test);
-  transient-vs-permanent store-error classification so a broken DB ends the
-  stream instead of spinning (+test); cursor seeded to MaxEventID in both live
-  clients so launch/reconnect starts from "now" not a full-history replay. The
-  per-task micro-view filter (codex P2) is deferred to the consumer PR below.
-  CI re-running on the fixes; merge when green.
+- Attach event stream — the observe half goes live (COMPLETE, compressed →
+  docs/superpowers/PILLARS.md): docs #167, spec #168 (3 codex P1s), producer
+  #169 (store tail queries + supervisor HandleAttach loop + ipc types; 5 review
+  threads folded), consumers #173 (TUI decode + selected-task filter + status
+  deltas incl. blocked; GUI per-frame refresh gate), json.Valid hardening #175.
+  Code-simplifier found one clean change → #176 (collapse pass-through
+  Client.Attach). All merged except the two cleanup PRs below (in CI).
 
-Next after #169 lands:
-- [ ] Wire the TUI/GUI live view to APPLY attach deltas instead of poll-only:
-  subscribe via Client.AttachEvents, decode each frame as ipc.AttachEvent,
-  update the in-memory snapshot per event, keep the periodic poll as a reconcile
-  safety net. Includes the deferred codex P2 from #169: the micro view must
-  FILTER frames to the selected task (match plan_id/task_id) instead of
-  appending every project frame. This is what makes the push-live feed actually
-  visible + correct for a user.
-- [ ] (candidate, from the #169 security self-review, LOW/pre-existing) harden
-  store.jsonOrEmptyObject with a json.Valid guard so the payload_json "always
-  valid JSON" invariant is structural, not caller-discipline. Not a blocker.
+Rolling (attach follow-ups + next lens):
+- [ ] [WAIT] #174 (chore: directive/PILLARS compression for the attach arc) — CI.
+- [ ] [WAIT] #176 (refactor: collapse pass-through Client.Attach) — CI.
+- [ ] [WAIT-AGENT] security-scanning:security-auditor lens over the merged
+  IPC/attach surface (server request handling, attach tail loop, EventsAfter SQL
+  scoping) — running background; fold any confirmed finding forward, else record
+  clean. Then pick the next product feature per directive 0 — a strong candidate
+  is wiring the GUI to Client.AttachEvents for TRUE per-event delta application
+  (it currently re-reads the whole snapshot per lifecycle frame).
 
 ## Notes
 
