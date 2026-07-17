@@ -88,7 +88,12 @@ func Watch(ctx context.Context, a *Agent, cfg WatchdogConfig) <-chan Signal {
 					emit(Signal{Kind: Progress, Detail: string(line)})
 				}
 			case <-timer.C:
+				// Stall is TERMINAL: the consumer (superviseAgent) kills the agent
+				// and stops reading on the first Stall, so continuing the loop would
+				// only block the next emit() on an abandoned channel until ctx is
+				// cancelled — a per-turn goroutine leak on every stall-kill. Return.
 				emit(Signal{Kind: Stall})
+				return
 			}
 		}
 	}()
