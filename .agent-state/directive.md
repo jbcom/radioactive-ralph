@@ -69,12 +69,23 @@ behind any load-bearing call.
 
 ## Concrete queue (current)
 
-- [ ] [WAIT-REVIEW] Native installers & GUI packaging — PR #92 open (feat/native-packaging). goreleaser nfpms (.deb/.rpm) + winget + homebrew_casks (brews→casks migration for goreleaser v2.17); GUI-bundle release matrix (fyne package --tags gui per-OS → macOS .app+ad-hoc-codesign+.dmg+cask PR, Linux AppImage+.desktop, Windows .exe); FyneApp.toml + 512² icon; install.sh dead-model fix; packaging-lint CI job (goreleaser check + shellcheck + desktop-file-validate). macOS path proven locally on darwin; two AppImage runtime bugs + the v2.17 cask deprecation caught by review/CI and fixed. Spec: docs/superpowers/specs/2026-07-17-native-packaging-design.md. Blocked only on CI green → self squash-merge.
+- [ ] User-facing docs for the desktop app + GUI (forward-explored: the GUI #89
+  and packaging #92 merged but README/AGENTS/getting-started had ZERO mention of
+  the desktop app, `gui` subcommand, or the cask/AppImage/dmg install). On
+  docs/desktop-app-and-gui: README Install split into CLI + Desktop-app tables
+  (cask/AppImage/dmg/winget/deb-rpm), Quick-start + CLI-surface `gui` line,
+  AGENTS command surface, getting-started "Or use the desktop app" section.
+  Bundles the #92 PILLARS.md compression. → PR + babysit.
 
 ## Rolling improvement queue (directive 0 appends here)
 
-_(empty — next tick's forward-exploration pass fills this once #92 merges: pick a
-review lens or a polish/feature and append concrete `[ ]` items.)_
+Forward-exploration candidates surfaced this pass (pick next after the docs PR):
+- [ ] TUI/GUI parity audit — does the GUI surface everything the TUI does
+  (project-wide event feed, plan progress detail)? Close any gaps.
+- [ ] GUI UX polish pass — run the app, screenshot, compare to intent; richer
+  status header, keyboard nav, empty/error states.
+- [ ] Provider coverage / observability / DX sweep on the newest surfaces.
+- [ ] Dependency freshness + CVE sweep (govulncheck already in CI; audit deps).
 
 ## Notes
 

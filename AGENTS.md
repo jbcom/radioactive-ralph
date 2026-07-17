@@ -45,7 +45,11 @@ Never store runtime state under `.claude/`.
 ## Command surface
 
 - `radioactive_ralph --supervisor` — run the supervisor.
-- `radioactive_ralph` — dumb client (discover + read-only view).
+- `radioactive_ralph` — dumb client (discover + read-only TUI).
+- `radioactive_ralph gui` — desktop GUI client: a graphical peer to the TUI on
+  the same socket that can also drive (approve/pause/kill/import). Present in
+  GUI-enabled builds (`-tags gui`); a bare desktop launch (double-clicked
+  bundle, no TTY) opens it automatically.
 - `radioactive_ralph --init` — initialize/re-initialize the current project.
 - `radioactive_ralph plan import <file>` — import a markdown plan and activate
   it (the supervisor's periodic dispatch loop then drives its ready steps).

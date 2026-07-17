@@ -94,6 +94,21 @@ current project's plan and live agent activity. Piped or non-interactive
 (CI, `go test`), it prints a single status line instead of launching the
 TUI.
 
+## Or use the desktop app
+
+```bash
+radioactive_ralph gui
+```
+
+The desktop app is a graphical peer to the terminal UI on the same supervisor —
+same macro→meso→micro drill, but it can also **drive**: approve a task awaiting
+approval, pause/resume/abandon a plan, kill a worker, and import a plan from a
+window. Install it with `brew install --cask radioactive-ralph` (macOS), the
+Linux `.AppImage`, or the Windows `.exe` from the
+[releases page](https://github.com/jbcom/radioactive-ralph/releases/latest);
+double-clicking the installed app opens the GUI directly. It opens even before a
+supervisor is running and lights up when one appears.
+
 ## Check your environment
 
 ```bash
