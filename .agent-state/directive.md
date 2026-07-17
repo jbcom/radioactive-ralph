@@ -183,17 +183,30 @@ Structured attach event surface (the observe half goes live) — shipping arc:
   per-task micro-view filter (codex P2) is deferred to the consumer PR below.
   CI re-running on the fixes; merge when green.
 
-Next after #169 lands:
-- [ ] Wire the TUI/GUI live view to APPLY attach deltas instead of poll-only:
-  subscribe via Client.AttachEvents, decode each frame as ipc.AttachEvent,
-  update the in-memory snapshot per event, keep the periodic poll as a reconcile
-  safety net. Includes the deferred codex P2 from #169: the micro view must
-  FILTER frames to the selected task (match plan_id/task_id) instead of
-  appending every project frame. This is what makes the push-live feed actually
-  visible + correct for a user.
-- [ ] (candidate, from the #169 security self-review, LOW/pre-existing) harden
+Attach live-consumers (push-live view) — #169 landed, consumers in flight:
+- [x] #169 (feat: stream events over Attach) MERGED — the observe half is live
+  on main. Store tail queries, supervisor HandleAttach tail loop, ipc
+  AttachArgs/AttachEvent/AttachEvents; all 5 review threads resolved (scope
+  precedence, transient/permanent error classification, MaxEventID cursor seed).
+- [ ] [WAIT] #173 (feat: apply attach deltas — TUI/GUI go push-live). TUI decodes
+  ipc.AttachEvent, filters the micro-view tail to the selected task (the deferred
+  codex P2), and applies task-status deltas ahead of the poll; GUI gates its
+  per-frame refresh on the event kind (kills the heartbeat-refresh storm). Poll
+  stays the reconcile net. Spec:
+  docs/superpowers/specs/2026-07-17-attach-live-consumers-design.md. CI running;
+  a code-review agent is examining the diff. Merge when green + threads resolved.
+- [ ] [WAIT-AGENT] Code-review of the #173 diff (feature-dev:code-reviewer,
+  running) — micro filter, re-arm on every path, applyEvent aliasing, GUI kind
+  gate, status mapping. Fold any confirmed finding forward before merge.
+
+Next after #173 lands (forward-exploration candidates):
+- [ ] (from the #169 security self-review, LOW/pre-existing) harden
   store.jsonOrEmptyObject with a json.Valid guard so the payload_json "always
   valid JSON" invariant is structural, not caller-discipline. Not a blocker.
+- [ ] Rotate a fresh review lens over the newly-merged attach surface once the
+  arc settles (comprehensive-review / security-sast / code-simplifier), then
+  pick the next product feature (GUI richness, provider coverage, observability,
+  DX, perf) per directive 0.
 
 ## Notes
 
