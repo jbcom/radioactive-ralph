@@ -19,6 +19,10 @@ import (
 // off instead of busy-spinning the accept goroutine.
 const acceptRetryDelay = 50 * time.Millisecond
 
+// defaultHeartbeatInterval is the heartbeat-touch cadence when a caller
+// leaves ServerOptions.HeartbeatInterval unset.
+const defaultHeartbeatInterval = 10 * time.Second
+
 // Handler handles a single client request. Attach streams events by
 // calling emit repeatedly; other commands return (reply, nil) and the
 // server transmits a single Response frame.
@@ -45,14 +49,15 @@ type Handler interface {
 
 // Server is the repo-service IPC server. One instance per repo service.
 type Server struct {
-	socketPath    string
-	heartbeatPath string
-	listener      net.Listener
-	handler       Handler
-	logger        *slog.Logger
-	wg            sync.WaitGroup
-	stopCh        chan struct{}
-	heartbeatCh   chan struct{}
+	socketPath        string
+	heartbeatPath     string
+	listener          net.Listener
+	handler           Handler
+	logger            *slog.Logger
+	heartbeatInterval time.Duration
+	wg                sync.WaitGroup
+	stopCh            chan struct{}
+	heartbeatCh       chan struct{}
 }
 
 // ServerOptions configures a Server.
@@ -90,26 +95,30 @@ func NewServer(opts ServerOptions) (*Server, error) {
 	if opts.Handler == nil {
 		return nil, errors.New("ipc: Handler required")
 	}
-	if opts.HeartbeatInterval == 0 {
-		opts.HeartbeatInterval = 10 * time.Second
+	interval := opts.HeartbeatInterval
+	if interval == 0 {
+		interval = defaultHeartbeatInterval
 	}
 	logger := opts.Logger
 	if logger == nil {
 		logger = slog.New(slog.NewTextHandler(io.Discard, nil))
 	}
 	return &Server{
-		socketPath:    opts.SocketPath,
-		heartbeatPath: opts.HeartbeatPath,
-		handler:       opts.Handler,
-		logger:        logger,
-		stopCh:        make(chan struct{}),
-		heartbeatCh:   make(chan struct{}),
+		socketPath:        opts.SocketPath,
+		heartbeatPath:     opts.HeartbeatPath,
+		handler:           opts.Handler,
+		logger:            logger,
+		heartbeatInterval: interval,
+		stopCh:            make(chan struct{}),
+		heartbeatCh:       make(chan struct{}),
 	}, nil
 }
 
 // Start binds the socket and begins accepting connections in a background
 // goroutine. Safe to call once. Returns the listener error if bind fails.
-func (s *Server) Start(heartbeatInterval time.Duration) error {
+// The heartbeat interval comes from ServerOptions.HeartbeatInterval (set at
+// NewServer), not a parameter here — a single source of truth.
+func (s *Server) Start() error {
 	l, err := listenEndpoint(s.socketPath)
 	if err != nil {
 		return fmt.Errorf("ipc: listen %s: %w", s.socketPath, err)
@@ -117,7 +126,7 @@ func (s *Server) Start(heartbeatInterval time.Duration) error {
 	s.listener = l
 
 	s.wg.Add(2)
-	go s.heartbeatLoop(heartbeatInterval)
+	go s.heartbeatLoop(s.heartbeatInterval)
 	go s.acceptLoop()
 
 	return nil
@@ -141,9 +150,7 @@ func (s *Server) Stop() error {
 
 func (s *Server) heartbeatLoop(interval time.Duration) {
 	defer s.wg.Done()
-	if interval == 0 {
-		interval = 10 * time.Second
-	}
+	// interval is always non-zero: NewServer applies defaultHeartbeatInterval.
 	// Touch once at start so radioactive_ralph status sees a fresh heartbeat
 	// immediately after the service comes up.
 	_ = touchFile(s.heartbeatPath)

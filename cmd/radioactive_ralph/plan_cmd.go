@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/jbcom/radioactive-ralph/internal/store"
+	"github.com/jbcom/radioactive-ralph/internal/supervisor"
 	"github.com/jbcom/radioactive-ralph/internal/xdg"
 	"github.com/spf13/cobra"
 )
@@ -43,8 +44,9 @@ func newPlanImportCmd() *cobra.Command {
 		Use:   "import <plan.md>",
 		Short: "Import a markdown plan file and activate it for the current project",
 		Long: "Reads a markdown plan file, creates a plan row for the current " +
-			"project from it, and marks the plan active so the supervisor's " +
-			"dispatch loop begins driving its ready steps. The plan title is " +
+			"project from it, and marks the plan active. A running supervisor's " +
+			"dispatch loop then drives its ready steps; if no supervisor is " +
+			"running the plan is queued until one starts. The plan title is " +
 			"the file's first level-1 heading (falling back to the filename); " +
 			"pass --slug to override the derived slug.",
 		Args: cobra.ExactArgs(1),
@@ -107,6 +109,15 @@ func runPlanImport(ctx context.Context, cmd *cobra.Command, planPath, slug strin
 	}
 
 	fmt.Printf("radioactive_ralph: imported plan %q (%s) — active\n", title, slug)
+	// "Active" only means "eligible for dispatch"; nothing actually drives it
+	// until a supervisor is running. Don't imply work has started when it
+	// hasn't — tell the operator how to start the supervisor if none is up.
+	if client, err := supervisor.Find(stateRoot); err != nil {
+		fmt.Fprintln(os.Stderr, "note: no supervisor is running, so the plan is queued but not yet being driven.")
+		fmt.Fprintln(os.Stderr, "      start one with:  radioactive_ralph service install   (or: radioactive_ralph --supervisor)")
+	} else {
+		_ = client.Close()
+	}
 	return nil
 }
 
