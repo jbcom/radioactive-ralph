@@ -161,18 +161,27 @@ Completed since (all shipped):
 Audit sweep COMPLETE across all major subsystems: orchestrator, store,
 provider-runners, agent-watchdog, TUI, IPC, GUI.
 
-Next forward-exploration items:
-- [ ] [WAIT] #167 (docs: [approval] marker operator guide) — CI; merge when green.
-- [ ] **DECIDED next feature — structured attach event surface.** The audit sweep
-  is done, so rotate from review to product. `HandleAttach`'s `emit` callback is
-  wired end-to-end (server streams frames until ctx cancel; C4 disconnect watcher
-  + write deadlines from #160/#165 protect it) but NOTHING is ever emitted — an
-  Attach client connects and receives silence until it disconnects. The observe
-  half of the drive+observe API is a stub. Ship a typed supervisor event stream
-  (task state transitions, worker lifecycle, spend/heartbeat ticks) that Attach
-  clients subscribe to, turning the read-only TUI/GUI from poll-only into
-  push-live. Sequence: brainstorm the event schema → spec doc → plan → build,
-  each task landing build/test/-race/lint green in isolation.
+Structured attach event surface (the observe half goes live) — shipping arc:
+- [x] #167 approval-marker operator docs (merged); #168 the event-stream design
+  spec (merged; three codex P1s folded in — plan-linked scoping, project id in
+  AttachArgs, client-owned cursor to close the backlog↔attach race).
+- [ ] [WAIT] #169 (feat: stream events over Attach) — store EventsAfter/MaxEventID
+  tail queries + the supervisor HandleAttach tail loop + ipc AttachArgs/
+  AttachEvent/AttachEvents. Rebased onto main; CI running. Security self-review
+  came back clean (SQL parameterized, tail loop bounded, cross-project scope
+  correct for the single-user local socket). Merge when green + threads resolved.
+- [ ] [WAIT-AGENT] Code-review of the #169 diff (feature-dev:code-reviewer,
+  running background) — cursor skip/dup, scoping, leak, emit-contract. Fold any
+  confirmed finding forward before merge.
+
+Next after #169 lands:
+- [ ] Wire the TUI/GUI live view to APPLY attach deltas instead of poll-only:
+  subscribe via Client.AttachEvents, update the in-memory snapshot per event,
+  keep the periodic poll as a reconcile safety net. This is what makes the
+  push-live feed actually visible to a user.
+- [ ] (candidate, from the #169 security self-review, LOW/pre-existing) harden
+  store.jsonOrEmptyObject with a json.Valid guard so the payload_json "always
+  valid JSON" invariant is structural, not caller-discipline. Not a blocker.
 
 ## Notes
 
