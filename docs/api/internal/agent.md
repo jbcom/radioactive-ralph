@@ -40,7 +40,7 @@ var ErrPTYUnsupported = fmt.Errorf("agent: pty allocation is unsupported on %s; 
 ```
 
 <a name="Watch"></a>
-## func [Watch](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/agent/watchdog.go#L36>)
+## func [Watch](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/agent/watchdog.go#L47>)
 
 ```go
 func Watch(ctx context.Context, a *Agent, cfg WatchdogConfig) <-chan Signal
@@ -49,7 +49,7 @@ func Watch(ctx context.Context, a *Agent, cfg WatchdogConfig) <-chan Signal
 Watch observes an agent and emits Signals. It NEVER blocks waiting on the agent: a prompt pattern or a stall is surfaced immediately so the caller can kill\-and\-reclaim. The channel closes when the agent exits.
 
 <a name="Agent"></a>
-## type [Agent](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/agent/agent.go#L38-L48>)
+## type [Agent](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/agent/agent.go#L47-L71>)
 
 Agent is a pty\-owned agent subprocess.
 
@@ -60,7 +60,7 @@ type Agent struct {
 ```
 
 <a name="Start"></a>
-### func [Start](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/agent/agent.go#L51>)
+### func [Start](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/agent/agent.go#L74>)
 
 ```go
 func Start(ctx context.Context, opts Options) (*Agent, error)
@@ -69,7 +69,7 @@ func Start(ctx context.Context, opts Options) (*Agent, error)
 Start launches opts.Command under a pty and begins streaming its output.
 
 <a name="Agent.Done"></a>
-### func \(\*Agent\) [Done](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/agent/agent.go#L125>)
+### func \(\*Agent\) [Done](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/agent/agent.go#L175>)
 
 ```go
 func (a *Agent) Done() <-chan struct{}
@@ -78,7 +78,7 @@ func (a *Agent) Done() <-chan struct{}
 Done is closed when the process exits.
 
 <a name="Agent.Kill"></a>
-### func \(\*Agent\) [Kill](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/agent/agent.go#L131>)
+### func \(\*Agent\) [Kill](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/agent/agent.go#L181>)
 
 ```go
 func (a *Agent) Kill() error
@@ -87,7 +87,7 @@ func (a *Agent) Kill() error
 Kill terminates the process immediately and releases the pty. Killing an agent that already exited on its own is a no\-op success — a normal shutdown that races an agent finishing its task must not surface a spurious "already closed" error.
 
 <a name="Agent.Output"></a>
-### func \(\*Agent\) [Output](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/agent/agent.go#L111>)
+### func \(\*Agent\) [Output](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/agent/agent.go#L161>)
 
 ```go
 func (a *Agent) Output() <-chan []byte
@@ -96,7 +96,7 @@ func (a *Agent) Output() <-chan []byte
 Output is the line\-oriented output stream; closed when the process exits.
 
 <a name="Agent.PID"></a>
-### func \(\*Agent\) [PID](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/agent/agent.go#L147>)
+### func \(\*Agent\) [PID](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/agent/agent.go#L200>)
 
 ```go
 func (a *Agent) PID() int
@@ -105,7 +105,7 @@ func (a *Agent) PID() int
 PID returns the subprocess PID \(0 before start / after release\).
 
 <a name="Agent.Wait"></a>
-### func \(\*Agent\) [Wait](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/agent/agent.go#L144>)
+### func \(\*Agent\) [Wait](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/agent/agent.go#L197>)
 
 ```go
 func (a *Agent) Wait() error
@@ -114,7 +114,7 @@ func (a *Agent) Wait() error
 Wait blocks until the process exits.
 
 <a name="Agent.WriteInput"></a>
-### func \(\*Agent\) [WriteInput](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/agent/agent.go#L119>)
+### func \(\*Agent\) [WriteInput](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/agent/agent.go#L169>)
 
 ```go
 func (a *Agent) WriteInput(b []byte) error
@@ -123,7 +123,7 @@ func (a *Agent) WriteInput(b []byte) error
 WriteInput writes raw bytes to the agent's pty stdin. Per spec §1, agents run non\-interactively and need little/no input; this exists for the providers that drive a CLI's stdin\-based protocol \(e.g. \`claude \-p \-\-input\-format stream\-json\`, which reads one JSON\-line user message per turn\) rather than passing the whole prompt as an argv/file. Direct Write\(\) to the ptmx, per spec §2.
 
 <a name="Options"></a>
-## type [Options](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/agent/agent.go#L29-L35>)
+## type [Options](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/agent/agent.go#L29-L44>)
 
 Options configures one agent subprocess.
 
@@ -134,11 +134,20 @@ type Options struct {
     Dir        string
     Env        []string
     ResultPath string // file the CLI is told to write its structured result to
+
+    // DisableEcho turns OFF the pty's terminal echo before the child starts.
+    // Providers that drive the CLI over stdin (claude/opencode stream-json)
+    // MUST set this: otherwise the pty echoes every stdin line back onto the
+    // output stream, where the never-block watchdog pattern-matches the
+    // operator's OWN prompt text ("do you want to…", "approve", …) as an
+    // interactive prompt and kills the turn. Disabling echo removes the
+    // echoed line at the source. No effect on native Windows (no pty there).
+    DisableEcho bool
 }
 ```
 
 <a name="Signal"></a>
-## type [Signal](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/agent/watchdog.go#L22-L25>)
+## type [Signal](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/agent/watchdog.go#L23-L26>)
 
 Signal is one watchdog observation about an agent.
 
@@ -150,7 +159,7 @@ type Signal struct {
 ```
 
 <a name="SignalKind"></a>
-## type [SignalKind](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/agent/watchdog.go#L10>)
+## type [SignalKind](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/agent/watchdog.go#L11>)
 
 SignalKind classifies a watchdog observation.
 
@@ -171,7 +180,7 @@ const (
 ```
 
 <a name="WatchdogConfig"></a>
-## type [WatchdogConfig](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/agent/watchdog.go#L28-L31>)
+## type [WatchdogConfig](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/agent/watchdog.go#L29-L42>)
 
 WatchdogConfig tunes stall and prompt detection.
 
@@ -179,6 +188,16 @@ WatchdogConfig tunes stall and prompt detection.
 type WatchdogConfig struct {
     StallTimeout   time.Duration
     PromptPatterns []*regexp.Regexp
+
+    // SkipPromptMatchOnJSONLines, when true, suppresses prompt-pattern
+    // matching for any output line that is a valid JSON value. Stream-json
+    // providers (claude/opencode) emit structured frames whose text can
+    // innocently contain prompt-like words ("permission", "continue?"),
+    // which would false-match and kill a valid turn — but a GENUINE raw
+    // interactive prompt from such a CLI is NOT valid JSON, so it still gets
+    // matched. This keeps real prompt detection while eliminating the
+    // false-kill-on-structured-content bug.
+    SkipPromptMatchOnJSONLines bool
 }
 ```
 

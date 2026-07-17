@@ -31,6 +31,7 @@ For commands that stream \(attach\), the server sends N \>= 0 frames of \{"event
 - [Constants](<#constants>)
 - [Variables](<#variables>)
 - [func Dial\(socketPath string, timeout time.Duration\) \(\*Client, error\)](<#Dial>)
+- [func IsCode\(err error, code string\) bool](<#IsCode>)
 - [func NewServer\(opts ServerOptions\) \(\*Server, error\)](<#NewServer>)
 - [func ServiceEndpoint\(sessionsDir string\) \(endpoint, heartbeat string\)](<#ServiceEndpoint>)
 - [func SocketAlive\(heartbeatPath string, maxAge time.Duration\) bool](<#SocketAlive>)
@@ -38,21 +39,38 @@ For commands that stream \(attach\), the server sends N \>= 0 frames of \{"event
   - [func \(c \*Client\) Attach\(ctx context.Context, fn func\(json.RawMessage\) error\) error](<#Client.Attach>)
   - [func \(c \*Client\) Close\(\) error](<#Client.Close>)
   - [func \(c \*Client\) Enqueue\(ctx context.Context, args EnqueueArgs\) \(EnqueueReply, error\)](<#Client.Enqueue>)
+  - [func \(c \*Client\) NegotiatedVersion\(ctx context.Context\) \(int, error\)](<#Client.NegotiatedVersion>)
+  - [func \(c \*Client\) PlanImport\(ctx context.Context, args PlanImportArgs\) \(PlanImportReply, error\)](<#Client.PlanImport>)
+  - [func \(c \*Client\) PlanSetStatus\(ctx context.Context, args PlanSetStatusArgs\) \(PlanSetStatusReply, error\)](<#Client.PlanSetStatus>)
   - [func \(c \*Client\) ReloadConfig\(ctx context.Context\) error](<#Client.ReloadConfig>)
   - [func \(c \*Client\) Status\(ctx context.Context\) \(StatusReply, error\)](<#Client.Status>)
   - [func \(c \*Client\) Stop\(ctx context.Context, args StopArgs\) error](<#Client.Stop>)
+  - [func \(c \*Client\) TaskApprove\(ctx context.Context, args TaskApproveArgs\) error](<#Client.TaskApprove>)
+  - [func \(c \*Client\) WorkerKill\(ctx context.Context, args WorkerKillArgs\) error](<#Client.WorkerKill>)
+- [type Coded](<#Coded>)
+- [type CodedError](<#CodedError>)
+  - [func \(e \*CodedError\) Code\(\) string](<#CodedError.Code>)
+  - [func \(e \*CodedError\) Error\(\) string](<#CodedError.Error>)
+- [type DriveHandler](<#DriveHandler>)
 - [type EnqueueArgs](<#EnqueueArgs>)
 - [type EnqueueReply](<#EnqueueReply>)
 - [type Handler](<#Handler>)
+- [type OKReply](<#OKReply>)
+- [type PlanImportArgs](<#PlanImportArgs>)
+- [type PlanImportReply](<#PlanImportReply>)
+- [type PlanSetStatusArgs](<#PlanSetStatusArgs>)
+- [type PlanSetStatusReply](<#PlanSetStatusReply>)
 - [type Request](<#Request>)
 - [type Response](<#Response>)
 - [type Server](<#Server>)
-  - [func \(s \*Server\) Start\(heartbeatInterval time.Duration\) error](<#Server.Start>)
+  - [func \(s \*Server\) Start\(\) error](<#Server.Start>)
   - [func \(s \*Server\) Stop\(\) error](<#Server.Stop>)
 - [type ServerOptions](<#ServerOptions>)
 - [type StatusReply](<#StatusReply>)
 - [type StopArgs](<#StopArgs>)
 - [type StreamEvent](<#StreamEvent>)
+- [type TaskApproveArgs](<#TaskApproveArgs>)
+- [type WorkerKillArgs](<#WorkerKillArgs>)
 - [type WorkerSummary](<#WorkerSummary>)
 
 
@@ -62,12 +80,36 @@ For commands that stream \(attach\), the server sends N \>= 0 frames of \{"event
 
 ```go
 const (
+    // v1 — observe surface.
     CmdStatus       = "status"
     CmdAttach       = "attach"
     CmdEnqueue      = "enqueue"
     CmdStop         = "stop"
     CmdReloadConfig = "reload-config"
+
+    // v2 — drive surface (see the IPC drive-api design spec).
+    CmdPlanImport    = "plan-import"
+    CmdPlanSetStatus = "plan-set-status"
+    CmdTaskApprove   = "task-approve"
+    CmdWorkerKill    = "worker-kill"
 )
+```
+
+<a name="CodeUnsupportedCommand"></a>Stable machine\-readable error classes carried in Response.Code so a client \(the GUI\) can react programmatically instead of string\-matching Error.
+
+```go
+const (
+    CodeUnsupportedCommand = "unsupported_command"
+    CodeNotFound           = "not_found"
+    CodeConflict           = "conflict"
+    CodeInvalidArgs        = "invalid_args"
+)
+```
+
+<a name="ProtoVersion"></a>ProtoVersion is the wire protocol version this build speaks. The original read\-only\-TUI surface \(status/attach/enqueue/stop/reload\-config\) is v1; the drive commands \(plan\-import/plan\-set\-status/task\-approve/worker\-kill\) are v2. A client omitting Request.ProtoVersion is treated as v1 for back\-compat.
+
+```go
+const ProtoVersion = 2
 ```
 
 ## Variables
@@ -94,8 +136,17 @@ defer c.Close()
 status, err := c.Status(ctx)
 ```
 
+<a name="IsCode"></a>
+## func [IsCode](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/client_drive.go#L33>)
+
+```go
+func IsCode(err error, code string) bool
+```
+
+IsCode reports whether err carries the given error class. It matches any error implementing the Coded interface \(Code\(\) string\) — both the client's \*CodedError \(decoded from a wire Response.Code\) and a handler\-side coded error returned by a direct in\-process call.
+
 <a name="NewServer"></a>
-## func [NewServer](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/server.go#L78>)
+## func [NewServer](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/server.go#L105>)
 
 ```go
 func NewServer(opts ServerOptions) (*Server, error)
@@ -104,7 +155,7 @@ func NewServer(opts ServerOptions) (*Server, error)
 NewServer constructs a Server. It does NOT bind the socket — call Start to begin accepting connections.
 
 <a name="ServiceEndpoint"></a>
-## func [ServiceEndpoint](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/paths.go#L31>)
+## func [ServiceEndpoint](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/paths.go#L32>)
 
 ```go
 func ServiceEndpoint(sessionsDir string) (endpoint, heartbeat string)
@@ -115,7 +166,7 @@ ServiceEndpoint returns the local control\-plane endpoint plus its heartbeat fil
 On POSIX the endpoint is normally sessionsDir/service.sock. But a deeply nested sessionsDir — a long XDG/App Support path, a deep RALPH\_STATE\_DIR, or a macOS /var/folders/... temp root under test — can push that path past the kernel's sun\_path limit, so bind\(\) fails with EINVAL. When that would happen we fall back to a short, collision\-resistant socket path under the system temp dir keyed by a hash of sessionsDir. The heartbeat file always stays in sessionsDir \(it is a plain file, not a socket, so it has no path limit\) which keeps discovery/liveness colocated with the workspace.
 
 <a name="SocketAlive"></a>
-## func [SocketAlive](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/server.go#L305>)
+## func [SocketAlive](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/server.go#L445>)
 
 ```go
 func SocketAlive(heartbeatPath string, maxAge time.Duration) bool
@@ -161,6 +212,33 @@ func (c *Client) Enqueue(ctx context.Context, args EnqueueArgs) (EnqueueReply, e
 
 Enqueue pushes a task. Returns the resulting task ID \(possibly a dedup hit from FTS\) and whether the task was freshly inserted.
 
+<a name="Client.NegotiatedVersion"></a>
+### func \(\*Client\) [NegotiatedVersion](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/client_drive.go#L91>)
+
+```go
+func (c *Client) NegotiatedVersion(ctx context.Context) (int, error)
+```
+
+NegotiatedVersion returns the supervisor's supported wire protocol version \(from StatusReply\). 0 means a pre\-versioned v1 supervisor.
+
+<a name="Client.PlanImport"></a>
+### func \(\*Client\) [PlanImport](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/client_drive.go#L66>)
+
+```go
+func (c *Client) PlanImport(ctx context.Context, args PlanImportArgs) (PlanImportReply, error)
+```
+
+PlanImport imports a markdown plan and activates it, returning the created plan's id/slug/title.
+
+<a name="Client.PlanSetStatus"></a>
+### func \(\*Client\) [PlanSetStatus](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/client_drive.go#L73>)
+
+```go
+func (c *Client) PlanSetStatus(ctx context.Context, args PlanSetStatusArgs) (PlanSetStatusReply, error)
+```
+
+PlanSetStatus changes a plan's lifecycle status \(paused|active|abandoned\).
+
 <a name="Client.ReloadConfig"></a>
 ### func \(\*Client\) [ReloadConfig](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/client.go#L117>)
 
@@ -188,8 +266,85 @@ func (c *Client) Stop(ctx context.Context, args StopArgs) error
 
 Stop issues a stop request. The server closes the socket after replying; expect the returned error to be ErrClosed on the next call.
 
+<a name="Client.TaskApprove"></a>
+### func \(\*Client\) [TaskApprove](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/client_drive.go#L80>)
+
+```go
+func (c *Client) TaskApprove(ctx context.Context, args TaskApproveArgs) error
+```
+
+TaskApprove clears the approval gate on a ready\_pending\_approval task.
+
+<a name="Client.WorkerKill"></a>
+### func \(\*Client\) [WorkerKill](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/client_drive.go#L85>)
+
+```go
+func (c *Client) WorkerKill(ctx context.Context, args WorkerKillArgs) error
+```
+
+WorkerKill kills a running worker via kill\-and\-reclaim.
+
+<a name="Coded"></a>
+## type [Coded](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/server.go#L389-L391>)
+
+Coded is implemented by handler errors that carry a stable machine\-readable error class \(Code\* consts\). writeResult copies it into Response.Code so the client can branch on the failure kind.
+
+```go
+type Coded interface {
+    Code() string
+}
+```
+
+<a name="CodedError"></a>
+## type [CodedError](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/client_drive.go#L14-L17>)
+
+CodedError wraps a \!Ok Response, exposing both the human message and the stable machine\-readable error class \(Code\* consts\) so a caller \(the GUI\) can branch on the failure kind — e.g. treat CodeNotFound as benign. It satisfies the Coded interface.
+
+```go
+type CodedError struct {
+    Class   string
+    Message string
+}
+```
+
+<a name="CodedError.Code"></a>
+### func \(\*CodedError\) [Code](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/client_drive.go#L27>)
+
+```go
+func (e *CodedError) Code() string
+```
+
+Code returns the error class, satisfying Coded.
+
+<a name="CodedError.Error"></a>
+### func \(\*CodedError\) [Error](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/client_drive.go#L19>)
+
+```go
+func (e *CodedError) Error() string
+```
+
+
+
+<a name="DriveHandler"></a>
+## type [DriveHandler](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/server.go#L56-L65>)
+
+DriveHandler is the OPTIONAL v2 drive surface. A Handler that also implements DriveHandler gains the plan\-import/plan\-set\-status/task\-approve/ worker\-kill commands; one that does not still serves the v1 observe surface, and the server answers a drive command with an unsupported\_command response. Keeping it a separate interface means existing v1 Handler implementations \(and their test doubles\) compile unchanged.
+
+```go
+type DriveHandler interface {
+    // HandlePlanImport creates + activates a plan from markdown.
+    HandlePlanImport(ctx context.Context, args PlanImportArgs) (PlanImportReply, error)
+    // HandlePlanSetStatus changes a plan's lifecycle status (validated).
+    HandlePlanSetStatus(ctx context.Context, args PlanSetStatusArgs) (PlanSetStatusReply, error)
+    // HandleTaskApprove clears the approval gate on a ready_pending_approval task.
+    HandleTaskApprove(ctx context.Context, args TaskApproveArgs) error
+    // HandleWorkerKill kills a running worker via kill-and-reclaim.
+    HandleWorkerKill(ctx context.Context, args WorkerKillArgs) error
+}
+```
+
 <a name="EnqueueArgs"></a>
-## type [EnqueueArgs](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/protocol.go#L86-L90>)
+## type [EnqueueArgs](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/protocol.go#L121-L125>)
 
 EnqueueArgs is the client's payload when pushing work via CmdEnqueue.
 
@@ -202,7 +357,7 @@ type EnqueueArgs struct {
 ```
 
 <a name="EnqueueReply"></a>
-## type [EnqueueReply](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/protocol.go#L94-L97>)
+## type [EnqueueReply](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/protocol.go#L129-L132>)
 
 EnqueueReply tells the client whether a new task was created or a duplicate was collapsed \(via FTS dedup in the db layer\).
 
@@ -214,7 +369,7 @@ type EnqueueReply struct {
 ```
 
 <a name="Handler"></a>
-## type [Handler](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/server.go#L20-L39>)
+## type [Handler](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/server.go#L29-L48>)
 
 Handler handles a single client request. Attach streams events by calling emit repeatedly; other commands return \(reply, nil\) and the server transmits a single Response frame.
 
@@ -241,8 +396,70 @@ type Handler interface {
 }
 ```
 
+<a name="OKReply"></a>
+## type [OKReply](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/protocol.go#L187-L189>)
+
+OKReply is the trivial success payload for drive commands that only need to confirm the action landed.
+
+```go
+type OKReply struct {
+    OK bool `json:"ok"`
+}
+```
+
+<a name="PlanImportArgs"></a>
+## type [PlanImportArgs](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/protocol.go#L145-L150>)
+
+PlanImportArgs imports a markdown plan and activates it \(CmdPlanImport\). The server runs the same CreatePlan \+ activate logic the \`plan import\` CLI does, so the GUI needn't open the DB itself and there is one writer of record.
+
+```go
+type PlanImportArgs struct {
+    Markdown string `json:"markdown"`
+    Slug     string `json:"slug,omitempty"`  // optional; derived from title if empty
+    Title    string `json:"title,omitempty"` // optional; derived from first heading/filename if empty
+    Project  string `json:"project"`         // project id the plan belongs to
+}
+```
+
+<a name="PlanImportReply"></a>
+## type [PlanImportReply](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/protocol.go#L153-L157>)
+
+PlanImportReply reports the created plan.
+
+```go
+type PlanImportReply struct {
+    PlanID string `json:"plan_id"`
+    Slug   string `json:"slug"`
+    Title  string `json:"title"`
+}
+```
+
+<a name="PlanSetStatusArgs"></a>
+## type [PlanSetStatusArgs](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/protocol.go#L161-L164>)
+
+PlanSetStatusArgs changes a plan's lifecycle status \(CmdPlanSetStatus\), e.g. pause/resume/abandon. The server validates the transition.
+
+```go
+type PlanSetStatusArgs struct {
+    PlanID string `json:"plan_id"`
+    Status string `json:"status"` // paused|active|abandoned
+}
+```
+
+<a name="PlanSetStatusReply"></a>
+## type [PlanSetStatusReply](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/protocol.go#L167-L170>)
+
+PlanSetStatusReply echoes the applied status.
+
+```go
+type PlanSetStatusReply struct {
+    PlanID string `json:"plan_id"`
+    Status string `json:"status"`
+}
+```
+
 <a name="Request"></a>
-## type [Request](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/protocol.go#L41-L44>)
+## type [Request](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/protocol.go#L63-L69>)
 
 Request is a single command from a client to the repo service.
 
@@ -250,11 +467,14 @@ Request is a single command from a client to the repo service.
 type Request struct {
     Cmd  string          `json:"cmd"`
     Args json.RawMessage `json:"args,omitempty"`
+    // ProtoVersion is the wire version the client speaks. 0 (omitted) means a
+    // pre-versioned v1 client (the current TUI), handled for back-compat.
+    ProtoVersion int `json:"proto_version,omitempty"`
 }
 ```
 
 <a name="Response"></a>
-## type [Response](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/protocol.go#L49-L53>)
+## type [Response](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/protocol.go#L74-L81>)
 
 Response is the single\-shot reply shape. For streaming commands the server sends multiple Event frames followed by a final Response with Ok=true; mid\-stream errors send a Response with Ok=false.
 
@@ -263,11 +483,14 @@ type Response struct {
     Ok    bool            `json:"ok"`
     Data  json.RawMessage `json:"data,omitempty"`
     Error string          `json:"error,omitempty"`
+    // Code is a stable machine-readable error class (Code* consts) set on
+    // !Ok responses where the client may want to branch on the failure kind.
+    Code string `json:"code,omitempty"`
 }
 ```
 
 <a name="Server"></a>
-## type [Server](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/server.go#L42-L51>)
+## type [Server](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/server.go#L68-L78>)
 
 Server is the repo\-service IPC server. One instance per repo service.
 
@@ -278,16 +501,16 @@ type Server struct {
 ```
 
 <a name="Server.Start"></a>
-### func \(\*Server\) [Start](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/server.go#L107>)
+### func \(\*Server\) [Start](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/server.go#L138>)
 
 ```go
-func (s *Server) Start(heartbeatInterval time.Duration) error
+func (s *Server) Start() error
 ```
 
-Start binds the socket and begins accepting connections in a background goroutine. Safe to call once. Returns the listener error if bind fails.
+Start binds the socket and begins accepting connections in a background goroutine. Safe to call once. Returns the listener error if bind fails. The heartbeat interval comes from ServerOptions.HeartbeatInterval \(set at NewServer\), not a parameter here — a single source of truth.
 
 <a name="Server.Stop"></a>
-### func \(\*Server\) [Stop](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/server.go#L122>)
+### func \(\*Server\) [Stop](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/server.go#L153>)
 
 ```go
 func (s *Server) Stop() error
@@ -296,7 +519,7 @@ func (s *Server) Stop() error
 Stop shuts the server down and waits for goroutines to exit.
 
 <a name="ServerOptions"></a>
-## type [ServerOptions](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/server.go#L54-L74>)
+## type [ServerOptions](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/server.go#L81-L101>)
 
 ServerOptions configures a Server.
 
@@ -325,12 +548,15 @@ type ServerOptions struct {
 ```
 
 <a name="StatusReply"></a>
-## type [StatusReply](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/protocol.go#L61-L75>)
+## type [StatusReply](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/protocol.go#L89-L106>)
 
 StatusReply is the data payload for CmdStatus responses.
 
 ```go
 type StatusReply struct {
+    // ProtoVersion is the supervisor's supported wire version, so a client
+    // can detect drive-command availability without trial-and-error.
+    ProtoVersion  int             `json:"proto_version,omitempty"`
     RepoPath      string          `json:"repo_path"`
     PID           int             `json:"pid"`
     Uptime        time.Duration   `json:"uptime_ns"`
@@ -348,7 +574,7 @@ type StatusReply struct {
 ```
 
 <a name="StopArgs"></a>
-## type [StopArgs](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/protocol.go#L100-L103>)
+## type [StopArgs](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/protocol.go#L135-L138>)
 
 StopArgs controls the termination mode for CmdStop.
 
@@ -360,7 +586,7 @@ type StopArgs struct {
 ```
 
 <a name="StreamEvent"></a>
-## type [StreamEvent](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/protocol.go#L56-L58>)
+## type [StreamEvent](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/protocol.go#L84-L86>)
 
 StreamEvent is one frame emitted during a streaming command \(e.g. attach\).
 
@@ -370,13 +596,40 @@ type StreamEvent struct {
 }
 ```
 
+<a name="TaskApproveArgs"></a>
+## type [TaskApproveArgs](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/protocol.go#L174-L177>)
+
+TaskApproveArgs clears the approval gate on a ready\_pending\_approval task \(CmdTaskApprove\), transitioning it to ready so dispatch can pick it up.
+
+```go
+type TaskApproveArgs struct {
+    PlanID string `json:"plan_id"`
+    TaskID string `json:"task_id"`
+}
+```
+
+<a name="WorkerKillArgs"></a>
+## type [WorkerKillArgs](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/protocol.go#L181-L183>)
+
+WorkerKillArgs kills a running worker \(CmdWorkerKill\) via the same kill\-and\-reclaim path a watchdog kill uses, so the task returns to ready.
+
+```go
+type WorkerKillArgs struct {
+    WorkerID string `json:"worker_id"`
+}
+```
+
 <a name="WorkerSummary"></a>
-## type [WorkerSummary](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/protocol.go#L78-L83>)
+## type [WorkerSummary](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/protocol.go#L109-L118>)
 
 WorkerSummary is the runtime\-facing status for one in\-flight worker.
 
 ```go
 type WorkerSummary struct {
+    // WorkerID is the store worker-row id — the value a client passes to the
+    // worker-kill drive command to target THIS worker. Distinct from any
+    // provider-session id.
+    WorkerID          string `json:"worker_id"`
     PlanID            string `json:"plan_id"`
     TaskID            string `json:"task_id"`
     Provider          string `json:"provider,omitempty"`

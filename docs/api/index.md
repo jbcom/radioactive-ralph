@@ -16,12 +16,8 @@ To improve this reference, edit the doc comments in the corresponding
 The reference mirrors the Go source tree:
 
 - **cmd/radioactive_ralph/** — CLI entry points and subcommand handlers
-- **internal/** — the runtime packages: `agent` (pty-owned agent + watchdog),
-  `store` (the one user-level SQLite DB), `vconfig` (virtual-layer config),
-  `supervisor` + `ipc` (control plane + discovery), `provider` +
-  `agentdetect` (local-only provider bindings), `plan` + `orch` + `a2a`
-  (plan decomposition, orchestrator-verified dispatch, A2A vocabulary),
-  `tui`, `genesis`, `doctor`, `service`, `rlog`, `xdg`.
+- **internal/** — everything else — config, session, runtime, fixit,
+  variant, IPC, service, workspace, provider, etc.
 
 Each package page lists constants, variables, functions, types, and
 their public methods with signatures and associated doc comments.
@@ -34,7 +30,9 @@ internal/agent
 internal/agentdetect
 internal/doctor
 internal/genesis
+internal/gui
 internal/ipc
+internal/onboard
 internal/orch
 internal/plan
 internal/provider
@@ -44,6 +42,7 @@ internal/provider/claudesession/cassette/replayer
 internal/provider/claudesession/internal/fakeclaude
 internal/rlog
 internal/service
+internal/statusbucket
 internal/store
 internal/store/schema
 internal/supervisor
