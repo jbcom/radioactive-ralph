@@ -178,21 +178,15 @@ Attach live-consumers (push-live view) — #169 landed, consumers in flight:
   on main. Store tail queries, supervisor HandleAttach tail loop, ipc
   AttachArgs/AttachEvent/AttachEvents; all 5 review threads resolved (scope
   precedence, transient/permanent error classification, MaxEventID cursor seed).
-- [ ] [WAIT] #173 (feat: apply attach deltas — TUI/GUI go push-live). TUI decodes
+- [x] #173 (feat: apply attach deltas — TUI/GUI go push-live) MERGED. TUI decodes
   ipc.AttachEvent, filters the micro-view tail to the selected task (the deferred
-  codex P2), and applies task-status deltas ahead of the poll; GUI gates its
-  per-frame refresh on the event kind (kills the heartbeat-refresh storm). Poll
-  stays the reconcile net. Spec:
-  docs/superpowers/specs/2026-07-17-attach-live-consumers-design.md. CI running;
-  a code-review agent is examining the diff. Merge when green + threads resolved.
-- [x] Code-review of the #173 diff (feature-dev:code-reviewer) DONE — items 1-4
-  (micro filter, re-arm exhaustiveness, applyEvent aliasing, GUI kind gate) clean;
-  one real finding: taskDeltaStatus missing task.blocked/task.context_requested →
-  Blocked (running→blocked went stale until the poll). Fixed forward on #173 (+test).
-- [ ] [WAIT] #175 (fix(store): payload_json always valid JSON structurally) — the
-  LOW json.Valid hardening from the #169 security self-review, shipped as its own
-  PR: jsonOrEmptyObject wraps a malformed input as {"raw":...} so the events
-  column's invariant is structural, not caller-discipline. CI running; merge green.
+  codex P2), and applies task-status deltas (incl. task.blocked/context_requested,
+  a code-review finding) ahead of the poll; GUI gates its per-frame refresh on the
+  event kind. Poll stays the reconcile net. Code-review clean on items 1-4.
+- [x] #175 (fix(store): payload_json always valid JSON structurally) MERGED — the
+  LOW json.Valid hardening from the #169 security self-review: jsonOrEmptyObject
+  wraps a malformed input as {"raw":...} so the events column's invariant is
+  structural, not caller-discipline.
 
 Next after the arc lands (forward-exploration candidates):
 - [ ] [WAIT-AGENT] code-simplifier lens over the merged attach surface (store
