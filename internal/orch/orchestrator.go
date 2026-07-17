@@ -560,19 +560,24 @@ func (o *Orchestrator) dispatchWorker(ctx context.Context, projectID, projectDir
 	// timeout ctx into VerifyAndComplete made a near-timeout run's acceptance
 	// re-check (which re-runs real shell commands) fail spuriously against an
 	// already-expired deadline. Use runCtx for Run; keep the parent ctx after.
-	runCtx := ctx
-	if o.watchdogConfig.StallTimeout > 0 {
-		var cancel context.CancelFunc
-		runCtx, cancel = context.WithTimeout(ctx, o.watchdogConfig.StallTimeout)
-		defer cancel()
-	}
-
 	req := provider.Request{
 		WorkingDir: projectDir,
 		UserPrompt: scoped.prompt(),
 	}
 
-	result, runErr := runner.Run(runCtx, binding, req)
+	// The stall timeout bounds ONLY the agent turn: cancel it the instant Run
+	// returns (not at function end) so the timeout resources aren't held
+	// through the slower post-run store writes + VerifyAndComplete, which use
+	// the parent ctx.
+	result, runErr := func() (provider.Result, error) {
+		runCtx := ctx
+		if o.watchdogConfig.StallTimeout > 0 {
+			var cancel context.CancelFunc
+			runCtx, cancel = context.WithTimeout(ctx, o.watchdogConfig.StallTimeout)
+			defer cancel()
+		}
+		return runner.Run(runCtx, binding, req)
+	}()
 
 	// Spend is real the moment tokens were billed, independent of whether
 	// the work is ultimately accepted by VerifyAndComplete — record it
@@ -702,18 +707,21 @@ func (o *Orchestrator) dispatchFanoutGroup(ctx context.Context, projectID, proje
 		return 0, fmt.Errorf("orch: resolve runner for %q: %w", binding.Name, err)
 	}
 
-	runCtx := ctx
-	if o.watchdogConfig.StallTimeout > 0 {
-		var cancel context.CancelFunc
-		runCtx, cancel = context.WithTimeout(ctx, o.watchdogConfig.StallTimeout)
-		defer cancel()
-	}
-
 	req := provider.Request{
 		WorkingDir: projectDir,
 		UserPrompt: scoped.prompt(),
 	}
-	result, runErr := runner.Run(runCtx, binding, req)
+	// Stall timeout bounds ONLY the fan-out turn; cancel it the instant Run
+	// returns so it isn't held through the per-task verification below.
+	result, runErr := func() (provider.Result, error) {
+		runCtx := ctx
+		if o.watchdogConfig.StallTimeout > 0 {
+			var cancel context.CancelFunc
+			runCtx, cancel = context.WithTimeout(ctx, o.watchdogConfig.StallTimeout)
+			defer cancel()
+		}
+		return runner.Run(runCtx, binding, req)
+	}()
 
 	// Spend is real the moment tokens were billed, independent of
 	// per-task verification outcome — record it once for the group's one
