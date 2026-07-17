@@ -99,6 +99,7 @@ func (u *ui) button(label string, tapped func()) *widget.Button {
 func (u *ui) drillTo(plan, task string) {
 	u.mu.Lock()
 	u.selectedPlan, u.selectedTask = plan, task
+	u.actionErr = "" // a prior view's action error must not follow the operator here
 	u.mu.Unlock()
 	if u.syncRender {
 		u.refreshNow()
@@ -120,6 +121,7 @@ func (u *ui) drillBack() {
 		u.mu.Unlock()
 		return // already at macro
 	}
+	u.actionErr = "" // clear a prior view's action error when leaving it
 	u.mu.Unlock()
 	if u.syncRender {
 		u.refreshNow()
@@ -243,23 +245,25 @@ func (u *ui) buildMicro(s snapshot) {
 	}
 }
 
-// drive runs a drive action off the main thread (it is an IPC round-trip),
-// surfaces any error in the banner, and refreshes on success. Called from a tap
-// handler; it spawns a goroutine so the click returns immediately.
+// drive runs a drive action off the main thread (it is an IPC round-trip) and
+// refreshes to surface the result. Called from a tap handler; it spawns a
+// goroutine so the click returns immediately. Both the success and failure paths
+// go through refreshNow → paint: a failure records actionErr (rendered with
+// precedence and persisting across refreshes until cleared), and a success clears
+// actionErr and repaints the fresh state. Routing errors through paint (rather
+// than a bare fyne.Do banner write) keeps them coordinated with the refreshSeq
+// staleness gate so a stale tick can neither erase a fresh error nor resurrect a
+// cleared one.
 func (u *ui) drive(label string, fn func() error) {
 	work := func() {
-		if err := fn(); err != nil {
-			showErr := func() {
-				u.errBanner.SetText(fmt.Sprintf("%s failed: %v", label, err))
-				u.errBanner.Show()
-			}
-			if u.syncRender {
-				showErr()
-			} else {
-				fyne.Do(showErr)
-			}
-			return
+		err := fn()
+		u.mu.Lock()
+		if err != nil {
+			u.actionErr = fmt.Sprintf("%s failed: %v", label, err)
+		} else {
+			u.actionErr = ""
 		}
+		u.mu.Unlock()
 		u.refreshNow()
 	}
 	if u.syncRender {

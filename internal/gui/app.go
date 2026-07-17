@@ -165,10 +165,19 @@ type ui struct {
 
 	// mu guards the drill selection, which is written by tap handlers on the
 	// main thread and read by gather() on the refresh/attach goroutine. It also
-	// guards refreshSeq (below).
+	// guards refreshSeq and actionErr (below).
 	mu           sync.Mutex
 	selectedPlan string
 	selectedTask string
+
+	// actionErr holds the last failed drive action's message ("" = none). Drive
+	// errors need their own slot because they don't come from the Status snapshot:
+	// a bare fyne.Do(showErr) would be silently erased by the next tick's
+	// setError(snap.err=nil), so a transient "kill failed" could flash and vanish
+	// or, conversely, never clear. paint() renders actionErr when set (it takes
+	// precedence over a Status error, since it's the thing the operator just did),
+	// and any subsequent successful drive or drill clears it. Guarded by mu.
+	actionErr string
 
 	// refreshSeq orders concurrent refreshes. refreshNow is fired from four
 	// sources (1s ticker, each live event, each drive, each drill); their
@@ -253,9 +262,20 @@ func (u *ui) refreshNow() {
 			return
 		}
 		u.lastPaintedSeq = seq
+		// A failed drive action's message takes precedence over a Status error —
+		// it's the thing the operator just did — and persists across data refreshes
+		// until a successful drive/drill clears it.
+		actionErr := u.actionErr
 		u.mu.Unlock()
 
-		u.setError(snap.err)
+		switch {
+		case actionErr != "":
+			u.setBanner(actionErr)
+		case snap.err != nil:
+			u.setBanner("error: " + snap.err.Error())
+		default:
+			u.setBanner("")
+		}
 		u.header.SetText(headerText(snap.status, snap.err))
 		u.render(snap)
 	}
@@ -345,12 +365,16 @@ func (u *ui) gather(plan, task string) snapshot {
 	return s
 }
 
-func (u *ui) setError(err error) {
-	if err == nil {
+// setBanner shows msg in the error banner, or hides it when msg is empty. The
+// single entry point for both Status-connection errors and drive-action errors
+// so exactly one of them is visible at a time (see paint's precedence). Main
+// thread only.
+func (u *ui) setBanner(msg string) {
+	if msg == "" {
 		u.errBanner.SetText("")
 		u.errBanner.Hide()
 		return
 	}
-	u.errBanner.SetText("error: " + err.Error())
+	u.errBanner.SetText(msg)
 	u.errBanner.Show()
 }

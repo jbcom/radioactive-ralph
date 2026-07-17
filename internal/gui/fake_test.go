@@ -32,7 +32,7 @@ type fakeController struct {
 	approved   [][2]string // {planID, taskID}
 	killed     []string    // workerIDs
 	importErr  error
-	statusErr  error
+	setPlanErr error // returned by SetPlanStatus() — a drive-action failure
 	approveErr error
 	killErr    error
 }
@@ -102,7 +102,7 @@ func (f *fakeController) SetPlanStatus(_ context.Context, planID, status string)
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.setStatus = append(f.setStatus, [2]string{planID, status})
-	return f.statusErr
+	return f.setPlanErr
 }
 
 func (f *fakeController) ApproveTask(_ context.Context, planID, taskID string) error {

@@ -226,6 +226,71 @@ func TestMeso_PauseCallsSetPlanStatus(t *testing.T) {
 	}
 }
 
+func TestDrive_FailureShowsBannerThatSurvivesRefresh(t *testing.T) {
+	// A failed drive action must show a banner that a subsequent same-view data
+	// refresh does NOT erase (the bug: the old bare-fyne.Do banner write was
+	// clobbered by the next tick's setError(snap.err=nil)).
+	f := newFakeController()
+	f.plans = []store.Plan{{ID: "p1", Title: "P", Status: store.PlanStatusActive}}
+	f.setPlanErr = errors.New("supervisor rejected")
+	u := newTestUI(t, f)
+	u.selectedPlan = "p1"
+	u.refreshNow()
+
+	tapButton(t, u.root, "Pause") // fails → records actionErr, repaints
+	if !u.errBanner.Visible() {
+		t.Fatal("drive failure did not show the error banner")
+	}
+	if !strings.Contains(u.errBanner.Text, "pause failed") {
+		t.Fatalf("banner text = %q, want it to mention the failed action", u.errBanner.Text)
+	}
+
+	// A plain data refresh (the 1s tick, no drive) must leave the banner up.
+	u.refreshNow()
+	if !u.errBanner.Visible() || !strings.Contains(u.errBanner.Text, "pause failed") {
+		t.Fatalf("same-view refresh erased the drive-error banner: visible=%v text=%q", u.errBanner.Visible(), u.errBanner.Text)
+	}
+}
+
+func TestDrive_SuccessClearsPriorFailureBanner(t *testing.T) {
+	// A successful drive after a failed one clears the banner.
+	f := newFakeController()
+	f.plans = []store.Plan{{ID: "p1", Title: "P", Status: store.PlanStatusActive}}
+	f.setPlanErr = errors.New("boom")
+	u := newTestUI(t, f)
+	u.selectedPlan = "p1"
+	u.refreshNow()
+
+	tapButton(t, u.root, "Pause") // fails → banner up
+	if !u.errBanner.Visible() {
+		t.Fatal("expected banner after failed drive")
+	}
+	f.setPlanErr = nil             // next action succeeds
+	tapButton(t, u.root, "Resume") // success → clears actionErr
+	if u.errBanner.Visible() {
+		t.Fatalf("successful drive did not clear the banner: text=%q", u.errBanner.Text)
+	}
+}
+
+func TestDrillBack_ClearsActionError(t *testing.T) {
+	// A drive error on one view must not follow the operator to another view.
+	f := newFakeController()
+	f.plans = []store.Plan{{ID: "p1", Title: "P", Status: store.PlanStatusActive}}
+	f.setPlanErr = errors.New("nope")
+	u := newTestUI(t, f)
+	u.selectedPlan = "p1"
+	u.refreshNow()
+
+	tapButton(t, u.root, "Pause") // fails at meso → banner up
+	if !u.errBanner.Visible() {
+		t.Fatal("expected banner after failed drive")
+	}
+	u.drillBack() // meso → macro; should clear the action error
+	if u.errBanner.Visible() {
+		t.Fatalf("drilling away did not clear the action-error banner: text=%q", u.errBanner.Text)
+	}
+}
+
 func TestMeso_ApproveOnlyForPendingApprovalTask(t *testing.T) {
 	f := newFakeController()
 	f.plans = []store.Plan{{ID: "p1", Title: "P", Status: store.PlanStatusActive}}
