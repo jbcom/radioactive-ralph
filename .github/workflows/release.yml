@@ -125,6 +125,17 @@ jobs:
           fi
           gh release upload "$GITHUB_REF_NAME" "${assets[@]}" --clobber
 
+      # Publish the Homebrew cask AFTER the .dmg is uploaded (the cask points at
+      # the release asset URL + its sha). This is the recommended macOS install:
+      # `brew install --cask radioactive-ralph`.
+      - name: Publish Homebrew cask (macOS)
+        if: matrix.target == 'darwin'
+        env:
+          GH_TOKEN: ${{ secrets.CI_GITHUB_TOKEN }}
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          bash packaging/macos/publish-cask.sh "$VERSION" "radioactive-ralph_${VERSION}_darwin.dmg"
+
   chocolatey:
     name: GoReleaser (chocolatey publish)
     needs: goreleaser
