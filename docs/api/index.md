@@ -16,8 +16,8 @@ To improve this reference, edit the doc comments in the corresponding
 The reference mirrors the Go source tree:
 
 - **cmd/radioactive_ralph/** — CLI entry points and subcommand handlers
-- **internal/** — everything else — config, session, runtime, fixit,
-  variant, IPC, service, workspace, provider, etc.
+- **internal/** — everything else — agent + watchdog, store, supervisor +
+  IPC, orchestrator, plan engine, providers, config, service, TUI, GUI, etc.
 
 Each package page lists constants, variables, functions, types, and
 their public methods with signatures and associated doc comments.

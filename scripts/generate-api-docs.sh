@@ -38,7 +38,11 @@ while IFS= read -r pkg_dir; do
   [[ -z "$pkg_dir" ]] && continue
   rel_pkg="${pkg_dir#$REPO_ROOT/}"
   pkg="./$rel_pkg"
+  # Build the GUI-tagged surface too: internal/gui's views/theme/app are behind
+  # `//go:build gui`, so without the tag its API page shows only the Fyne-free
+  # Controller. --tags gui is harmless for every other package.
   if ! gomarkdoc \
+    --tags gui \
     --output "$OUT_DIR/{{.Dir}}.md" \
     --repository.url "https://github.com/jbcom/radioactive-ralph" \
     --repository.default-branch main \
@@ -100,8 +104,8 @@ To improve this reference, edit the doc comments in the corresponding
 The reference mirrors the Go source tree:
 
 - **cmd/radioactive_ralph/** — CLI entry points and subcommand handlers
-- **internal/** — everything else — config, session, runtime, fixit,
-  variant, IPC, service, workspace, provider, etc.
+- **internal/** — everything else — agent + watchdog, store, supervisor +
+  IPC, orchestrator, plan engine, providers, config, service, TUI, GUI, etc.
 
 Each package page lists constants, variables, functions, types, and
 their public methods with signatures and associated doc comments.
