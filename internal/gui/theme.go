@@ -7,7 +7,6 @@ import (
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/theme"
-
 	"github.com/jbcom/radioactive-ralph/internal/statusbucket"
 )
 
@@ -65,6 +64,6 @@ func (ralphTheme) Color(name fyne.ThemeColorName, variant fyne.ThemeVariant) col
 	return theme.DefaultTheme().Color(name, variant)
 }
 
-func (ralphTheme) Font(s fyne.TextStyle) fyne.Resource    { return theme.DefaultTheme().Font(s) }
+func (ralphTheme) Font(s fyne.TextStyle) fyne.Resource     { return theme.DefaultTheme().Font(s) }
 func (ralphTheme) Icon(n fyne.ThemeIconName) fyne.Resource { return theme.DefaultTheme().Icon(n) }
 func (ralphTheme) Size(n fyne.ThemeSizeName) float32       { return theme.DefaultTheme().Size(n) }

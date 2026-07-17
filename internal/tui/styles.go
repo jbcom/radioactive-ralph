@@ -2,7 +2,6 @@ package tui
 
 import (
 	"github.com/charmbracelet/lipgloss"
-
 	"github.com/jbcom/radioactive-ralph/internal/statusbucket"
 )
 
