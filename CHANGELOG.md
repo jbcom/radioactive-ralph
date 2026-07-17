@@ -13,6 +13,13 @@ shipped. That means historical sections may still mention MCP, plugins,
 supervisors, or the archived Python implementation even though those are no
 longer part of the live contract.
 
+## [0.20.0](https://github.com/jbcom/radioactive-ralph/compare/v0.19.1...v0.20.0) (2026-07-17)
+
+
+### Features
+
+* **doctor:** verify the XDG state root is usable ([#120](https://github.com/jbcom/radioactive-ralph/issues/120)) ([997f701](https://github.com/jbcom/radioactive-ralph/commit/997f7018d75a09f58d6716feabfd3c28699496a7))
+
 ## [0.19.1](https://github.com/jbcom/radioactive-ralph/compare/v0.19.0...v0.19.1) (2026-07-17)
 
 
