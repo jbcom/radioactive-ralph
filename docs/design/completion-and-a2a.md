@@ -45,7 +45,7 @@ the orchestrator to verify — never a self-assertion of completion.
 ## Durability
 
 Evidence and task-state transitions live in the one user-level SQLite
-database (`a2a_tasks`/`a2a_messages` tables) — the plan DAG's existing
+database (the `a2a_messages` table plus the plan/task tables) — the plan DAG's existing
 task store is the durable authority, not a second parallel store. The
 message table is a log of evidence, not an alternate source of truth.
 

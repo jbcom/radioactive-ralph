@@ -38,7 +38,7 @@ because an agent said so.
   non-interactively under Ralph's pty; a watchdog surfaces any stall or
   permission-prompt and the runtime kills-and-reclaims. Recovery is cheap
   because state is durable.
-- **One user-level database.** A single SQLite DB (in your XDG data dir) is
+- **One user-level database.** A single SQLite DB (under your XDG state dir) is
   durable memory for **all** projects. Repos stay clean — no committed config
   dir, no per-repo database. Projects are recognized by accumulated fingerprints
   (git root-commit, remote, path), so identity survives `git init` and moves.

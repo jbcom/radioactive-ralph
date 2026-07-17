@@ -5,6 +5,9 @@ import (
 	"os/exec"
 	"path/filepath"
 	"testing"
+	"time"
+
+	"github.com/jonboulle/clockwork"
 )
 
 func openTestStore(t *testing.T) *Store {
@@ -348,5 +351,39 @@ func TestProjectAbsPathMissingIsNotFound(t *testing.T) {
 	}
 	if found {
 		t.Error("ProjectAbsPath found=true for a project with no abs_path identifier")
+	}
+}
+
+// TestProjectAbsPathMostRecentWins is the regression for the audit's
+// test-coverage finding: ProjectAbsPath's `ORDER BY added_at DESC LIMIT 1`
+// is load-bearing (a project accumulates abs_paths as it's cloned/moved, and
+// the most-recently-added one is the best guess at where the operator works
+// now). A fake clock makes the ordering deterministic.
+func TestProjectAbsPathMostRecentWins(t *testing.T) {
+	ctx := context.Background()
+	clock := clockwork.NewFakeClockAt(mustParseTime(t, "2026-07-16T00:00:00Z"))
+	s := openTestStoreWithClock(t, clock)
+
+	id, err := s.CreateProject(ctx, "Moved Project", []Fingerprint{
+		{Kind: FingerprintKindAbsPath, Value: "/old/location"},
+	})
+	if err != nil {
+		t.Fatalf("CreateProject: %v", err)
+	}
+
+	// A later move adds a second abs_path at a strictly-later timestamp.
+	clock.Advance(1 * time.Hour)
+	if err := s.AddProjectIdentifiers(ctx, id, []Fingerprint{
+		{Kind: FingerprintKindAbsPath, Value: "/new/location"},
+	}); err != nil {
+		t.Fatalf("AddProjectIdentifiers: %v", err)
+	}
+
+	path, found, err := s.ProjectAbsPath(ctx, id)
+	if err != nil || !found {
+		t.Fatalf("ProjectAbsPath: found=%v err=%v", found, err)
+	}
+	if path != "/new/location" {
+		t.Errorf("abs path = %q, want the most-recently-added /new/location", path)
 	}
 }

@@ -131,6 +131,7 @@ func Run(ctx context.Context, opts ...Option) Report {
 		checkClaudeAuth,
 		checkCodexVersion,
 		checkCodexAuth,
+		checkOpencodeVersion,
 		checkGhVersion,
 		checkGhAuth,
 		checkServicePlatform,
@@ -174,6 +175,6 @@ func (r Report) WriteText(w io.Writer) {
 	if r.Passed() {
 		_, _ = fmt.Fprintln(w, "Ralph's ready to run here.")
 	} else {
-		_, _ = fmt.Fprintln(w, "Resolve the FAIL items above before `radioactive_ralph run`.")
+		_, _ = fmt.Fprintln(w, "Resolve the FAIL items above, then start the supervisor with `radioactive_ralph service install`.")
 	}
 }

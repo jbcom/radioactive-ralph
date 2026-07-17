@@ -58,7 +58,8 @@ func runClientMode(ctx context.Context, cmd *cobra.Command) error {
 	if err != nil {
 		if errors.Is(err, supervisor.ErrNoSupervisor) {
 			fmt.Fprintln(os.Stderr, "radioactive_ralph: no supervisor is running.")
-			fmt.Fprintln(os.Stderr, "Start one with:  radioactive_ralph --supervisor")
+			fmt.Fprintln(os.Stderr, "Install the durable background service:  radioactive_ralph service install")
+			fmt.Fprintln(os.Stderr, "or run one in the foreground (dies with this terminal):  radioactive_ralph --supervisor")
 			return fmt.Errorf("no supervisor listening")
 		}
 		return fmt.Errorf("find supervisor: %w", err)

@@ -47,17 +47,28 @@ var (
 )
 
 // statusStyle returns the style used to render a status string
-// consistently across macro/meso/micro views.
+// consistently across macro/meso/micro views. It covers every real plan
+// status (store.PlanStatus*) and task status (store.TaskStatus*), so a
+// status is never rendered as undifferentiated muted gray by accident —
+// only a genuinely-unknown string falls through to muted.
 func statusStyle(status string) lipgloss.Style {
 	switch status {
+	// Terminal-success.
 	case "done":
 		return styleGood
+	// Active / in-flight.
 	case "running":
 		return styleRunning
-	case "blocked", "ready_pending_approval":
+	// Needs attention (blocked on a dependency, awaiting approval, or a
+	// partial/paused plan an operator should look at).
+	case "blocked", "ready_pending_approval", "paused", "failed_partial":
 		return styleWarn
-	case "failed":
+	// Terminal-failure / abandoned.
+	case "failed", "abandoned":
 		return styleBad
+	// Not-yet-started or benignly-skipped work: readable but low-emphasis.
+	case "pending", "ready", "draft", "skipped", "decomposed", "archived":
+		return styleMuted
 	default:
 		return styleMuted
 	}

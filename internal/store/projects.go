@@ -68,7 +68,7 @@ func (s *Store) CreateProject(ctx context.Context, displayName string, fps []Fin
 		return "", fmt.Errorf("store: insert project: %w", err)
 	}
 
-	if err := insertIdentifiers(ctx, tx, id, fps); err != nil {
+	if err := insertIdentifiers(ctx, tx, id, fps, now); err != nil {
 		return "", err
 	}
 
@@ -92,7 +92,8 @@ func (s *Store) AddProjectIdentifiers(ctx context.Context, projectID string, fps
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	if err := insertIdentifiers(ctx, tx, projectID, fps); err != nil {
+	now := s.clock.Now().UTC().Format(time.RFC3339)
+	if err := insertIdentifiers(ctx, tx, projectID, fps, now); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -100,16 +101,22 @@ func (s *Store) AddProjectIdentifiers(ctx context.Context, projectID string, fps
 
 // insertIdentifiers writes each fingerprint via INSERT OR IGNORE so
 // accumulation is idempotent — a fingerprint already recorded (for this
-// project, from an earlier run) is a no-op rather than an error.
-func insertIdentifiers(ctx context.Context, tx *sql.Tx, projectID string, fps []Fingerprint) error {
+// project, from an earlier run) is a no-op rather than an error. addedAt is
+// set EXPLICITLY from the store clock rather than relying on the schema's
+// DEFAULT CURRENT_TIMESTAMP: the default is real wall-clock at
+// second-granularity, which (a) ignores an injected test clock and (b) ties
+// when two identifiers are added in the same second, making ProjectAbsPath's
+// `ORDER BY added_at DESC` non-deterministic. An explicit clock-driven value
+// makes most-recent-wins actually hold.
+func insertIdentifiers(ctx context.Context, tx *sql.Tx, projectID string, fps []Fingerprint, addedAt string) error {
 	for _, fp := range fps {
 		if fp.Kind == "" || fp.Value == "" {
 			continue
 		}
 		_, err := tx.ExecContext(ctx, `
-			INSERT OR IGNORE INTO project_identifiers(project_id, kind, value)
-			VALUES (?, ?, ?)
-		`, projectID, fp.Kind, fp.Value)
+			INSERT OR IGNORE INTO project_identifiers(project_id, kind, value, added_at)
+			VALUES (?, ?, ?, ?)
+		`, projectID, fp.Kind, fp.Value, addedAt)
 		if err != nil {
 			return fmt.Errorf("store: insert identifier %s=%s: %w", fp.Kind, fp.Value, err)
 		}
@@ -140,10 +147,13 @@ func (s *Store) TouchProjectLastSeen(ctx context.Context, projectID string) erro
 // two locations, or moved); the most recently added one is returned as the
 // best current guess at where the operator is working now.
 func (s *Store) ProjectAbsPath(ctx context.Context, projectID string) (path string, found bool, err error) {
+	// rowid DESC breaks ties when two abs_paths share the same added_at
+	// second (e.g. seeded together at CreateProject): later-inserted wins,
+	// which is the deterministic "most recent" the doc promises.
 	row := s.db.QueryRowContext(ctx, `
 		SELECT value FROM project_identifiers
 		WHERE project_id = ? AND kind = ?
-		ORDER BY added_at DESC
+		ORDER BY added_at DESC, rowid DESC
 		LIMIT 1
 	`, projectID, FingerprintKindAbsPath)
 	err = row.Scan(&path)
