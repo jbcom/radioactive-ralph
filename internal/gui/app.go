@@ -146,6 +146,23 @@ type ui struct {
 	body      *fyne.Container // swapped per drill level
 	errBanner *widget.Label
 
+	// firstFocusable is the first keyboard-focusable widget of the view built
+	// during the current render — the back button at meso/micro, else the first
+	// plan/task button. render() focuses it ONLY when the drill view just changed
+	// (see focusedView) so a keyboard-only operator lands on an actionable control
+	// on arrival without blind-Tabbing. Reset to nil at the top of each render; a
+	// view with no buttons leaves it nil and render() focuses nothing.
+	firstFocusable fyne.Focusable
+
+	// focusedView identifies the drill view (level+selection) whose initial focus
+	// has already been set. render() runs on every 1s tick and live event, not
+	// just on navigation, so focusing unconditionally would yank focus back to the
+	// first control every refresh — stealing it from a keyboard operator mid-Tab.
+	// We only (re)initialize focus when this identity changes, i.e. on an actual
+	// drill in/out. Main-thread-only (render is always called under fyne.Do), so
+	// no lock is needed. Empty until the first render.
+	focusedView string
+
 	// mu guards the drill selection, which is written by tap handlers on the
 	// main thread and read by gather() on the refresh/attach goroutine. It also
 	// guards refreshSeq (below).

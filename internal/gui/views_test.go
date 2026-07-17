@@ -122,6 +122,90 @@ func TestMacro_RendersPlansAndDrillsToMeso(t *testing.T) {
 	}
 }
 
+func TestRender_FocusesFirstActionAtMacro(t *testing.T) {
+	f := newFakeController()
+	f.plans = []store.Plan{{ID: "p1", Title: "Ship It", Status: store.PlanStatusActive}}
+	u := newTestUI(t, f)
+
+	u.refreshNow()
+
+	// The first plan button should hold keyboard focus so a keyboard-only
+	// operator can act (Enter to drill) without blind-Tabbing.
+	want := findButton(u.root, "Ship It")
+	if want == nil {
+		t.Fatal("macro view did not render the plan button")
+	}
+	if got := u.win.Canvas().Focused(); got != fyne.Focusable(want) {
+		t.Fatalf("focused widget = %#v, want the first plan button", got)
+	}
+}
+
+func TestRender_FocusesBackButtonAtMeso(t *testing.T) {
+	f := newFakeController()
+	f.plans = []store.Plan{{ID: "p1", Title: "P", Status: store.PlanStatusActive}}
+	f.tasks["p1"] = []store.Task{{ID: "t1", Description: "do the thing", Status: store.TaskStatusPending}}
+	u := newTestUI(t, f)
+	u.selectedPlan = "p1"
+
+	u.refreshNow()
+
+	// At meso the back button is added first, so focus should land on it.
+	want := findButton(u.root, "← Plans")
+	if want == nil {
+		t.Fatal("meso view did not render the back button")
+	}
+	if got := u.win.Canvas().Focused(); got != fyne.Focusable(want) {
+		t.Fatalf("focused widget = %#v, want the back button", got)
+	}
+}
+
+func TestRender_DoesNotStealFocusOnSameViewRefresh(t *testing.T) {
+	// render() runs on every 1s tick and live event, not just on navigation. It
+	// must NOT re-focus the first control on a same-view refresh, or a keyboard
+	// operator Tabbing toward Pause/Approve/Kill would have focus yanked back every
+	// second. Focus is only (re)initialized when the drill view identity changes.
+	f := newFakeController()
+	f.plans = []store.Plan{{ID: "p1", Title: "P", Status: store.PlanStatusActive}}
+	f.tasks["p1"] = []store.Task{{ID: "t1", Description: "task", Status: store.TaskStatusPending}}
+	u := newTestUI(t, f)
+	u.selectedPlan = "p1"
+	u.refreshNow() // first render at meso: focus lands on the back button
+
+	// Simulate the operator Tabbing to a different control (Pause).
+	pause := findButton(u.root, "Pause")
+	if pause == nil {
+		t.Fatal("meso view missing Pause control")
+	}
+	u.win.Canvas().Focus(pause)
+
+	// A same-view data refresh (the 1s tick) must leave focus where the operator
+	// put it, not reset it to the back button.
+	u.refreshNow()
+	if got := u.win.Canvas().Focused(); got != fyne.Focusable(pause) {
+		t.Fatalf("same-view refresh stole focus: got %#v, want it left on Pause", got)
+	}
+}
+
+func TestRender_RefocusesWhenDrillViewChanges(t *testing.T) {
+	// Drilling to a new view SHOULD (re)initialize focus on that view's first
+	// control, even after the operator moved focus elsewhere in the prior view.
+	f := newFakeController()
+	f.plans = []store.Plan{{ID: "p1", Title: "P", Status: store.PlanStatusActive}}
+	f.tasks["p1"] = []store.Task{{ID: "t1", Description: "task", Status: store.TaskStatusPending}}
+	u := newTestUI(t, f)
+	u.refreshNow() // macro: focus on the first plan button
+
+	// Drill into the plan → meso; focus should move to the meso back button.
+	u.drillTo("p1", "")
+	back := findButton(u.root, "← Plans")
+	if back == nil {
+		t.Fatal("meso view missing back button after drill")
+	}
+	if got := u.win.Canvas().Focused(); got != fyne.Focusable(back) {
+		t.Fatalf("drill did not refocus: got %#v, want the meso back button", got)
+	}
+}
+
 func TestMeso_PauseCallsSetPlanStatus(t *testing.T) {
 	f := newFakeController()
 	f.plans = []store.Plan{{ID: "p1", Title: "P", Status: store.PlanStatusActive}}

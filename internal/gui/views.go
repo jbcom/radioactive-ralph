@@ -56,6 +56,7 @@ func humanizeUptime(d time.Duration) string {
 // Called only inside fyne.Do (main thread).
 func (u *ui) render(s snapshot) {
 	u.body.Objects = nil
+	u.firstFocusable = nil
 	switch s.level {
 	case levelMicro:
 		u.buildMicro(s)
@@ -65,6 +66,31 @@ func (u *ui) render(s snapshot) {
 		u.buildMacro(s)
 	}
 	u.body.Refresh()
+	// Land keyboard focus on the first actionable control so a keyboard-only
+	// operator can act on arrival without blind-Tabbing — but ONLY when the drill
+	// view just changed. render() also runs on every 1s tick and live event; if we
+	// focused unconditionally, each refresh would yank focus back to the first
+	// control, stealing it from an operator Tabbing toward Pause/Approve/Kill. So
+	// (re)initialize focus only when the view identity changes, and otherwise leave
+	// the operator's current focus untouched during ordinary data refreshes.
+	viewID := fmt.Sprintf("%d\x00%s\x00%s", s.level, s.selectedPlan, s.selectedTask)
+	if viewID != u.focusedView {
+		u.focusedView = viewID
+		if c := u.win.Canvas(); c != nil {
+			c.Focus(u.firstFocusable) // Focus(nil) is a safe no-op (blurs)
+		}
+	}
+}
+
+// button builds a labeled button and records it as the view's first focusable
+// control if none has been recorded yet this render — so render() can land
+// keyboard focus on the first actionable widget after every rebuild.
+func (u *ui) button(label string, tapped func()) *widget.Button {
+	b := widget.NewButton(label, tapped)
+	if u.firstFocusable == nil {
+		u.firstFocusable = b
+	}
+	return b
 }
 
 // --- drill navigation: mutate the selection under the lock, then kick an async
@@ -132,7 +158,7 @@ func (u *ui) buildMacro(s snapshot) {
 		for _, p := range s.plans {
 			planID := p.ID
 			prog := s.progress[p.ID]
-			open := widget.NewButton(p.Title, func() { u.drillTo(planID, "") })
+			open := u.button(p.Title, func() { u.drillTo(planID, "") })
 			open.Alignment = widget.ButtonAlignLeading
 			u.body.Add(container.NewHBox(
 				statusChip(string(p.Status)),
@@ -181,7 +207,7 @@ func (u *ui) buildMeso(s snapshot) {
 	}
 	for _, t := range s.tasks {
 		taskID := t.ID
-		open := widget.NewButton(taskLabel(t), func() { u.drillTo(planID, taskID) })
+		open := u.button(taskLabel(t), func() { u.drillTo(planID, taskID) })
 		open.Alignment = widget.ButtonAlignLeading
 		row := container.NewHBox(statusChip(string(t.Status)), open)
 		if t.Status == store.TaskStatusReadyPendingApproval {
@@ -243,14 +269,16 @@ func (u *ui) drive(label string, fn func() error) {
 	go work()
 }
 
-// backButton returns a button that drills back to (plan, task).
+// backButton returns a button that drills back to (plan, task). It routes
+// through u.button so that at meso/micro (where the back button is added first)
+// keyboard focus lands here after a rebuild.
 func (u *ui) backButton(label, plan, task string) *widget.Button {
-	return widget.NewButton(label, func() { u.drillTo(plan, task) })
+	return u.button(label, func() { u.drillTo(plan, task) })
 }
 
 // importButton opens a small form to import a markdown plan by pasting its text.
 func (u *ui) importButton() *widget.Button {
-	return widget.NewButton("Import plan…", func() {
+	return u.button("Import plan…", func() {
 		entry := widget.NewMultiLineEntry()
 		entry.SetPlaceHolder("# Plan title\n\n1. first step\n2. second step\n")
 		u.body.Objects = nil
