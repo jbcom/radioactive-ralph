@@ -116,31 +116,27 @@ concrete item.)
 
 ## Rolling improvement queue (directive 0 appends here)
 
-Completed this arc:
-- [x] Orchestrator async-dispatch concurrency audit (opus) — clean on races/
-  leaks/semaphore/WaitGroup/ctx/deadlock; surfaced the panic-crash gap → #146.
-- [x] Store claim-path/SQLite audit (opus) — core claim path race-safe; found
-  the approval-gate dead-end (C1 → #147) and, via a codex P1 on the follow-up,
-  a LIVE reaper double-execution bug (C2 → #149): a worker's own session was
-  never heartbeated, so a turn > 270s let the reaper delete the session, cascade-
-  kill the live worker, and re-dispatch its running task. Fixed by beating the
-  worker session (HeartbeatWorkerAndSession) + guarding step-2 session-delete.
-- [x] Dead `raw` return on the oversized-line path → #150 (in flight): raw is now
-  empty on every error path of runStreamJSONCommand (contract: valid only on
-  success), and the ErrStreamJSONLineTooLong doc corrected to match.
+Completed this arc (audits → fixes, all shipped):
+- [x] Orchestrator async-dispatch concurrency audit → panic containment #146.
+- [x] Store claim-path audit → approval-gate dead-end #147; LIVE reaper
+  double-execution bug (C2, codex P1) fixed via worker-session heartbeat +
+  step-2 guard #149; dead-raw error-contract cleanup #150.
+- [x] Provider-runner audit (opus) → codex nonzero-exit laundering fixed
+  (Agent.ExitErr, codex fails on nonzero exit) #152; superviseAgent scopes its
+  agent.Watch via a child ctx it cancels on return #153 (reframed honestly — the
+  onLine-done leak wasn't reproducible because Kill collapses the window; the
+  change is defensive ownership scoping, not a claimed live-leak fix).
+- [x] Approval-gate producer → DECIDED to wire it (intended feature, fully
+  surfaced, only the producer was missing). A plan step's trailing [approval]
+  marker materializes the task as ready_pending_approval; DispatchNext gate-
+  checks before spawning worker rows (a bot P2 caught per-tick orphan-row
+  accumulation, fixed) #154.
 
 Next forward-exploration items:
-- [ ] [WAIT] #150 (declarative raw-error contract) — CI running; merge when green.
-- [ ] [WAIT-AGENT] Provider-runner audit (opus) — adversarial review of the
-  pty-backed claude/codex/opencode runners + watchdog enforcement for misparse,
-  control-invariant holes, hangs, kill correctness, leaks, usage accounting.
-  Re-invokes on completion; fold confirmed findings into fresh items + ship.
-- [ ] Approval-gate producer: nothing yet sets ready_pending_approval, so the
-  now-safe Approve button has no live trigger. Decide whether the gate is a real
-  product feature (wire a producer — e.g. plan-level approval flag) or dead
-  surface to remove (YAGNI). Architecture call for the agent.
-- [ ] After the runner audit: rotate the review lens to the agent watchdog / TUI,
-  or a NEW product-improving feature (GUI richness, observability, DX).
+- [ ] [WAIT] #154 (approval-gate producer) — CI running; merge when green.
+- [ ] Next review lens: rotate to the agent watchdog internals or the TUI/GUI
+  with a fresh adversarial pass, OR a NEW product-improving feature (approval-gate
+  docs + a plan example, GUI richness, observability, DX). Agent's call next tick.
 
 ## Notes
 

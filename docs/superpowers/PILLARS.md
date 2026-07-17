@@ -206,3 +206,33 @@ still excluding ready_pending_approval, making the already-wired Approve button
 safe the moment a gate producer lands (#147). Housekeeping: the removed
 ResourceExceeded watchdog signal was purged from the generated API docs and its
 test renamed (#143).
+
+## Runner audit + store-reaper fix + approval-gate producer (v0.21.4+)
+
+A second wave of adversarial audits (opus store claim-path + opus pty-runner)
+plus the approval-gate wiring. **Store reaper (live bug):** a worker's OWN
+session row was heartbeated by nothing — runWithHeartbeat beat only the worker
+row — so a provider turn longer than the reaper's session-delete window
+(staleSessionMultiplier * staleAfter = 270s) let step-2 delete the stale session,
+CASCADE-kill the still-live worker, NULL its running task's claim, and re-dispatch
+that task to a second worker (double execution). Caught by a codex P1 on a
+follow-up after my first pass wrongly called it latent. Fixed by beating the
+worker session in lockstep (HeartbeatWorkerAndSession) AND excluding sessions
+with a fresh worker from step-2 deletion (#149). **codex runner:** codex has no
+structured terminal frame, so superviseAgent returned nil on ANY exit — a
+nonzero exit (auth/model error, crash) that had written a partial
+--output-last-message was laundered into a successful, zero-cost result,
+defeating both correctness and spend accounting. The agent layer now captures
+cmd.Wait()'s status (Agent.ExitErr, nil when killed) and codex fails the turn on
+a nonzero exit (#152). **Watchdog scoping:** superviseAgent now runs agent.Watch
+under a child ctx it cancels on return, bounding Watch's lifetime to its own
+scope rather than the caller's — defensive ownership (the onLine-done leak the
+audit hypothesized wasn't reproducible because Kill collapses the window) (#153).
+**Approval-gate producer:** the whole approval surface existed (GUI Approve
+button, IPC/statusbucket, ApproveTask) with no producer; a plan step's trailing
+[approval] marker now materializes the task as ready_pending_approval, and
+DispatchNext gate-checks each step before spawning worker rows so a pending gate
+doesn't accumulate orphan session/worker rows per tick (#147 made 'ready'
+claimable; #154 wired the producer). Plus the dead-raw error-contract cleanup
+(#150) and the raw-error diagnostics polish. Runner-audit clean on frame
+parsing, usage accounting, kill correctness, and stall handling.
