@@ -77,6 +77,10 @@ func Start(ctx context.Context, opts Options) (*Agent, error) {
 	if opts.Env != nil {
 		cmd.Env = opts.Env
 	}
+	// Route the automatic ctx-cancel kill through the whole process group, not
+	// just the direct child (exec.CommandContext's default) — so a turn cancelled
+	// by KillWorker / shutdown / stall-timeout reaps grandchildren too.
+	setCancelKillsGroup(cmd)
 	ptmx, err := pty.Start(cmd)
 	if err != nil {
 		if errors.Is(err, pty.ErrUnsupported) {

@@ -53,22 +53,27 @@ func TestKillReapsGrandchildProcess(t *testing.T) {
 		t.Fatalf("grandchild pid %d not alive before kill: %v", gpid, err)
 	}
 
+	agentPID := a.PID()
 	if err := a.Kill(); err != nil {
 		t.Fatalf("Kill: %v", err)
 	}
 
-	// The grandchild must be gone — poll briefly for the group SIGKILL to land.
-	gone := false
-	for range 50 {
-		if err := syscall.Kill(gpid, 0); err != nil {
-			gone = true // ESRCH (or EPERM after reap) — no longer signalable
-			break
+	// BOTH the direct child (agent) and the grandchild must be gone — poll briefly
+	// for the group SIGKILL to land on the whole tree.
+	gone := func(pid int) bool {
+		for range 50 {
+			if err := syscall.Kill(pid, 0); err != nil {
+				return true // ESRCH (or EPERM after reap) — no longer signalable
+			}
+			time.Sleep(20 * time.Millisecond)
 		}
-		time.Sleep(20 * time.Millisecond)
+		return false
 	}
-	if !gone {
-		// Best-effort cleanup so the test doesn't leak the sleep.
-		_ = syscall.Kill(gpid, syscall.SIGKILL)
+	if agentPID > 1 && !gone(agentPID) {
+		t.Errorf("agent pid %d survived Kill()", agentPID)
+	}
+	if !gone(gpid) {
+		_ = syscall.Kill(gpid, syscall.SIGKILL) // best-effort cleanup
 		t.Fatalf("grandchild pid %d survived agent Kill() — process group was not reaped", gpid)
 	}
 }
