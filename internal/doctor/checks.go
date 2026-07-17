@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"runtime"
 	"time"
 
@@ -241,9 +240,12 @@ func checkStateDir(_ context.Context, _ RunOptions) Check {
 
 	// Prove writability with a probe file rather than trusting the mode bits —
 	// ownership, ACLs, read-only mounts, and SELinux can all deny a write that the
-	// permission bits appear to allow.
-	probe := filepath.Join(root, ".doctor-write-probe")
-	if err := os.WriteFile(probe, []byte("ok"), 0o600); err != nil {
+	// permission bits appear to allow. CreateTemp makes the probe with a random,
+	// exclusively-created name (O_EXCL): it never truncates a pre-existing file or
+	// follows a planted `.doctor-write-probe` symlink, and two concurrent doctor
+	// runs can't collide on the same path.
+	probe, err := os.CreateTemp(root, ".doctor-write-probe-*")
+	if err != nil {
 		return Check{
 			Name:      "state dir",
 			Severity:  FAIL,
@@ -251,7 +253,9 @@ func checkStateDir(_ context.Context, _ RunOptions) Check {
 			Remediate: "fix its ownership/permissions (the DB and worker files must be writable), or set $RALPH_STATE_DIR to a writable path",
 		}
 	}
-	_ = os.Remove(probe)
+	probeName := probe.Name()
+	_ = probe.Close()
+	_ = os.Remove(probeName)
 
 	if free, ok := diskFreeBytes(root); ok && free < minStateFreeBytes {
 		return Check{

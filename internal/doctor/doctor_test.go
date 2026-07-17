@@ -78,6 +78,7 @@ func TestRunAllGreen(t *testing.T) {
 func TestRunCommandTimeoutOption(t *testing.T) {
 	t.Setenv("OPENAI_API_KEY", "test-token")
 	t.Setenv("ANTHROPIC_API_KEY", "test-token")
+	t.Setenv("RALPH_STATE_DIR", t.TempDir()) // isolate checkStateDir from the real state root
 	base := fakeRunner(map[string]struct {
 		out string
 		err error
@@ -154,9 +155,9 @@ func TestCheckStateDir_OKWhenWritable(t *testing.T) {
 	if !strings.Contains(check.Detail, dir) {
 		t.Errorf("state dir detail = %q, want it to name the resolved root", check.Detail)
 	}
-	// The probe file must be cleaned up, not left behind.
-	if _, err := os.Stat(filepath.Join(dir, ".doctor-write-probe")); !os.IsNotExist(err) {
-		t.Errorf("checkStateDir left its write probe behind (stat err = %v)", err)
+	// No probe file (random-suffixed via CreateTemp) must be left behind.
+	if leftovers, _ := filepath.Glob(filepath.Join(dir, ".doctor-write-probe-*")); len(leftovers) != 0 {
+		t.Errorf("checkStateDir left write probe(s) behind: %v", leftovers)
 	}
 }
 
@@ -242,6 +243,7 @@ func TestCodexAuthMissingCLIReportsMissingBinary(t *testing.T) {
 }
 
 func TestRunMissingGit(t *testing.T) {
+	t.Setenv("RALPH_STATE_DIR", t.TempDir()) // isolate checkStateDir from the real state root
 	runner := fakeRunner(map[string]struct {
 		out string
 		err error
@@ -280,6 +282,7 @@ func TestRunMissingGit(t *testing.T) {
 }
 
 func TestRunMissingGhWarnsNotFails(t *testing.T) {
+	t.Setenv("RALPH_STATE_DIR", t.TempDir()) // isolate checkStateDir from the real state root
 	runner := fakeRunner(map[string]struct {
 		out string
 		err error
@@ -300,6 +303,7 @@ func TestRunMissingGhWarnsNotFails(t *testing.T) {
 }
 
 func TestRunIncludesServicePlatformCheck(t *testing.T) {
+	t.Setenv("RALPH_STATE_DIR", t.TempDir()) // isolate checkStateDir from the real state root
 	runner := fakeRunner(map[string]struct {
 		out string
 		err error
@@ -328,6 +332,7 @@ func TestRunIncludesServicePlatformCheck(t *testing.T) {
 }
 
 func TestRunClaudeVersionTooOldWarnsNotFails(t *testing.T) {
+	t.Setenv("RALPH_STATE_DIR", t.TempDir()) // isolate checkStateDir from the real state root
 	runner := fakeRunner(map[string]struct {
 		out string
 		err error
@@ -354,6 +359,7 @@ func TestRunClaudeVersionTooOldWarnsNotFails(t *testing.T) {
 }
 
 func TestRunGitTooOldFails(t *testing.T) {
+	t.Setenv("RALPH_STATE_DIR", t.TempDir()) // isolate checkStateDir from the real state root
 	runner := fakeRunner(map[string]struct {
 		out string
 		err error
