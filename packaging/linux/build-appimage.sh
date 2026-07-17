@@ -70,6 +70,10 @@ echo "${TOOL_SHA}  ${TOOL}" | sha256sum -c - || {
 chmod +x "$TOOL"
 
 OUT="radioactive-ralph_${VERSION}_linux_${ARCH}.AppImage"
-# ARCH env is what appimagetool stamps into the runtime.
-ARCH="$ARCH" "$TOOL" --no-appstream "$APPDIR" "$OUT"
+# appimagetool is itself an AppImage, so running it normally needs libfuse2 —
+# which GitHub's ubuntu-latest runners do NOT ship. APPIMAGE_EXTRACT_AND_RUN=1
+# tells it to self-extract and run without FUSE, so the build works on a stock
+# runner with no extra apt packages. ARCH is what appimagetool stamps into the
+# produced runtime.
+ARCH="$ARCH" APPIMAGE_EXTRACT_AND_RUN=1 "$TOOL" --no-appstream "$APPDIR" "$OUT"
 echo "build-appimage: wrote $OUT"

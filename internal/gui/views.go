@@ -21,15 +21,20 @@ import (
 
 // headerText renders the always-visible top line. When the supervisor is
 // reachable (statusErr==nil) it leads with a live "connected · up <dur>"
-// indicator plus the project-wide counters; when it is not, it shows a calm
-// "waiting for supervisor…" instead of just leaving stale counters — the GUI is
-// designed to open before a supervisor is up and light up when one appears.
+// indicator plus the counters; when it is not, it shows a calm "waiting for
+// supervisor…" instead of leaving stale counters — the GUI is designed to open
+// before a supervisor is up and light up when one appears.
+//
+// The counters come from the supervisor-wide StatusReply (the supervisor is
+// project-agnostic), whereas the plan list below is scoped to the launching
+// project — so the header explicitly labels the counts "all projects" to avoid
+// the operator trying to reconcile them with the visible per-project rows.
 func headerText(st ipc.StatusReply, statusErr error) string {
 	if statusErr != nil {
 		return "waiting for supervisor…  (start one with:  radioactive_ralph service install)"
 	}
 	return fmt.Sprintf(
-		"connected · up %s   ·   plans %d active   workers %d   running %d   ready %d   approval %d   blocked %d   failed %d",
+		"connected · up %s   ·   all projects: plans %d active   workers %d   running %d   ready %d   approval %d   blocked %d   failed %d",
 		humanizeUptime(st.Uptime),
 		st.ActivePlans, st.ActiveWorkers, st.RunningTasks, st.ReadyTasks,
 		st.ApprovalTasks, st.BlockedTasks, st.FailedTasks,
@@ -86,9 +91,18 @@ func statusChip(status string) fyne.CanvasObject {
 
 // buildMacro lists the project's plans; selecting one drills to meso.
 func (u *ui) buildMacro(s snapshot) {
+	// Import needs a project context — the supervisor rejects a plan-import with
+	// an empty project id. A project-agnostic launch (no project scope) is
+	// read-only for import; only offer the affordance when scoped to a project.
+	canImport := u.project != ""
+
 	if len(s.plans) == 0 {
-		u.body.Add(widget.NewLabel("No plans yet. Import a markdown plan to begin."))
-		u.body.Add(u.importButton())
+		if canImport {
+			u.body.Add(widget.NewLabel("No plans yet. Import a markdown plan to begin."))
+			u.body.Add(u.importButton())
+		} else {
+			u.body.Add(widget.NewLabel("No active plans. Launch from a project directory to import one."))
+		}
 		// The activity feed is still worth showing with zero plans (the TUI does
 		// too) — a fresh project may have supervisor/service events before its
 		// first plan. Fall through to addRecentActivity rather than returning.
@@ -105,7 +119,9 @@ func (u *ui) buildMacro(s snapshot) {
 				widget.NewLabel(fmt.Sprintf("%d/%d", prog.Done, prog.Total)),
 			))
 		}
-		u.body.Add(u.importButton())
+		if canImport {
+			u.body.Add(u.importButton())
+		}
 	}
 	u.addRecentActivity(s.projEvents)
 }

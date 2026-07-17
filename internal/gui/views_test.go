@@ -328,6 +328,33 @@ func TestMacro_RenderedStructure(t *testing.T) {
 	}
 }
 
+func TestMacro_NoImportInProjectAgnosticMode(t *testing.T) {
+	// A project-agnostic launch (empty project) can't import — the supervisor
+	// rejects an empty project id — so the import affordance must be hidden.
+	f := newFakeController()
+	a := test.NewApp()
+	t.Cleanup(a.Quit)
+	w := a.NewWindow("test")
+	u := newUI(context.Background(), f, "", w) // empty project
+	u.syncRender = true
+	w.SetContent(u.root)
+	u.refreshNow()
+
+	if findButton(u.root, "Import plan…") != nil {
+		t.Error("import button shown in project-agnostic mode (empty project)")
+	}
+	if !labelContains(u.root, "Launch from a project directory to import") {
+		t.Error("project-agnostic empty state should explain how to import")
+	}
+}
+
+func TestHeaderText_LabelsCountersAllProjects(t *testing.T) {
+	got := headerText(ipc.StatusReply{Uptime: time.Minute, ActivePlans: 2}, nil)
+	if !strings.Contains(got, "all projects") {
+		t.Errorf("header should label the supervisor-wide counters 'all projects': %q", got)
+	}
+}
+
 func TestMacro_ActivityFeedShownWithNoPlans(t *testing.T) {
 	// With zero plans, the recent-activity feed must still render (parity with
 	// the TUI, which shows events even before the first plan).
