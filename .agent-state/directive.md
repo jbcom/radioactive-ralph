@@ -145,12 +145,20 @@ Completed since (all shipped):
 - [x] Verified the app RUNS: `doctor` 11 OK/0 WARN/0 FAIL, all three providers
   detected+authenticated. Cleared 20 stale branch-switch stashes.
 
+- [x] IPC-layer audit (opus) → 5 findings; the server had NO read/write
+  deadlines and NO request size cap, so a bad client could hang shutdown, leak
+  goroutines/fds, or OOM the supervisor. #160 (in flight) fixes C1/C2/C3
+  (request read deadline + 32MiB LimitReader; response/Attach write deadlines;
+  Stop closes all conns so shutdown drains promptly, skipping the stop-requester
+  so it still gets its reply) + C5 (proto-version guard before dispatch).
+
 Next forward-exploration items:
-- [ ] [WAIT-AGENT] IPC-layer audit (opus) — adversarial review of the socket/
-  named-pipe server: framing/decode, server-wedging DoS, conn/goroutine leaks,
-  request routing, races, Attach streaming, transport perms. Re-invokes on
-  completion; fold confirmed findings into fresh items + ship.
-- [ ] After the IPC audit: rotate the lens again (GUI, or a NEW product feature —
+- [ ] [WAIT] #160 (IPC deadlines/limits/conn-close) — CI; merge when green.
+- [ ] IPC C4 follow-up (after #160): a vanished Attach client leaks its handler
+  until process exit — nothing observes the client disconnect. Add a read-side
+  disconnect probe in the server's CmdAttach path that cancels the handler ctx
+  on EOF. (Recorded in memory: project_ipc_c4_attach_disconnect.)
+- [ ] Then rotate the lens again (GUI audit, or a NEW product feature —
   approval-gate docs + plan example, observability, DX).
 
 ## Notes
