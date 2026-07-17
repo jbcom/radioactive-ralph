@@ -41,8 +41,11 @@ configured; until then Windows SmartScreen may warn on first launch.)
   and opens the GUI rather than the TUI.
 - **Project scope:** launched from a project directory, the GUI scopes to that
   project; launched from a file manager (working directory not a repo) it opens
-  project-agnostic and lists every project the supervisor knows — it never
-  registers the launch directory as a new project.
+  project-agnostic and lists the active plans across every project the
+  supervisor knows — it never registers the launch directory as a new project.
+  In project-agnostic mode the plan/task views work read-only, but importing a
+  plan needs a project context, so **launch from a project directory (or the
+  `gui` subcommand inside a repo) when you want to import**.
 
 The window opens even before a supervisor is running: the header shows
 `waiting for supervisor…`, and it lights up to `connected · up <duration>` the
