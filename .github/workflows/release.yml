@@ -53,11 +53,12 @@ jobs:
       matrix:
         include:
           # Two macOS legs so both Mac architectures get a native .app/.dmg:
-          # macos-latest is arm64 (Apple Silicon), macos-13 is amd64 (Intel).
+          # macos-latest is arm64 (Apple Silicon), macos-15-intel is amd64
+          # (Intel — the current GitHub-hosted Intel runner; macos-13 is retired).
           - os: macos-latest
             target: darwin
             arch: arm64
-          - os: macos-13
+          - os: macos-15-intel
             target: darwin
             arch: amd64
           - os: ubuntu-latest
