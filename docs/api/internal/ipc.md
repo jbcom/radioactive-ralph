@@ -219,13 +219,13 @@ type Client struct {
 ```
 
 <a name="Client.Attach"></a>
-### func \(\*Client\) [Attach](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/client.go#L149>)
+### func \(\*Client\) [Attach](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/client.go#L150>)
 
 ```go
 func (c *Client) Attach(ctx context.Context, args AttachArgs, fn func(json.RawMessage) error) error
 ```
 
-Attach issues an attach request and streams event frames through fn until the repo service closes the stream or ctx is cancelled. The returned error is nil for a clean end\-of\-stream. It scopes the stream via args \(the project id is required; a zero AfterID starts from the beginning\).
+Attach issues an attach request and streams raw event frames through fn until the repo service closes the stream or ctx is cancelled. The returned error is nil for a clean end\-of\-stream. It scopes the stream via args \(the project id is required; a zero AfterID starts from the beginning\). AttachEvents layers a typed decode over this; callers wanting the raw frames use Attach directly.
 
 <a name="Client.AttachEvents"></a>
 ### func \(\*Client\) [AttachEvents](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/client.go#L135>)
