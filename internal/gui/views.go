@@ -207,7 +207,7 @@ func (u *ui) buildMeso(s snapshot) {
 		widget.NewButton("Resume", func() { u.drive("resume", func() error { return u.ctrl.SetPlanStatus(u.ctx, planID, "active") }) }),
 		widget.NewButton("Abandon", func() {
 			u.confirmDrive("Abandon plan?",
-				"Abandon plan "+planID+"? Its unfinished tasks stop and it cannot be resumed.",
+				"Abandon plan "+planID+"? No further tasks will be dispatched. (Tasks already running finish; you can set it active again to resume dispatch.)",
 				"abandon", func() error { return u.ctrl.SetPlanStatus(u.ctx, planID, "abandoned") })
 		}),
 	))
