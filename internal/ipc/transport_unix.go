@@ -14,6 +14,13 @@ import (
 )
 
 func listenEndpoint(endpoint string) (net.Listener, error) {
+	// Fail with a clear message if even the (short by construction) fallback
+	// path still exceeds the kernel's sun_path limit — better than a cryptic
+	// "invalid argument" from bind on an exotic system with a very long
+	// TMPDIR.
+	if len(endpoint) > maxUnixSocketPath {
+		return nil, fmt.Errorf("ipc: socket path %q exceeds the %d-byte sun_path limit; set a shorter TMPDIR/RALPH_STATE_DIR", endpoint, maxUnixSocketPath)
+	}
 	_ = os.Remove(endpoint)
 	dir := filepath.Dir(endpoint)
 	if err := os.MkdirAll(dir, 0o700); err != nil {

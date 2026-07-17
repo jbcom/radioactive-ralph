@@ -326,6 +326,9 @@ func (o *Orchestrator) DispatchNext(ctx context.Context, projectID, planID strin
 
 		ds, err := o.claimStepTask(ctx, planID, parsedPlan, refs[i], readySteps[i], sessionID, workerID)
 		if err != nil {
+			// Release the worker row we just spawned — otherwise it leaks in
+			// 'running' with no task (CreateWorker hardcodes status='running').
+			_ = o.store.ClearWorkerTask(ctx, workerID, "crashed")
 			return dispatched, err
 		}
 		if ds == nil {

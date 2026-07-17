@@ -79,9 +79,12 @@ func (s *Store) CreateProject(ctx context.Context, displayName string, fps []Fin
 }
 
 // AddProjectIdentifiers accumulates additional fingerprints onto an
-// existing project. Idempotent: fingerprints already present (for this or
-// any other project) are silently skipped via INSERT OR IGNORE, since
-// (kind, value) is the primary key of project_identifiers.
+// existing project. Idempotent and safe to call repeatedly: re-adding a
+// fingerprint THIS project already owns refreshes its added_at (so
+// most-recent-wins ordering stays correct after a move); a fingerprint owned
+// by a DIFFERENT project is left untouched (never stolen), since (kind,
+// value) is the primary key and the UPSERT is guarded on the owning
+// project_id — see insertIdentifiers.
 func (s *Store) AddProjectIdentifiers(ctx context.Context, projectID string, fps []Fingerprint) error {
 	if projectID == "" {
 		return fmt.Errorf("store: projectID required")
