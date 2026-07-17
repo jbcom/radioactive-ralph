@@ -320,12 +320,26 @@ func (s *Supervisor) HandleStatus(ctx context.Context) (ipc.StatusReply, error) 
 		})
 	}
 
+	// Plan/task aggregate counters. Same degrade-not-fail policy: a failed
+	// count query leaves the counters at zero rather than failing `status`.
+	counts, err := s.store.StatusCounts(ctx)
+	if err != nil {
+		s.log("status counts failed", "err", err)
+		counts = store.StatusCounts{}
+	}
+
 	return ipc.StatusReply{
 		ProtoVersion:  ipc.ProtoVersion, // advertise the drive-surface version
 		PID:           os.Getpid(),
 		Uptime:        time.Since(s.startedAt),
 		ActiveWorkers: len(running),
 		Workers:       workers,
+		ActivePlans:   counts.ActivePlans,
+		ReadyTasks:    counts.Ready,
+		RunningTasks:  counts.Running,
+		ApprovalTasks: counts.Approval,
+		BlockedTasks:  counts.Blocked,
+		FailedTasks:   counts.Failed,
 	}, nil
 }
 

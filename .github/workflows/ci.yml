@@ -306,11 +306,17 @@ jobs:
       # to link even against the headless test driver; macOS links Cocoa via the
       # toolchain. The rest of CI builds CGO-off and excludes the `gui`-tagged
       # package entirely — this job is the only place it is compiled.
-      - name: Install Linux GL/X11 dev headers
+      - name: Install Linux GL/X11/Wayland dev headers
         if: matrix.os == 'ubuntu-latest'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libgl1-mesa-dev xorg-dev libxkbcommon-dev
+          # Fyne's documented Linux build deps: GL + X11 (xorg-dev) AND the
+          # Wayland stack — glfw 3.4 compiles its Wayland backend unconditionally,
+          # so wayland-client-core.h (libwayland-dev) + wayland-protocols +
+          # libxkbcommon are all required even for a headless test-driver build.
+          sudo apt-get install -y \
+            libgl1-mesa-dev xorg-dev libxkbcommon-dev \
+            libwayland-dev wayland-protocols
       - name: go mod download
         run: go mod download
       - name: Build GUI-enabled binary

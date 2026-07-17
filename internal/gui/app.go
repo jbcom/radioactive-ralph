@@ -88,7 +88,17 @@ func Run(ctx context.Context, o Opts) error {
 		}()
 	}
 
-	ui.refreshNow() // first paint before the ticker's first tick
+	// First paint runs on its own goroutine, NOT inline: refreshNow does a
+	// blocking Status IPC, so calling it synchronously here would keep the
+	// window from ever appearing if the supervisor accepts the connection but is
+	// slow or never answers. The window shows immediately (empty), then the
+	// snapshot fills it in — the same async path the ticker uses. In sync mode
+	// (tests) it stays inline so the first render is deterministic.
+	if o.fyneApp != nil && ui.syncRender {
+		ui.refreshNow()
+	} else {
+		go ui.refreshNow()
+	}
 
 	if o.fyneApp == nil {
 		w.ShowAndRun() // real app: blocks until quit; window close cancels ctx via defer
@@ -234,10 +244,26 @@ func (u *ui) gather(plan, task string) snapshot {
 	case plan != "" && task != "":
 		s.level = levelMicro
 		s.events, _ = u.ctrl.ListTaskEvents(u.ctx, plan, task, 50)
-		for _, w := range st.Workers {
-			if w.PlanID == plan && w.TaskID == task {
-				s.killID = w.WorkerID // store worker-row id — the kill key
-				break
+		// The kill key is the worker that CLAIMED this task. Read it from the
+		// task's own claimed_by_worker_id, which is authoritative even for a
+		// native-fanout group where one worker claims several tasks but the
+		// worker row's current_task_id records only the first — so the kill
+		// affordance appears on every task the worker holds, not just the first.
+		// Fall back to the status Workers scan if the task row is unavailable.
+		if tasks, terr := u.ctrl.ListTasks(u.ctx, plan); terr == nil {
+			for _, t := range tasks {
+				if t.ID == task && t.Status == store.TaskStatusRunning {
+					s.killID = t.ClaimedByWorkerID
+					break
+				}
+			}
+		}
+		if s.killID == "" {
+			for _, w := range st.Workers {
+				if w.PlanID == plan && w.TaskID == task {
+					s.killID = w.WorkerID // store worker-row id — the kill key
+					break
+				}
 			}
 		}
 	case plan != "":

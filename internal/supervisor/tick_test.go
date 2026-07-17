@@ -186,6 +186,9 @@ func TestHandleStatusPopulatesWorkers(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreatePlan: %v", err)
 	}
+	if err := sup.store.SetPlanStatus(ctx, planID, store.PlanStatusActive); err != nil {
+		t.Fatalf("SetPlanStatus active: %v", err)
+	}
 	sessionID, err := sup.store.CreateSession(ctx, store.SessionOpts{Role: "supervisor", PID: 1, PIDStartTime: "t0"})
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
@@ -217,6 +220,15 @@ func TestHandleStatusPopulatesWorkers(t *testing.T) {
 	w := status.Workers[0]
 	if w.WorkerID != workerID || w.PlanID != planID || w.TaskID != "t" {
 		t.Errorf("worker summary = %+v, want id=%s plan=%s task=t (WorkerID is the kill key)", w, workerID, planID)
+	}
+
+	// The plan/task counters must be populated too (they were always zero before
+	// StatusCounts was wired in): the plan is active and its one task is running.
+	if status.ActivePlans != 1 {
+		t.Errorf("ActivePlans = %d, want 1", status.ActivePlans)
+	}
+	if status.RunningTasks != 1 {
+		t.Errorf("RunningTasks = %d, want 1 (the claimed task)", status.RunningTasks)
 	}
 }
 

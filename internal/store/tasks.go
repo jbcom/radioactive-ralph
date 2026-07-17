@@ -180,6 +180,61 @@ func (s *Store) wouldCreateCycle(ctx context.Context, planID, task, dep string) 
 	return visit(dep)
 }
 
+// StatusCounts is the aggregate view the status reply exposes: how many active
+// plans exist and how many tasks sit in each status a client surfaces. Sourced
+// from one pass over the store so `status` reports real numbers rather than the
+// zeros the reply carried before (the task/plan counters were never populated).
+type StatusCounts struct {
+	ActivePlans int
+	Ready       int
+	Running     int
+	Approval    int // ready_pending_approval
+	Blocked     int
+	Failed      int
+}
+
+// StatusCounts returns the plan/task aggregates for the status reply, across all
+// projects (the supervisor is project-agnostic). Counts are derived from the
+// live rows so they stay accurate without any in-process bookkeeping.
+func (s *Store) StatusCounts(ctx context.Context) (StatusCounts, error) {
+	var c StatusCounts
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM plans WHERE status = 'active'`,
+	).Scan(&c.ActivePlans); err != nil {
+		return StatusCounts{}, fmt.Errorf("store: count active plans: %w", err)
+	}
+	// One grouped pass over tasks; map each status of interest onto its field.
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT status, COUNT(*) FROM tasks GROUP BY status`)
+	if err != nil {
+		return StatusCounts{}, fmt.Errorf("store: count tasks by status: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var status string
+		var n int
+		if err := rows.Scan(&status, &n); err != nil {
+			return StatusCounts{}, fmt.Errorf("store: scan task count: %w", err)
+		}
+		switch status {
+		case string(TaskStatusReady):
+			c.Ready = n
+		case string(TaskStatusRunning):
+			c.Running = n
+		case string(TaskStatusReadyPendingApproval):
+			c.Approval = n
+		case string(TaskStatusBlocked):
+			c.Blocked = n
+		case string(TaskStatusFailed):
+			c.Failed = n
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return StatusCounts{}, fmt.Errorf("store: iterate task counts: %w", err)
+	}
+	return c, nil
+}
+
 // Ready returns tasks that are ready to run — every dependency is in a
 // terminal-satisfied state (`done`, `skipped`, or `decomposed`). Result is
 // ordered by created_at for stable test output.

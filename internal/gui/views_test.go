@@ -125,10 +125,8 @@ func TestMeso_ApproveOnlyForPendingApprovalTask(t *testing.T) {
 func TestMicro_KillButtonCallsKillWorker(t *testing.T) {
 	f := newFakeController()
 	f.plans = []store.Plan{{ID: "p1", Title: "P", Status: store.PlanStatusActive}}
-	f.tasks["p1"] = []store.Task{{ID: "t1", Description: "running task", Status: store.TaskStatusRunning}}
-	f.status = ipc.StatusReply{
-		Workers: []ipc.WorkerSummary{{WorkerID: "w-123", PlanID: "p1", TaskID: "t1"}},
-	}
+	// The task's own claimed_by_worker_id is the authoritative kill key.
+	f.tasks["p1"] = []store.Task{{ID: "t1", Description: "running task", Status: store.TaskStatusRunning, ClaimedByWorkerID: "w-123"}}
 	u := newTestUI(t, f)
 	u.selectedPlan = "p1"
 	u.selectedTask = "t1"
@@ -138,6 +136,36 @@ func TestMicro_KillButtonCallsKillWorker(t *testing.T) {
 	killed := f.killedWorkers()
 	if len(killed) != 1 || killed[0] != "w-123" {
 		t.Fatalf("KillWorker calls = %v, want [w-123]", killed)
+	}
+}
+
+// TestMicro_KillButtonForFanoutSecondTask proves the kill affordance appears on
+// a task claimed by a native-fanout worker even when it is NOT the worker's
+// current_task_id (so it is absent from StatusReply.Workers): the button is
+// driven by the TASK's own claimed_by_worker_id, so every task the worker holds
+// gets one.
+func TestMicro_KillButtonForFanoutSecondTask(t *testing.T) {
+	f := newFakeController()
+	f.plans = []store.Plan{{ID: "p1", Title: "P", Status: store.PlanStatusActive}}
+	f.tasks["p1"] = []store.Task{
+		{ID: "t1", Description: "first", Status: store.TaskStatusRunning, ClaimedByWorkerID: "w-fan"},
+		{ID: "t2", Description: "second (same worker)", Status: store.TaskStatusRunning, ClaimedByWorkerID: "w-fan"},
+	}
+	// Only the first task appears in Workers (current_task_id), as production
+	// would populate it — the second must still get a kill button.
+	f.status = ipc.StatusReply{Workers: []ipc.WorkerSummary{{WorkerID: "w-fan", PlanID: "p1", TaskID: "t1"}}}
+
+	u := newTestUI(t, f)
+	u.selectedPlan = "p1"
+	u.selectedTask = "t2" // the NON-first fan-out task
+	u.refreshNow()
+
+	if findButton(u.root, "Kill worker") == nil {
+		t.Fatal("no kill button on a fan-out worker's non-first task")
+	}
+	tapButton(t, u.root, "Kill worker")
+	if killed := f.killedWorkers(); len(killed) != 1 || killed[0] != "w-fan" {
+		t.Errorf("KillWorker calls = %v, want [w-fan]", killed)
 	}
 }
 
