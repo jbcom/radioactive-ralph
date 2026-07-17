@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"testing"
 )
 
@@ -259,5 +260,155 @@ func TestCountRunningWorkers(t *testing.T) {
 	}
 	if n != 1 {
 		t.Fatalf("CountRunningWorkers after clearing one = %d, want 1", n)
+	}
+}
+
+// TestReclaimWorkerRequeuesAllClaimedTasks proves a kill of a fan-out worker
+// requeues EVERY task the worker claimed, not just the one recorded in
+// current_task_id. The store keys the requeue on claimed_by_worker_id, so a
+// second task claimed by the same worker (as native-fanout does) is also
+// returned to pending — otherwise it would strand as running-but-orphaned.
+func TestReclaimWorkerRequeuesAllClaimedTasks(t *testing.T) {
+	ctx := context.Background()
+	s := openTestStore(t)
+	projectID := mustCreateProject(t, s, "reclaim-all-project")
+	planID := mustCreatePlan(t, s, projectID, "reclaim-all-plan")
+	sessionID, workerID := mustCreateSessionAndWorker(t, s, "1")
+
+	for _, id := range []string{"a", "b"} {
+		if err := s.CreateTask(ctx, CreateTaskOpts{PlanID: planID, ID: id, Description: id}); err != nil {
+			t.Fatalf("CreateTask %s: %v", id, err)
+		}
+	}
+	claimed, err := s.ClaimNextReady(ctx, planID, sessionID, workerID)
+	if err != nil {
+		t.Fatalf("ClaimNextReady: %v", err)
+	}
+	// Also claim the second task under the same worker, and record only the
+	// first in the worker's current_task_id (the fan-out shape).
+	if _, err := s.DB().ExecContext(ctx, `
+		UPDATE tasks SET status='running', claimed_by_session=?, claimed_by_worker_id=?
+		WHERE plan_id=? AND id=?`, sessionID, workerID, planID, "b"); err != nil {
+		t.Fatalf("claim second task: %v", err)
+	}
+	if err := s.SetWorkerTask(ctx, workerID, planID, claimed.ID); err != nil {
+		t.Fatalf("SetWorkerTask: %v", err)
+	}
+
+	found, err := s.ReclaimWorker(ctx, workerID)
+	if err != nil {
+		t.Fatalf("ReclaimWorker: %v", err)
+	}
+	if !found {
+		t.Fatal("ReclaimWorker: found=false, want true")
+	}
+
+	for _, id := range []string{"a", "b"} {
+		var status string
+		var wk sql.NullString
+		if err := s.DB().QueryRowContext(ctx,
+			"SELECT status, claimed_by_worker_id FROM tasks WHERE plan_id=? AND id=?", planID, id,
+		).Scan(&status, &wk); err != nil {
+			t.Fatalf("read task %s: %v", id, err)
+		}
+		if status != "pending" {
+			t.Errorf("task %s status = %q, want pending (requeued)", id, status)
+		}
+		if wk.Valid {
+			t.Errorf("task %s still claimed by %q, want NULL", id, wk.String)
+		}
+	}
+}
+
+// TestReclaimWorkerDoesNotStompReassignedTask proves the claimed_by_worker_id
+// guard: if the reaper already reclaimed the task and it was reassigned to a
+// DIFFERENT worker, killing the original worker must not reset the new owner's
+// running task back to pending.
+func TestReclaimWorkerDoesNotStompReassignedTask(t *testing.T) {
+	ctx := context.Background()
+	s := openTestStore(t)
+	projectID := mustCreateProject(t, s, "reclaim-race-project")
+	planID := mustCreatePlan(t, s, projectID, "reclaim-race-plan")
+	sessionID, oldWorker := mustCreateSessionAndWorker(t, s, "old")
+	_, newWorker := mustCreateSessionAndWorker(t, s, "new")
+
+	if err := s.CreateTask(ctx, CreateTaskOpts{PlanID: planID, ID: "t", Description: "d"}); err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+	if _, err := s.ClaimNextReady(ctx, planID, sessionID, oldWorker); err != nil {
+		t.Fatalf("ClaimNextReady: %v", err)
+	}
+	if err := s.SetWorkerTask(ctx, oldWorker, planID, "t"); err != nil {
+		t.Fatalf("SetWorkerTask: %v", err)
+	}
+	// Reaper reassigns the running task to the new worker (claim moves away
+	// from oldWorker), but oldWorker.current_task_id still points at it.
+	if _, err := s.DB().ExecContext(ctx,
+		"UPDATE tasks SET claimed_by_worker_id=? WHERE plan_id=? AND id=?", newWorker, planID, "t"); err != nil {
+		t.Fatalf("reassign task: %v", err)
+	}
+
+	if _, err := s.ReclaimWorker(ctx, oldWorker); err != nil {
+		t.Fatalf("ReclaimWorker: %v", err)
+	}
+
+	var status string
+	var wk sql.NullString
+	if err := s.DB().QueryRowContext(ctx,
+		"SELECT status, claimed_by_worker_id FROM tasks WHERE plan_id=? AND id=?", planID, "t",
+	).Scan(&status, &wk); err != nil {
+		t.Fatalf("read task: %v", err)
+	}
+	if status != "running" || !wk.Valid || wk.String != newWorker {
+		t.Errorf("task = (status=%q, worker=%v), want running claimed by %q — old worker's kill stomped the new owner", status, wk, newWorker)
+	}
+}
+
+// TestReclaimWorkerDoesNotPenalizeRetryBudget proves an operator kill does not
+// increment reclaim_count — it is a system action, not a task-execution
+// failure, so the task's retry budget must be untouched.
+func TestReclaimWorkerDoesNotPenalizeRetryBudget(t *testing.T) {
+	ctx := context.Background()
+	s := openTestStore(t)
+	projectID := mustCreateProject(t, s, "reclaim-budget-project")
+	planID := mustCreatePlan(t, s, projectID, "reclaim-budget-plan")
+	sessionID, workerID := mustCreateSessionAndWorker(t, s, "1")
+
+	if err := s.CreateTask(ctx, CreateTaskOpts{PlanID: planID, ID: "t", Description: "d"}); err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+	if _, err := s.ClaimNextReady(ctx, planID, sessionID, workerID); err != nil {
+		t.Fatalf("ClaimNextReady: %v", err)
+	}
+	if err := s.SetWorkerTask(ctx, workerID, planID, "t"); err != nil {
+		t.Fatalf("SetWorkerTask: %v", err)
+	}
+
+	if _, err := s.ReclaimWorker(ctx, workerID); err != nil {
+		t.Fatalf("ReclaimWorker: %v", err)
+	}
+
+	var reclaimCount int
+	if err := s.DB().QueryRowContext(ctx,
+		"SELECT reclaim_count FROM tasks WHERE plan_id=? AND id=?", planID, "t",
+	).Scan(&reclaimCount); err != nil {
+		t.Fatalf("read reclaim_count: %v", err)
+	}
+	if reclaimCount != 0 {
+		t.Errorf("reclaim_count = %d, want 0 (operator kill must not spend retry budget)", reclaimCount)
+	}
+}
+
+// TestReclaimWorkerUnknownIsNotFound proves a kill of an already-gone worker is
+// a benign no-op the caller can surface as CodeNotFound.
+func TestReclaimWorkerUnknownIsNotFound(t *testing.T) {
+	ctx := context.Background()
+	s := openTestStore(t)
+	found, err := s.ReclaimWorker(ctx, "does-not-exist")
+	if err != nil {
+		t.Fatalf("ReclaimWorker(unknown): %v", err)
+	}
+	if found {
+		t.Error("ReclaimWorker(unknown): found=true, want false")
 	}
 }

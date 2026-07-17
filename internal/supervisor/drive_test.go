@@ -88,3 +88,25 @@ func TestHandleTaskApprove_UnknownIsNotFound(t *testing.T) {
 		t.Errorf("err = %v, want CodeNotFound", err)
 	}
 }
+
+// TestDriveHandlers_ValidateEmptyArgs proves the drive handlers reject empty
+// required ids with CodeInvalidArgs (a clean, specific error) rather than
+// letting a blank id reach the store and surface as a confusing query miss —
+// consistent across HandlePlanSetStatus, HandleTaskApprove, HandleWorkerKill.
+func TestDriveHandlers_ValidateEmptyArgs(t *testing.T) {
+	sup := newTestSupervisor(t, nil)
+	ctx := context.Background()
+
+	if _, err := sup.HandlePlanSetStatus(ctx, ipc.PlanSetStatusArgs{PlanID: "", Status: "active"}); !ipc.IsCode(err, ipc.CodeInvalidArgs) {
+		t.Errorf("plan-set-status empty plan_id err = %v, want CodeInvalidArgs", err)
+	}
+	if err := sup.HandleTaskApprove(ctx, ipc.TaskApproveArgs{PlanID: "", TaskID: "t"}); !ipc.IsCode(err, ipc.CodeInvalidArgs) {
+		t.Errorf("task-approve empty plan_id err = %v, want CodeInvalidArgs", err)
+	}
+	if err := sup.HandleTaskApprove(ctx, ipc.TaskApproveArgs{PlanID: "p", TaskID: ""}); !ipc.IsCode(err, ipc.CodeInvalidArgs) {
+		t.Errorf("task-approve empty task_id err = %v, want CodeInvalidArgs", err)
+	}
+	if err := sup.HandleWorkerKill(ctx, ipc.WorkerKillArgs{WorkerID: ""}); !ipc.IsCode(err, ipc.CodeInvalidArgs) {
+		t.Errorf("worker-kill empty worker_id err = %v, want CodeInvalidArgs", err)
+	}
+}

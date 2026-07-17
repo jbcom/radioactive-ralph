@@ -70,6 +70,53 @@ type Orchestrator struct {
 	// so two goroutines could otherwise race to create the session row.
 	orchSessionMu sync.Mutex
 	orchSessionID string
+
+	// runningWorkers maps a live worker id to the CancelFunc of its in-flight
+	// runner.Run context, so an operator/GUI worker-kill can actually cancel the
+	// provider subprocess (exec.CommandContext kills the process tree on ctx
+	// cancel) rather than only doing store bookkeeping and leaving the process
+	// running against the checkout. An entry exists only for the duration of a
+	// worker's agent turn; dispatchWorker/dispatchFanoutGroup register on start
+	// and deregister the instant Run returns. runningWorkersMu guards the map,
+	// which is touched from every concurrent dispatch and from KillWorker.
+	runningWorkersMu sync.Mutex
+	runningWorkers   map[string]context.CancelFunc
+}
+
+// registerWorker records cancel as the way to abort workerID's in-flight run
+// and returns a deregister func to call (via defer) the moment the run returns.
+// Keeping the window tight — only around runner.Run — means KillWorker can never
+// cancel post-run store writes or verification, which use the parent ctx.
+func (o *Orchestrator) registerWorker(workerID string, cancel context.CancelFunc) (deregister func()) {
+	o.runningWorkersMu.Lock()
+	if o.runningWorkers == nil {
+		o.runningWorkers = make(map[string]context.CancelFunc)
+	}
+	o.runningWorkers[workerID] = cancel
+	o.runningWorkersMu.Unlock()
+	return func() {
+		o.runningWorkersMu.Lock()
+		delete(o.runningWorkers, workerID)
+		o.runningWorkersMu.Unlock()
+	}
+}
+
+// KillWorker cancels the in-flight agent run for workerID, if one is currently
+// registered, and reports whether it did. This is the process half of a
+// worker-kill: exec.CommandContext propagates the cancellation to the provider
+// subprocess so it stops consuming tokens and touching the checkout. The store
+// half (requeue the task, terminate the row) is store.ReclaimWorker; the
+// supervisor's HandleWorkerKill invokes both. A false return means no run was
+// live under that id (already finished, or a fan-out member id) — harmless, and
+// the store side still runs.
+func (o *Orchestrator) KillWorker(workerID string) bool {
+	o.runningWorkersMu.Lock()
+	cancel, ok := o.runningWorkers[workerID]
+	o.runningWorkersMu.Unlock()
+	if ok {
+		cancel()
+	}
+	return ok
 }
 
 // Option configures an Orchestrator at construction time.
@@ -570,12 +617,18 @@ func (o *Orchestrator) dispatchWorker(ctx context.Context, projectID, projectDir
 	// through the slower post-run store writes + VerifyAndComplete, which use
 	// the parent ctx.
 	result, runErr := func() (provider.Result, error) {
-		runCtx := ctx
+		// A cancelable run context registered under workerID so an operator/GUI
+		// worker-kill can abort this provider turn (see KillWorker). The stall
+		// timeout, when set, layers on top of the same cancelable context.
+		runCtx, cancel := context.WithCancel(ctx)
+		defer cancel()
 		if o.watchdogConfig.StallTimeout > 0 {
-			var cancel context.CancelFunc
-			runCtx, cancel = context.WithTimeout(ctx, o.watchdogConfig.StallTimeout)
-			defer cancel()
+			var tcancel context.CancelFunc
+			runCtx, tcancel = context.WithTimeout(runCtx, o.watchdogConfig.StallTimeout)
+			defer tcancel()
 		}
+		deregister := o.registerWorker(workerID, cancel)
+		defer deregister()
 		return runner.Run(runCtx, binding, req)
 	}()
 
@@ -712,14 +765,19 @@ func (o *Orchestrator) dispatchFanoutGroup(ctx context.Context, projectID, proje
 		UserPrompt: scoped.prompt(),
 	}
 	// Stall timeout bounds ONLY the fan-out turn; cancel it the instant Run
-	// returns so it isn't held through the per-task verification below.
+	// returns so it isn't held through the per-task verification below. The run
+	// context is also registered under workerID so a worker-kill cancels the
+	// whole fan-out turn (see KillWorker).
 	result, runErr := func() (provider.Result, error) {
-		runCtx := ctx
+		runCtx, cancel := context.WithCancel(ctx)
+		defer cancel()
 		if o.watchdogConfig.StallTimeout > 0 {
-			var cancel context.CancelFunc
-			runCtx, cancel = context.WithTimeout(ctx, o.watchdogConfig.StallTimeout)
-			defer cancel()
+			var tcancel context.CancelFunc
+			runCtx, tcancel = context.WithTimeout(runCtx, o.watchdogConfig.StallTimeout)
+			defer tcancel()
 		}
+		deregister := o.registerWorker(workerID, cancel)
+		defer deregister()
 		return runner.Run(runCtx, binding, req)
 	}()
 

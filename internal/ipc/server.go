@@ -307,6 +307,22 @@ func (s *Server) handleConn(conn net.Conn) {
 // DriveHandler, the command is answered with an unsupported_command response
 // so an older supervisor fails cleanly against a newer client.
 func (s *Server) dispatchDrive(ctx context.Context, conn net.Conn, req Request) {
+	// Reject a client asking for a wire version newer than this supervisor
+	// speaks. A future v3 may reuse a v2 command name with changed payload
+	// semantics; without this guard we would decode it as v2 and act on it,
+	// defeating the versioning contract. An unknown-newer version fails clean
+	// with unsupported_command (the same class an old supervisor returns to a
+	// newer client), so the client can fall back or report a mismatch. A zero/
+	// omitted version is pre-versioned and allowed through.
+	if req.ProtoVersion > ProtoVersion {
+		s.writeResponse(conn, Response{
+			Ok:    false,
+			Error: fmt.Sprintf("protocol version %d not supported (this supervisor speaks v%d)", req.ProtoVersion, ProtoVersion),
+			Code:  CodeUnsupportedCommand,
+		})
+		return
+	}
+
 	dh, ok := s.handler.(DriveHandler)
 	if !ok {
 		s.writeResponse(conn, Response{

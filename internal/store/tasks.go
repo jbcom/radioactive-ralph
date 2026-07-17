@@ -678,8 +678,17 @@ func scanTasks(rows *sql.Rows) ([]Task, error) {
 // it) returns found=true, changed=false rather than erroring. found=false (no
 // error) when the task doesn't exist, so the caller can surface CodeNotFound.
 func (s *Store) ApproveTask(ctx context.Context, planID, taskID string) (found, changed bool, err error) {
+	// The read-then-write must be atomic: without a transaction the task could
+	// be deleted or transitioned between the SELECT and the UPDATE, so the
+	// return values (found/changed) could describe a state that no longer holds.
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return false, false, fmt.Errorf("store: begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
 	var status string
-	err = s.db.QueryRowContext(ctx,
+	err = tx.QueryRowContext(ctx,
 		`SELECT status FROM tasks WHERE plan_id = ? AND id = ?`, planID, taskID,
 	).Scan(&status)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -692,7 +701,7 @@ func (s *Store) ApproveTask(ctx context.Context, planID, taskID string) (found, 
 		// Already approved / not awaiting approval — idempotent success.
 		return true, false, nil
 	}
-	res, err := s.db.ExecContext(ctx, `
+	res, err := tx.ExecContext(ctx, `
 		UPDATE tasks SET status = 'ready'
 		WHERE plan_id = ? AND id = ? AND status = 'ready_pending_approval'
 	`, planID, taskID)
@@ -702,6 +711,9 @@ func (s *Store) ApproveTask(ctx context.Context, planID, taskID string) (found, 
 	n, err := res.RowsAffected()
 	if err != nil {
 		return false, false, fmt.Errorf("store: approve rows affected: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return false, false, fmt.Errorf("store: commit: %w", err)
 	}
 	return true, n > 0, nil
 }

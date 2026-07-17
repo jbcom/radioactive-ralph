@@ -220,7 +220,14 @@ func (s *Supervisor) dispatchActivePlans(ctx context.Context) (int, error) {
 	s.dispatchMu.Lock()
 	defer s.dispatchMu.Unlock()
 
-	plans, err := s.store.ListPlans(ctx, "", nil)
+	// Only ACTIVE plans are dispatched. ListPlans' default (nil) filter returns
+	// active AND paused, so passing it here would let the periodic tick keep
+	// dispatching ready steps from a plan an operator just paused via the drive
+	// API — the pause control would be a no-op. Filter to active explicitly so
+	// pause actually halts progress. (Paused plans remain visible to read
+	// clients through their own ListPlans calls; they are only excluded here,
+	// at the dispatch gate.)
+	plans, err := s.store.ListPlans(ctx, "", []store.PlanStatus{store.PlanStatusActive})
 	if err != nil {
 		return 0, fmt.Errorf("supervisor: list active plans: %w", err)
 	}

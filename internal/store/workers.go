@@ -185,10 +185,12 @@ func (s *Store) ReclaimWorker(ctx context.Context, workerID string) (found bool,
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	var planID, taskID sql.NullString
+	// Confirm the worker exists; found=false lets the caller map a kill of an
+	// already-gone worker to CodeNotFound.
+	var exists int
 	err = tx.QueryRowContext(ctx,
-		`SELECT current_plan_id, current_task_id FROM workers WHERE id = ?`, workerID,
-	).Scan(&planID, &taskID)
+		`SELECT 1 FROM workers WHERE id = ?`, workerID,
+	).Scan(&exists)
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, nil
 	}
@@ -196,18 +198,26 @@ func (s *Store) ReclaimWorker(ctx context.Context, workerID string) (found bool,
 		return false, fmt.Errorf("store: load worker: %w", err)
 	}
 
-	// Requeue the worker's running task (if it still holds one).
-	if planID.Valid && taskID.Valid {
-		if _, err := tx.ExecContext(ctx, `
-			UPDATE tasks
-			SET status = 'pending',
-			    reclaim_count = reclaim_count + 1,
-			    claimed_by_session = NULL,
-			    claimed_by_worker_id = NULL
-			WHERE plan_id = ? AND id = ? AND status = 'running'
-		`, planID.String, taskID.String); err != nil {
-			return false, fmt.Errorf("store: requeue killed worker task: %w", err)
-		}
+	// Requeue EVERY running task this worker still holds — keyed on
+	// claimed_by_worker_id, not the worker's single current_task_id column. A
+	// native-fanout worker can hold several claimed tasks at once while
+	// current_task_id records only the first, so requeuing by current_task_id
+	// would strand the rest as running-but-orphaned until the reaper noticed.
+	// The claimed_by_worker_id = workerID guard also fixes the reaper race: if
+	// the stale-worker reaper already reclaimed and reassigned a task to a
+	// different worker, that row's claim no longer names this worker, so we
+	// leave it alone instead of stomping the new owner's task back to pending.
+	// reclaim_count is deliberately NOT incremented: a worker-kill is a
+	// system/operator action, not a task-execution failure, so it must not
+	// spend the task's retry budget.
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE tasks
+		SET status = 'pending',
+		    claimed_by_session = NULL,
+		    claimed_by_worker_id = NULL
+		WHERE claimed_by_worker_id = ? AND status = 'running'
+	`, workerID); err != nil {
+		return false, fmt.Errorf("store: requeue killed worker tasks: %w", err)
 	}
 
 	now := s.clock.Now().UTC().Format(time.RFC3339)

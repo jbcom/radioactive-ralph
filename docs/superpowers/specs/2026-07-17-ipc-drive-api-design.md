@@ -53,7 +53,7 @@ killing a worker still goes through the same kill-and-reclaim path.
 | `plan-import` | `{markdown, slug?, title?}` | `{plan_id, slug, title}` | `store.CreatePlan` + `SetPlanStatus(active)` — the same logic `plan import` runs, moved server-side so the GUI needn't open the DB itself |
 | `plan-set-status` | `{plan_id, status}` (pause\|active\|abandoned) | `{plan_id, status}` | `store.SetPlanStatus` (validated to the allowed transitions) |
 | `task-approve` | `{plan_id, task_id}` | `{ok}` | transition a `ready_pending_approval` task to `ready` (an approval-clearing store method) |
-| `worker-kill` | `{worker_id}` | `{ok}` | orch/supervisor kill-and-reclaim for that worker's task (mark its task pending, terminate the subprocess) |
+| `worker-kill` | `{worker_id}` | `{ok}` | cancel the worker's live provider run (orch.KillWorker) then kill-and-reclaim in the store: requeue every task it claimed to pending, terminate the worker row |
 
 `plan-ls` is intentionally NOT added: the GUI reads plans via the same
 read-path the TUI's live data source uses (a direct store read is fine for a
@@ -84,6 +84,35 @@ so there is one writer of record for drive actions).
 - **No control-invariant bypass**: `worker-kill` reuses the existing
   kill-and-reclaim so a killed worker's task returns to the ready pool exactly
   as a watchdog kill would.
+
+### Correctness notes (surfaced during review)
+
+These are load-bearing behaviors the second-scrutiny review confirmed the drive
+API must get right, each pinned by a regression test:
+
+- **Pause actually pauses.** The periodic dispatch loop filters to `active`
+  plans explicitly (`ListPlans` with an active-only status filter), not
+  `ListPlans`'s default `active+paused`. Otherwise the tick would keep
+  dispatching ready steps from a plan an operator just paused — the control
+  would be cosmetic. (`TestDispatchActivePlans_SkipsPausedPlan`.)
+- **Worker-kill cancels the process, not just the row.** `HandleWorkerKill`
+  first calls `orch.KillWorker`, which cancels the worker's in-flight
+  `runner.Run` context (registered per worker id while the run is live), tearing
+  down the provider subprocess via `exec.CommandContext` so it stops spending
+  tokens and mutating the checkout — *then* does the store reclaim. Without the
+  cancel, the requeued task could be re-dispatched while the old process still
+  ran. (`TestKillWorkerCancelsInFlightRun`.)
+- **Reclaim requeues ALL of a worker's tasks and never stomps a reassigned
+  one.** `store.ReclaimWorker` requeues by `claimed_by_worker_id = worker`, so a
+  native-fanout worker holding several tasks has all of them returned to pending
+  (not just `current_task_id`), and a task the reaper already reassigned to a
+  different worker is left untouched. A kill does not increment `reclaim_count`
+  (it is a system action, not a task-execution failure). (`TestReclaimWorker*`.)
+- **Version guard before dispatch.** `dispatchDrive` rejects a request whose
+  `proto_version` exceeds the supervisor's with `unsupported_command`, before
+  routing to any handler — so a future version that reuses a command name with
+  changed payload semantics can't be silently acted on as the current version.
+  (`TestDrive_RejectsNewerProtocolVersion`.)
 
 ## Testing
 

@@ -146,6 +146,39 @@ func TestDrive_UnsupportedByV1Handler(t *testing.T) {
 	}
 }
 
+// TestDrive_RejectsNewerProtocolVersion proves the server refuses a drive
+// request whose proto_version is newer than it speaks, BEFORE routing it to a
+// handler. A future v3 could reuse a v2 command name with changed payload
+// semantics; without this guard the server would decode-and-act as v2. The
+// rejection is a clean unsupported_command, and the (otherwise-succeeding)
+// handler must never be invoked.
+func TestDrive_RejectsNewerProtocolVersion(t *testing.T) {
+	h := &driveFakeHandler{} // would succeed if reached
+	sock, _, cleanup := startServer(t, h)
+	defer cleanup()
+	c := dialTest(t, sock)
+	defer func() { _ = c.Close() }()
+
+	ctx := context.Background()
+	// Hand-send a drive request tagged with a version this server can't speak.
+	if err := c.send(ctx, Request{Cmd: CmdWorkerKill, ProtoVersion: ProtoVersion + 1}); err != nil {
+		t.Fatalf("send: %v", err)
+	}
+	resp, err := c.readResponse(ctx)
+	if err != nil {
+		t.Fatalf("readResponse: %v", err)
+	}
+	if resp.Ok {
+		t.Fatal("newer-version drive request: want !Ok, got Ok")
+	}
+	if resp.Code != CodeUnsupportedCommand {
+		t.Errorf("resp.Code = %q, want %q", resp.Code, CodeUnsupportedCommand)
+	}
+	if (h.gotKill != WorkerKillArgs{}) {
+		t.Errorf("handler was invoked (gotKill=%+v), want the version guard to reject before dispatch", h.gotKill)
+	}
+}
+
 // TestDrive_UnknownCommand confirms a truly unknown command returns
 // unsupported_command too.
 func TestDrive_UnknownCommand(t *testing.T) {

@@ -82,6 +82,9 @@ var allowedPlanStatuses = map[string]store.PlanStatus{
 // allowed operator transitions.
 func (s *Supervisor) HandlePlanSetStatus(ctx context.Context, args ipc.PlanSetStatusArgs) (ipc.PlanSetStatusReply, error) {
 	var zero ipc.PlanSetStatusReply
+	if args.PlanID == "" {
+		return zero, &codedError{ipc.CodeInvalidArgs, "plan-set-status: plan_id required"}
+	}
 	target, ok := allowedPlanStatuses[args.Status]
 	if !ok {
 		return zero, &codedError{ipc.CodeInvalidArgs, fmt.Sprintf("plan-set-status: %q is not an allowed status (paused|active|abandoned)", args.Status)}
@@ -97,6 +100,12 @@ func (s *Supervisor) HandlePlanSetStatus(ctx context.Context, args ipc.PlanSetSt
 
 // HandleTaskApprove clears the approval gate on a ready_pending_approval task.
 func (s *Supervisor) HandleTaskApprove(ctx context.Context, args ipc.TaskApproveArgs) error {
+	if args.PlanID == "" {
+		return &codedError{ipc.CodeInvalidArgs, "task-approve: plan_id required"}
+	}
+	if args.TaskID == "" {
+		return &codedError{ipc.CodeInvalidArgs, "task-approve: task_id required"}
+	}
 	found, _, err := s.store.ApproveTask(ctx, args.PlanID, args.TaskID)
 	if err != nil {
 		return fmt.Errorf("supervisor: approve task: %w", err)
@@ -107,13 +116,24 @@ func (s *Supervisor) HandleTaskApprove(ctx context.Context, args ipc.TaskApprove
 	return nil
 }
 
-// HandleWorkerKill reclaims a worker's task and terminates the worker row via
-// the same kill-and-reclaim the reaper uses; the orphaned subprocess (owned by
-// the provider runner's ctx) is caught by the watchdog.
+// HandleWorkerKill cancels the worker's live provider subprocess and then
+// reclaims its task and terminates the worker row. The process cancellation
+// (orch.KillWorker) aborts the in-flight runner.Run context so the subprocess
+// tears down at once rather than running on until its own timeout; the store
+// reclaim (kill-and-reclaim, the same shape the reaper uses) requeues the
+// task(s) and marks the worker terminated.
 func (s *Supervisor) HandleWorkerKill(ctx context.Context, args ipc.WorkerKillArgs) error {
 	if args.WorkerID == "" {
 		return &codedError{ipc.CodeInvalidArgs, "worker-kill: worker_id required"}
 	}
+	// Cancel the live provider subprocess first (best-effort): KillWorker aborts
+	// the in-flight runner.Run context so exec.CommandContext tears down the
+	// process tree, stopping token spend and further checkout mutation. Doing
+	// this BEFORE the store reclaim narrows the window in which the requeued
+	// task could be re-dispatched while the old process still runs. A false
+	// return (no live run under that id) is fine — the store side still applies.
+	s.orch.KillWorker(args.WorkerID)
+
 	found, err := s.store.ReclaimWorker(ctx, args.WorkerID)
 	if err != nil {
 		return fmt.Errorf("supervisor: reclaim worker: %w", err)
