@@ -270,8 +270,15 @@ func (u *ui) runAttach(ctx context.Context) {
 		if ctx.Err() != nil {
 			return
 		}
-		_ = u.ctrl.Attach(ctx, func(json.RawMessage) error {
-			u.refreshNow()
+		_ = u.ctrl.Attach(ctx, func(raw json.RawMessage) error {
+			// Only refresh for events that change visible aggregate state
+			// (task/plan/worker lifecycle). Skipping pure log/heartbeat kinds
+			// (tick, task.progress) avoids a full-snapshot re-read storm on a
+			// busy stream — the GUI re-reads everything from the store, so a
+			// per-frame refresh for a heartbeat would be pure waste.
+			if eventTriggersRefresh(raw) {
+				u.refreshNow()
+			}
 			return nil
 		})
 		// Attach returned: the stream ended. Back off briefly, then reconnect —
@@ -282,6 +289,27 @@ func (u *ui) runAttach(ctx context.Context) {
 		case <-time.After(u.attachRetryDelay):
 		}
 	}
+}
+
+// refreshNoiseKinds are event kinds that do NOT change any aggregate the GUI
+// renders (plan/task/worker/status counts), so they must not trigger a full
+// refresh. Everything else does — a live view should reflect any lifecycle
+// change immediately, and the periodic poll reconciles anything a skipped kind
+// might have implied.
+var refreshNoiseKinds = map[string]bool{
+	"tick":          true, // supervisor heartbeat
+	"task.progress": true, // mid-turn progress, not a state change
+}
+
+// eventTriggersRefresh reports whether a live Attach frame should trigger a GUI
+// refresh. An undecodable frame defaults to true: if we can't tell what it is,
+// refreshing is the safe (merely-wasteful) choice over silently going stale.
+func eventTriggersRefresh(raw json.RawMessage) bool {
+	var ev ipc.AttachEvent
+	if err := json.Unmarshal(raw, &ev); err != nil || ev.Kind == "" {
+		return true
+	}
+	return !refreshNoiseKinds[ev.Kind]
 }
 
 // refreshNow gathers a complete data snapshot for the current drill level OFF

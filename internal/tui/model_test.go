@@ -230,6 +230,98 @@ func TestModel_LiveFrameAppendsToLog(t *testing.T) {
 	}
 }
 
+func TestModel_LiveFrameFiltersToSelectedTask(t *testing.T) {
+	f := testFake()
+	m := newTestModel(t, f)
+	m.lvl = levelMicro
+	m.selectedTask = store.Task{ID: "task-a"}
+
+	// A frame for a DIFFERENT task must not pollute the selected task's tail.
+	updated, _ := m.Update(liveFrameMsg{raw: []byte(`{"kind":"task.claimed","task_id":"task-b"}`)})
+	m = updated.(Model)
+	if len(m.snap.live) != 0 {
+		t.Fatalf("frame for task-b appended to task-a's tail: got %d lines", len(m.snap.live))
+	}
+
+	// A frame for the selected task IS appended.
+	updated, _ = m.Update(liveFrameMsg{raw: []byte(`{"kind":"task.done","task_id":"task-a"}`)})
+	m = updated.(Model)
+	if len(m.snap.live) != 1 {
+		t.Fatalf("frame for the selected task not appended: got %d lines", len(m.snap.live))
+	}
+
+	// A task-agnostic frame (no task_id) is shown as context.
+	updated, _ = m.Update(liveFrameMsg{raw: []byte(`{"kind":"plan.imported"}`)})
+	m = updated.(Model)
+	if len(m.snap.live) != 2 {
+		t.Fatalf("task-agnostic frame not shown: got %d lines", len(m.snap.live))
+	}
+}
+
+func TestModel_LiveFrameAppliesTaskStatusDelta(t *testing.T) {
+	f := testFake()
+	m := newTestModel(t, f)
+	m.snap.tasks = []store.Task{
+		{ID: "task-a", Status: store.TaskStatusRunning},
+		{ID: "task-b", Status: store.TaskStatusReady},
+	}
+
+	// A task.done for task-a flips its status immediately, without a poll.
+	updated, _ := m.Update(liveFrameMsg{raw: []byte(`{"kind":"task.done","task_id":"task-a"}`)})
+	m = updated.(Model)
+	if m.snap.tasks[0].Status != store.TaskStatusDone {
+		t.Errorf("task-a status = %q, want done (live delta)", m.snap.tasks[0].Status)
+	}
+	if m.snap.tasks[1].Status != store.TaskStatusReady {
+		t.Errorf("task-b status = %q, want ready (untouched)", m.snap.tasks[1].Status)
+	}
+}
+
+func TestModel_LiveFrameAppliesBlockedDelta(t *testing.T) {
+	f := testFake()
+	m := newTestModel(t, f)
+	m.snap.tasks = []store.Task{{ID: "task-a", Status: store.TaskStatusRunning}}
+
+	// The store emits task.blocked / task.context_requested on running→blocked;
+	// both must flip the visible status to blocked immediately.
+	for _, kind := range []string{"task.blocked", "task.context_requested"} {
+		m.snap.tasks[0].Status = store.TaskStatusRunning
+		updated, _ := m.Update(liveFrameMsg{raw: []byte(`{"kind":"` + kind + `","task_id":"task-a"}`)})
+		m = updated.(Model)
+		if m.snap.tasks[0].Status != store.TaskStatusBlocked {
+			t.Errorf("%s: task-a status = %q, want blocked (live delta)", kind, m.snap.tasks[0].Status)
+		}
+	}
+}
+
+func TestModel_LiveFrameUnknownKindIsSnapshotNoop(t *testing.T) {
+	f := testFake()
+	m := newTestModel(t, f)
+	m.snap.tasks = []store.Task{{ID: "task-a", Status: store.TaskStatusRunning}}
+
+	updated, _ := m.Update(liveFrameMsg{raw: []byte(`{"kind":"task.progress","task_id":"task-a"}`)})
+	m = updated.(Model)
+	if m.snap.tasks[0].Status != store.TaskStatusRunning {
+		t.Errorf("unknown kind mutated task status to %q, want running unchanged", m.snap.tasks[0].Status)
+	}
+}
+
+func TestModel_LiveFrameUndecodableIsDropped(t *testing.T) {
+	f := testFake()
+	m := newTestModel(t, f)
+	m.lvl = levelMicro
+
+	// Malformed JSON and an empty-kind frame both drop cleanly (no panic, no
+	// log line).
+	for _, raw := range []string{`{not json`, `{"task_id":"task-a"}`} {
+		updated, _ := m.Update(liveFrameMsg{raw: []byte(raw)})
+		m = updated.(Model)
+	}
+	if len(m.snap.live) != 0 {
+		t.Errorf("undecodable frames produced %d log lines, want 0", len(m.snap.live))
+	}
+}
+
 func TestStartAttach_StreamsFramesThenEnds(t *testing.T) {
 	f := testFake()
 	f.attachFrames = []json.RawMessage{

@@ -131,7 +131,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd)
 Update handles key events \(arrows/enter to drill in, esc/backspace to drill out, q to quit\) and the periodic refresh tick. This is the surface the model\_test.go table tests exercise directly, injecting tea.KeyMsg values without a real terminal.
 
 <a name="Model.View"></a>
-### func \(Model\) [View](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/tui/model.go#L577>)
+### func \(Model\) [View](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/tui/model.go#L605>)
 
 ```go
 func (m Model) View() string
