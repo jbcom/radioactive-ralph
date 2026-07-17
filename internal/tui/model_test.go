@@ -3,10 +3,12 @@ package tui
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/jbcom/radioactive-ralph/internal/ipc"
 	"github.com/jbcom/radioactive-ralph/internal/orch"
 	"github.com/jbcom/radioactive-ralph/internal/store"
 )
@@ -252,6 +254,32 @@ func TestStartAttach_StreamsFramesThenEnds(t *testing.T) {
 
 	if err := <-done; err != errFakeAttach {
 		t.Fatalf("expected errFakeAttach from done channel, got %v", err)
+	}
+}
+
+func TestMacroHeaderShowsSupervisorLiveness(t *testing.T) {
+	f := testFake()
+	m := newTestModel(t, f)
+	m.snap.plans = f.plans
+	m.snap.progress = f.progress
+	m.snap.status = ipc.StatusReply{Uptime: 2 * time.Hour, ActiveWorkers: 1}
+
+	view := m.View()
+	if !strings.Contains(view, "connected") || !strings.Contains(view, "up 2h0m") {
+		t.Errorf("macro header missing the connected/uptime liveness line:\n%s", view)
+	}
+}
+
+func TestHumanizeUptime(t *testing.T) {
+	cases := map[time.Duration]string{
+		30 * time.Second: "30s",
+		5 * time.Minute:  "5m",
+		90 * time.Minute: "1h30m",
+	}
+	for d, want := range cases {
+		if got := humanizeUptime(d); got != want {
+			t.Errorf("humanizeUptime(%s) = %q, want %q", d, got, want)
+		}
 	}
 }
 

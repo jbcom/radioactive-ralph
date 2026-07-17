@@ -1,9 +1,25 @@
 package tui
 
 import (
+	"fmt"
+	"time"
+
 	"github.com/charmbracelet/lipgloss"
 	"github.com/jbcom/radioactive-ralph/internal/statusbucket"
 )
+
+// humanizeUptime renders a supervisor uptime compactly (e.g. "3h12m", "45s") —
+// the same shape the desktop GUI header uses, for a consistent liveness line.
+func humanizeUptime(d time.Duration) string {
+	switch {
+	case d < time.Minute:
+		return fmt.Sprintf("%ds", int(d.Seconds()))
+	case d < time.Hour:
+		return fmt.Sprintf("%dm", int(d.Minutes()))
+	default:
+		return fmt.Sprintf("%dh%dm", int(d.Hours()), int(d.Minutes())%60)
+	}
+}
 
 // Palette is small and theme-neutral on purpose: the TUI runs in
 // whatever terminal color scheme the operator already has, so styling

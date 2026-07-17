@@ -14,6 +14,10 @@ func renderMacro(m Model) string {
 	b.WriteString(styleHeader.Render("radioactive_ralph — plans"))
 	b.WriteString("\n")
 
+	// Supervisor liveness: the client only runs against a reachable supervisor,
+	// so lead with "connected · up <dur>" (parity with the desktop GUI header).
+	fmt.Fprintf(&b, "%s · up %s\n",
+		styleGood.Render("connected"), humanizeUptime(m.snap.status.Uptime))
 	fmt.Fprintf(&b, "active workers: %s   ready: %d  approval: %d  blocked: %d  running: %d  failed: %d\n\n",
 		styleRunning.Render(fmt.Sprintf("%d", m.snap.status.ActiveWorkers)),
 		m.snap.status.ReadyTasks, m.snap.status.ApprovalTasks,
