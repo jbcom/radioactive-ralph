@@ -13,6 +13,13 @@ shipped. That means historical sections may still mention MCP, plugins,
 supervisors, or the archived Python implementation even though those are no
 longer part of the live contract.
 
+## [0.19.1](https://github.com/jbcom/radioactive-ralph/compare/v0.19.0...v0.19.1) (2026-07-17)
+
+
+### Bug Fixes
+
+* **gui:** coordinate drive-action errors with the paint loop ([#119](https://github.com/jbcom/radioactive-ralph/issues/119)) ([9788d20](https://github.com/jbcom/radioactive-ralph/commit/9788d20669a86e33d37b504a81d41483c1ae9c72))
+
 ## [0.19.0](https://github.com/jbcom/radioactive-ralph/compare/v0.18.0...v0.19.0) (2026-07-17)
 
 
