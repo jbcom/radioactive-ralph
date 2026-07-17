@@ -181,17 +181,25 @@ Structured attach event surface (the observe half goes live) — shipping arc:
   resources, parameterized SQL, total input validation, correct scoping — the
   prior #160/#165/#169 fixes closed the real exposure); code-simplifier → #176.
 
+- Events CLI #178 (MERGED): `radioactive_ralph events` tails the project's events
+  to stdout (--backlog N, --json) — the observe API's first CLI consumer +
+  Client.AttachEvents' first production caller. Review folded 3 findings forward:
+  backlog↔live duplicate race (cursor from the SAME read, not a separate
+  MaxEventID), --json marshal-drop → stderr notice, and — the notable one —
+  ListProjectEvents used a bare project_id filter that SILENTLY DROPPED
+  plan-scoped lifecycle events (task.claimed/done/failed) from the CLI backlog
+  AND the pre-existing TUI macro pane + GUI event view; fixed by switching it to
+  the shared eventProjectScope so all consumers agree with the live tail.
+
 Rolling (next product feature per directive 0):
-- [ ] [WAIT] #178 (feat: `radioactive_ralph events` — headless live event tail).
-  Gives the observe API its first CLI consumer + Client.AttachEvents its first
-  production caller: tails the project's events to stdout (--backlog N, --json),
-  client-owned cursor so no gap/dup. Pure consumer, no core change. Fully
-  fake-tested via an eventSource seam. Code-review running; merge when green.
-- [ ] After #178: next feature candidate — a live macro-view event tail in the
-  TUI (today the Attach subscription only starts at MICRO drill level; the macro
-  plan overview shows events via a 10-item poll, never live). Or GUI true
-  per-event delta apply (currently full-refresh per lifecycle frame — but the
-  reviews judged that model clean, so lower priority). Agent's call at that point.
+- [ ] [WAIT] #180 (docs: spec a session-long TUI live event tail) — CI; merge green.
+- [ ] Implement the session-long TUI live tail per #180's spec: move the Attach
+  subscription from micro-only (start on drill-in / stop on drill-out) to
+  session-long (start at Init), route liveFrameMsg by level — always apply the
+  lifecycle delta + a live macro planEvent tail (id-deduped vs the poll), add the
+  per-task filtered log only at micro. Makes macro/meso push-live (today poll-only)
+  and simplifies the subscription lifecycle. Reuses #173's applyEvent/renderEvent.
+  Build once #180 lands (both touch model.go — avoid a fork).
 
 ## Notes
 
