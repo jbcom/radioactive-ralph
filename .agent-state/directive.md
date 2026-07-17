@@ -202,13 +202,12 @@ Structured attach event surface (the observe half goes live) — shipping arc:
   (#173).
 
 Next concrete item (now runnable — #180/#182 merged):
-- [ ] Cursor-aware TUI reconnect: the session subscription currently re-seeds
-  from the current MaxEventID on reconnect, so events during a supervisor-blip
-  gap arrive only via the poll, not the live stream (the one real limitation the
-  #180/#182 reviews surfaced repeatedly). Have the model remember its
-  last-processed event id and thread it into the resubscribe (startAttach →
-  AttachArgs.AfterID) so no macro event is missed across a blip. This closes the
-  documented gap and makes the "no event missed" contract true.
+- [ ] [WAIT] #184 (feat: cursor-aware TUI reconnect) — BUILT and in flight.
+  DataSource.Attach now takes an afterID; the model tracks lastEventID and
+  resumes from it on reconnect (0 on first attach = from now), threaded into
+  AttachArgs.AfterID, so no macro event is missed across a supervisor-blip gap
+  (the one real limitation the #180/#182 reviews surfaced). +regression test
+  (resume from id 14, not 0). CI; merge green.
 - [ ] Then rotate a fresh review lens (comprehensive-review / code-simplifier)
   over the merged TUI subscription change, and pick the next product feature
   (live macro plan-PROGRESS deltas; GUI true per-event delta apply; or a NEW
