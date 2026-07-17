@@ -14,6 +14,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"runtime/debug"
 	"strings"
 	"sync"
 	"time"
@@ -163,10 +164,16 @@ func (o *Orchestrator) runWithHeartbeat(hbCtx context.Context, workerID string, 
 			}
 		}
 	}()
-	result, err := fn()
-	close(done)
-	wg.Wait()
-	return result, err
+	// Stop the heartbeat goroutine via defer, not a plain post-call close: if
+	// fn() PANICS, a bare close(done) after it would be skipped and leak the
+	// heartbeat goroutine on every panicking turn. The defer runs during
+	// unwinding too, so the panic still propagates to the dispatch goroutine's
+	// recover — this only guarantees the heartbeat is reaped first.
+	defer func() {
+		close(done)
+		wg.Wait()
+	}()
+	return fn()
 }
 
 // registerWorker records cancel as the way to abort workerID's in-flight run
@@ -572,12 +579,22 @@ func (o *Orchestrator) DispatchNext(ctx context.Context, projectID, planID strin
 		// would kill this goroutine's run + store writes.
 		runCtx := o.dispatchBaseCtx()
 		go func() {
+			// LAST defer ⇒ runs FIRST during unwinding: recover the panic and
+			// record it BEFORE inflight.Done() below signals Wait(), so the
+			// dispatch_panic event is written while the store is guaranteed live
+			// (Wait() gates supervisor shutdown / store close). A panicking turn
+			// becomes a logged failure, never a supervisor crash.
 			defer o.inflight.Done()
 			defer o.releaseDispatchSlot()
 			// Release the spend reservation once the turn's usage is recorded
 			// (dispatchWorker records it before returning), freeing the capped
 			// provider for its next turn.
 			defer o.releaseSpendReservation(projectID, reservedProvider)
+			defer o.recoverDispatchPanic(runCtx, projectID, planID, panicCleanup{
+				sessionID: sessionID,
+				workerID:  workerID,
+				taskIDs:   []string{ds.task.ID},
+			})
 			if err := o.dispatchWorker(runCtx, projectID, projectDir, planID, sessionID, workerID, binding, ds, scoped); err != nil {
 				// Async: no caller to return to. A dispatch error for one worker
 				// must never abort the pass or wedge the supervisor — log it as a
@@ -595,6 +612,69 @@ func (o *Orchestrator) DispatchNext(ctx context.Context, projectID, planID strin
 	}
 
 	return dispatched, nil
+}
+
+// panicCleanup carries the claim/worker bookkeeping recoverDispatchPanic needs
+// to reclaim a panicking goroutine's task(s) immediately, rather than leaving
+// them wedged 'running' until the reaper's 90s stale window.
+type panicCleanup struct {
+	sessionID string   // owning session for the owner-guarded claim release
+	workerID  string   // worker row to clear
+	taskIDs   []string // every task this goroutine had claimed
+}
+
+// recoverDispatchPanic is the last-line containment for an async dispatch
+// goroutine. A worker turn (or its verification) that panics must NEVER take
+// down the supervisor — that would violate the control invariant that a
+// misbehaving turn can never block or kill the system. Installed as the LAST
+// deferred call in each dispatch goroutine so it runs FIRST during unwinding —
+// crucially before the inflight.Done() defer that unblocks Wait(), so the
+// cleanup below is written while the store is still guaranteed live (Wait()
+// gates supervisor shutdown and store close). It converts the panic into a
+// logged store event, releases the claimed task(s), and clears the worker row,
+// then lets the goroutine return normally instead of crashing the process.
+// ctx is the detached run context (dispatchBaseCtx), so the writes still land
+// even if the caller's request ctx is long gone.
+func (o *Orchestrator) recoverDispatchPanic(ctx context.Context, projectID, planID string, cleanup panicCleanup) {
+	r := recover()
+	if r == nil {
+		return
+	}
+	// Detach + bound the writes: the panic may be unwinding during shutdown,
+	// and we must not lose the record or leave the claim wedged on a cancelled
+	// ctx.
+	persistCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+	defer cancel()
+	_ = o.store.Emit(persistCtx, store.EmitOpts{
+		ProjectID: projectID,
+		PlanID:    planID,
+		Kind:      "worker.dispatch_panic",
+		Stream:    "service",
+		PayloadJSON: mustPayloadJSON(store.EventPayload{
+			Reason: fmt.Sprintf("dispatch goroutine panicked: %v\n%s", r, debug.Stack()),
+		}),
+	})
+	// Reclaim immediately so the panicked task is re-dispatchable now, not after
+	// the reaper's stale window. A panic is an orchestrator-level failure, not
+	// the task's fault, so ReleaseClaim returns the task to 'pending' WITHOUT
+	// charging its retry budget (unlike MarkFailed on a real turn error). The
+	// owner guard makes a release harmless if the reaper already reclaimed the
+	// task and reassigned it — ErrTaskNotOwnedRunning just means "not ours
+	// anymore", which is fine.
+	for _, taskID := range cleanup.taskIDs {
+		if err := o.store.ReleaseClaim(persistCtx, planID, taskID, cleanup.sessionID, "dispatch goroutine panicked"); err != nil && !errors.Is(err, store.ErrTaskNotOwnedRunning) {
+			_ = o.store.Emit(persistCtx, store.EmitOpts{
+				ProjectID:   projectID,
+				PlanID:      planID,
+				Kind:        "worker.dispatch_error",
+				Stream:      "service",
+				PayloadJSON: mustPayloadJSON(store.EventPayload{Reason: fmt.Sprintf("release claim after panic on %s: %v", taskID, err)}),
+			})
+		}
+	}
+	if cleanup.workerID != "" {
+		_ = o.store.ClearWorkerTask(persistCtx, cleanup.workerID, "crashed")
+	}
 }
 
 // acquireDispatchSlot try-acquires one dispatch slot without blocking, returning
@@ -1049,9 +1129,23 @@ func (o *Orchestrator) dispatchFanoutGroup(ctx context.Context, projectID, proje
 	// Run under baseCtx, NOT the caller's ctx (which for HandleEnqueue dies when
 	// the IPC request returns).
 	runCtx := o.dispatchBaseCtx()
+	claimedTaskIDs := make([]string, len(claimed))
+	for i, ds := range claimed {
+		claimedTaskIDs[i] = ds.task.ID
+	}
 	go func() {
+		// LAST defer ⇒ runs FIRST during unwinding: recover the panic, record it,
+		// and reclaim every claimed task BEFORE inflight.Done() below signals
+		// Wait(), so the writes land while the store is still live. A panicking
+		// fan-out turn becomes a logged failure + immediately re-dispatchable
+		// tasks, never a supervisor crash.
 		defer o.inflight.Done()
 		defer releaseFanoutSlot()
+		defer o.recoverDispatchPanic(runCtx, projectID, planID, panicCleanup{
+			sessionID: sessionID,
+			workerID:  workerID,
+			taskIDs:   claimedTaskIDs,
+		})
 		if err := o.runFanoutGroup(runCtx, projectID, projectDir, planID, groupHeading, binding, sessionID, workerID, claimed, scoped); err != nil {
 			_ = o.store.Emit(runCtx, store.EmitOpts{
 				ProjectID:   projectID,

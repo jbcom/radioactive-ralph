@@ -177,6 +177,94 @@ func TestDispatchNextSequentialDispatchesOnlyFirstStep(t *testing.T) {
 	}
 }
 
+// panicRunner is a provider.Runner whose turn panics, standing in for a
+// misbehaving provider integration or a bug in the turn path.
+type panicRunner struct{}
+
+func (panicRunner) Run(context.Context, provider.Binding, provider.Request) (provider.Result, error) {
+	panic("boom: simulated provider turn panic")
+}
+
+// TestDispatchWorkerPanicIsContained confirms the control invariant that a
+// panicking worker turn can never crash the supervisor: the async dispatch
+// goroutine recovers, the process survives (o.Wait() returns instead of the
+// test binary aborting), the panic is recorded as a worker.dispatch_panic store
+// event, and the claimed task is reclaimed to 'pending' immediately (not left
+// wedged 'running' until the reaper) so it can be re-dispatched at once.
+func TestDispatchWorkerPanicIsContained(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	projectID := mustCreateTestProject(t, s, "panic-project")
+	planID := mustCreateTestPlan(t, s, projectID, "panic-plan", "Ship", twoStepSequentialPlan)
+
+	o := New(s,
+		WithRunnerFactory(func(provider.Binding) (provider.Runner, error) { return panicRunner{}, nil }),
+		WithBindingResolver(fakeBindingResolver("claude", false)),
+	)
+
+	dispatched, err := o.DispatchNext(ctx, projectID, planID)
+	if err != nil {
+		t.Fatalf("DispatchNext: %v", err)
+	}
+	if dispatched != 1 {
+		t.Fatalf("dispatched = %d, want 1", dispatched)
+	}
+	// If the panic were NOT recovered, the dispatch goroutine would crash the
+	// whole test process here rather than letting Wait return.
+	o.Wait()
+
+	events, err := s.ListProjectEvents(ctx, projectID, 50)
+	if err != nil {
+		t.Fatalf("ListProjectEvents: %v", err)
+	}
+	var panicEvent *store.Event
+	for i := range events {
+		if events[i].Kind == "worker.dispatch_panic" {
+			panicEvent = &events[i]
+			break
+		}
+	}
+	if panicEvent == nil {
+		t.Fatalf("no worker.dispatch_panic event recorded; events = %+v", events)
+	}
+	if !strings.Contains(panicEvent.PayloadJSON, "simulated provider turn panic") {
+		t.Errorf("panic event payload = %q, want it to carry the panic value", panicEvent.PayloadJSON)
+	}
+
+	// The claimed task must be reclaimed immediately, not stuck 'running' until
+	// the 90s reaper window. It returns to 'pending' (no retry penalty for an
+	// orchestrator-level failure) and no task should be left 'running'.
+	tasks, err := s.ListTasks(ctx, planID, nil)
+	if err != nil {
+		t.Fatalf("ListTasks: %v", err)
+	}
+	var running, pending int
+	for _, tk := range tasks {
+		switch tk.Status {
+		case store.TaskStatusRunning:
+			running++
+		case store.TaskStatusPending:
+			pending++
+		}
+	}
+	if running != 0 {
+		t.Errorf("running tasks = %d, want 0 (the panicked task must not be left wedged running)", running)
+	}
+	if pending != 1 {
+		t.Errorf("pending tasks = %d, want 1 (the panicked task reclaimed to pending)", pending)
+	}
+
+	// A second dispatch must be able to re-claim the reclaimed task right away.
+	redispatched, err := o.DispatchNext(ctx, projectID, planID)
+	if err != nil {
+		t.Fatalf("second DispatchNext: %v", err)
+	}
+	o.Wait()
+	if redispatched != 1 {
+		t.Errorf("re-dispatched = %d, want 1 (reclaimed task must be immediately dispatchable)", redispatched)
+	}
+}
+
 // TestDispatchNextParallelDispatchesAllReadySteps confirms an unordered
 // (parallel) leaf group dispatches every not-done step together.
 func TestDispatchNextParallelDispatchesAllReadySteps(t *testing.T) {
