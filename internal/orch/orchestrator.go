@@ -648,6 +648,12 @@ func (o *Orchestrator) dispatchFanoutGroup(ctx context.Context, projectID, proje
 	for i, ref := range refs {
 		ds, err := o.claimStepTask(ctx, planID, parsedPlan, ref, steps[i], sessionID, workerID)
 		if err != nil {
+			// A mid-loop claim error would otherwise leave the tasks this
+			// worker ALREADY claimed (transitioned to 'running') wedged with
+			// no worker to complete them. Release them back to pending so the
+			// reaper/next dispatch can pick them up, then fail.
+			o.releaseClaimedTasks(ctx, planID, sessionID, claimed)
+			_ = o.store.ClearWorkerTask(ctx, workerID, "crashed")
 			return 0, err
 		}
 		if ds == nil {
@@ -754,6 +760,18 @@ func (o *Orchestrator) dispatchFanoutGroup(ctx context.Context, projectID, proje
 	}
 	_ = o.store.ClearWorkerTask(ctx, workerID, "idle")
 	return len(claimed), nil
+}
+
+// releaseClaimedTasks requeues tasks a fan-out worker had already claimed
+// when a later claim in the same group fails, so they don't sit wedged in
+// 'running' with no worker. Each is requeued via MarkFailed under the
+// worker's own session (its owner guard matches), which transitions
+// 'running' -> 'pending' with the retry budget intact. Best-effort:
+// individual failures are ignored — the reaper is the backstop.
+func (o *Orchestrator) releaseClaimedTasks(ctx context.Context, planID, sessionID string, claimed []*dispatchedStep) {
+	for _, ds := range claimed {
+		_, _ = o.store.MarkFailed(ctx, planID, ds.task.ID, sessionID, "released: fan-out group claim aborted", 3)
+	}
 }
 
 // derefSteps extracts the dispatchedStep values (not pointers) for

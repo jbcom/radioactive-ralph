@@ -127,11 +127,16 @@ func (r *Recorder) Close() error {
 		_ = r.cmd.Process.Kill()
 		_ = r.cmd.Wait()
 	}
+	// Snapshot frames under the mutex: a pump goroutine may still be draining
+	// a buffered line and calling append() concurrently with this read.
+	r.mu.Lock()
+	frames := append([]Frame(nil), r.frames...)
+	r.mu.Unlock()
 	c := &Cassette{
 		Version:    CurrentVersion,
 		RecordedAt: r.startedAt().UTC(),
 		Args:       r.args,
-		Frames:     r.frames,
+		Frames:     frames,
 	}
 	return c.Save(r.cassettePath)
 }
