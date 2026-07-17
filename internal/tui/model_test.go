@@ -268,6 +268,18 @@ func TestMacroHeaderShowsSupervisorLiveness(t *testing.T) {
 	if !strings.Contains(view, "connected") || !strings.Contains(view, "up 2h0m") {
 		t.Errorf("macro header missing the connected/uptime liveness line:\n%s", view)
 	}
+
+	// When the last refresh failed (supervisor unreachable mid-session), the
+	// header must NOT keep claiming "connected" with a frozen uptime — it shows
+	// the disconnected state instead.
+	m.err = context.DeadlineExceeded
+	dview := m.View()
+	if !strings.Contains(dview, "disconnected") {
+		t.Errorf("macro header should show 'disconnected' after a failed refresh:\n%s", dview)
+	}
+	if strings.Contains(dview, "up 2h0m") {
+		t.Error("macro header should not show a frozen uptime when disconnected")
+	}
 }
 
 func TestHumanizeUptime(t *testing.T) {
