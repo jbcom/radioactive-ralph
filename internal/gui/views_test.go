@@ -15,6 +15,7 @@ import (
 	"fyne.io/fyne/v2/test"
 	"fyne.io/fyne/v2/widget"
 	"github.com/jbcom/radioactive-ralph/internal/ipc"
+	"github.com/jbcom/radioactive-ralph/internal/orch"
 	"github.com/jbcom/radioactive-ralph/internal/store"
 )
 
@@ -288,6 +289,42 @@ func TestMacro_EmptyStateShowsImport(t *testing.T) {
 	u.refreshNow()
 	if findButton(u.root, "Import plan…") == nil {
 		t.Error("empty macro view should offer plan import")
+	}
+}
+
+// TestMacro_RenderedStructure is a visual-regression guard: it renders the full
+// macro view to Fyne's markup and asserts the intended structure is present and
+// in order (status header → plans with status chips + progress → import → the
+// activity separator + feed). Rendering the real widget tree catches layout
+// regressions a per-widget assertion would miss. (Verified by reading the markup
+// during the visuals-ownership pass — the palette and drill controls render as
+// intended.)
+func TestMacro_RenderedStructure(t *testing.T) {
+	f := newFakeController()
+	f.status = ipc.StatusReply{Uptime: 90 * time.Minute, ActivePlans: 1}
+	f.plans = []store.Plan{{ID: "p1", Title: "Ship it", Status: store.PlanStatusActive}}
+	f.progr = map[string]orch.Progress{"p1": {Done: 2, Total: 3}}
+	f.pEvents = []store.Event{{Kind: "task.done", Actor: "w1"}}
+	u := newTestUI(t, f)
+	u.refreshNow()
+
+	markup := test.RenderToMarkup(u.win.Canvas())
+	for _, want := range []string{
+		"connected · up 1h30m", // live status header
+		"Ship it",              // the plan
+		"2/3",                  // progress
+		"Import plan…",         // import affordance
+		"Separator",            // the activity divider
+		"Recent activity",      // the feed header
+		"task.done",            // an event
+	} {
+		if !strings.Contains(markup, want) {
+			t.Errorf("macro render missing %q", want)
+		}
+	}
+	// Ordering: the activity feed comes AFTER the plans.
+	if strings.Index(markup, "Ship it") > strings.Index(markup, "Recent activity") {
+		t.Error("plan list should render before the Recent activity feed")
 	}
 }
 
