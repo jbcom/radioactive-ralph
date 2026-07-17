@@ -88,6 +88,10 @@ type Model struct {
 	// forwarder goroutine leaked (blocked writing to a channel no one read).
 	attachFrames chan json.RawMessage
 	attachDone   chan error
+	// attachEpoch increments on every new subscription; a liveFrameMsg
+	// carrying a stale epoch (from a subscription the user already drilled out
+	// of) is dropped rather than re-arming the current one.
+	attachEpoch uint64
 
 	quitting bool
 }
@@ -128,9 +132,13 @@ type fetchedMsg struct {
 }
 
 // liveFrameMsg carries one Attach event frame back into Update. Only
-// produced while in levelMicro with a live subscription active.
+// produced while in levelMicro with a live subscription active. epoch tags
+// the subscription that produced it, so a late frame from a subscription the
+// user already drilled out of is ignored instead of re-arming (which would
+// start a duplicate loop on the NEW subscription's channels).
 type liveFrameMsg struct {
-	raw json.RawMessage
+	raw   json.RawMessage
+	epoch uint64
 }
 
 // attachEndedMsg signals the Attach stream ended (cleanly or with error).
@@ -204,14 +212,14 @@ func (m Model) fetchCmd() tea.Cmd {
 // feeds frames back as liveFrameMsg; Update re-issues attachCmd after each
 // frame is delivered so the subscription keeps flowing (Bubble Tea's
 // convention for representing a channel/stream as commands).
-func attachCmd(ctx context.Context, frames chan json.RawMessage, done chan error) tea.Cmd {
+func attachCmd(ctx context.Context, frames chan json.RawMessage, done chan error, epoch uint64) tea.Cmd {
 	return func() tea.Msg {
 		select {
 		case raw, ok := <-frames:
 			if !ok {
 				return attachEndedMsg{err: <-done}
 			}
-			return liveFrameMsg{raw: raw}
+			return liveFrameMsg{raw: raw, epoch: epoch}
 		case <-ctx.Done():
 			return attachEndedMsg{err: ctx.Err()}
 		}
@@ -286,6 +294,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case liveFrameMsg:
+		// Drop a late frame from a subscription the user already drilled out
+		// of (its epoch no longer matches): appending it would pollute the new
+		// view, and re-arming on it would start a duplicate loop on the
+		// current subscription's channels.
+		if msg.epoch != m.attachEpoch {
+			return m, nil
+		}
 		m.snap.live = append(m.snap.live, liveLogLine{at: time.Now(), text: renderFrame(msg.raw)})
 		if len(m.snap.live) > 500 {
 			m.snap.live = m.snap.live[len(m.snap.live)-500:]
@@ -294,7 +309,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// subscription delivers exactly one frame and the forwarder goroutine
 		// blocks forever on the unread channel.
 		if m.attachFrames != nil {
-			return m, attachCmd(m.ctx, m.attachFrames, m.attachDone)
+			return m, attachCmd(m.ctx, m.attachFrames, m.attachDone, m.attachEpoch)
 		}
 		return m, nil
 
@@ -391,7 +406,8 @@ func (m Model) drillIn() (tea.Model, tea.Cmd) {
 		m.attachCancel = cancel
 		m.attachFrames = frames
 		m.attachDone = done
-		return m, tea.Batch(m.fetchCmd(), attachCmd(m.ctx, frames, done))
+		m.attachEpoch++
+		return m, tea.Batch(m.fetchCmd(), attachCmd(m.ctx, frames, done, m.attachEpoch))
 
 	default:
 		return m, nil
