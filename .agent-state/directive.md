@@ -132,22 +132,26 @@ Completed this arc (audits → fixes, all shipped):
   checks before spawning worker rows (a bot P2 caught per-tick orphan-row
   accumulation, fixed) #154.
 
-Completed since (all shipped/in-flight):
-- [x] Agent watchdog audit (opus) → #156 (in flight): Kill no longer SIGKILLs a
-  reaped/recycled PID (reapMu guard), Watch no longer spurious-stalls on a
+Completed since (all shipped):
+- [x] Agent watchdog audit (opus) → #156: Kill no longer SIGKILLs a reaped/
+  recycled PID — redesigned (after a codex P1 disproved a mutex approach) to
+  route Kill through exec.Cmd's own Cancel→Wait via a private cancelable ctx, so
+  a signal can never land after the reap; Watch no longer spurious-stalls on a
   non-positive StallTimeout.
-- [x] Verified the app RUNS: built binary, `doctor` 11 OK/0 WARN/0 FAIL, all
-  three providers detected+authenticated. Cleared 20 stale branch-switch stashes.
+- [x] TUI rendering audit (opus) → #157: cursor follows the selected ENTITY by
+  ID across a refresh (not just a clamped index — two codex P2s sharpened this),
+  and ALL gather paths route through one in-flight guard so a slow refresh can't
+  stack overlapping gathers.
+- [x] Verified the app RUNS: `doctor` 11 OK/0 WARN/0 FAIL, all three providers
+  detected+authenticated. Cleared 20 stale branch-switch stashes.
 
 Next forward-exploration items:
-- [ ] [WAIT] #156 (agent Kill-reaped-PID + zero-timeout-stall) — CI; merge green.
-- [ ] TUI audit (opus) findings — FIX next: C1 m.cursor not clamped/reconciled
-  after a background refresh mutates the plan/task list → wrong-entity drill-ins
-  + invisible cursor; C2 no in-flight guard on the 1s refresh tick → slow gathers
-  overlap, stack connections, land stale writes out of order. Plus P2 stale micro/
-  meso header (selectedTask/Plan captured at drill-in, never refreshed).
-- [ ] After the TUI fixes: rotate the lens again (GUI, supervisor IPC, or a NEW
-  product feature — approval-gate docs + plan example, observability, DX).
+- [ ] [WAIT-AGENT] IPC-layer audit (opus) — adversarial review of the socket/
+  named-pipe server: framing/decode, server-wedging DoS, conn/goroutine leaks,
+  request routing, races, Attach streaming, transport perms. Re-invokes on
+  completion; fold confirmed findings into fresh items + ship.
+- [ ] After the IPC audit: rotate the lens again (GUI, or a NEW product feature —
+  approval-gate docs + plan example, observability, DX).
 
 ## Notes
 
