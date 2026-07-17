@@ -13,6 +13,13 @@ shipped. That means historical sections may still mention MCP, plugins,
 supervisors, or the archived Python implementation even though those are no
 longer part of the live contract.
 
+## [0.18.0](https://github.com/jbcom/radioactive-ralph/compare/v0.17.1...v0.18.0) (2026-07-17)
+
+
+### Features
+
+* **doctor:** surface the codex spend-cap metering blind spot ([#112](https://github.com/jbcom/radioactive-ralph/issues/112)) ([cacdc63](https://github.com/jbcom/radioactive-ralph/commit/cacdc631d83a1d068d94fc1284017b421a202479))
+
 ## [0.17.1](https://github.com/jbcom/radioactive-ralph/compare/v0.17.0...v0.17.1) (2026-07-17)
 
 
