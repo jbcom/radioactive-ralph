@@ -29,6 +29,7 @@ internal/a2a
 internal/agent
 internal/agentdetect
 internal/doctor
+internal/genesis
 internal/ipc
 internal/orch
 internal/plan
@@ -42,6 +43,7 @@ internal/service
 internal/store
 internal/store/schema
 internal/supervisor
+internal/tui
 internal/vconfig
 internal/voice
 internal/xdg

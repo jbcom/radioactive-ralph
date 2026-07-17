@@ -15,6 +15,8 @@ Package provider adapts configured CLI backends into radioactive\_ralph's provid
 
 ## Index
 
+- [Variables](<#variables>)
+- [func DefaultWatchdogConfig\(\) agent.WatchdogConfig](<#DefaultWatchdogConfig>)
 - [func ValidateBinding\(binding Binding\) error](<#ValidateBinding>)
 - [type Binding](<#Binding>)
   - [func ResolveBinding\(cfg File, local Local, fromConfig VariantFile\) \(Binding, error\)](<#ResolveBinding>)
@@ -38,6 +40,46 @@ Package provider adapts configured CLI backends into radioactive\_ralph's provid
 - [type Usage](<#Usage>)
 - [type VariantFile](<#VariantFile>)
 
+
+## Variables
+
+<a name="DefaultPromptPatterns"></a>DefaultPromptPatterns are the regexes superviseAgent uses out of the box to recognize an interactive permission/clarification prompt in a CLI's output — the shapes seen from Claude Code, Codex, opencode, and generic POSIX\-confirmation prompts \("\(y/n\)", "[Y/n](<https://pkg.go.dev/Y/n/>)", etc.\). Callers with a provider\-specific prompt shape should extend, not replace, this list.
+
+```go
+var DefaultPromptPatterns = []*regexp.Regexp{
+    regexp.MustCompile(`(?i)\(y/n\)`),
+    regexp.MustCompile(`(?i)\[y/n\]`),
+    regexp.MustCompile(`(?i)continue\?`),
+    regexp.MustCompile(`(?i)proceed\?`),
+    regexp.MustCompile(`(?i)permission`),
+    regexp.MustCompile(`(?i)approve`),
+    regexp.MustCompile(`(?i)allow this`),
+    regexp.MustCompile(`(?i)do you want to`),
+    regexp.MustCompile(`(?i)waiting for`),
+    regexp.MustCompile(`(?i)press enter`),
+}
+```
+
+<a name="DefaultStallTimeout"></a>DefaultStallTimeout is the default ceiling on how long superviseAgent will wait for output from an agent before treating it as stalled and killing it. Individual callers may override via WatchdogConfig.StallTimeout. It is a var \(not a const\) solely so tests can shrink it to keep watchdog tests fast without threading a StallTimeout override through every runner call site; production code should never reassign it outside of tests.
+
+```go
+var DefaultStallTimeout = 3 * time.Minute
+```
+
+<a name="ErrAgentBlocked"></a>ErrAgentBlocked is returned by superviseAgent \(and wrapped with the triggering reason\) when the control invariant fires: the agent produced a signal \(an interactive prompt, a stall, or a resource\-exceeded condition\) that means it can no longer be trusted to make forward progress non\-interactively. superviseAgent ALWAYS kills the agent before returning this error — callers must never wait on it themselves.
+
+```go
+var ErrAgentBlocked = errors.New("provider: agent blocked (killed by watchdog)")
+```
+
+<a name="DefaultWatchdogConfig"></a>
+## func [DefaultWatchdogConfig](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/watchdog.go#L52>)
+
+```go
+func DefaultWatchdogConfig() agent.WatchdogConfig
+```
+
+DefaultWatchdogConfig returns a WatchdogConfig seeded with DefaultStallTimeout and DefaultPromptPatterns. Runners call this \(rather than constructing agent.WatchdogConfig\{\} directly\) so every provider gets the same baseline prompt/stall detection unless a caller has a reason to override it.
 
 <a name="ValidateBinding"></a>
 ## func [ValidateBinding](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/declarative.go#L159>)
@@ -145,16 +187,18 @@ func (ClaudeRunner) Run(ctx context.Context, binding Binding, req Request) (Resu
 Run spawns \`claude \-p \-\-input\-format stream\-json \-\-output\-format stream\-json\` under agent.Start, feeds req.UserPrompt on stdin via a one\-shot input file \(claude in \-\-input\-format stream\-json mode reads a JSON\-line user message from stdin\), tees stdout into a ResultPath file, and parses the terminal result frame from that file for Usage.
 
 <a name="CodexRunner"></a>
-## type [CodexRunner](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/codex.go#L11>)
+## type [CodexRunner](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/codex.go#L27>)
 
 CodexRunner executes a single \`codex exec\` turn.
+
+codex, like claude/opencode, now runs under Ralph's own pty via internal/agent so its pane/stream goes through the same superviseAgent\-enforced watchdog \(spec §1's never\-block control invariant\): a stalled or \(despite \-\-dangerously\-bypass\-approvals\-and\-sandbox\) unexpectedly interactive codex process is killed rather than left to hang, exactly like claude/opencode. codex's own native result channel — the \-\-output\-last\-message file — is unaffected: it is still the authoritative source for AssistantOutput, read back from disk after the process exits. The pty pane output itself carries no structured result for codex \(unlike claude/opencode's stream\-json\), so onLine here has nothing to parse; it exists purely so superviseAgent's watchdog has output to observe for stall/prompt detection.
 
 ```go
 type CodexRunner struct{}
 ```
 
 <a name="CodexRunner.Run"></a>
-### func \(CodexRunner\) [Run](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/codex.go#L14>)
+### func \(CodexRunner\) [Run](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/codex.go#L30>)
 
 ```go
 func (CodexRunner) Run(ctx context.Context, binding Binding, req Request) (Result, error)

@@ -1,20 +1,18 @@
 ---
 title: Guides
-lastUpdated: 2026-04-15
+lastUpdated: 2026-07-16
 ---
 
 # Guides
 
 | Guide | What it covers |
 |---|---|
-| [Runtime surfaces](./transports.md) | How `service`, attached `run`, and `tui` fit together |
-| [TUI cockpit](./tui.md) | Keyboard shortcuts, queue views, and operator actions in the socket-backed cockpit |
-| [Plan format](./plan-format.md) | How repo-visible plan markdown and the live DAG store relate, plus what `plan import` accepts |
-| [Fixit delegation](./fixit-delegation.md) | How fixit advisor mode writes recommendation docs and seeds the durable plan DAG |
+| [Supervisor and client](./transports.md) | How `--supervisor` and the dumb client fit together |
+| [TUI](./tui.md) | The read-only macro/meso/micro client view |
+| [Plan format](./plan-format.md) | The markdown grammar plans decompose from, and how completion is verified |
+| [Safety floors](./safety-floors.md) | The never-block invariant, orchestrator-verified completion, spend caps |
 | [Cassette VCR](./cassette-vcr.md) | Deterministic replay for the Claude provider backend tests |
-| [Safety floors](./safety-floors.md) | Non-negotiable guardrails for risky variants and service contexts |
-| [Design](./design.md) | Product vision, persona philosophy, and the binary-first direction |
-| [Fixit pipeline design](../design/fixit-plan-pipeline.md) | The deeper design note for fixit's staged planning pipeline |
+| [Design](./design.md) | The product shape and why it's built this way |
 | [Demo](./demo.md) | How the recorded terminal demo is structured and how to re-record it |
 | [Launch](./launch.md) | Launch-day asset, packaging, verification, and copy checklist |
 
@@ -24,9 +22,8 @@ lastUpdated: 2026-04-15
 transports
 tui
 plan-format
-fixit-delegation
-cassette-vcr
 safety-floors
+cassette-vcr
 design
 launch
 demo

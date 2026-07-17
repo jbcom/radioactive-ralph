@@ -11,7 +11,7 @@ description: Go API reference for the supervisor package.
 import "github.com/jbcom/radioactive-ralph/internal/supervisor"
 ```
 
-Package supervisor implements the \`\-\-supervisor\` process: the single durable authority described in docs/superpowers/specs/2026\-07\-16\-supervisor\-architecture\-design.md §4\-§6. It owns the one user\-level store, all agent ptys, and the IPC endpoint that both discovery and single\-instance enforcement key off of \(§5c: "the socket is the advertisement"\).
+Package supervisor implements the \`\-\-supervisor\` process: the single durable authority described in docs/superpowers/specs/2026\-07\-16\-supervisor\-architecture\-design.md §4\-§6. It owns the one user\-level store, all agent ptys, and the IPC endpoint clients discover \(§5c: "the socket is the advertisement"\). Single\-instance is enforced by an exclusive flock on the PID file, not by the socket bind \(which happens downstream of that lock\).
 
 ## Index
 
@@ -24,9 +24,9 @@ Package supervisor implements the \`\-\-supervisor\` process: the single durable
 - [type Options](<#Options>)
 - [type Supervisor](<#Supervisor>)
   - [func \(s \*Supervisor\) HandleAttach\(ctx context.Context, \_ func\(json.RawMessage\) error\) error](<#Supervisor.HandleAttach>)
-  - [func \(s \*Supervisor\) HandleEnqueue\(\_ context.Context, \_ ipc.EnqueueArgs\) \(ipc.EnqueueReply, error\)](<#Supervisor.HandleEnqueue>)
+  - [func \(s \*Supervisor\) HandleEnqueue\(ctx context.Context, args ipc.EnqueueArgs\) \(ipc.EnqueueReply, error\)](<#Supervisor.HandleEnqueue>)
   - [func \(s \*Supervisor\) HandleReloadConfig\(\_ context.Context\) error](<#Supervisor.HandleReloadConfig>)
-  - [func \(s \*Supervisor\) HandleStatus\(\_ context.Context\) \(ipc.StatusReply, error\)](<#Supervisor.HandleStatus>)
+  - [func \(s \*Supervisor\) HandleStatus\(ctx context.Context\) \(ipc.StatusReply, error\)](<#Supervisor.HandleStatus>)
   - [func \(s \*Supervisor\) HandleStop\(\_ context.Context, \_ ipc.StopArgs\) error](<#Supervisor.HandleStop>)
 
 
@@ -38,14 +38,14 @@ Package supervisor implements the \`\-\-supervisor\` process: the single durable
 var ErrNoSupervisor = errors.New("supervisor: no supervisor is listening")
 ```
 
-<a name="ErrSupervisorRunning"></a>ErrSupervisorRunning is returned by Acquire when another live supervisor already holds the socket. Binding the socket IS the single\-instance mutex \(spec §5c\); this error surfaces the second bind's failure with a name callers can match via errors.Is.
+<a name="ErrSupervisorRunning"></a>ErrSupervisorRunning is returned by Acquire when another live supervisor already holds the lock. The actual single\-instance mutex is the exclusive non\-blocking flock on the PID file \(acquirePIDLock\); the socket advertisement \(§5c\) that clients discover is bound downstream of that lock \(inside ipc.Server.Start\). This error surfaces the second acquire's failure with a name callers can match via errors.Is.
 
 ```go
 var ErrSupervisorRunning = errors.New("supervisor: another supervisor is already running")
 ```
 
 <a name="Find"></a>
-## func [Find](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/supervisor/discovery.go#L58>)
+## func [Find](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/supervisor/discovery.go#L61>)
 
 ```go
 func Find(runtimeDir string) (*ipc.Client, error)
@@ -54,16 +54,16 @@ func Find(runtimeDir string) (*ipc.Client, error)
 Find tries to connect to the supervisor socket under runtimeDir. A successful connect means a live supervisor answered — the returned \*ipc.Client is ready to use. Any failure \(connect refused, socket missing, or a stale socket nothing is listening behind\) collapses to ErrNoSupervisor: callers don't need to distinguish "never started" from "crashed," both mean the client should offer to start one \(spec §4\).
 
 <a name="Run"></a>
-## func [Run](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/supervisor/supervisor.go#L71>)
+## func [Run](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/supervisor/supervisor.go#L81>)
 
 ```go
 func Run(ctx context.Context, opts Options) error
 ```
 
-Run acquires the supervisor socket \(failing with ErrSupervisorRunning if another instance already holds it\), registers a supervisor session in the store, serves IPC until ctx is cancelled or a client sends CmdStop, and then shuts down cleanly: agents killed, IPC server stopped, socket released, session closed.
+Run acquires the supervisor socket \(failing with ErrSupervisorRunning if another instance already holds it\), registers a supervisor session in the store, serves IPC until ctx is cancelled or a client sends CmdStop, and then shuts down cleanly: any in\-flight dispatch is bounded by orch's own watchdog config, the IPC server is stopped, the socket released, the session closed.
 
 <a name="Listener"></a>
-## type [Listener](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/supervisor/discovery.go#L71-L76>)
+## type [Listener](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/supervisor/discovery.go#L74-L79>)
 
 Listener wraps the bound supervisor socket plus the resources that enforce single\-instance: the \*ipc.Server built on top of it and the PID lockfile held for this process's lifetime. Release must be called exactly once, typically via a deferred call from the owning Supervisor.
 
@@ -76,18 +76,18 @@ type Listener struct {
 ```
 
 <a name="Acquire"></a>
-### func [Acquire](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/supervisor/discovery.go#L105>)
+### func [Acquire](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/supervisor/discovery.go#L112>)
 
 ```go
 func Acquire(runtimeDir string) (*Listener, error)
 ```
 
-Acquire binds the supervisor socket at runtimeDir, which is itself the single\-instance mutex \(spec §5c\): a second live supervisor's bind fails and Acquire returns ErrSupervisorRunning.
+Acquire takes the single\-instance lock for runtimeDir. The actual mutex is the exclusive non\-blocking flock on the PID file \(acquirePIDLock\): a second live supervisor fails to take that lock and Acquire returns ErrSupervisorRunning. The socket clients discover \(spec §5c: "the socket is the advertisement"\) is bound later, in ipc.Server.Start, strictly after Acquire has already won the PID lock — so two processes racing Acquire contend on the flock, never on the socket bind.
 
-Before attempting the bind, Acquire checks whether the socket path is a stale leftover from a crashed supervisor: if a live client can still connect, a supervisor is genuinely running \(ErrSupervisorRunning\). If nothing answers, Acquire consults the PID lockfile — a dead recorded PID means the previous supervisor crashed without cleaning up, so Acquire reclaims: removes the stale socket file and takes over the PID lock itself. A missing or already\-unlocked PID file is treated the same as a dead PID \(nothing to protect the reclaim from\).
+Before taking the lock, Acquire checks whether the socket path is a stale leftover from a crashed supervisor: if a live client can still connect, a supervisor is genuinely running \(ErrSupervisorRunning\). If nothing answers, Acquire consults the PID lockfile — a dead recorded PID means the previous supervisor crashed without cleaning up, so Acquire reclaims: removes the stale socket file and takes over the PID lock itself. A missing or already\-unlocked PID file is treated the same as a dead PID \(nothing to protect the reclaim from\).
 
 <a name="Listener.Release"></a>
-### func \(\*Listener\) [Release](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/supervisor/discovery.go#L83>)
+### func \(\*Listener\) [Release](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/supervisor/discovery.go#L86>)
 
 ```go
 func (l *Listener) Release() error
@@ -96,7 +96,7 @@ func (l *Listener) Release() error
 Release closes the PID lockfile \(dropping the flock\) and removes the PID file. It does NOT close the \*ipc.Server bound to SocketPath — the caller owns that server's lifecycle separately \(Server.Stop\(\) also unlinks the socket file\). Calling Release after the server has stopped is the expected order: server down, then mutex released.
 
 <a name="Options"></a>
-## type [Options](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/supervisor/supervisor.go#L29-L43>)
+## type [Options](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/supervisor/supervisor.go#L29-L50>)
 
 Options configures a Supervisor run.
 
@@ -113,15 +113,22 @@ type Options struct {
     // store opened with a fake clock.
     Store *store.Store
 
+    // Orchestrator dispatches plan/task work (Phase 6). Optional: nil
+    // defaults to orch.New(Store) — a real provider.NewRunner-backed
+    // orchestrator. Tests inject one built with a fake RunnerFactory so
+    // HandleEnqueue's dispatch wiring can be proven without a real
+    // provider CLI.
+    Orchestrator *orch.Orchestrator
+
     // Logger receives lifecycle messages. Optional.
     Logger func(msg string, args ...any)
 }
 ```
 
 <a name="Supervisor"></a>
-## type [Supervisor](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/supervisor/supervisor.go#L49-L64>)
+## type [Supervisor](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/supervisor/supervisor.go#L60-L73>)
 
-Supervisor is the small, boring control\-plane process described in spec §4/§13: pty ownership \+ IPC \+ store \+ reaper. It deliberately does NOT do plan orchestration yet \(that lands in Phase 6\) — HandleStatus and HandleStop are the only commands it answers today.
+Supervisor is the small, boring control\-plane process described in spec §4/§13: pty ownership \+ IPC \+ store \+ reaper, PLUS \(as of Phase 6c\) real plan dispatch: HandleEnqueue drives internal/orch's DispatchNext instead of returning "not implemented". Orch itself — via the provider runners it dispatches onto internal/agent — owns every agent subprocess's lifetime \(start, watchdog supervision, kill\), so the supervisor holds no separate pty\-tracking map of its own; there is nothing left for the supervisor to additionally track or drain at shutdown.
 
 ```go
 type Supervisor struct {
@@ -130,7 +137,7 @@ type Supervisor struct {
 ```
 
 <a name="Supervisor.HandleAttach"></a>
-### func \(\*Supervisor\) [HandleAttach](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/supervisor/supervisor.go#L255>)
+### func \(\*Supervisor\) [HandleAttach](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/supervisor/supervisor.go#L311>)
 
 ```go
 func (s *Supervisor) HandleAttach(ctx context.Context, _ func(json.RawMessage) error) error
@@ -139,16 +146,18 @@ func (s *Supervisor) HandleAttach(ctx context.Context, _ func(json.RawMessage) e
 HandleAttach streams no events yet — the durable event/attach surface is part of the plan\-orchestration work in a later phase. It blocks until ctx is cancelled so a connected client simply sees a quiet, still\-open stream rather than an immediate close.
 
 <a name="Supervisor.HandleEnqueue"></a>
-### func \(\*Supervisor\) [HandleEnqueue](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/supervisor/supervisor.go#L232>)
+### func \(\*Supervisor\) [HandleEnqueue](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/supervisor/supervisor.go#L261>)
 
 ```go
-func (s *Supervisor) HandleEnqueue(_ context.Context, _ ipc.EnqueueArgs) (ipc.EnqueueReply, error)
+func (s *Supervisor) HandleEnqueue(ctx context.Context, args ipc.EnqueueArgs) (ipc.EnqueueReply, error)
 ```
 
-HandleEnqueue is not yet implemented — plan/task orchestration is Phase 6. Returning an explicit error here \(rather than a silent no\-op\) means a client that tries this today gets a clear "not supported yet" rather than a false\-positive success.
+HandleEnqueue drives one real dispatch pass via internal/orch instead of returning "not implemented": it lists every currently active/paused plan store\-wide \(spec: the supervisor is project\-agnostic — it has no notion of "the current project", so this checks every project's active work, not just one\) and calls DispatchNext on each, in plan order, until either every plan has been tried or maxEnqueueDispatchPlans is reached \(a bound so one enqueue call can never scan an unbounded number of plans\). It is NOT a blocking wait for any of that work to finish — DispatchNext itself is synchronous per dispatched step but bounded by orch's own watchdog config \(agent.WatchdogConfig.StallTimeout\), so a stalled/prompting provider still returns \(killed\) rather than hanging this IPC call.
+
+args.Description/args.TaskID name the work the caller wanted enqueued, but a store task cannot be created without a plan\_id \(tasks.plan\_id is a NOT NULL foreign key\) and EnqueueArgs carries no plan reference — so HandleEnqueue's job today is exactly "wake up dispatch for whatever is already ready", the same effect an enqueue is meant to have \(make already\-known work actually run\), not "materialize a new ad hoc task with no plan to belong to". EnqueueReply.Inserted reports whether anything was actually dispatched; TaskID echoes args.TaskID \(or, if unset, the number of steps dispatched, best\-effort\) so a caller has some return value acknowledging its enqueue signal was acted upon.
 
 <a name="Supervisor.HandleReloadConfig"></a>
-### func \(\*Supervisor\) [HandleReloadConfig](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/supervisor/supervisor.go#L247>)
+### func \(\*Supervisor\) [HandleReloadConfig](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/supervisor/supervisor.go#L303>)
 
 ```go
 func (s *Supervisor) HandleReloadConfig(_ context.Context) error
@@ -157,16 +166,16 @@ func (s *Supervisor) HandleReloadConfig(_ context.Context) error
 HandleReloadConfig is a no\-op today: config reload semantics belong to vconfig's virtual\-layer resolution \(spec §5a\), which this minimal supervisor does not yet wire into a running process's live config.
 
 <a name="Supervisor.HandleStatus"></a>
-### func \(\*Supervisor\) [HandleStatus](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/supervisor/supervisor.go#L216>)
+### func \(\*Supervisor\) [HandleStatus](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/supervisor/supervisor.go#L224>)
 
 ```go
-func (s *Supervisor) HandleStatus(_ context.Context) (ipc.StatusReply, error)
+func (s *Supervisor) HandleStatus(ctx context.Context) (ipc.StatusReply, error)
 ```
 
-HandleStatus reports supervisor\-level liveness. Plan/task/worker counts are intentionally zeroed for now — plan orchestration is Phase 6, so there is nothing yet to count; wiring those fields to real queries is noted as follow\-up in the phase report, not silently faked here.
+HandleStatus reports supervisor\-level liveness. ActiveWorkers is sourced from the store's real worker rows \(store.CountRunningWorkers\) rather than an in\-process map: no in\-process structure could ever reflect this count anyway, since agent subprocess lifetime is fully owned by whichever provider runner orch dispatched, not by the supervisor itself. A query failure degrades to 0 rather than failing the whole status reply — a transient count\-query error should never make \`status\` itself fail.
 
 <a name="Supervisor.HandleStop"></a>
-### func \(\*Supervisor\) [HandleStop](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/supervisor/supervisor.go#L239>)
+### func \(\*Supervisor\) [HandleStop](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/supervisor/supervisor.go#L295>)
 
 ```go
 func (s *Supervisor) HandleStop(_ context.Context, _ ipc.StopArgs) error

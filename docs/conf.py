@@ -55,11 +55,11 @@ html_css_files = ["custom.css"]
 
 html_theme_options = {
     "accent_color": "green",
-    "announcement": "☢️ Ralph dressed himself, and now he dressed the docs too. ☢️",
+    "announcement": "☢️ Ralph is now one supervisor and one mutating agent. ☢️",
     "nav_links": [
         {"name": "Get started", "url": "https://jonbogaty.com/radioactive-ralph/getting-started/"},
         {"name": "Guides", "url": "https://jonbogaty.com/radioactive-ralph/guides/"},
-        {"name": "Variants", "url": "https://jonbogaty.com/radioactive-ralph/variants/"},
+        {"name": "Design", "url": "https://jonbogaty.com/radioactive-ralph/design/"},
         {"name": "Reference", "url": "https://jonbogaty.com/radioactive-ralph/reference/"},
         {"name": "API", "url": "https://jonbogaty.com/radioactive-ralph/api/"},
         {"name": "GitHub", "url": "https://github.com/jbcom/radioactive-ralph"},

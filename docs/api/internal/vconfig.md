@@ -34,6 +34,7 @@ viper does the mechanical defaults\<file merge \(TOML\) per layer; this package 
 - [func AutoRemove\(incoming map\[string\]any, conflicts \[\]Conflict\) map\[string\]any](<#AutoRemove>)
 - [func FlagsFrom\(cmd \*cobra.Command\) \(configFile, userConfigFile, projectConfigFile string\)](<#FlagsFrom>)
 - [func FormatMissing\(missing \[\]MissingField\) string](<#FormatMissing>)
+- [func LoadFileValues\(path string\) \(map\[string\]any, error\)](<#LoadFileValues>)
 - [func UserScopeProjectID\(ctx context.Context, st \*store.Store\) \(string, error\)](<#UserScopeProjectID>)
 - [type Conflict](<#Conflict>)
   - [func DiffConflicts\(stored ProjectConfig, incoming map\[string\]any\) \[\]Conflict](<#DiffConflicts>)
@@ -44,6 +45,7 @@ viper does the mechanical defaults\<file merge \(TOML\) per layer; this package 
   - [func \(m Mode\) String\(\) string](<#Mode.String>)
 - [type ProjectConfig](<#ProjectConfig>)
   - [func EffectiveProject\(ctx context.Context, st \*store.Store, projectsCfg ProjectConfig, projectID, projectConfigFile string, mode Mode\) \(ProjectConfig, error\)](<#EffectiveProject>)
+  - [func EffectiveProjectFromValues\(ctx context.Context, st \*store.Store, projectsCfg ProjectConfig, projectID string, overlay map\[string\]any, mode Mode\) \(ProjectConfig, error\)](<#EffectiveProjectFromValues>)
   - [func ResolveProjects\(ctx context.Context, st \*store.Store, userCfg UserConfig, projectID string\) \(ProjectConfig, error\)](<#ResolveProjects>)
 - [type UserConfig](<#UserConfig>)
   - [func ResolveUser\(ctx context.Context, st \*store.Store, configFile, userConfigFile string\) \(UserConfig, error\)](<#ResolveUser>)
@@ -103,6 +105,15 @@ func FormatMissing(missing []MissingField) string
 ```
 
 FormatMissing renders missing as an actionable multi\-line exit message. Returns "" when missing is empty.
+
+<a name="LoadFileValues"></a>
+## func [LoadFileValues](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/vconfig/effective.go#L80>)
+
+```go
+func LoadFileValues(path string) (map[string]any, error)
+```
+
+LoadFileValues loads a standalone TOML file \(a \-\-project\-config\-file\) and returns its top\-level settings as a flat map\[string\]any. Exported so callers that need the incoming values BEFORE deciding whether to call EffectiveProject — e.g. the \-\-init path's DiffConflicts pre\-check against the stored project config — can load the same file the same way without duplicating viper setup.
 
 <a name="UserScopeProjectID"></a>
 ## func [UserScopeProjectID](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/vconfig/vconfig.go#L82>)
@@ -224,6 +235,15 @@ projectConfigFile is optional; an empty string returns projectsCfg unchanged. Wh
 - ModeOverride: runtime\-only. Nothing is written to the store; the project's stored initialization is left untouched.
 
 \-\-project\-config\-file is ignored in \-\-supervisor mode \(the supervisor path simply never calls EffectiveProject with a projectConfigFile\) — see spec §5a and the AddFlags doc comment.
+
+<a name="EffectiveProjectFromValues"></a>
+### func [EffectiveProjectFromValues](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/vconfig/effective.go#L52>)
+
+```go
+func EffectiveProjectFromValues(ctx context.Context, st *store.Store, projectsCfg ProjectConfig, projectID string, overlay map[string]any, mode Mode) (ProjectConfig, error)
+```
+
+EffectiveProjectFromValues is EffectiveProject's core: merge \(and, under ModeChange, persist\) overlay directly, without going through a file on disk. Exported so a caller that has already computed the overlay it wants applied — e.g. the \-\-init path's conflict UX, which may want to apply an vconfig.AutoRemove\-filtered subset of an incoming \-\-project\-config\-file rather than the file's values verbatim — can reuse the exact same merge/persist semantics EffectiveProject uses, instead of round\-tripping the filtered map back through a TOML file just to satisfy EffectiveProject's file\-path signature.
 
 <a name="ResolveProjects"></a>
 ### func [ResolveProjects](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/vconfig/vconfig.go#L163>)

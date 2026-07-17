@@ -105,7 +105,7 @@ brews:
           branch: main
     directory: Formula
     homepage: https://github.com/jbcom/radioactive-ralph
-    description: Binary-first repo runtime with many Ralph personalities
+    description: Supervised-execution runtime for local AI-agent CLIs
     license: MIT
     commit_author:
       name: jbcom-bot
@@ -115,19 +115,18 @@ brews:
     install: |
       bin.install "radioactive_ralph"
     caveats: |
-      Next step — initialize a repo and let Fixit seed the first plan:
+      Next step — start the supervisor, then register a project:
 
-        radioactive_ralph init
-        radioactive_ralph run --variant fixit --advise --topic bootstrap
-        radioactive_ralph service start
+        radioactive_ralph service install
+        radioactive_ralph --init
 
-      Use `radioactive_ralph tui` for the cockpit once the repo service
-      is running. Full docs:
+      Run `radioactive_ralph` inside a registered project for the
+      read-only TUI once the supervisor is running. Full docs:
 
         https://jonbogaty.com/radioactive-ralph/getting-started/
-    # Homebrew service blocks are intentionally omitted. Ralph's durable
-    # runtime is repo-scoped and `radioactive_ralph service install`
-    # needs the operator's chosen repo root at runtime.
+    # Homebrew service blocks are intentionally omitted. `service install`
+    # registers the per-user supervisor with the native OS service manager
+    # itself; there is no per-repo service to declare here.
 
 scoops:
   - name: radioactive-ralph
@@ -145,13 +144,12 @@ scoops:
           branch: main
     directory: bucket
     homepage: https://github.com/jbcom/radioactive-ralph
-    description: Binary-first repo runtime with many Ralph personalities
+    description: Supervised-execution runtime for local AI-agent CLIs
     license: MIT
     post_install:
-      - "Write-Host 'Next step — initialize a repo and let Fixit seed the first plan:'"
-      - "Write-Host '  radioactive_ralph init'"
-      - "Write-Host '  radioactive_ralph run --variant fixit --advise --topic bootstrap'"
-      - "Write-Host '  radioactive_ralph service start'"
+      - "Write-Host 'Next step — start the supervisor, then register a project:'"
+      - "Write-Host '  radioactive_ralph service install'"
+      - "Write-Host '  radioactive_ralph --init'"
       - "Write-Host 'See https://jonbogaty.com/radioactive-ralph/getting-started/ for the full setup flow.'"
 
 # Chocolatey publishing is split into .goreleaser.chocolatey.yaml and
@@ -190,10 +188,9 @@ release:
     curl -sSL https://jonbogaty.com/radioactive-ralph/install.sh | sh
     ```
 
-    First repo bootstrap:
+    First run:
     ```
-    radioactive_ralph init
-    radioactive_ralph run --variant fixit --advise --topic bootstrap
-    radioactive_ralph service start
-    radioactive_ralph tui
+    radioactive_ralph service install
+    radioactive_ralph --init
+    radioactive_ralph
     ```

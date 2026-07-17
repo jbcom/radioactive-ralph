@@ -1,58 +1,56 @@
 ---
-title: Runtime surfaces
-description: How the repo service, attached run, and TUI fit together.
+title: Supervisor and client
+description: How --supervisor and the dumb client fit together.
 ---
 
-# Runtime surfaces
+# Supervisor and client
 
-radioactive-ralph has three operator-facing runtime surfaces.
+`radioactive_ralph` has exactly two runtime roles, chosen by a single flag.
 
-## Durable repo service
-
-```bash
-radioactive_ralph service start
-```
-
-This is the main runtime. It owns:
-
-- the durable SQLite plan DAG session
-- task claiming and progression
-- worktrees and mirrors
-- provider subprocess execution
-- the local control plane used by the CLI and TUI
-
-Use this mode when you want the full system, including long-running variants.
-
-## Attached bounded run
+## The supervisor
 
 ```bash
-radioactive_ralph run --variant blue
+radioactive_ralph --supervisor
 ```
 
-This mode is for bounded variants only. It uses the same underlying runtime
-engine, but it stays attached to the current terminal and exits when the
-eligible work is done.
+The supervisor is the one long-lived process on a machine. It owns:
 
-If a durable repo service is already running, attached `run` refuses to start a
-competing runtime.
+- every agent's pty (`creack/pty`) — direct process control, no
+  multiplexer in the loop
+- the discovery socket (`internal/ipc`) that clients dial
+- the reaper, which reclaims stalled or crashed agent processes
+- the single user-level SQLite database that is durable memory for every
+  registered project
 
-## TUI cockpit
+Working directory is irrelevant to the supervisor; it operates at the
+user/XDG level. Install it as an OS service for daily use — see the
+[service runbook](../runbooks/service.md).
+
+## The client
 
 ```bash
-radioactive_ralph tui
+radioactive_ralph
 ```
 
-The TUI is a socket-backed cockpit. It attaches to the repo service when it is
-already running, or launches it if it is absent. It shows repo status,
-plan/task queues, blocked work, running workers/providers, recent event flow,
-and direct operator actions.
+Plain invocation is a dumb client. It:
 
-## Why the model changed
+- resolves the current directory to a known project (auto-initializing if
+  needed)
+- discovers the running supervisor over the socket
+- renders a read-only Bubble Tea TUI showing the supervisor's live state
 
-The old product shape tried to make multiple things primary at once. The live
-contract is cleaner:
+It refuses to run if no supervisor answers, and prints the command to
+start one. It owns no ptys, no database, and no orchestration logic —
+"attach" is the wrong word for this because there is nothing to attach
+to or detach from; the client simply shows what the supervisor already
+knows.
 
-- the binary is the product
-- the repo service is the runtime
-- the TUI and CLI are clients of that runtime
-- providers are backends, not the boundary of the system
+## Why this shape
+
+A single process must hold every agent's pty for the never-block control
+invariant to work: only the process that owns the fd can watch it for
+stalls and kill-and-reclaim on the spot. Splitting that ownership across
+multiple processes (or a multiplexer) reintroduces exactly the
+`os/exec` round-trip and external failure domain the invariant is meant
+to remove. The client is deliberately thin so there is only one place
+where agent lifecycle and completion-verification logic lives.

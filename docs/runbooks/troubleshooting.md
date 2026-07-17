@@ -1,6 +1,7 @@
 ---
 title: Troubleshooting
 description: Failure modes you'll hit in practice and the fix for each.
+lastUpdated: 2026-07-16
 ---
 
 This is the triage guide. Match your symptom, apply the fix, then
@@ -10,80 +11,72 @@ re-check `radioactive_ralph doctor` to confirm.
 
 ### Symptom
 
-`radioactive_ralph status` returns a response but with stale data, or
-says the service is running but `run --variant ...` hangs waiting for
-the control plane.
+The client hangs, or reports the supervisor as up when it's actually
+dead.
 
 ### What it means
 
-The service process crashed without cleaning its control-plane socket
-and heartbeat file. The socket / named pipe still exists on disk, so
-clients connect successfully — but nothing is on the other end.
+The supervisor process crashed without cleaning its socket and heartbeat
+file. The socket / named pipe still exists on disk, so a dial can
+succeed at the OS level even though nothing answers — a fresh supervisor
+startup detects this (dead PID behind the lockfile) and reclaims
+automatically; a stuck client predates that reclaim.
 
 ### Fix
 
-The service process crashed without cleaning its control-plane socket
-and heartbeat file. The socket / named pipe still exists on disk, so
-clients connect successfully — but nothing is on the other end.
-
 ```sh
-# 1. Stop the service if it's somehow still alive.
-radioactive_ralph stop || pgrep -f "radioactive_ralph service" && kill <pid>
+# 1. Stop the supervisor if it's somehow still alive.
+pgrep -f "radioactive_ralph --supervisor" && kill <pid>
 
-# 2. Remove the stale control-plane endpoint and heartbeat file by hand.
-#    radioactive_ralph does not ship a `service clean` subcommand.
-#    Replace <repo-hash> with the directory under your XDG state root.
-rm -f "$HOME/Library/Application Support/radioactive-ralph/<repo-hash>"/control.sock
-rm -f "$HOME/Library/Application Support/radioactive-ralph/<repo-hash>"/control.alive
+# 2. Remove the stale socket + heartbeat file by hand if needed.
+rm -f "$HOME/Library/Application Support/radioactive-ralph/service.sock"
+rm -f "$HOME/Library/Application Support/radioactive-ralph/service.sock.alive"
 
-# 3. Restart the service.
-radioactive_ralph service start   # or launchctl/systemctl/SCM restart
+# 3. Restart the supervisor.
+radioactive_ralph --supervisor   # or the OS service manager restart
 ```
 
-Verify:
+Verify by running the client:
 
 ```sh
-radioactive_ralph status --json
+radioactive_ralph
 ```
-
-Response should have a fresh `uptime_ns` value (small, growing as the
-service runs).
 
 ## Dead socket or pipe
 
 ### Symptom (Unix)
 
 ```
-error: ipc: dial /path/to/control.sock: connection refused
+error: ipc: dial /path/to/service.sock: connection refused
 ```
 
 ### Symptom (Windows)
 
 ```
-error: ipc: dial \\.\pipe\radioactive-ralph-<slug>: pipe does not exist
+error: ipc: dial \\.\pipe\radioactive_ralph-<token>-service: pipe does not exist
 ```
 
 ### Fix
 
-Either the service never started or the OS cleaned the endpoint.
+Either the supervisor never started or the OS cleaned the endpoint.
 
 ```sh
-# 1. Is the service actually running?
-pgrep -f "radioactive_ralph service"        # Unix
+# 1. Is the supervisor actually running?
+pgrep -f "radioactive_ralph --supervisor"        # Unix
 Get-Process | Where-Object { $_.ProcessName -like "*radioactive*" }   # Windows
 
-# 2a. If yes: stop it, then remove the stale endpoint by hand and restart.
-radioactive_ralph stop
-rm -f "<state-root>/<repo-hash>"/control.sock   # Unix; Windows pipes clear on reboot
-radioactive_ralph service start
+# 2a. If yes: stop it, remove the stale endpoint, restart.
+kill <pid>
+rm -f "<state-root>/service.sock"   # Unix; Windows pipes clear on reboot
+radioactive_ralph --supervisor
 
-# 2b. If no: just start it
-radioactive_ralph service start
+# 2b. If no: just start it.
+radioactive_ralph --supervisor
 ```
 
 On Windows, named pipes are killed by reboot even with an installed
 service. That's normal — the service wrapper recreates the pipe on
-start. Don't panic.
+start.
 
 ## Provider CLI missing or unauthenticated
 
@@ -91,12 +84,6 @@ start. Don't panic.
 
 ```
 doctor: [FAIL] claude — claude binary not on PATH
-```
-
-or
-
-```
-service: worker failed to spawn: claude -p: exit 1 (sign in required)
 ```
 
 ### Fix
@@ -116,9 +103,8 @@ claude
 radioactive_ralph doctor
 ```
 
-If you're not using claude/codex, remove the variant's
-`provider = ...` line from `config.toml` instead of installing a
-provider you won't use.
+If you're not using a given provider, ignore its doctor warning rather
+than installing something you won't use.
 
 ## Service-install errors
 
@@ -128,20 +114,17 @@ provider you won't use.
 launchctl bootstrap failed: 5: Input/output error
 ```
 
-`5: I/O error` from launchctl usually means the plist is
-syntactically-valid but references a binary launchctl can't execute
+`5: I/O error` from launchctl usually means the generated definition is
+syntactically valid but references a binary launchctl can't execute
 (permissions or SIP).
 
 ### Fix (macOS)
 
 ```sh
-# 1. Verify the plist exists and the binary path is correct
-cat ~/Library/LaunchAgents/com.jbcom.radioactive-ralph.<slug>.plist
-
-# 2. Verify the binary is executable
+# 1. Verify the binary is executable
 ls -l $(which radioactive_ralph)
 
-# 3. Re-install
+# 2. Re-install
 radioactive_ralph service uninstall
 radioactive_ralph service install
 ```
@@ -175,107 +158,37 @@ service install failed: access denied
 Registering an SCM service requires admin privileges. Open PowerShell
 **as administrator** and re-run `radioactive_ralph service install`.
 
-## Worker stuck in `running`
+## Worker stuck / no progress
 
 ### Symptom
 
-`radioactive_ralph plan tasks <plan> --status running` shows a task
-claimed a long time ago with no progress, no events in
-`plan history`, and the variant subprocess is gone.
+A task looks claimed but no evidence and no state transition for a long
+time, and the agent process is gone.
 
 ### What it means
 
-The runtime's reaper hasn't swept it yet. The task has a claimed-by
-session that's dead; the reaper releases claims on sessions whose
-heartbeat is stale.
+The watchdog's stall/no-output detection should have killed and
+reclaimed it already; if it hasn't, the reaper sweeps it on its next
+pass. This is expected transient behavior, not a hang — the never-block
+invariant means the system self-corrects rather than waiting.
 
 ### Fix
 
-```sh
-# Force-requeue the stuck task (resets claim, back to ready)
-radioactive_ralph plan requeue <plan> <task>
-```
-
-If the same task keeps getting stuck:
-
-```sh
-# Mark it failed and look at the run history
-radioactive_ralph plan fail <plan> <task>
-radioactive_ralph plan history <plan> <task>
-```
-
-## plandag schema mismatch
-
-### Symptom
-
-```
-error: plandag: open: schema version 5 is newer than this binary's supported 4
-```
-
-### What it means
-
-You downgraded the binary. The plandag SQLite file has a newer
-user_version than the running binary knows how to read.
-
-### Fix
-
-- Re-install the newer binary (recommended)
-- Or nuke the plandag state (if you don't care about plan history):
-  If `RALPH_STATE_DIR` is set, remove `$RALPH_STATE_DIR/plans.db`
-  instead of the platform default.
-  ```sh
-  # macOS
-  rm -f "$HOME/Library/Application Support/radioactive-ralph/plans.db"
-
-  # Linux / WSL2
-  rm -f "${XDG_STATE_HOME:-$HOME/.local/state}/radioactive-ralph/plans.db"
-  ```
-  ```powershell
-  # Windows PowerShell
-  Remove-Item "$env:LOCALAPPDATA\radioactive-ralph\plans.db" -ErrorAction SilentlyContinue
-  ```
-  The next command that reads or writes the plan DAG will recreate and
-  migrate `plans.db`.
-
-## Fixit advisor writes a fallback plan
-
-### Symptom
-
-```
-ralph: fixit emitted a fallback plan — operator intervention required
-```
-
-### What it means
-
-Stage 4 (Claude analysis) or Stage 5 (validation) failed twice. Fixit
-wrote a diagnostic plan (`status: fallback`) instead of guessing.
-
-### Fix
-
-Open `.radioactive-ralph/plans/<topic>-advisor.md` and read the
-"Methodology" section — it includes the raw Claude output and the
-validation errors. Typical causes:
-
-- Claude returned non-JSON (rare with the opus tier; usually a
-  timeout)
-- Operator constraints conflict (e.g. `--description` forbids all
-  variants)
-- Repo state makes every variant disqualified (e.g. operator is on a
-  release branch)
-
-Adjust the inputs and re-run `run --variant fixit --advise`.
+Give the reaper a pass, then re-check. If the same step keeps failing to
+make progress across multiple reclaim cycles, that's a signal the step
+itself (or its acceptance criteria) needs attention, not the runtime.
 
 ## When everything else fails
 
 Capture state and open an issue:
 
 ```sh
-radioactive_ralph doctor              > /tmp/ralph-doctor.txt
-radioactive_ralph status --json       > /tmp/ralph-status.json
-journalctl --user -u radioactive-ralph-<slug> --since -1h > /tmp/ralph-journal.txt
+radioactive_ralph doctor > /tmp/ralph-doctor.txt
+radioactive_ralph --supervisor --log-format json 2> /tmp/ralph-supervisor.log &
 ```
 
-(Or the platform equivalent — macOS Console, Windows Event Viewer.)
+(Or the platform log equivalent — `journalctl`, macOS Console, Windows
+Event Viewer.)
 
 File at <https://github.com/jbcom/radioactive-ralph/issues> with those
-three files attached.
+attached.

@@ -1,66 +1,68 @@
 ---
 title: Design
-lastUpdated: 2026-04-15
+description: The product shape and why it's built this way.
 ---
 
-# Design — radioactive-ralph
+# Design
 
-## Vision
+## The shape
 
-radioactive-ralph is a little runtime creature with a lot of different
-personalities who really wants to help any way he can.
+radioactive-ralph is one binary with one job: supervise AI-agent CLIs so
+they can run for hours without an operator watching them, without ever
+blocking on a prompt they can't answer.
 
-The product should feel like:
+- **One binary**, two modes: `--supervisor` (the control layer) and the
+  plain dumb client (a read-only view).
+- **One user-level database** — durable memory for every project on the
+  machine, never a file committed to a repo.
+- **One mutating Ralph.** There is no lineup of personas; the same agent
+  becomes whatever a task needs, driven by the plan and its context.
+- **Providers as bindings**, not the identity of the product. Claude,
+  Codex, and OpenCode are interchangeable execution backends behind the
+  same contract.
 
-- one binary you install
-- one repo you initialize
-- one durable planning/runtime surface
-- many personalities you can ask Ralph to inhabit
+## Why personas were removed
 
-## The simplification
+An earlier iteration of this project modeled Ralph as a family of
+personas (blue, green, savage, fixit, and others), each with a baked
+system prompt and its own safety-floor configuration. That model added a
+whole surface — persona registries, per-persona confirmation gates,
+per-persona provider bindings — for a problem better solved by the plan
+itself: what runs, how much parallelism, and what's safe to do are all
+properties of the task at hand, not of which character is "on shift."
+Removing personas simplified every prompt to *"you are an agent; here is
+your task; here is the necessary context"* and collapsed a large
+surface of duplicated safety-floor logic into the orchestrator's single
+verification path.
 
-The repo got into trouble by trying to support too many identities at once:
+## Why one supervisor, not a multiplexer
 
-- plugin
-- marketplace add-on packaging
-- binary
-- detached sidecar transports
-- provider-specific implementation
-- provider-agnostic future
+Early designs considered running agents inside tmux panes for
+observability. tmux was rejected: the tmux server owns the pty, so every
+read/write/kill becomes an `os/exec` round-trip to a process the
+supervisor doesn't control — which breaks the never-block invariant (the
+supervisor can't reliably watch or kill what it doesn't own) and adds an
+external binary as a failure domain. `creack/pty` gives the supervisor
+direct ownership of every agent's stdio instead.
 
-That is too many stories for one tool.
+## Why plans are markdown, not a DSL
 
-The correct story is:
-
-- **binary first**
-- **personas in code**
-- **repo service + socket IPC**
-- **provider bindings as adapters, not product identity**
-
-## Personality matters
-
-The personalities are not fluff. They are a usable operator model.
-
-Green, grey, red, blue, professor, fixit, immortal, savage, old-man, and
-world-breaker are different ways Ralph can help. The product should preserve
-that voice and intent while keeping the implementation source of truth inside
-the binary.
+Plans are parsed with `goldmark` and decomposed heuristically: heading
+nesting encodes grouping and ordering, list type (ordered vs. unordered)
+encodes sequential vs. parallel steps. No LLM is involved in
+decomposition — the grammar is simple enough that a plan document reads
+naturally and parses deterministically. See
+[Plan format](./plan-format.md) for the grammar and
+[Provider contract](../design/provider-contract.md) for how steps are
+dispatched to agents.
 
 ## Provider direction
 
-The runtime already ships a declarative provider layer in repo config so a
-repo can bind Ralph to whatever compatible agent CLI it wants, provided it
-defines:
-
-- how to run the tool
-- how to set model
-- how to set effort
-- how to append the persona/system prompt
-- how to pass the operator/user prompt
-- what structured output format the runtime should parse
-
-Claude and Codex ship today. (Gemini shipped previously but was removed on
-2026-06-18 after the Gemini CLI's auth endpoint was deprecated; the
-declarative path still lets a repo bind a self-hosted gemini-compatible
-CLI.) More providers should fit the same binding contract rather than
-forcing the product to reinvent itself around each vendor.
+Each provider binding is a capability record — how to invoke it
+non-interactively, how to read its structured result and usage/cost, how
+it resumes, and whether it natively fans out subagents. `claude`,
+`codex`, and `opencode` ship today. `gemini` was removed after its CLI's
+auth endpoint was deprecated (2026-06-18); `cursor-agent` is excluded
+because it delegates session control to Cursor's cloud rather than
+running locally. Adding a provider is a table-driven registration, not a
+rearchitecture.

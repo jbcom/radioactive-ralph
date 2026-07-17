@@ -40,7 +40,7 @@ func Watch(ctx context.Context, a *Agent, cfg WatchdogConfig) <-chan Signal
 Watch observes an agent and emits Signals. It NEVER blocks waiting on the agent: a prompt pattern or a stall is surfaced immediately so the caller can kill\-and\-reclaim. The channel closes when the agent exits.
 
 <a name="Agent"></a>
-## type [Agent](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/agent/agent.go#L25-L31>)
+## type [Agent](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/agent/agent.go#L26-L36>)
 
 Agent is a pty\-owned agent subprocess.
 
@@ -51,7 +51,7 @@ type Agent struct {
 ```
 
 <a name="Start"></a>
-### func [Start](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/agent/agent.go#L34>)
+### func [Start](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/agent/agent.go#L39>)
 
 ```go
 func Start(ctx context.Context, opts Options) (*Agent, error)
@@ -60,7 +60,7 @@ func Start(ctx context.Context, opts Options) (*Agent, error)
 Start launches opts.Command under a pty and begins streaming its output.
 
 <a name="Agent.Done"></a>
-### func \(\*Agent\) [Done](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/agent/agent.go#L89>)
+### func \(\*Agent\) [Done](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/agent/agent.go#L110>)
 
 ```go
 func (a *Agent) Done() <-chan struct{}
@@ -69,16 +69,16 @@ func (a *Agent) Done() <-chan struct{}
 Done is closed when the process exits.
 
 <a name="Agent.Kill"></a>
-### func \(\*Agent\) [Kill](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/agent/agent.go#L92>)
+### func \(\*Agent\) [Kill](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/agent/agent.go#L116>)
 
 ```go
 func (a *Agent) Kill() error
 ```
 
-Kill terminates the process immediately and releases the pty.
+Kill terminates the process immediately and releases the pty. Killing an agent that already exited on its own is a no\-op success — a normal shutdown that races an agent finishing its task must not surface a spurious "already closed" error.
 
 <a name="Agent.Output"></a>
-### func \(\*Agent\) [Output](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/agent/agent.go#L75>)
+### func \(\*Agent\) [Output](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/agent/agent.go#L96>)
 
 ```go
 func (a *Agent) Output() <-chan []byte
@@ -87,7 +87,7 @@ func (a *Agent) Output() <-chan []byte
 Output is the line\-oriented output stream; closed when the process exits.
 
 <a name="Agent.PID"></a>
-### func \(\*Agent\) [PID](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/agent/agent.go#L103>)
+### func \(\*Agent\) [PID](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/agent/agent.go#L132>)
 
 ```go
 func (a *Agent) PID() int
@@ -96,7 +96,7 @@ func (a *Agent) PID() int
 PID returns the subprocess PID \(0 before start / after release\).
 
 <a name="Agent.Wait"></a>
-### func \(\*Agent\) [Wait](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/agent/agent.go#L100>)
+### func \(\*Agent\) [Wait](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/agent/agent.go#L129>)
 
 ```go
 func (a *Agent) Wait() error
@@ -105,7 +105,7 @@ func (a *Agent) Wait() error
 Wait blocks until the process exits.
 
 <a name="Agent.WriteInput"></a>
-### func \(\*Agent\) [WriteInput](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/agent/agent.go#L83>)
+### func \(\*Agent\) [WriteInput](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/agent/agent.go#L104>)
 
 ```go
 func (a *Agent) WriteInput(b []byte) error
@@ -114,7 +114,7 @@ func (a *Agent) WriteInput(b []byte) error
 WriteInput writes raw bytes to the agent's pty stdin. Per spec §1, agents run non\-interactively and need little/no input; this exists for the providers that drive a CLI's stdin\-based protocol \(e.g. \`claude \-p \-\-input\-format stream\-json\`, which reads one JSON\-line user message per turn\) rather than passing the whole prompt as an argv/file. Direct Write\(\) to the ptmx, per spec §2.
 
 <a name="Options"></a>
-## type [Options](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/agent/agent.go#L16-L22>)
+## type [Options](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/agent/agent.go#L17-L23>)
 
 Options configures one agent subprocess.
 

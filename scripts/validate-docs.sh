@@ -63,6 +63,7 @@ fi
 for pattern in \
   'uvx radioactive-ralph' \
   'pip install radioactive-ralph' \
+  'radioactive_ralph run --variant' \
   'radioactive_ralph --variant ' \
   'claude plugin install' \
   'claude plugin marketplace' \
@@ -79,10 +80,13 @@ for pattern in \
   'ralph dashboard' \
   'ralph discover' \
   'ralph pr list' \
+  '\.radioactive-ralph/config\.toml' \
+  'internal/plandag' \
+  'internal/variant\b' \
   'hatch '
 do
   if search "$pattern" \
-    docs/getting-started docs/guides docs/reference docs/design docs/variants \
+    docs/getting-started docs/guides docs/reference docs/design \
     README.md CLAUDE.md AGENTS.md SECURITY.md STANDARDS.md \
     assets/ASSETS.md scripts/demo.tape scripts/record-demo.sh site/README.md \
     "${LIVE_RELEASE_FILES[@]}"; then
@@ -106,12 +110,10 @@ for pattern in \
   'service install --variant' \
   'run --variant .+ --foreground' \
   'internal/mcp' \
-  'internal/variantpool' \
-  'internal/supervisor' \
-  '_supervisor'
+  'internal/variantpool'
 do
   if search "$pattern" \
-    docs/getting-started docs/guides docs/reference docs/design docs/variants \
+    docs/getting-started docs/guides docs/reference docs/design \
     README.md AGENTS.md SECURITY.md assets/ASSETS.md site/README.md \
     "${LIVE_RELEASE_FILES[@]}"; then
     fail "found stale live-docs pattern: $pattern"

@@ -123,9 +123,9 @@ func UnmarshalEvidence(raw string) (Evidence, error)
 UnmarshalEvidence parses a JSON string back into Evidence. Used when reloading a worker's submitted evidence \(e.g. from an a2a\_messages row or a stored event payload\) for \(re\-\)verification.
 
 <a name="Message"></a>
-## type [Message](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/a2a/a2a.go#L58>)
+## type [Message](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/a2a/a2a.go#L57>)
 
-Message and Part re\-export the a2a\-go core types used to carry Evidence.
+Message re\-exports a2a.Message, the core type used to carry Evidence.
 
 ```go
 type Message = a2a.Message
@@ -141,9 +141,9 @@ func NewEvidenceMessage(role a2a.MessageRole, taskID, contextID string, ev Evide
 NewEvidenceMessage wraps Evidence as an a2a.Message with a single JSON data Part, tagged with the given plan/task context. role is typically RoleAgent \(a worker reporting evidence to the orchestrator\).
 
 <a name="Part"></a>
-## type [Part](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/a2a/a2a.go#L59>)
+## type [Part](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/a2a/a2a.go#L60>)
 
-Message and Part re\-export the a2a\-go core types used to carry Evidence.
+Part re\-exports a2a.Part, one content part of a Message.
 
 ```go
 type Part = a2a.Part

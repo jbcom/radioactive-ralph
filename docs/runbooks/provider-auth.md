@@ -1,20 +1,22 @@
 ---
 title: Provider auth + setup
-description: Get the claude and codex CLIs authenticated so the runtime can drive them.
+description: Get the claude, codex, and opencode CLIs authenticated so the supervisor can drive them.
+lastUpdated: 2026-07-16
 ---
 
-radioactive-ralph is provider-agnostic. The runtime dispatches
-claimed tasks to whichever provider CLI the variant's config binds
-to. Both shipped providers — `claude`, `codex` — are external CLIs
-that must be installed and authenticated separately.
+The supervisor dispatches work to whichever provider CLI is configured.
+All three shipped providers — `claude`, `codex`, `opencode` — are
+external CLIs that must be installed and authenticated separately, and
+each is local-only: the CLI owns its own agent loop and tool execution on
+this machine, even when it calls a hosted model for inference.
 
-Gemini shipped as a built-in provider previously but was removed on
-2026-06-18, when the Gemini CLI's auth endpoint was deprecated (it
-now returns HTTP 410 Gone on every invocation). The declarative
-provider path (see
-[Declarative provider bindings](/design/declarative-provider-bindings/))
-still lets a repo bind a self-hosted, gemini-compatible CLI through
-`config.toml` if one becomes available again.
+`gemini` shipped as a built-in provider previously but was removed on
+2026-06-18, when the Gemini CLI's auth endpoint was deprecated (it now
+returns HTTP 410 Gone on every invocation). `cursor-agent` is excluded
+because it delegates session control to Cursor's cloud rather than
+running locally. A self-hosted, gemini-compatible CLI can still be wired
+in through the [declarative provider binding
+path](../design/declarative-provider-bindings.md).
 
 ## Claude (Anthropic)
 
@@ -35,7 +37,7 @@ claude
 ```
 
 First run prompts you to sign in at `console.anthropic.com`. Session
-tokens are cached in your user config under `~/.claude/`.
+tokens are cached under `~/.claude/`.
 
 ### Verify
 
@@ -47,11 +49,13 @@ claude -p --input-format stream-json < /dev/null
 The second command should print a stream-json init frame, then exit
 cleanly. If it prompts for auth, the session cache is missing.
 
-### radioactive-ralph stateful binding
+### Binding
 
-Claude supports session resume, so the provider binding for `claude`
-is stateful — `internal/provider/claudesession` holds the session
-lifecycle across task boundaries.
+Claude supports session resume, so its binding is stateful —
+`internal/provider/claudesession` holds the session lifecycle across
+turns, and it is the only shipped binding whose capability record
+declares `NativeFanout: true` today (the CLI natively manages subagents
+via `--agents`/`--agent`/`claude agents`).
 
 ## Codex (OpenAI)
 
@@ -70,33 +74,32 @@ codex --version
 codex login status
 ```
 
-### radioactive-ralph stateless binding
+### Binding
 
-Codex is bound stateless in v1 — each turn is independent. If the
-OpenAI CLI grows session-resume, the binding can promote to stateful
-in a later release.
+Codex is bound stateless: each turn is independent. Its capability
+record's `NativeFanout` is currently `false` (unconfirmed) — no evidence
+of a subagent/parallel-workflow flag in `codex exec --help`.
 
-## Choosing a provider per variant
+## OpenCode
 
-Provider selection is per-variant, configured in
-`.radioactive-ralph/config.toml`:
+### Install
 
-```toml
-[variants.fixit]
-provider = "claude"
-plan_model = "claude-opus-4-5"
-plan_effort = "high"
+Follow the OpenCode CLI's own install instructions for your platform.
 
-[variants.grey]
-provider = "codex"
-```
+### Authenticate
 
-If no provider is set, the runtime falls back to `claude`. Passing an
-unknown provider fails loudly at `service start`.
+Authenticate however the installed OpenCode CLI documents (typically an
+interactive `opencode auth` or equivalent first-run flow).
+
+### Binding
+
+OpenCode's capability record declares `NativeFanout: true` — `opencode
+run --agent` and `opencode agent create/list` expose a native multi-agent
+surface the orchestrator can delegate a parallel step-group to.
 
 ## Verify end-to-end
 
-After both are installed and authenticated:
+After the providers you plan to use are installed and authenticated:
 
 ```sh
 radioactive_ralph doctor
@@ -109,6 +112,5 @@ Expected:
 [OK] codex        — codex X.Y.Z
 ```
 
-If any provider is missing but you don't plan to use it, that's fine
-— only the providers that appear in your `config.toml` need to
-authenticate.
+Only the providers you actually intend to use need to authenticate — an
+unauthenticated or missing provider you never select is not a blocker.

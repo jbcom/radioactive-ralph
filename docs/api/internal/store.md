@@ -47,6 +47,7 @@ The schema is embedded under schema/\*.sql and applied in lexical order by Migra
   - [func \(s \*Store\) ClearWorkerTask\(ctx context.Context, workerID, status string\) error](<#Store.ClearWorkerTask>)
   - [func \(s \*Store\) Close\(\) error](<#Store.Close>)
   - [func \(s \*Store\) CloseSession\(ctx context.Context, sessionID string\) error](<#Store.CloseSession>)
+  - [func \(s \*Store\) CountRunningWorkers\(ctx context.Context\) \(int, error\)](<#Store.CountRunningWorkers>)
   - [func \(s \*Store\) CreatePlan\(ctx context.Context, o CreatePlanOpts\) \(string, error\)](<#Store.CreatePlan>)
   - [func \(s \*Store\) CreateProject\(ctx context.Context, displayName string, fps \[\]Fingerprint\) \(string, error\)](<#Store.CreateProject>)
   - [func \(s \*Store\) CreateSession\(ctx context.Context, o SessionOpts\) \(string, error\)](<#Store.CreateSession>)
@@ -434,7 +435,7 @@ func (s *Store) ClaimNextReady(ctx context.Context, planID, sessionID, workerID 
 ClaimNextReady is the atomic "claim the next ready task for this worker" operation. Returns the claimed task, or ErrNoReadyTask if none. Uses BEGIN \(with \_txlock=immediate at the DSN level\) \+ UPDATE with a checked RowsAffected so two parallel workers never claim the same task.
 
 <a name="Store.ClearWorkerTask"></a>
-### func \(\*Store\) [ClearWorkerTask](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/workers.go#L139>)
+### func \(\*Store\) [ClearWorkerTask](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/workers.go#L152>)
 
 ```go
 func (s *Store) ClearWorkerTask(ctx context.Context, workerID, status string) error
@@ -459,6 +460,15 @@ func (s *Store) CloseSession(ctx context.Context, sessionID string) error
 ```
 
 CloseSession removes a session row. FK cascades clear its workers.
+
+<a name="Store.CountRunningWorkers"></a>
+### func \(\*Store\) [CountRunningWorkers](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/workers.go#L142>)
+
+```go
+func (s *Store) CountRunningWorkers(ctx context.Context) (int, error)
+```
+
+CountRunningWorkers returns how many worker rows are currently status='running' — i.e. actively assigned a task, not idle/terminated/ crashed. Used by the supervisor's HandleStatus to report a real ActiveWorkers count sourced from the store rather than an in\-process map that only the dispatcher owning the pty could ever populate.
 
 <a name="Store.CreatePlan"></a>
 ### func \(\*Store\) [CreatePlan](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/plans.go#L56>)
