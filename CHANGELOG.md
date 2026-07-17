@@ -13,6 +13,19 @@ shipped. That means historical sections may still mention MCP, plugins,
 supervisors, or the archived Python implementation even though those are no
 longer part of the live contract.
 
+## [0.21.0](https://github.com/jbcom/radioactive-ralph/compare/v0.20.0...v0.21.0) (2026-07-17)
+
+
+### Features
+
+* **gui:** confirm before abandoning a plan or killing a worker ([#122](https://github.com/jbcom/radioactive-ralph/issues/122)) ([1b23218](https://github.com/jbcom/radioactive-ralph/commit/1b23218ff811e5f097bc9d45330d2413e0b9fbb8))
+
+
+### Bug Fixes
+
+* **doctor:** distinguish missing claude CLI from unauthenticated ([#125](https://github.com/jbcom/radioactive-ralph/issues/125)) ([5e7ef40](https://github.com/jbcom/radioactive-ralph/commit/5e7ef403110f0db924c0399839439167b4bff694))
+* **gui:** scroll to top when the drill view changes ([#123](https://github.com/jbcom/radioactive-ralph/issues/123)) ([6ce981d](https://github.com/jbcom/radioactive-ralph/commit/6ce981de211149d9ae97f819ab06f554d7ebc2ea))
+
 ## [0.20.0](https://github.com/jbcom/radioactive-ralph/compare/v0.19.1...v0.20.0) (2026-07-17)
 
 
