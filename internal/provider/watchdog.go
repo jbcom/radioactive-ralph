@@ -48,11 +48,30 @@ var DefaultPromptPatterns = []*regexp.Regexp{
 // DefaultStallTimeout and DefaultPromptPatterns. Runners call this (rather
 // than constructing agent.WatchdogConfig{} directly) so every provider gets
 // the same baseline prompt/stall detection unless a caller has a reason to
-// override it.
+// override it. Use this ONLY for providers whose output is free-form pane
+// text where a raw interactive prompt could actually appear (see
+// StreamJSONWatchdogConfig for the structured-output case).
 func DefaultWatchdogConfig() agent.WatchdogConfig {
 	return agent.WatchdogConfig{
 		StallTimeout:   DefaultStallTimeout,
 		PromptPatterns: DefaultPromptPatterns,
+	}
+}
+
+// StreamJSONWatchdogConfig is the watchdog config for providers driven in a
+// structured stream-json mode (claude/opencode: `--output-format
+// stream-json`). Their normal output is JSON frames whose text can innocently
+// contain prompt-like words ("permission", "continue?"), which content-blind
+// matching would misread and KILL a valid turn. It keeps the prompt patterns
+// but sets SkipPromptMatchOnJSONLines: patterns are matched ONLY on lines
+// that are NOT valid JSON, so a legitimate JSON frame is never a false prompt
+// while a GENUINE raw interactive prompt (never valid JSON) is still caught
+// immediately — not merely by the slower stall timeout.
+func StreamJSONWatchdogConfig() agent.WatchdogConfig {
+	return agent.WatchdogConfig{
+		StallTimeout:               DefaultStallTimeout,
+		PromptPatterns:             DefaultPromptPatterns,
+		SkipPromptMatchOnJSONLines: true,
 	}
 }
 
@@ -89,9 +108,12 @@ func superviseAgent(ctx context.Context, a *agent.Agent, cfg agent.WatchdogConfi
 	if cfg.StallTimeout <= 0 {
 		cfg.StallTimeout = DefaultStallTimeout
 	}
-	if cfg.PromptPatterns == nil {
-		cfg.PromptPatterns = DefaultPromptPatterns
-	}
+	// NOTE: no nil->DefaultPromptPatterns fallback here. Callers pass a
+	// deliberate config (DefaultWatchdogConfig for pane-text providers,
+	// StreamJSONWatchdogConfig for structured-output ones), and a nil pattern
+	// set legitimately means "match nothing" — silently substituting the
+	// defaults would re-introduce the false-kill-on-JSON-content bug for
+	// stream-json providers.
 
 	sigs := agent.Watch(ctx, a, cfg)
 	for {

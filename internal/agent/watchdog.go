@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"regexp"
 	"time"
 )
@@ -28,6 +29,16 @@ type Signal struct {
 type WatchdogConfig struct {
 	StallTimeout   time.Duration
 	PromptPatterns []*regexp.Regexp
+
+	// SkipPromptMatchOnJSONLines, when true, suppresses prompt-pattern
+	// matching for any output line that is a valid JSON value. Stream-json
+	// providers (claude/opencode) emit structured frames whose text can
+	// innocently contain prompt-like words ("permission", "continue?"),
+	// which would false-match and kill a valid turn — but a GENUINE raw
+	// interactive prompt from such a CLI is NOT valid JSON, so it still gets
+	// matched. This keeps real prompt detection while eliminating the
+	// false-kill-on-structured-content bug.
+	SkipPromptMatchOnJSONLines bool
 }
 
 // Watch observes an agent and emits Signals. It NEVER blocks waiting on the
@@ -58,7 +69,15 @@ func Watch(ctx context.Context, a *Agent, cfg WatchdogConfig) <-chan Signal {
 					return
 				}
 				matched := false
+				// Skip prompt-matching on structured JSON frames when
+				// configured — a raw interactive prompt is never valid JSON,
+				// so this preserves real detection while not misreading
+				// prompt-like WORDS inside a legitimate JSON frame as a prompt.
+				skipPromptMatch := cfg.SkipPromptMatchOnJSONLines && json.Valid(line)
 				for _, re := range cfg.PromptPatterns {
+					if skipPromptMatch {
+						break
+					}
 					if re.Match(line) {
 						emit(Signal{Kind: Prompt, Detail: string(line)})
 						matched = true

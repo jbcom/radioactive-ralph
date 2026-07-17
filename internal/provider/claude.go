@@ -130,7 +130,7 @@ func (ClaudeRunner) Run(ctx context.Context, binding Binding, req Request) (Resu
 		return false
 	}
 
-	if err := superviseAgent(ctx, a, DefaultWatchdogConfig(), onLine); err != nil {
+	if err := superviseAgent(ctx, a, StreamJSONWatchdogConfig(), onLine); err != nil {
 		return Result{}, fmt.Errorf("provider: claude run: %w", err)
 	}
 	if !sawResult {

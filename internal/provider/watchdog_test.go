@@ -138,7 +138,13 @@ sleep 300
 // runner level: ClaudeRunner.Run, driving a fake `claude` CLI that emits a
 // permission prompt and then sleeps, must return promptly with an
 // ErrAgentBlocked-wrapped error rather than hang for the sleep's duration.
-func TestClaudeRunnerKilledByWatchdogOnPrompt(t *testing.T) {
+// TestClaudeRunnerKilledByWatchdogOnRawPrompt proves that a GENUINE raw
+// interactive prompt (a non-JSON line) is still detected and kills the turn,
+// even under StreamJSONWatchdogConfig. That config sets
+// SkipPromptMatchOnJSONLines, which suppresses matching ONLY on valid JSON
+// frames — the raw "Allow this action? (y/n)" line here is not JSON, so it
+// still matches and trips the watchdog well before the fake's 300s sleep.
+func TestClaudeRunnerKilledByWatchdogOnRawPrompt(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("shell-script fake CLI is Unix-only")
 	}
@@ -165,6 +171,38 @@ sleep 300
 	}
 	if elapsed > 10*time.Second {
 		t.Fatalf("ClaudeRunner.Run took %s, want well under the fake CLI's 300s sleep — the watchdog must kill it, not wait it out", elapsed)
+	}
+}
+
+// TestClaudeRunnerNotKilledByPromptWordsInJSONOutput is the third-pass
+// regression: a claude assistant frame whose TEXT contains prompt-like words
+// ("permission", "do you want to continue?") must NOT be misread as an
+// interactive prompt and killed — it's ordinary model output. The fake emits
+// such a frame then a clean result frame and exits; Run must succeed.
+func TestClaudeRunnerNotKilledByPromptWordsInJSONOutput(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell-script fake CLI is Unix-only")
+	}
+	bin := writeFakeCLI(t, "fake-claude-benign-prompt-words.sh", `#!/bin/sh
+printf '%s\n' '{"type":"system","session_id":"sid"}'
+IFS= read -r _
+printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"text","text":"You need permission to write there; do you want to continue?"}]}}'
+printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"result":"done"}'
+`)
+
+	start := time.Now()
+	res, err := ClaudeRunner{}.Run(context.Background(), Binding{
+		Name:   "claude",
+		Config: BindingConfig{Type: "claude", Binary: bin},
+	}, Request{WorkingDir: t.TempDir(), UserPrompt: "hi"})
+	if err != nil {
+		t.Fatalf("ClaudeRunner.Run error = %v, want success — prompt-like words in a JSON frame must NOT trigger a false kill", err)
+	}
+	if time.Since(start) > 10*time.Second {
+		t.Fatalf("Run took too long; the turn should complete on the result frame")
+	}
+	if !strings.Contains(res.AssistantOutput, "do you want to continue") {
+		t.Errorf("assistant output = %q, want the benign frame text captured", res.AssistantOutput)
 	}
 }
 

@@ -92,6 +92,10 @@ func Start(ctx context.Context, opts Options) (*Agent, error) {
 		if err := disablePTYEcho(ptmx); err != nil {
 			_ = ptmx.Close()
 			_ = cmd.Process.Kill()
+			// Reap the killed child — readLoop (the only other Wait) hasn't
+			// started yet on this early-return path, so without this Wait the
+			// process would be left a zombie.
+			_ = cmd.Wait()
 			return nil, fmt.Errorf("agent: disable pty echo: %w", err)
 		}
 	}

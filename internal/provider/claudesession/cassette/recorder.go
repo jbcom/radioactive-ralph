@@ -3,6 +3,7 @@ package cassette
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os/exec"
@@ -148,8 +149,6 @@ func (r *Recorder) Close() error {
 	if r.clientStdoutW != nil {
 		_ = r.clientStdoutW.Close()
 	}
-	// Give the pumps a moment to drain their final buffered frames before we
-	// snapshot; they exit promptly once their pipe end is closed.
 	// Snapshot frames under the mutex: a pump goroutine may still be draining
 	// a buffered line and calling append() concurrently with this read.
 	r.mu.Lock()
@@ -175,11 +174,29 @@ func (r *Recorder) pumpStdin(clientSide io.Reader, realSide io.Writer) {
 		r.append(Frame{
 			Direction: "in",
 			At:        r.elapsed(),
-			Line:      line,
+			Line:      asRawJSON(line),
 		})
 		_, _ = realSide.Write(line)
 		_, _ = realSide.Write([]byte{'\n'})
 	}
+}
+
+// asRawJSON returns line as a json.RawMessage that is guaranteed to marshal:
+// if line is already a valid JSON value it is stored verbatim; otherwise
+// (a banner, warning, or blank line — real CLIs emit these) it is wrapped as
+// a JSON string. Without this a single non-JSON captured line made the whole
+// cassette's json.Encode fail at Close, silently discarding the recording.
+func asRawJSON(line []byte) json.RawMessage {
+	if json.Valid(line) {
+		return append(json.RawMessage(nil), line...)
+	}
+	quoted, err := json.Marshal(string(line))
+	if err != nil {
+		// string always marshals; this is unreachable, but never store bytes
+		// that would break the whole cassette.
+		return json.RawMessage(`""`)
+	}
+	return quoted
 }
 
 // pumpStdout reads claude stdout line-by-line, appends each line to
@@ -193,7 +210,7 @@ func (r *Recorder) pumpStdout(realSide io.Reader, clientSide io.Writer) {
 		r.append(Frame{
 			Direction: "out",
 			At:        r.elapsed(),
-			Line:      line,
+			Line:      asRawJSON(line),
 		})
 		_, _ = clientSide.Write(line)
 		_, _ = clientSide.Write([]byte{'\n'})
