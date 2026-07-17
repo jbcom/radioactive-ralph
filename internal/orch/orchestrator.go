@@ -488,7 +488,7 @@ func (o *Orchestrator) DispatchNext(ctx context.Context, projectID, planID strin
 				releaseSlot = false
 			}
 			if spendProvider != "" {
-				o.releaseSpendReservation(spendProvider)
+				o.releaseSpendReservation(projectID, spendProvider)
 				spendProvider = ""
 			}
 		}
@@ -577,7 +577,7 @@ func (o *Orchestrator) DispatchNext(ctx context.Context, projectID, planID strin
 			// Release the spend reservation once the turn's usage is recorded
 			// (dispatchWorker records it before returning), freeing the capped
 			// provider for its next turn.
-			defer o.releaseSpendReservation(reservedProvider)
+			defer o.releaseSpendReservation(projectID, reservedProvider)
 			if err := o.dispatchWorker(runCtx, projectID, projectDir, planID, sessionID, workerID, binding, ds, scoped); err != nil {
 				// Async: no caller to return to. A dispatch error for one worker
 				// must never abort the pass or wedge the supervisor — log it as a
@@ -983,7 +983,7 @@ func (o *Orchestrator) dispatchFanoutGroup(ctx context.Context, projectID, proje
 	releaseFanoutSlot = func() {
 		baseReleaseFanoutSlot()
 		if spendReserved != "" {
-			o.releaseSpendReservation(spendReserved)
+			o.releaseSpendReservation(projectID, spendReserved)
 			spendReserved = ""
 		}
 	}

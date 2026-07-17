@@ -308,5 +308,60 @@ func TestSpendCapSerializesCappedProviderTurns(t *testing.T) {
 	o.Wait()
 }
 
+// TestSpendReservationIsPerProject proves the in-flight reservation is scoped to
+// (project, provider): a capped provider with a turn in flight for project A must
+// NOT block the same provider dispatching for project B. The orchestrator is
+// shared across all projects, and spend is capped per project.
+func TestSpendReservationIsPerProject(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	projA := mustCreateTestProject(t, s, "spend-proj-a")
+	projB := mustCreateTestProject(t, s, "spend-proj-b")
+	planA := mustCreateTestPlan(t, s, projA, "plan-a", "A", twoStepSequentialPlan)
+	planB := mustCreateTestPlan(t, s, projB, "plan-b", "B", twoStepSequentialPlan)
+
+	runner := &blockingRunner{started: make(chan string, 8)}
+	o := New(s,
+		WithRunnerFactory(func(provider.Binding) (provider.Runner, error) { return runner, nil }),
+		WithBindingResolver(fakeBindingResolver("claude", false)),
+		WithSpendCap("claude", 100.00),
+	)
+
+	// Project A launches one capped turn (now in flight, blocked).
+	if _, err := o.DispatchNext(ctx, projA, planA); err != nil {
+		t.Fatalf("DispatchNext A: %v", err)
+	}
+	<-runner.started
+
+	// Project B must still dispatch its own turn — the reservation for A's claude
+	// must not spill over to B's claude.
+	if _, err := o.DispatchNext(ctx, projB, planB); err != nil {
+		t.Fatalf("DispatchNext B: %v", err)
+	}
+	select {
+	case <-runner.started:
+		// good — B dispatched despite A holding a reservation for the same provider.
+	case <-time.After(2 * time.Second):
+		t.Fatal("project B's capped turn was blocked by project A's reservation (reservation not per-project)")
+	}
+
+	// Drain both blocked turns.
+	for _, id := range runningWorkerIDs(o) {
+		o.KillWorker(id)
+	}
+	o.Wait()
+}
+
+// runningWorkerIDs snapshots the ids currently in the cancel registry.
+func runningWorkerIDs(o *Orchestrator) []string {
+	o.runningWorkersMu.Lock()
+	defer o.runningWorkersMu.Unlock()
+	ids := make([]string, 0, len(o.runningWorkers))
+	for id := range o.runningWorkers {
+		ids = append(ids, id)
+	}
+	return ids
+}
+
 // blockingRunner must satisfy provider.Runner.
 var _ provider.Runner = (*blockingRunner)(nil)
