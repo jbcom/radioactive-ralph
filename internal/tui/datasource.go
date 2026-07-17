@@ -65,3 +65,9 @@ type refreshMsg time.Time
 // drill level's data. Short enough to feel live, long enough not to
 // hammer the store/socket from a single client.
 const refreshInterval = 1 * time.Second
+
+// fetchTimeout bounds a single refresh gather. A healthy round trip is
+// sub-millisecond; this ceiling exists so a hung/slow supervisor surfaces an
+// error (and lets the next tick retry) instead of blocking the in-flight guard
+// forever.
+const fetchTimeout = 5 * time.Second
