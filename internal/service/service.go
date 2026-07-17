@@ -23,10 +23,19 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path"
 	"path/filepath"
 	"runtime"
 )
+
+// execCommand runs a command and returns its combined output. A package var so
+// tests can stub the service-manager calls (launchctl/systemctl) without a
+// real daemon.
+var execCommand = func(name string, args ...string) (string, error) {
+	out, err := exec.Command(name, args...).CombinedOutput() //nolint:gosec // fixed service-manager argv, not user input
+	return string(out), err
+}
 
 // Backend identifies which platform mechanism is in use.
 type Backend string
@@ -199,6 +208,64 @@ func Uninstall(opts InstallOptions) error {
 		return fmt.Errorf("service: remove %s: %w", path, err)
 	}
 	return nil
+}
+
+// Start loads/starts the installed per-user supervisor service so its process
+// actually comes up. Install only WRITES the unit definition; on launchd and
+// systemd the unit must additionally be loaded/started (a launchd unit with
+// RunAtLoad still needs `launchctl bootstrap`; systemd needs `systemctl
+// --user start`). Windows SCM's install already starts it, so Start is a
+// no-op there. Returns nil when the start command succeeds or the platform
+// needs no separate start.
+func Start(opts InstallOptions) error {
+	backend := opts.Backend
+	if backend == "" {
+		backend = DetectBackend()
+	}
+	home := opts.HomeDir
+	if home == "" {
+		h, err := os.UserHomeDir()
+		if err != nil {
+			return fmt.Errorf("service: user home: %w", err)
+		}
+		home = h
+	}
+
+	switch backend {
+	case BackendLaunchd:
+		domain := fmt.Sprintf("gui/%d", os.Getuid())
+		label := UnitName(backend)
+		path := UnitPath(backend, home)
+		// bootstrap loads + (via RunAtLoad) starts; kickstart -k ensures a
+		// fresh start even if a stale instance was already bootstrapped.
+		if out, err := runService("launchctl", "bootstrap", domain, path); err != nil {
+			return fmt.Errorf("service: launchctl bootstrap: %w\n%s", err, out)
+		}
+		_, _ = runService("launchctl", "kickstart", "-k", domain+"/"+label)
+		return nil
+	case BackendSystemdUser:
+		unit := UnitName(backend)
+		if out, err := runService("systemctl", "--user", "daemon-reload"); err != nil {
+			return fmt.Errorf("service: systemctl daemon-reload: %w\n%s", err, out)
+		}
+		if out, err := runService("systemctl", "--user", "enable", "--now", unit); err != nil {
+			return fmt.Errorf("service: systemctl enable --now: %w\n%s", err, out)
+		}
+		return nil
+	case BackendWindowsSCM:
+		// installWindowsService already starts the SCM entry.
+		return nil
+	default:
+		return fmt.Errorf("%w: %s", ErrUnsupportedBackend, backend)
+	}
+}
+
+// runService runs a service-manager command, returning combined output for
+// error diagnostics. Split out so tests can observe it and the callers stay
+// readable.
+func runService(name string, args ...string) (string, error) {
+	out, err := execCommand(name, args...)
+	return out, err
 }
 
 // IsServiceContext reports whether the current process looks like it's

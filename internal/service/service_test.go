@@ -298,3 +298,63 @@ func TestInspectUnsupportedBackend(t *testing.T) {
 		t.Fatal("expected error for unsupported backend")
 	}
 }
+
+// TestStartLaunchdRunsBootstrap verifies Start dispatches the launchd
+// load/start commands (via the stubbable execCommand) without needing a real
+// launchd. Covers the gap CodeRabbit flagged: Install writes the unit but
+// Start is what actually brings the supervisor up.
+func TestStartLaunchdRunsBootstrap(t *testing.T) {
+	var calls [][]string
+	orig := execCommand
+	execCommand = func(name string, args ...string) (string, error) {
+		calls = append(calls, append([]string{name}, args...))
+		return "", nil
+	}
+	t.Cleanup(func() { execCommand = orig })
+
+	if err := Start(InstallOptions{Backend: BackendLaunchd, HomeDir: t.TempDir()}); err != nil {
+		t.Fatalf("Start(launchd): %v", err)
+	}
+	if len(calls) == 0 || calls[0][0] != "launchctl" || calls[0][1] != "bootstrap" {
+		t.Fatalf("expected a launchctl bootstrap call first, got %v", calls)
+	}
+}
+
+// TestStartSystemdEnablesNow verifies the systemd path runs daemon-reload then
+// enable --now.
+func TestStartSystemdEnablesNow(t *testing.T) {
+	var calls [][]string
+	orig := execCommand
+	execCommand = func(name string, args ...string) (string, error) {
+		calls = append(calls, append([]string{name}, args...))
+		return "", nil
+	}
+	t.Cleanup(func() { execCommand = orig })
+
+	if err := Start(InstallOptions{Backend: BackendSystemdUser, HomeDir: t.TempDir()}); err != nil {
+		t.Fatalf("Start(systemd): %v", err)
+	}
+	joined := ""
+	for _, c := range calls {
+		joined += strings.Join(c, " ") + "\n"
+	}
+	if !strings.Contains(joined, "systemctl --user daemon-reload") || !strings.Contains(joined, "systemctl --user enable --now") {
+		t.Errorf("expected daemon-reload + enable --now, got:\n%s", joined)
+	}
+}
+
+// TestStartWindowsSCMIsNoop confirms Start is a no-op on Windows SCM (install
+// already starts it) — no service-manager command should run.
+func TestStartWindowsSCMIsNoop(t *testing.T) {
+	called := false
+	orig := execCommand
+	execCommand = func(string, ...string) (string, error) { called = true; return "", nil }
+	t.Cleanup(func() { execCommand = orig })
+
+	if err := Start(InstallOptions{Backend: BackendWindowsSCM, HomeDir: t.TempDir()}); err != nil {
+		t.Fatalf("Start(windows): %v", err)
+	}
+	if called {
+		t.Error("Start(WindowsSCM) ran a service-manager command; want no-op")
+	}
+}

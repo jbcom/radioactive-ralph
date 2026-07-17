@@ -94,6 +94,16 @@ func TestClientMode_NoSupervisorFailsClearly(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected an error when no supervisor is running, got nil")
 	}
+	// Under `go test` stdin/stdout are NOT terminals, so the interactive
+	// first-run wizard must NOT run — the exact print-commands-and-fail path
+	// is preserved. Guard the invariant so a future wizard change can't
+	// silently start prompting in a non-interactive context.
+	if onboardingInteractive() {
+		t.Fatal("onboardingInteractive() = true under `go test`; the wizard must never run non-interactively")
+	}
+	if !errors.Is(err, errNoSupervisorListening) {
+		t.Errorf("err = %v, want errNoSupervisorListening on the non-interactive path", err)
+	}
 }
 
 func TestClientMode_FindsRunningSupervisor(t *testing.T) {
