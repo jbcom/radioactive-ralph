@@ -29,6 +29,7 @@ Service\-context detection is used to distinguish durable service launches from 
 - [func Install\(opts InstallOptions\) \(path string, err error\)](<#Install>)
 - [func IsServiceContext\(\) bool](<#IsServiceContext>)
 - [func MarshalWindowsServiceConfig\(opts InstallOptions\) \(\[\]byte, error\)](<#MarshalWindowsServiceConfig>)
+- [func Start\(opts InstallOptions\) error](<#Start>)
 - [func Uninstall\(opts InstallOptions\) error](<#Uninstall>)
 - [func UnitName\(b Backend\) string](<#UnitName>)
 - [func UnitPath\(b Backend, home string\) string](<#UnitPath>)
@@ -58,7 +59,7 @@ var ErrUnsupportedBackend = errors.New("service: unsupported platform")
 ```
 
 <a name="Install"></a>
-## func [Install](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/service/service.go#L118>)
+## func [Install](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/service/service.go#L127>)
 
 ```go
 func Install(opts InstallOptions) (path string, err error)
@@ -67,7 +68,7 @@ func Install(opts InstallOptions) (path string, err error)
 Install writes or registers the platform service definition that runs \`radioactive\_ralph \-\-supervisor\` as a per\-user auto\-restarting background process. On launchd/systemd this means writing the unit file; on Windows it also registers the SCM entry.
 
 <a name="IsServiceContext"></a>
-## func [IsServiceContext](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/service/service.go#L207>)
+## func [IsServiceContext](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/service/service.go#L274>)
 
 ```go
 func IsServiceContext() bool
@@ -84,8 +85,17 @@ func MarshalWindowsServiceConfig(opts InstallOptions) ([]byte, error)
 
 MarshalWindowsServiceConfig renders the Windows service config in the exact JSON form written to disk for the native service host.
 
+<a name="Start"></a>
+## func [Start](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/service/service.go#L220>)
+
+```go
+func Start(opts InstallOptions) error
+```
+
+Start loads/starts the installed per\-user supervisor service so its process actually comes up. Install only WRITES the unit definition; on launchd and systemd the unit must additionally be loaded/started \(a launchd unit with RunAtLoad still needs \`launchctl bootstrap\`; systemd needs \`systemctl \-\-user start\`\). Windows SCM's install already starts it, so Start is a no\-op there. Returns nil when the start command succeeds or the platform needs no separate start.
+
 <a name="Uninstall"></a>
-## func [Uninstall](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/service/service.go#L178>)
+## func [Uninstall](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/service/service.go#L187>)
 
 ```go
 func Uninstall(opts InstallOptions) error
@@ -94,7 +104,7 @@ func Uninstall(opts InstallOptions) error
 Uninstall removes the unit file. Returns nil if already absent.
 
 <a name="UnitName"></a>
-## func [UnitName](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/service/service.go#L53>)
+## func [UnitName](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/service/service.go#L62>)
 
 ```go
 func UnitName(b Backend) string
@@ -109,7 +119,7 @@ windows-scm: "radioactive_ralph-supervisor"
 ```
 
 <a name="UnitPath"></a>
-## func [UnitPath](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/service/service.go#L78>)
+## func [UnitPath](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/service/service.go#L87>)
 
 ```go
 func UnitPath(b Backend, home string) string
@@ -127,7 +137,7 @@ func WindowsServiceArgs() []string
 WindowsServiceArgs returns the radioactive\_ralph argv used by the native Windows SCM service entry: just \-\-supervisor, since the per\-user supervisor takes no repo\-scoped arguments.
 
 <a name="Backend"></a>
-## type [Backend](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/service/service.go#L32>)
+## type [Backend](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/service/service.go#L41>)
 
 Backend identifies which platform mechanism is in use.
 
@@ -152,7 +162,7 @@ const (
 ```
 
 <a name="DetectBackend"></a>
-### func [DetectBackend](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/service/service.go#L63>)
+### func [DetectBackend](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/service/service.go#L72>)
 
 ```go
 func DetectBackend() Backend
@@ -161,7 +171,7 @@ func DetectBackend() Backend
 DetectBackend returns the appropriate backend for the current OS.
 
 <a name="InstallOptions"></a>
-## type [InstallOptions](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/service/service.go#L93-L104>)
+## type [InstallOptions](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/service/service.go#L102-L113>)
 
 InstallOptions configures an install.
 
@@ -181,7 +191,7 @@ type InstallOptions struct {
 ```
 
 <a name="Status"></a>
-## type [Status](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/service/service.go#L227-L231>)
+## type [Status](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/service/service.go#L294-L298>)
 
 Status reports whether the per\-user supervisor service definition is installed. This only inspects the service definition on disk \(unit file present/absent\); it says nothing about whether the supervisor process is currently running — callers wanting liveness should combine this with supervisor.Find against the XDG state root.
 
@@ -194,7 +204,7 @@ type Status struct {
 ```
 
 <a name="Inspect"></a>
-### func [Inspect](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/service/service.go#L235>)
+### func [Inspect](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/service/service.go#L302>)
 
 ```go
 func Inspect(opts InstallOptions) (Status, error)

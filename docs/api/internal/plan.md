@@ -23,6 +23,8 @@ Plans are markdown documents parsed with goldmark into an AST and decomposed heu
 ## Index
 
 - [func DecomposeRefs\(p \*Plan, done map\[string\]bool\) \(readyNow \[\]Step, refs \[\]StepRef, parallel bool\)](<#DecomposeRefs>)
+- [func Slug\(title string\) string](<#Slug>)
+- [func Title\(markdown, fallback string\) string](<#Title>)
 - [type Group](<#Group>)
 - [type Plan](<#Plan>)
   - [func Parse\(md \[\]byte\) \(\*Plan, error\)](<#Parse>)
@@ -45,6 +47,24 @@ func DecomposeRefs(p *Plan, done map[string]bool) (readyNow []Step, refs []StepR
 ```
 
 DecomposeRefs is like Decompose but also returns the StepRef for each ready step, in the same order, so a caller can mark individual steps done via StepRef.ID\(\) without recomputing positions.
+
+<a name="Slug"></a>
+## func [Slug](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plan/meta.go#L28>)
+
+```go
+func Slug(title string) string
+```
+
+Slug lower\-cases a title and collapses every run of non\-alphanumeric characters into a single hyphen, trimming leading/trailing hyphens — a stable, filesystem\-and\-URL\-safe plan slug. Returns "plan" for an all\-punctuation/empty title.
+
+<a name="Title"></a>
+## func [Title](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plan/meta.go#L15>)
+
+```go
+func Title(markdown, fallback string) string
+```
+
+Title returns the plan markdown's first level\-1 heading, or fallback \(e.g. a filename sans extension\) when there is none or it is blank. Shared by the \`plan import\` CLI and the supervisor's plan\-import IPC handler so both derive identical titles.
 
 <a name="Group"></a>
 ## type [Group](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plan/parse.go#L40-L60>)

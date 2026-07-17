@@ -129,7 +129,7 @@ type Frame struct {
 ```
 
 <a name="Recorder"></a>
-## type [Recorder](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/claudesession/cassette/recorder.go#L25-L47>)
+## type [Recorder](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/claudesession/cassette/recorder.go#L26-L63>)
 
 Recorder wraps a real claude subprocess and captures its I/O to a cassette. The public surface mirrors what session.Session needs: Stdin writer, Stdout reader, Start, Wait, Close.
 
@@ -151,7 +151,7 @@ type Recorder struct {
 ```
 
 <a name="NewRecorder"></a>
-### func [NewRecorder](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/claudesession/cassette/recorder.go#L51>)
+### func [NewRecorder](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/claudesession/cassette/recorder.go#L67>)
 
 ```go
 func NewRecorder(ctx context.Context, cassettePath, bin string, args []string) (*Recorder, error)
@@ -160,7 +160,7 @@ func NewRecorder(ctx context.Context, cassettePath, bin string, args []string) (
 NewRecorder returns an uninitialized Recorder. Callers must call Start before any I/O and Close after the session ends.
 
 <a name="Recorder.Close"></a>
-### func \(\*Recorder\) [Close](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/claudesession/cassette/recorder.go#L125>)
+### func \(\*Recorder\) [Close](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/claudesession/cassette/recorder.go#L151>)
 
 ```go
 func (r *Recorder) Close() error
@@ -169,7 +169,7 @@ func (r *Recorder) Close() error
 Close stops the subprocess, flushes the cassette to disk, and returns any write error.
 
 <a name="Recorder.Start"></a>
-### func \(\*Recorder\) [Start](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/claudesession/cassette/recorder.go#L88>)
+### func \(\*Recorder\) [Start](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/claudesession/cassette/recorder.go#L114>)
 
 ```go
 func (r *Recorder) Start() error
@@ -178,7 +178,7 @@ func (r *Recorder) Start() error
 Start spawns the claude subprocess. Returns any exec error. The start time is stamped here \(under startedMu\) so frame timestamps anchor to the real session start, not construction.
 
 <a name="Recorder.Stdin"></a>
-### func \(\*Recorder\) [Stdin](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/claudesession/cassette/recorder.go#L114>)
+### func \(\*Recorder\) [Stdin](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/claudesession/cassette/recorder.go#L140>)
 
 ```go
 func (r *Recorder) Stdin() io.WriteCloser
@@ -187,7 +187,7 @@ func (r *Recorder) Stdin() io.WriteCloser
 Stdin returns the client\-side writer. Anything written here is forwarded to claude and recorded to the cassette.
 
 <a name="Recorder.Stdout"></a>
-### func \(\*Recorder\) [Stdout](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/claudesession/cassette/recorder.go#L118>)
+### func \(\*Recorder\) [Stdout](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/claudesession/cassette/recorder.go#L144>)
 
 ```go
 func (r *Recorder) Stdout() io.ReadCloser
@@ -196,7 +196,7 @@ func (r *Recorder) Stdout() io.ReadCloser
 Stdout returns the client\-side reader. Anything read here was emitted by claude \(and also recorded\).
 
 <a name="Recorder.Wait"></a>
-### func \(\*Recorder\) [Wait](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/claudesession/cassette/recorder.go#L121>)
+### func \(\*Recorder\) [Wait](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/claudesession/cassette/recorder.go#L147>)
 
 ```go
 func (r *Recorder) Wait() error
