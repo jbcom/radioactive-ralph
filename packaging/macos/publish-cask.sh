@@ -25,13 +25,16 @@ trap 'rm -rf "$WORK"' EXIT   # the clone carries a credentialed remote — alway
 
 # Download both arch dmgs from the release and hash them (the SHAs the cask
 # pins). The dmgs were uploaded by the gui-bundles macOS legs this cask job
-# `needs`, so they exist by now.
-declare -A SHA
-for arch in arm64 amd64; do
-  dmg="radioactive-ralph_${VERSION}_darwin_${arch}.dmg"
+# `needs`, so they exist by now. NOTE: macOS runners ship Bash 3.2, which has no
+# associative arrays (`declare -A`) — use one plain var per arch.
+download_sha() {
+  local arch="$1"
+  local dmg="radioactive-ralph_${VERSION}_darwin_${arch}.dmg"
   gh release download "$TAG" --repo "$REPO" --pattern "$dmg" --dir "$WORK" --clobber
-  SHA[$arch]="$(shasum -a 256 "$WORK/$dmg" | awk '{print $1}')"
-done
+  shasum -a 256 "$WORK/$dmg" | awk '{print $1}'
+}
+SHA_ARM64="$(download_sha arm64)"
+SHA_AMD64="$(download_sha amd64)"
 
 # Keep the token out of the clone URL (it would leak in process listings / any
 # stored remote). Feed it via an in-memory askpass helper instead.
@@ -52,11 +55,11 @@ cask "radioactive-ralph" do
   version "${VERSION}"
 
   on_arm do
-    sha256 "${SHA[arm64]}"
+    sha256 "${SHA_ARM64}"
     url "https://github.com/${REPO}/releases/download/v#{version}/radioactive-ralph_#{version}_darwin_arm64.dmg"
   end
   on_intel do
-    sha256 "${SHA[amd64]}"
+    sha256 "${SHA_AMD64}"
     url "https://github.com/${REPO}/releases/download/v#{version}/radioactive-ralph_#{version}_darwin_amd64.dmg"
   end
 
