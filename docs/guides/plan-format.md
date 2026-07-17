@@ -64,9 +64,10 @@ The `[approval]` marker is stripped from the displayed step text and does
 `ready_pending_approval` state instead of `pending`, so the supervisor's
 dispatch loop **skips it** — it is never claimed or run, and (in a
 sequential group) the steps after it wait too, until an operator approves
-it. Approve from the TUI/GUI (the **Approve** button on a gated task) or
-the drive API; that promotes it to `ready`, and the next dispatch tick
-claims and runs it normally.
+it. Approve it from the desktop GUI (the **Approve** button on a gated
+task) or the drive API — the terminal client is read-only and has no
+approve action. Approval promotes the task to `ready`, and the next
+dispatch tick claims and runs it normally.
 
 Use it for the irreversible or high-blast-radius step in an otherwise
 autonomous plan — a production deploy, a data migration, a destructive
