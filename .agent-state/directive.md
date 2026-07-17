@@ -191,15 +191,23 @@ Structured attach event surface (the observe half goes live) — shipping arc:
   AND the pre-existing TUI macro pane + GUI event view; fixed by switching it to
   the shared eventProjectScope so all consumers agree with the live tail.
 
-Rolling (next product feature per directive 0):
-- [ ] [WAIT] #180 (docs: spec a session-long TUI live event tail) — CI; merge green.
-- [ ] Implement the session-long TUI live tail per #180's spec: move the Attach
-  subscription from micro-only (start on drill-in / stop on drill-out) to
-  session-long (start at Init), route liveFrameMsg by level — always apply the
-  lifecycle delta + a live macro planEvent tail (id-deduped vs the poll), add the
-  per-task filtered log only at micro. Makes macro/meso push-live (today poll-only)
-  and simplifies the subscription lifecycle. Reuses #173's applyEvent/renderEvent.
-  Build once #180 lands (both touch model.go — avoid a fork).
+- Session-long TUI live tail (MERGED): spec #180, feature #182 — macro/meso views
+  go push-live (subscription starts once on first fetch, routes frames by level;
+  poll reconciles via mergeEventTail; id-less-frame dedup + poll-drops-live-event
+  bug fixed in review). The observe-half push-live work now spans CLI (#178) /
+  TUI (#173/#182) / GUI (#173).
+
+Rolling (next per directive 0):
+- [ ] [WAIT] #184 (feat: cursor-aware TUI reconnect) — closes the one real
+  limitation the #180/#182 reviews surfaced: the subscription re-seeded from
+  MaxEventID on reconnect, missing gap events. Now DataSource.Attach takes an
+  afterID; the model tracks lastEventID and resumes from it on reconnect (0 on
+  first attach = from now), so no macro event is missed across a supervisor blip.
+  +regression test (resume from id 14, not 0). CI; merge green.
+- [ ] After #184: rotate a fresh review lens (comprehensive-review /
+  code-simplifier) over the merged TUI subscription code, then pick the next
+  product feature (live macro plan-PROGRESS deltas; GUI true per-event delta
+  apply; or a NEW area — provider coverage, observability, DX) per directive 0.
 
 ## Notes
 
