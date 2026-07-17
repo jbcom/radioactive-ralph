@@ -96,20 +96,23 @@ func (l *liveDataSource) ListTaskEvents(ctx context.Context, planID, taskID stri
 	return l.store.ListTaskEvents(ctx, planID, taskID, limit)
 }
 
-func (l *liveDataSource) Attach(ctx context.Context, fn func(json.RawMessage) error) error {
+func (l *liveDataSource) Attach(ctx context.Context, afterID int64, fn func(json.RawMessage) error) error {
 	client, err := l.dial()
 	if err != nil {
 		return err
 	}
 	defer func() { _ = client.Close() }()
-	// Seed the cursor to the current max so the live view starts from "now"
-	// rather than replaying the entire project history on every launch/attach —
-	// a mature project would otherwise flood the micro view (and re-fetch) with
-	// thousands of historical frames. A read error here is non-fatal: fall back
-	// to 0 (from the beginning) so the stream still works, just verbosely.
-	afterID, err := l.store.MaxEventID(ctx, l.projectID)
-	if err != nil {
-		afterID = 0
+	// afterID>0 is a RESUME cursor from a reconnect — stream strictly after it so
+	// events during the disconnect gap are delivered, not skipped. afterID<=0 is
+	// an initial attach: seed the cursor to the current max so the live view
+	// starts from "now" rather than replaying the entire project history (a
+	// mature project would otherwise flood the view). A MaxEventID read error is
+	// non-fatal: fall back to 0 (from the beginning) so the stream still works.
+	if afterID <= 0 {
+		afterID, err = l.store.MaxEventID(ctx, l.projectID)
+		if err != nil {
+			afterID = 0
+		}
 	}
 	return client.Attach(ctx, ipc.AttachArgs{ProjectID: l.projectID, AfterID: afterID}, fn)
 }

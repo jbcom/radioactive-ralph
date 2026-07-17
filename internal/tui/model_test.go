@@ -138,6 +138,45 @@ func TestModel_ReconnectsAfterStreamEnds(t *testing.T) {
 	m.attachCancel()
 }
 
+// TestModel_ReconnectResumesFromLastEventID: after processing live events, a
+// reconnect must resume from the highest id seen (not re-seed from 0/current
+// max), so events emitted during the disconnect gap are delivered.
+func TestModel_ReconnectResumesFromLastEventID(t *testing.T) {
+	f := testFake()
+	m := newTestModel(t, f)
+
+	// First attach: seeds from 0 (initial — "from now"). startAttach runs the
+	// fake's Attach on a goroutine, so wait for it to record the cursor.
+	updated, _ := m.Update(fetchedMsg{snap: snapshot{plans: f.plans}})
+	m = updated.(Model)
+	epoch1 := m.attachEpoch
+	waitAttachCount(t, f, 1)
+	if f.afterIDAt(0) != 0 {
+		t.Fatalf("first attach afterID = %d, want 0 (initial seed)", f.afterIDAt(0))
+	}
+	m.attachCancel()
+
+	// Process a couple of live events; the model tracks the highest id.
+	updated, _ = m.Update(liveFrameMsg{epoch: epoch1, raw: []byte(`{"id":11,"kind":"task.claimed","task_id":"t1"}`)})
+	m = updated.(Model)
+	updated, _ = m.Update(liveFrameMsg{epoch: epoch1, raw: []byte(`{"id":14,"kind":"task.done","task_id":"t1"}`)})
+	m = updated.(Model)
+	if m.lastEventID != 14 {
+		t.Fatalf("lastEventID = %d, want 14 (highest processed)", m.lastEventID)
+	}
+
+	// Stream ends, then a fetch reconnects — it must resume from id 14.
+	updated, _ = m.Update(attachEndedMsg{epoch: epoch1})
+	m = updated.(Model)
+	updated, _ = m.Update(fetchedMsg{snap: snapshot{plans: f.plans}})
+	m = updated.(Model)
+	waitAttachCount(t, f, 2)
+	if f.afterIDAt(1) != 14 {
+		t.Errorf("reconnect afterID = %d, want 14 (resume from last processed — gap events not missed)", f.afterIDAt(1))
+	}
+	m.attachCancel()
+}
+
 // TestModel_DrillInMicroDoesNotRestartAttach: drilling into micro reuses the
 // session subscription (it doesn't start a new one) and resets the per-task log.
 func TestModel_DrillInMicroDoesNotRestartAttach(t *testing.T) {
@@ -522,7 +561,7 @@ func TestStartAttach_StreamsFramesThenEnds(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	frames, done, stop := startAttach(ctx, f)
+	frames, done, stop := startAttach(ctx, f, 0)
 	defer stop()
 
 	var got []string

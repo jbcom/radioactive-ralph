@@ -50,11 +50,14 @@ type DataSource interface {
 	// recent first.
 	ListTaskEvents(ctx context.Context, planID, taskID string, limit int) ([]store.Event, error)
 
-	// Attach subscribes to the live event stream. fn is invoked once per
-	// event frame until ctx is cancelled or the stream ends. Attach must
-	// not block Model's redraw loop — Run wires it up on its own
+	// Attach subscribes to the live event stream from afterID. fn is invoked
+	// once per event frame until ctx is cancelled or the stream ends. afterID>0
+	// RESUMES from a known cursor (a reconnect passes the last id it processed,
+	// so events during the disconnect gap are not missed); afterID<=0 seeds from
+	// the current max (an initial attach starts from "now", not full history).
+	// Attach must not block Model's redraw loop — Run wires it up on its own
 	// goroutine (see model.go).
-	Attach(ctx context.Context, fn func(json.RawMessage) error) error
+	Attach(ctx context.Context, afterID int64, fn func(json.RawMessage) error) error
 }
 
 // refreshMsg is the periodic tick that drives Model's re-fetch. It carries
