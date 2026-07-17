@@ -486,3 +486,44 @@ func TestCreateTaskDuplicateIsDistinguishable(t *testing.T) {
 		t.Fatalf("duplicate CreateTask err = %v, want ErrDuplicateTask", err)
 	}
 }
+
+// TestReleaseClaimDoesNotChargeRetry is the regression for CodeRabbit's
+// finding that a system-level release (e.g. an aborted fan-out group) must
+// requeue a task WITHOUT charging its retry budget — unlike MarkFailed.
+func TestReleaseClaimDoesNotChargeRetry(t *testing.T) {
+	ctx := context.Background()
+	s := openTestStore(t)
+	projectID := mustCreateProject(t, s, "release-project")
+	planID := mustCreatePlan(t, s, projectID, "release-plan")
+	sessionID, workerID := mustCreateSessionAndWorker(t, s, "1")
+
+	if err := s.CreateTask(ctx, CreateTaskOpts{PlanID: planID, ID: "t", Description: "work"}); err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+	if _, err := s.ClaimNextReady(ctx, planID, sessionID, workerID); err != nil {
+		t.Fatalf("ClaimNextReady: %v", err)
+	}
+
+	if err := s.ReleaseClaim(ctx, planID, "t", sessionID, "aborted"); err != nil {
+		t.Fatalf("ReleaseClaim: %v", err)
+	}
+
+	got, err := s.GetTask(ctx, planID, "t")
+	if err != nil {
+		t.Fatalf("GetTask: %v", err)
+	}
+	if got.Status != TaskStatusPending {
+		t.Errorf("status = %q, want pending after release", got.Status)
+	}
+	if got.RetryCount != 0 {
+		t.Errorf("retry_count = %d, want 0 — a system release must not charge a retry", got.RetryCount)
+	}
+	if got.ClaimedBySession != "" {
+		t.Errorf("claim not cleared: claimed_by_session = %q", got.ClaimedBySession)
+	}
+
+	// A stale release (wrong session) is a benign no-op.
+	if err := s.ReleaseClaim(ctx, planID, "t", "some-other-session", "stale"); !errors.Is(err, ErrTaskNotOwnedRunning) {
+		t.Errorf("stale ReleaseClaim err = %v, want ErrTaskNotOwnedRunning", err)
+	}
+}

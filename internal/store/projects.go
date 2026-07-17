@@ -113,9 +113,19 @@ func insertIdentifiers(ctx context.Context, tx *sql.Tx, projectID string, fps []
 		if fp.Kind == "" || fp.Value == "" {
 			continue
 		}
+		// UPSERT rather than INSERT OR IGNORE: re-adding an existing
+		// fingerprint must REFRESH added_at (and re-point it at this project),
+		// so a project moved A -> B -> A has its abs_path A recognized as the
+		// most recent again. INSERT OR IGNORE left the stale original
+		// timestamp, breaking ProjectAbsPath's most-recent-wins ordering.
+		// The (kind, value) primary key still guarantees a fingerprint maps
+		// to at most one project.
 		_, err := tx.ExecContext(ctx, `
-			INSERT OR IGNORE INTO project_identifiers(project_id, kind, value, added_at)
+			INSERT INTO project_identifiers(project_id, kind, value, added_at)
 			VALUES (?, ?, ?, ?)
+			ON CONFLICT(kind, value) DO UPDATE SET
+				project_id = excluded.project_id,
+				added_at   = excluded.added_at
 		`, projectID, fp.Kind, fp.Value, addedAt)
 		if err != nil {
 			return fmt.Errorf("store: insert identifier %s=%s: %w", fp.Kind, fp.Value, err)

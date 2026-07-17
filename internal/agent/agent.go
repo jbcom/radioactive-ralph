@@ -53,6 +53,12 @@ type Agent struct {
 	// invariant). A live consumer drains a.out; a killed agent unblocks here.
 	killOnce sync.Once
 	killed   chan struct{}
+
+	// ctx is the caller's context, observed by readLoop's blocking send so a
+	// consumer that stops reading after ctx cancellation (e.g. a runner that
+	// returned on ctx.Done before the process fully exits) doesn't leak the
+	// reader on a[.out send that no one will ever drain.
+	ctx context.Context
 }
 
 // Start launches opts.Command under a pty and begins streaming its output.
@@ -70,6 +76,7 @@ func Start(ctx context.Context, opts Options) (*Agent, error) {
 		return nil, err
 	}
 	a := &Agent{
+		ctx:    ctx,
 		cmd:    cmd,
 		ptmx:   ptmx,
 		out:    make(chan []byte, 256),
@@ -101,6 +108,10 @@ func (a *Agent) readLoop() {
 		select {
 		case a.out <- line:
 		case <-a.killed:
+			return
+		case <-a.ctx.Done():
+			// The caller cancelled: a consumer that returned on ctx.Done
+			// will never drain a.out, so stop rather than block forever.
 			return
 		}
 	}

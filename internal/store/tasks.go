@@ -520,6 +520,41 @@ func (s *Store) MarkFailedWithPayload(ctx context.Context, planID, taskID, sessi
 	return false, tx.Commit()
 }
 
+// ReleaseClaim requeues a running task owned by sessionID back to pending
+// WITHOUT charging a retry, for SYSTEM-level aborts (e.g. a fan-out group
+// whose later claim failed) as opposed to task-execution failures. Using
+// MarkFailed here would penalize the retry budget for something the task
+// never got a chance to attempt, and could terminally fail an otherwise-valid
+// task after a few transient orchestrator hiccups. Owner-guarded like
+// MarkFailed: a task no longer running under sessionID yields
+// ErrTaskNotOwnedRunning (benign — someone else owns it now).
+func (s *Store) ReleaseClaim(ctx context.Context, planID, taskID, sessionID, reason string) error {
+	res, err := s.db.ExecContext(ctx, `
+		UPDATE tasks
+		SET status = 'pending',
+		    claimed_by_session = NULL,
+		    claimed_by_worker_id = NULL
+		WHERE plan_id = ? AND id = ? AND status = 'running' AND claimed_by_session = ?
+	`, planID, taskID, sessionID)
+	if err != nil {
+		return fmt.Errorf("store: release claim: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("store: release claim rows affected: %w", err)
+	}
+	if n == 0 {
+		return ErrTaskNotOwnedRunning
+	}
+	if _, err := s.db.ExecContext(ctx, `
+		INSERT INTO events(plan_id, task_id, kind, actor, stream, payload_json)
+		VALUES (?, ?, 'task.released', ?, 'orch', ?)
+	`, planID, taskID, sessionID, payloadJSON(EventPayload{Reason: reason})); err != nil {
+		return fmt.Errorf("store: log release: %w", err)
+	}
+	return nil
+}
+
 // MarkBlocked releases a running task into the blocked set so an operator
 // can later requeue or otherwise intervene.
 func (s *Store) MarkBlocked(ctx context.Context, planID, taskID, sessionID string, payload EventPayload) error {

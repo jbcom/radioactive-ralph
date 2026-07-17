@@ -764,13 +764,15 @@ func (o *Orchestrator) dispatchFanoutGroup(ctx context.Context, projectID, proje
 
 // releaseClaimedTasks requeues tasks a fan-out worker had already claimed
 // when a later claim in the same group fails, so they don't sit wedged in
-// 'running' with no worker. Each is requeued via MarkFailed under the
-// worker's own session (its owner guard matches), which transitions
-// 'running' -> 'pending' with the retry budget intact. Best-effort:
-// individual failures are ignored — the reaper is the backstop.
+// 'running' with no worker. Uses store.ReleaseClaim (NOT MarkFailed): this
+// is a system-level abort, not a task-execution failure, so it must NOT
+// charge a retry — otherwise repeated transient claim/materialization
+// hiccups could exhaust an otherwise-valid task's budget and terminally fail
+// it. Best-effort: individual failures are ignored — the reaper is the
+// backstop.
 func (o *Orchestrator) releaseClaimedTasks(ctx context.Context, planID, sessionID string, claimed []*dispatchedStep) {
 	for _, ds := range claimed {
-		_, _ = o.store.MarkFailed(ctx, planID, ds.task.ID, sessionID, "released: fan-out group claim aborted", 3)
+		_ = o.store.ReleaseClaim(ctx, planID, ds.task.ID, sessionID, "released: fan-out group claim aborted")
 	}
 }
 

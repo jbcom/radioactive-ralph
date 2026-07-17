@@ -208,16 +208,29 @@ func (c *Client) send(ctx context.Context, req Request) error {
 }
 
 func (c *Client) readResponse(ctx context.Context) (Response, error) {
-	// Bound the blocking read by the ctx deadline: send() only set a WRITE
+	// Bound the blocking read by the caller's ctx: send() only set a WRITE
 	// deadline, so without this a server that accepts the request but never
-	// replies would hang the read forever, ignoring the caller's ctx
-	// timeout/cancel entirely.
+	// replies would hang the read forever. Honor an explicit deadline AND a
+	// bare cancellation (no deadline) — the latter via a watcher that trips
+	// the read deadline the moment ctx is done, so ReadBytes returns at once.
 	if deadline, ok := ctx.Deadline(); ok {
 		_ = c.conn.SetReadDeadline(deadline)
 		defer func() { _ = c.conn.SetReadDeadline(time.Time{}) }()
 	}
+	watchDone := make(chan struct{})
+	defer close(watchDone)
+	go func() {
+		select {
+		case <-ctx.Done():
+			_ = c.conn.SetReadDeadline(time.Now())
+		case <-watchDone:
+		}
+	}()
 	line, err := c.reader.ReadBytes('\n')
 	if err != nil {
+		if cerr := ctx.Err(); cerr != nil {
+			return Response{}, cerr
+		}
 		if errors.Is(err, io.EOF) {
 			return Response{}, ErrClosed
 		}
