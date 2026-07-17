@@ -95,12 +95,17 @@ type Model struct {
 	// of) is dropped rather than re-arming the current one.
 	attachEpoch uint64
 
-	// lastEventID is the highest event id processed from the live stream. On a
-	// reconnect (the subscription ended, e.g. a supervisor blip), ensureAttach
-	// resumes from it so events emitted during the disconnect gap are delivered
-	// rather than skipped by a re-seed from the current max. 0 means nothing has
-	// streamed yet — the first attach seeds from "now" (current max).
+	// lastEventID is the model-owned resume cursor: the highest event id known
+	// to have been seen. It is seeded once to the current max before the first
+	// attach (attachSeeded), then advanced as live frames arrive. ensureAttach
+	// always passes it to the subscription, so a reconnect resumes from it and
+	// gap events aren't missed — even if the first subscription ended before
+	// yielding a frame (the model, not the datasource, owns the cursor).
 	lastEventID int64
+	// attachSeeded is set once lastEventID has been seeded from MaxEventID, so
+	// the seed happens exactly once (the first ensureAttach), not on every
+	// reconnect (which must keep the advanced cursor, not reset it).
+	attachSeeded bool
 
 	// fetching is true while a refresh gather is in flight. The 1s refresh
 	// tick fires unconditionally, so without this guard a gather that outlives
@@ -188,8 +193,24 @@ func (m *Model) ensureAttach() tea.Cmd {
 	if m.attachFrames != nil {
 		return nil
 	}
-	// Resume from the last id processed (a reconnect after a blip) so gap events
-	// aren't missed; 0 on the first attach seeds from the current max.
+	// Seed the model-owned cursor ONCE, before the very first attach, to the
+	// current max — so the model (not the datasource) owns the cursor end-to-end.
+	// Without this, the first subscription's internal "seed from max" would be
+	// forgotten if it ended before yielding a frame, and a reconnect would
+	// re-seed to a NEWER max, skipping the gap. A read error is non-fatal (fall
+	// back to 0). This runs on the Update goroutine, but it's a single indexed
+	// MAX query — bounded and fast; a short timeout caps the worst case.
+	if !m.attachSeeded {
+		ctx, cancel := context.WithTimeout(m.ctx, fetchTimeout)
+		if maxID, err := m.source.MaxEventID(ctx); err == nil {
+			m.lastEventID = maxID
+		}
+		cancel()
+		m.attachSeeded = true
+	}
+	// Always resume from the model's cursor: on the first attach it's the seeded
+	// max ("from now"); on a reconnect it's the last id processed, so gap events
+	// aren't missed.
 	frames, done, cancel := startAttach(m.ctx, m.source, m.lastEventID)
 	m.attachCancel = cancel
 	m.attachFrames = frames

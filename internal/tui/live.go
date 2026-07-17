@@ -96,23 +96,24 @@ func (l *liveDataSource) ListTaskEvents(ctx context.Context, planID, taskID stri
 	return l.store.ListTaskEvents(ctx, planID, taskID, limit)
 }
 
+// MaxEventID returns the project's highest event id (0 if none). The model
+// reads it once to seed its resume cursor before the first attach — see the
+// DataSource interface doc and Model.attachSeeded.
+func (l *liveDataSource) MaxEventID(ctx context.Context) (int64, error) {
+	return l.store.MaxEventID(ctx, l.projectID)
+}
+
 func (l *liveDataSource) Attach(ctx context.Context, afterID int64, fn func(json.RawMessage) error) error {
 	client, err := l.dial()
 	if err != nil {
 		return err
 	}
 	defer func() { _ = client.Close() }()
-	// afterID>0 is a RESUME cursor from a reconnect — stream strictly after it so
-	// events during the disconnect gap are delivered, not skipped. afterID<=0 is
-	// an initial attach: seed the cursor to the current max so the live view
-	// starts from "now" rather than replaying the entire project history (a
-	// mature project would otherwise flood the view). A MaxEventID read error is
-	// non-fatal: fall back to 0 (from the beginning) so the stream still works.
-	if afterID <= 0 {
-		afterID, err = l.store.MaxEventID(ctx, l.projectID)
-		if err != nil {
-			afterID = 0
-		}
-	}
+	// afterID is the model-owned cursor: the initial attach passes the seeded
+	// current max ("from now") and a reconnect passes the last processed id, so
+	// gap events are delivered. Attach is a pure resume — it does NOT re-seed
+	// from MaxEventID here, because a re-seed would forget the cursor the model
+	// already holds (the bug this design fixes: a first subscription that ended
+	// before yielding a frame would otherwise let a reconnect skip the gap).
 	return client.Attach(ctx, ipc.AttachArgs{ProjectID: l.projectID, AfterID: afterID}, fn)
 }

@@ -50,6 +50,14 @@ type DataSource interface {
 	// recent first.
 	ListTaskEvents(ctx context.Context, planID, taskID string, limit int) ([]store.Event, error)
 
+	// MaxEventID returns the highest event id for the client's project (0 if
+	// none). The model reads it ONCE before the first attach to seed its resume
+	// cursor, so it owns the cursor end-to-end: a reconnect resumes from the last
+	// processed id even if the FIRST subscription ended before yielding any frame
+	// (its internal seed would otherwise be forgotten and the reconnect would
+	// skip the gap). An error is non-fatal — the model falls back to 0.
+	MaxEventID(ctx context.Context) (int64, error)
+
 	// Attach subscribes to the live event stream from afterID. fn is invoked
 	// once per event frame until ctx is cancelled or the stream ends. afterID>0
 	// RESUMES from a known cursor (a reconnect passes the last id it processed,

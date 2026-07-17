@@ -28,6 +28,7 @@ type fakeDataSource struct {
 	projectEvents []store.Event
 	taskEvents    map[string][]store.Event // keyed by planID+"/"+taskID
 
+	maxEventID   int64 // returned by MaxEventID (the initial cursor seed)
 	attachFrames []json.RawMessage
 	attachErr    error
 
@@ -85,6 +86,10 @@ func (f *fakeDataSource) ListProjectEvents(_ context.Context, _ string, _ int) (
 
 func (f *fakeDataSource) ListTaskEvents(_ context.Context, planID, taskID string, _ int) ([]store.Event, error) {
 	return f.taskEvents[planID+"/"+taskID], nil
+}
+
+func (f *fakeDataSource) MaxEventID(_ context.Context) (int64, error) {
+	return f.maxEventID, nil
 }
 
 func (f *fakeDataSource) Attach(ctx context.Context, afterID int64, fn func(json.RawMessage) error) error {

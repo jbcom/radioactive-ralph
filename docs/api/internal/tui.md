@@ -46,7 +46,7 @@ func Run(ctx context.Context, source DataSource, opts Options) error
 Run starts the read\-only TUI against source and blocks until the operator quits or ctx is cancelled. Callers MUST verify stdout is a real terminal before calling Run \(see IsTerminal\) — Run itself does not guard against a non\-tty stdout, so that a caller wanting to force a run against a pseudo\-tty in an integration test still can.
 
 <a name="DataSource"></a>
-## type [DataSource](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/tui/datasource.go#L29-L61>)
+## type [DataSource](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/tui/datasource.go#L29-L69>)
 
 DataSource is every read the TUI needs, gathered behind one interface so Model can be driven by either the real supervisor client \+ shared store or an in\-memory fake in tests. Every method here is READ\-ONLY by contract: this is the enforcement point for the spec's "read\-only" guarantee — Model.Update never calls anything but these methods, and none of them may mutate durable state. \(The real implementation, liveDataSource in live.go, is a thin wrapper: it forwards to \*ipc.Client.Status/Attach and \*store.Store's existing List\*/Get\* read methods — it adds no new write surface of its own.\)
 
@@ -75,6 +75,14 @@ type DataSource interface {
     // recent first.
     ListTaskEvents(ctx context.Context, planID, taskID string, limit int) ([]store.Event, error)
 
+    // MaxEventID returns the highest event id for the client's project (0 if
+    // none). The model reads it ONCE before the first attach to seed its resume
+    // cursor, so it owns the cursor end-to-end: a reconnect resumes from the last
+    // processed id even if the FIRST subscription ended before yielding any frame
+    // (its internal seed would otherwise be forgotten and the reconnect would
+    // skip the gap). An error is non-fatal — the model falls back to 0.
+    MaxEventID(ctx context.Context) (int64, error)
+
     // Attach subscribes to the live event stream from afterID. fn is invoked
     // once per event frame until ctx is cancelled or the stream ends. afterID>0
     // RESUMES from a known cursor (a reconnect passes the last id it processed,
@@ -96,7 +104,7 @@ func NewLiveDataSource(runtimeDir string, st *store.Store, projectID string) Dat
 NewLiveDataSource builds the production DataSource: runtimeDir is the directory the supervisor's socket lives under \(xdg.StateRoot\(\)\), st is the shared store, and projectID scopes the plan/event reads.
 
 <a name="Model"></a>
-## type [Model](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/tui/model.go#L56-L114>)
+## type [Model](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/tui/model.go#L56-L119>)
 
 Model is the root tea.Model. It holds the current drill level, the read\-only DataSource, and the last\-fetched snapshot; Update handles key events and the periodic refresh tick, View delegates to the per\-level renderer. Model never calls anything on DataSource except its documented read methods — see datasource.go's DataSource doc comment for the read\-only enforcement point.
 
@@ -107,7 +115,7 @@ type Model struct {
 ```
 
 <a name="NewModel"></a>
-### func [NewModel](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/tui/model.go#L123>)
+### func [NewModel](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/tui/model.go#L128>)
 
 ```go
 func NewModel(ctx context.Context, source DataSource, projectID string) Model
@@ -116,7 +124,7 @@ func NewModel(ctx context.Context, source DataSource, projectID string) Model
 NewModel constructs the root model. ctx bounds the whole TUI session — cancelling it \(e.g. on SIGINT\) unwinds any in\-flight Attach goroutine.
 
 <a name="Model.Init"></a>
-### func \(Model\) [Init](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/tui/model.go#L139>)
+### func \(Model\) [Init](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/tui/model.go#L144>)
 
 ```go
 func (m Model) Init() tea.Cmd
@@ -125,7 +133,7 @@ func (m Model) Init() tea.Cmd
 Init starts the refresh loop. It fires an IMMEDIATE refresh tick rather than launching a fetch directly, so the very first gather goes through the same in\-flight\-guarded path as every periodic tick \(Init returns a Cmd and cannot set m.fetching, so a direct fetch here could overlap the first periodic tick if the initial gather is slow\).
 
 <a name="Model.Update"></a>
-### func \(Model\) [Update](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/tui/model.go#L325>)
+### func \(Model\) [Update](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/tui/model.go#L346>)
 
 ```go
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd)
@@ -134,7 +142,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd)
 Update handles key events \(arrows/enter to drill in, esc/backspace to drill out, q to quit\) and the periodic refresh tick. This is the surface the model\_test.go table tests exercise directly, injecting tea.KeyMsg values without a real terminal.
 
 <a name="Model.View"></a>
-### func \(Model\) [View](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/tui/model.go#L660>)
+### func \(Model\) [View](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/tui/model.go#L681>)
 
 ```go
 func (m Model) View() string
