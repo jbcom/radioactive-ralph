@@ -136,7 +136,7 @@ var ErrTaskNotOwnedRunning = errors.New("store: task not running under the repor
 ```
 
 <a name="DSN"></a>
-## func [DSN](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/store.go#L52>)
+## func [DSN](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/store.go#L58>)
 
 ```go
 func DSN(dbPath string) string
@@ -301,7 +301,7 @@ func Fingerprints(ctx context.Context, dir string) ([]Fingerprint, error)
 Fingerprints computes the identity fingerprints for a directory: always the cleaned absolute path, plus — best\-effort, if dir is a git repository — the root\-commit sha and any "origin" remote URL. A fingerprint whose git command fails \(e.g. no origin remote configured\) is silently skipped rather than failing the whole call.
 
 <a name="Options"></a>
-## type [Options](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/store.go#L72-L82>)
+## type [Options](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/store.go#L78-L88>)
 
 Options configures Open.
 
@@ -426,7 +426,7 @@ type StatusCounts struct {
 ```
 
 <a name="Store"></a>
-## type [Store](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/store.go#L31-L35>)
+## type [Store](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/store.go#L37-L41>)
 
 Store is the user\-level store handle. It wraps a \*sql.DB plus a deterministic clock \+ UUID provider \(test\-swappable\).
 
@@ -437,7 +437,7 @@ type Store struct {
 ```
 
 <a name="Open"></a>
-### func [Open](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/store.go#L85>)
+### func [Open](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/store.go#L91>)
 
 ```go
 func Open(ctx context.Context, opts Options) (*Store, error)
@@ -509,7 +509,7 @@ func (s *Store) ClearWorkerTask(ctx context.Context, workerID, status string) er
 ClearWorkerTask clears the active task from one worker row and marks it idle or terminated \(status defaults to "idle" when empty\).
 
 <a name="Store.Close"></a>
-### func \(\*Store\) [Close](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/store.go#L126>)
+### func \(\*Store\) [Close](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/store.go#L150>)
 
 ```go
 func (s *Store) Close() error
@@ -581,7 +581,7 @@ func (s *Store) CreateWorker(ctx context.Context, o WorkerOpts) (string, error)
 CreateWorker registers a newly\-spawned agent subprocess against a session. Returns the worker row id. Successor to plandag's CreateSessionVariant — no persona; carries the provider capability \(native\_fanout\) instead of a variant name \(§9/§10 of the design\).
 
 <a name="Store.DB"></a>
-### func \(\*Store\) [DB](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/store.go#L132>)
+### func \(\*Store\) [DB](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/store.go#L156>)
 
 ```go
 func (s *Store) DB() *sql.DB

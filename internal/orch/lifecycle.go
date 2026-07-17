@@ -80,7 +80,7 @@ func (o *Orchestrator) HandleContextEnd(ctx context.Context, a *agent.Agent, pla
 // HandleWatchdogSignal reacts to one agent.Signal from agent.Watch per the
 // control invariant: NEVER wait. A Prompt or Stall is treated as
 // kill+reclaim (a worker that would block or has gone quiet cannot be
-// trusted to make progress); ResourceExceeded is an immediate kill.
+// trusted to make progress).
 // Progress and Exited require no action here — Exited is handled by the
 // dispatch loop's normal evidence/verification path, and Progress is a
 // pure observation.
@@ -89,7 +89,7 @@ func (o *Orchestrator) HandleContextEnd(ctx context.Context, a *agent.Agent, pla
 // (via HandleContextEnd or an equivalent MarkFailed/MarkBlocked call).
 func HandleWatchdogSignal(sig agent.Signal) (shouldKill bool) {
 	switch sig.Kind {
-	case agent.Prompt, agent.Stall, agent.ResourceExceeded:
+	case agent.Prompt, agent.Stall:
 		return true
 	case agent.Progress, agent.Exited:
 		return false

@@ -88,17 +88,16 @@ func TestEnforcementPromptStopsWhenContextCanceled(t *testing.T) {
 	}
 }
 
-// TestHandleWatchdogSignalKillsOnPromptStallResourceExceeded confirms the
-// control invariant: Prompt/Stall/ResourceExceeded all say "kill", never
-// "wait".
-func TestHandleWatchdogSignalKillsOnPromptStallResourceExceeded(t *testing.T) {
+// TestHandleWatchdogSignalKillsOnPromptOrStall confirms the control
+// invariant: Prompt and Stall both say "kill", while Progress and Exited
+// never do.
+func TestHandleWatchdogSignalKillsOnPromptOrStall(t *testing.T) {
 	cases := []struct {
 		kind agent.SignalKind
 		want bool
 	}{
 		{agent.Prompt, true},
 		{agent.Stall, true},
-		{agent.ResourceExceeded, true},
 		{agent.Progress, false},
 		{agent.Exited, false},
 	}

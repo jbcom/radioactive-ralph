@@ -67,7 +67,7 @@ var DefaultPromptPatterns = []*regexp.Regexp{
 var DefaultStallTimeout = 3 * time.Minute
 ```
 
-<a name="ErrAgentBlocked"></a>ErrAgentBlocked is returned by superviseAgent \(and wrapped with the triggering reason\) when the control invariant fires: the agent produced a signal \(an interactive prompt, a stall, or a resource\-exceeded condition\) that means it can no longer be trusted to make forward progress non\-interactively. superviseAgent ALWAYS kills the agent before returning this error — callers must never wait on it themselves.
+<a name="ErrAgentBlocked"></a>ErrAgentBlocked is returned by superviseAgent \(and wrapped with the triggering reason\) when the control invariant fires: the agent produced a signal \(an interactive prompt or a stall\) that means it can no longer be trusted to make forward progress non\-interactively. superviseAgent ALWAYS kills the agent before returning this error — callers must never wait on it themselves.
 
 ```go
 var ErrAgentBlocked = errors.New("provider: agent blocked (killed by watchdog)")

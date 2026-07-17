@@ -383,8 +383,8 @@ type dispatchedStep struct {
 //
 // DispatchNext does NOT wait for dispatched workers to finish — each
 // dispatch runs its provider turn in its own goroutine, wired through
-// agent.Watch for stall/prompt/resource-exceeded handling (kill+reclaim,
-// never wait), and reports its result back for VerifyAndComplete via the
+// agent.Watch for stall/prompt handling (kill+reclaim, never wait), and
+// reports its result back for VerifyAndComplete via the
 // store's task/event log. The worker's termination or self-reported
 // result does NOT mark the task done.
 func (o *Orchestrator) DispatchNext(ctx context.Context, projectID, planID string) (dispatched int, err error) {

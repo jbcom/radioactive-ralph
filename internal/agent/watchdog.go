@@ -10,13 +10,15 @@ import (
 // SignalKind classifies a watchdog observation.
 type SignalKind int
 
-// The recognized SignalKind values.
+// The recognized SignalKind values. (There is deliberately no
+// resource-exceeded signal: Watch does no RSS/CPU sampling, so it could never
+// emit one — a runaway agent is bounded by the stall timeout, not a resource
+// ceiling. A real resource limiter would be its own feature.)
 const (
 	Progress SignalKind = iota
 	Stall
 	Prompt
 	Exited
-	ResourceExceeded
 )
 
 // Signal is one watchdog observation about an agent.

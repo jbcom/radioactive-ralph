@@ -141,7 +141,7 @@ type Supervisor struct {
 ```
 
 <a name="Supervisor.HandleAttach"></a>
-### func \(\*Supervisor\) [HandleAttach](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/supervisor/supervisor.go#L406>)
+### func \(\*Supervisor\) [HandleAttach](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/supervisor/supervisor.go#L423>)
 
 ```go
 func (s *Supervisor) HandleAttach(ctx context.Context, _ func(json.RawMessage) error) error
@@ -150,7 +150,7 @@ func (s *Supervisor) HandleAttach(ctx context.Context, _ func(json.RawMessage) e
 HandleAttach streams no events yet — the durable event/attach surface is part of the plan\-orchestration work in a later phase. It blocks until ctx is cancelled so a connected client simply sees a quiet, still\-open stream rather than an immediate close.
 
 <a name="Supervisor.HandleEnqueue"></a>
-### func \(\*Supervisor\) [HandleEnqueue](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/supervisor/supervisor.go#L369>)
+### func \(\*Supervisor\) [HandleEnqueue](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/supervisor/supervisor.go#L386>)
 
 ```go
 func (s *Supervisor) HandleEnqueue(ctx context.Context, args ipc.EnqueueArgs) (ipc.EnqueueReply, error)
@@ -179,7 +179,7 @@ func (s *Supervisor) HandlePlanSetStatus(ctx context.Context, args ipc.PlanSetSt
 HandlePlanSetStatus changes a plan's lifecycle status, validated to the allowed operator transitions.
 
 <a name="Supervisor.HandleReloadConfig"></a>
-### func \(\*Supervisor\) [HandleReloadConfig](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/supervisor/supervisor.go#L398>)
+### func \(\*Supervisor\) [HandleReloadConfig](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/supervisor/supervisor.go#L415>)
 
 ```go
 func (s *Supervisor) HandleReloadConfig(_ context.Context) error
@@ -188,7 +188,7 @@ func (s *Supervisor) HandleReloadConfig(_ context.Context) error
 HandleReloadConfig is a no\-op today: config reload semantics belong to vconfig's virtual\-layer resolution \(spec §5a\), which this minimal supervisor does not yet wire into a running process's live config.
 
 <a name="Supervisor.HandleStatus"></a>
-### func \(\*Supervisor\) [HandleStatus](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/supervisor/supervisor.go#L303>)
+### func \(\*Supervisor\) [HandleStatus](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/supervisor/supervisor.go#L320>)
 
 ```go
 func (s *Supervisor) HandleStatus(ctx context.Context) (ipc.StatusReply, error)
@@ -197,7 +197,7 @@ func (s *Supervisor) HandleStatus(ctx context.Context) (ipc.StatusReply, error)
 HandleStatus reports supervisor\-level liveness. ActiveWorkers and the per\-worker detail are sourced from the store's real worker rows \(store.ListRunningWorkers\) rather than an in\-process map: no in\-process structure could ever reflect this anyway, since agent subprocess lifetime is fully owned by whichever provider runner orch dispatched, not by the supervisor itself. A query failure degrades to an empty list / 0 count rather than failing the whole status reply — a transient error should never make \`status\` itself fail.
 
 <a name="Supervisor.HandleStop"></a>
-### func \(\*Supervisor\) [HandleStop](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/supervisor/supervisor.go#L390>)
+### func \(\*Supervisor\) [HandleStop](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/supervisor/supervisor.go#L407>)
 
 ```go
 func (s *Supervisor) HandleStop(_ context.Context, _ ipc.StopArgs) error
