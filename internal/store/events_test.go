@@ -110,6 +110,38 @@ func TestListProjectEventsScopesToProject(t *testing.T) {
 	}
 }
 
+func TestListProjectEventsIncludesPlanScopedEvents(t *testing.T) {
+	ctx := context.Background()
+	s := openTestStore(t)
+	projectID := mustCreateProject(t, s, "listevents-planlink")
+	planID := mustCreatePlan(t, s, projectID, "listevents-plan")
+
+	// A task-lifecycle-style event: plan_id set, project_id LEFT EMPTY (exactly
+	// how tasks.go inserts task.claimed/done/failed). A bare project_id filter
+	// would drop it — the headline events the overview exists to show.
+	if err := s.Emit(ctx, EmitOpts{PlanID: planID, TaskID: "t1", Kind: "task.done", Stream: "worker"}); err != nil {
+		t.Fatalf("Emit plan-scoped: %v", err)
+	}
+	if err := s.Emit(ctx, EmitOpts{ProjectID: projectID, Kind: "service.started"}); err != nil {
+		t.Fatalf("Emit project-scoped: %v", err)
+	}
+
+	events, err := s.ListProjectEvents(ctx, projectID, 10)
+	if err != nil {
+		t.Fatalf("ListProjectEvents: %v", err)
+	}
+	kinds := map[string]bool{}
+	for _, ev := range events {
+		kinds[ev.Kind] = true
+	}
+	if !kinds["task.done"] {
+		t.Errorf("ListProjectEvents dropped the plan-scoped task.done event; got kinds %v", kinds)
+	}
+	if !kinds["service.started"] {
+		t.Errorf("ListProjectEvents dropped the project-scoped service.started event; got kinds %v", kinds)
+	}
+}
+
 func TestMaxEventIDEmptyProjectIsZero(t *testing.T) {
 	ctx := context.Background()
 	s := openTestStore(t)

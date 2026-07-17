@@ -54,6 +54,10 @@ Never store runtime state under `.claude/`.
 - `radioactive_ralph plan import <file>` — import a markdown plan and activate
   it (the supervisor's periodic dispatch loop then drives its ready steps).
 - `radioactive_ralph plan ls [--all]` — list the current project's plans.
+- `radioactive_ralph events [--backlog N] [--json]` — tail the current project's
+  live supervisor events to stdout (the headless peer of the TUI/GUI live view;
+  the CLI consumer of the Attach observe API). `--backlog N` prints the N most
+  recent events first; `--json` emits JSONL.
 - `radioactive_ralph doctor` — environment checks.
 
 A plan step opts into MECHANICAL, orchestrator-verified completion with an

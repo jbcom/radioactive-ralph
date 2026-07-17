@@ -50,7 +50,13 @@ func (s *Store) Emit(ctx context.Context, o EmitOpts) error {
 	return nil
 }
 
-// ListProjectEvents returns the most recent events for one project first.
+// ListProjectEvents returns the most recent events for one project, newest
+// first. Scoping includes plan-linked events (see eventProjectScope) — the
+// headline lifecycle rows (task.claimed/done/failed/…) carry only plan_id and no
+// project_id, so a bare `project_id = ?` filter would silently drop exactly the
+// events a backlog/overview view exists to show, and would DISAGREE with the
+// live tail (EventsAfter uses the same scope). Keeping both on eventProjectScope
+// means the macro/backlog snapshot and the live stream show the same set.
 func (s *Store) ListProjectEvents(ctx context.Context, projectID string, limit int) ([]Event, error) {
 	if limit <= 0 {
 		limit = 20
@@ -59,10 +65,10 @@ func (s *Store) ListProjectEvents(ctx context.Context, projectID string, limit i
 		SELECT id, COALESCE(project_id,''), COALESCE(plan_id,''), COALESCE(task_id,''),
 		       kind, COALESCE(stream,''), COALESCE(actor,''), COALESCE(payload_json,''), occurred_at
 		FROM events
-		WHERE project_id = ?
+		WHERE `+eventProjectScope+`
 		ORDER BY occurred_at DESC, id DESC
 		LIMIT ?
-	`, projectID, limit)
+	`, projectID, projectID, limit)
 	if err != nil {
 		return nil, fmt.Errorf("store: list project events: %w", err)
 	}
