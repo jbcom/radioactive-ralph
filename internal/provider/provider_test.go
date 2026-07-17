@@ -2,6 +2,7 @@ package provider
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -220,34 +221,54 @@ printf '%s\n' '"}'
 	}
 }
 
-// TestDeclarativeStreamJSONSalvagesOutputPastOversizedLine proves that a single
-// stream-json line exceeding the 16MiB cap does NOT discard the whole turn: the
-// assistant text parsed from the frames BEFORE the oversized line is salvaged and
-// returned with no error, rather than failing the turn and throwing away real
-// work for one pathological frame.
-func TestDeclarativeStreamJSONSalvagesOutputPastOversizedLine(t *testing.T) {
+// TestDeclarativeStreamJSONOversizedLineFailsTurn proves that a single
+// stream-json line exceeding the 16MiB cap FAILS the turn with
+// ErrStreamJSONLineTooLong rather than reporting the frames parsed before it as
+// a success. The CLI is killed mid-stream, so that leading text is partial;
+// surfacing it as a completed turn would let the judgment-only acceptance check
+// (non-empty output ⇒ done) mark a step complete on a forcibly-terminated
+// worker. It must also complete PROMPTLY — the process tree is reaped before
+// cmd.Wait(), so a CLI still blocked writing the oversized line into a full
+// pipe can't hang the turn.
+func TestDeclarativeStreamJSONOversizedLineFailsTurn(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("shell-script fake CLI is Unix-only")
 	}
-	// First a normal assistant frame (usable output), THEN a single line far over
-	// the 16MiB scanner cap (no trailing newline needed — the scanner trips on it).
+	// First a normal assistant frame (would-be usable output), THEN a single line
+	// far over the 16MiB scanner cap (no trailing newline needed — the scanner
+	// trips on it). MaxRetries default 0 ⇒ one attempt, so the failure surfaces
+	// immediately.
 	bin := writeFakeCLI(t, "fake-oversized.sh", `#!/bin/sh
-printf '%s\n' '{"type":"assistant","text":"salvaged good frame"}'
+printf '%s\n' '{"type":"assistant","text":"partial pre-oversize frame"}'
 dd if=/dev/zero bs=1048576 count=17 2>/dev/null | tr '\000' a
 `)
-	result, err := DeclarativeRunner{}.Run(context.Background(), Binding{
-		Name:            "stream",
-		BinaryFromLocal: true,
-		Config: BindingConfig{
-			Type:   "stream-json",
-			Binary: bin,
-		},
-	}, Request{WorkingDir: t.TempDir()})
-	if err != nil {
-		t.Fatalf("oversized line should salvage prior output, not fail the turn: %v", err)
+	done := make(chan struct{})
+	var result Result
+	var err error
+	go func() {
+		result, err = DeclarativeRunner{}.Run(context.Background(), Binding{
+			Name:            "stream",
+			BinaryFromLocal: true,
+			Config: BindingConfig{
+				Type:   "stream-json",
+				Binary: bin,
+			},
+		}, Request{WorkingDir: t.TempDir()})
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(30 * time.Second):
+		t.Fatal("oversized line hung the turn — process tree not reaped before cmd.Wait()")
 	}
-	if !strings.Contains(result.AssistantOutput, "salvaged good frame") {
-		t.Fatalf("output = %q, want the pre-oversized-line assistant text salvaged", result.AssistantOutput)
+
+	if !errors.Is(err, ErrStreamJSONLineTooLong) {
+		t.Fatalf("err = %v, want ErrStreamJSONLineTooLong", err)
+	}
+	// A failed turn must carry NO partial output — otherwise the acceptance check
+	// could mark the step done on a killed worker.
+	if result.AssistantOutput != "" {
+		t.Fatalf("AssistantOutput = %q, want empty on a failed oversized-line turn", result.AssistantOutput)
 	}
 }
 

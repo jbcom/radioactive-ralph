@@ -22,6 +22,16 @@ const (
 	declarativeStreamJSONLineMax = 16 << 20
 )
 
+// ErrStreamJSONLineTooLong reports that a stream-json provider emitted a
+// single frame larger than declarativeStreamJSONLineMax (16MiB). The turn is
+// failed (and retried) rather than completed: the CLI was killed mid-stream,
+// so any text parsed before the oversized frame is PARTIAL, and reporting it
+// as a successful turn would let the judgment-only acceptance check
+// (mechanicalAcceptanceCheck: non-empty output ⇒ done) mark a step complete
+// on the strength of a forcibly-terminated worker. The partial text is kept
+// only in the returned rawOutput audit trail, never in AssistantOutput.
+var ErrStreamJSONLineTooLong = errors.New("provider: stream-json line exceeded 16MiB limit")
+
 var declarativeTokens = []string{
 	"allowed_tools",
 	"effort",
@@ -367,13 +377,14 @@ func runStreamJSONCommand(ctx context.Context, dir, bin string, args []string) (
 		_ = cmd.Wait()
 		if errors.Is(scanErr, bufio.ErrTooLong) {
 			// A single stream-json line exceeded declarativeStreamJSONLineMax
-			// (16MiB). SALVAGE rather than discard: the assistant text parsed from
-			// the frames BEFORE the oversized line is a degraded-but-usable turn
-			// result, and failing the whole turn would throw away real work for one
-			// pathological frame. Return the accumulated output with no error; the
-			// caller then verifies it normally. (raw is also returned for the audit
-			// trail.)
-			return strings.TrimSpace(assistant.String()), raw.String(), nil
+			// (16MiB), so we killed the CLI mid-stream. FAIL the turn (Run retries,
+			// then surfaces the error) rather than reporting the frames parsed
+			// before the oversized line as a success: that text is partial, and a
+			// nil error would feed it into Evidence.Output where the judgment-only
+			// acceptance check would mark the step done on a forcibly-terminated
+			// worker. The partial text stays in raw (the audit trail) but never
+			// reaches AssistantOutput.
+			return "", raw.String(), ErrStreamJSONLineTooLong
 		}
 		return "", raw.String(), fmt.Errorf("provider: scan stream-json: %w", scanErr)
 	}
