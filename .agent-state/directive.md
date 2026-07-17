@@ -86,6 +86,7 @@ docs/superpowers/specs/2026-07-16-supervisor-architecture-design.md.
 - [ ] [WAIT-REVIEW] Babysit PR #73 to green squash-merge: wait CI, address every review thread, resolve, merge; then flip Status to RELEASED
 
 ## Notes
+- PR #73 review-absorption (commit 84161bb + a8102be): fixed the CI portability failures at the root (ipc.ServiceEndpoint short-path socket fallback for the macOS sun_path 104-byte limit; agent.ErrPTYUnsupported + WSL boundary on Windows; launchd/reclaim tests made host-portable) AND all 6 CodeRabbit P1 gaps (plan import/ls CLI, tick-driven dispatch, worker/acceptance run in the project checkout via store.ProjectAbsPath, real acceptance derived from `accept:`/`accept-file:` plan markers, config-backed binding resolver, cobra SilenceErrors). All 6 review threads resolved. Docs updated (README/AGENTS/getting-started). Full local gate green + real binary verified end-to-end (init→plan import→plan ls).
 - [x] Interim review of Phases 1-6a — DONE (found+fixed agent Kill double-close; doc-comment fixes; dead-code removal)
 - Just-in-time step expansion: expand each phase's TDD micro-steps against the then-current tree at phase start (recorded strategy).
 - CodeQL-go fix belongs upstream in gh-fleet-sync (codeql.yml is centrally managed); branch protection already set on main.
