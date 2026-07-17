@@ -1,8 +1,9 @@
 # radioactive-ralph — supervisor-architecture rewrite directive
 
-**Status:** ACTIVE — never flips to RELEASED without an explicit manual "end the
-session" from the user (directive 2026-07-17). The loop below keeps generating
-work; the queue never legitimately drains.
+**Status:** RELEASED — the user ended the session ("finish up and wrap up",
+2026-07-17). The perpetual-shipping loop (directive 0) is stopped: the scheduled
+wakeup is cancelled and the CI monitors are stopped. All in-flight work landed;
+main is green. Re-arm by flipping Status back to ACTIVE on the next explicit go.
 
 ## Directive 0 — the perpetual-shipping loop (ALWAYS ACTIVE, never checked off)
 
@@ -198,14 +199,21 @@ Structured attach event surface (the observe half goes live) — shipping arc:
   (security-auditor, code-simplifier — one stale-comment delete folded into
   #184); govulncheck 0 CVEs, direct deps current.
 
-Next concrete item (per directive 0):
-- [ ] Live macro plan-PROGRESS deltas: today a live task.done/failed frame
-  updates the macro EVENT pane + the task's status (at meso) immediately, but the
-  macro plan-PROGRESS counter (snap.progress, from PlanProgress) only refreshes
-  on the 1s poll. Recompute the affected plan's done/total from the frame so the
-  progress bar advances live too — the last poll-only gap in the macro view.
-  Touches model.go's applyEvent/liveFrameMsg; land build+test+lint green with a
-  test (a task.done bumps the plan's Done count without a poll).
+- [x] Live macro plan-PROGRESS deltas (#188, MERGED): a live done frame bumps the
+  plan's Done counter immediately, closing the last poll-only gap in the macro
+  view. Review folded forward: dedup the two completion aliases (worker.completed
+  + worker.verified_done) by task-id; take max(live, poll) on the poll merge so
+  an in-flight poll can't regress a live bump.
+
+## Session end (2026-07-17)
+
+The TUI/CLI observe surface is fully push-live (compressed → PILLARS.md): events
+CLI #178, session-long TUI tail #182, cursor-aware reconnect #184, live macro
+progress #188. Two clean review lenses (security-auditor, code-simplifier);
+govulncheck 0 CVEs. When the loop resumes, the queued candidates are: GUI true
+per-event delta apply (it still full-refreshes per lifecycle frame — the reviews
+judged that model clean, so lower priority), or a NEW area (provider coverage,
+observability, DX). No open work blocks a resume.
 
 ## Notes
 
