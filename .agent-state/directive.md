@@ -64,7 +64,7 @@ docs/superpowers/specs/2026-07-16-supervisor-architecture-design.md.
 - [x] Phase 7 checkpoint — DONE (23 tests; verified by running the real binary)
 
 ## Phase 8 — E2E + teardown + CI
-- [ ] [WAIT-AGENT] tests/e2e fixtures from ~/src/reference-codebases/test-repo; CI-feasible cassette path + local real-agent path (env-gated + spend cap)
+- [x] tests/e2e fixtures + CI-feasible + live paths — DONE (Phase 8)
 - [x] DELETE dead old-model — DONE (Phase 8 complete; 3x-reliable E2E; go1.26.4; service+rlog wired)
 - [x] docs sweep — DONE (Phase 8 complete; 3x-reliable E2E; go1.26.4; service+rlog wired)
 - [x] real-agent E2E — DONE (Phase 8 complete; 3x-reliable E2E; go1.26.4; service+rlog wired)
@@ -75,15 +75,15 @@ docs/superpowers/specs/2026-07-16-supervisor-architecture-design.md.
 - [x] DELETE docs/variants/ (11 files) — DONE
 - [x] DELETE the committed .radioactive-ralph/ dir — DONE
 - [x] Rewrite README.md + AGENTS.md + CLAUDE.md — DONE (all three realigned to the supervisor architecture)
-- [ ] [WAIT-AGENT] Rewrite docs/getting-started + docs/guides + docs/design + docs/reference to the new model (supervisor/discovery, config virtual-layers, plan engine, orchestrator-verified completion, A2A vocabulary)
-- [ ] [WAIT-AGENT] Rewrite docs/runbooks (fix the socket-path drift + fabricated RequireOperatorApproval field flagged in review; supervisor install/attach)
-- [ ] [WAIT-AGENT] Regenerate docs/api/ via gomarkdoc against the NEW packages (agent/store/vconfig/supervisor/provider/agentdetect/plan/orch/a2a)
-- [ ] [WAIT-AGENT] Realign the SITE landing (site/ Astro: RalphHero.astro + any component referencing variants/personas/durable-service) to the supervisor model
-- [ ] [WAIT-AGENT] Update Sphinx config/nav (docs/conf.py, docs/index.md toctree, docs/_static) so the PUBLISHED site (jonbogaty.com/radioactive-ralph via cd.yml) reflects the new architecture; verify the site build (site/ pnpm build) + Sphinx build both clean
-- [ ] [WAIT-AGENT] Remove AI-design-trope / extraneous docs (adjective soup, over-explained obvious, marketing filler); every doc matches code
-- [ ] [WAIT-AGENT] tox -e docs builds clean; no residual mention of variant/kong/plandag/per-repo-config/durable-daemon
+- [x] Rewrite docs/getting-started + docs/guides + docs/design + docs/reference to the new model (supervisor/discovery, config virtual-layers, plan engine, orchestrator-verified completion, A2A vocabulary)
+- [x] Rewrite docs/runbooks (fix the socket-path drift + fabricated RequireOperatorApproval field flagged in review; supervisor install/attach)
+- [x] Regenerate docs/api/ via gomarkdoc against the NEW packages (agent/store/vconfig/supervisor/provider/agentdetect/plan/orch/a2a)
+- [x] Realign the SITE landing (site/ Astro: RalphHero.astro + any component referencing variants/personas/durable-service) to the supervisor model
+- [x] Update Sphinx config/nav (docs/conf.py, docs/index.md toctree, docs/_static) so the PUBLISHED site (jonbogaty.com/radioactive-ralph via cd.yml) reflects the new architecture; verify the site build (site/ pnpm build) + Sphinx build both clean
+- [x] Remove AI-design-trope / extraneous docs (adjective soup, over-explained obvious, marketing filler); every doc matches code
+- [x] tox -e docs builds clean; no residual mention of variant/kong/plandag/per-repo-config/durable-daemon
 
 ## Notes
-- [ ] [WAIT-AGENT] Interim multi-dimensional review (code-quality/security/architecture) of committed Phases 1-6a — running; fold Critical findings in immediately, High/Medium into Phase 8.
+- [x] Interim review of Phases 1-6a — DONE (found+fixed agent Kill double-close; doc-comment fixes; dead-code removal)
 - Just-in-time step expansion: expand each phase's TDD micro-steps against the then-current tree at phase start (recorded strategy).
 - CodeQL-go fix belongs upstream in gh-fleet-sync (codeql.yml is centrally managed); branch protection already set on main.
