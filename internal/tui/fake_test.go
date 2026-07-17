@@ -4,6 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"sync"
+	"testing"
+	"time"
 
 	"github.com/jbcom/radioactive-ralph/internal/ipc"
 	"github.com/jbcom/radioactive-ralph/internal/orch"
@@ -25,8 +28,40 @@ type fakeDataSource struct {
 	projectEvents []store.Event
 	taskEvents    map[string][]store.Event // keyed by planID+"/"+taskID
 
+	maxEventID   int64 // returned by MaxEventID (the initial cursor seed)
 	attachFrames []json.RawMessage
 	attachErr    error
+
+	// attachMu guards attachAfterIDs, which the Attach goroutine (started by
+	// startAttach) writes and the test goroutine reads — see waitAttachCount.
+	attachMu       sync.Mutex
+	attachAfterIDs []int64 // records the afterID cursor each Attach was called with
+}
+
+// waitAttachCount blocks until Attach has been called at least n times (the
+// Attach goroutine records each afterID), so a test can read attachAfterIDs
+// without racing the goroutine.
+func waitAttachCount(t *testing.T, f *fakeDataSource, n int) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		f.attachMu.Lock()
+		got := len(f.attachAfterIDs)
+		f.attachMu.Unlock()
+		if got >= n {
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatalf("Attach was called fewer than %d times", n)
+}
+
+// afterIDAt returns the afterID the i-th Attach was called with (0-indexed),
+// under the lock.
+func (f *fakeDataSource) afterIDAt(i int) int64 {
+	f.attachMu.Lock()
+	defer f.attachMu.Unlock()
+	return f.attachAfterIDs[i]
 }
 
 func (f *fakeDataSource) Status(_ context.Context) (ipc.StatusReply, error) {
@@ -53,7 +88,14 @@ func (f *fakeDataSource) ListTaskEvents(_ context.Context, planID, taskID string
 	return f.taskEvents[planID+"/"+taskID], nil
 }
 
-func (f *fakeDataSource) Attach(ctx context.Context, fn func(json.RawMessage) error) error {
+func (f *fakeDataSource) MaxEventID(_ context.Context) (int64, error) {
+	return f.maxEventID, nil
+}
+
+func (f *fakeDataSource) Attach(ctx context.Context, afterID int64, fn func(json.RawMessage) error) error {
+	f.attachMu.Lock()
+	f.attachAfterIDs = append(f.attachAfterIDs, afterID) // record each attach's cursor
+	f.attachMu.Unlock()
 	for _, frame := range f.attachFrames {
 		if err := fn(frame); err != nil {
 			return err

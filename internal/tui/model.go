@@ -95,6 +95,18 @@ type Model struct {
 	// of) is dropped rather than re-arming the current one.
 	attachEpoch uint64
 
+	// lastEventID is the model-owned resume cursor: the highest event id known
+	// to have been seen. It is seeded once to the current max before the first
+	// attach (attachSeeded), then advanced as live frames arrive. ensureAttach
+	// always passes it to the subscription, so a reconnect resumes from it and
+	// gap events aren't missed — even if the first subscription ended before
+	// yielding a frame (the model, not the datasource, owns the cursor).
+	lastEventID int64
+	// attachSeeded is set once lastEventID has been seeded from MaxEventID, so
+	// the seed happens exactly once (the first ensureAttach), not on every
+	// reconnect (which must keep the advanced cursor, not reset it).
+	attachSeeded bool
+
 	// fetching is true while a refresh gather is in flight. The 1s refresh
 	// tick fires unconditionally, so without this guard a gather that outlives
 	// its interval (large plan set, contended SQLite, slow supervisor) would
@@ -181,7 +193,25 @@ func (m *Model) ensureAttach() tea.Cmd {
 	if m.attachFrames != nil {
 		return nil
 	}
-	frames, done, cancel := startAttach(m.ctx, m.source)
+	// Seed the model-owned cursor ONCE, before the very first attach, to the
+	// current max — so the model (not the datasource) owns the cursor end-to-end.
+	// Without this, the first subscription's internal "seed from max" would be
+	// forgotten if it ended before yielding a frame, and a reconnect would
+	// re-seed to a NEWER max, skipping the gap. A read error is non-fatal (fall
+	// back to 0). This runs on the Update goroutine, but it's a single indexed
+	// MAX query — bounded and fast; a short timeout caps the worst case.
+	if !m.attachSeeded {
+		ctx, cancel := context.WithTimeout(m.ctx, fetchTimeout)
+		if maxID, err := m.source.MaxEventID(ctx); err == nil {
+			m.lastEventID = maxID
+		}
+		cancel()
+		m.attachSeeded = true
+	}
+	// Always resume from the model's cursor: on the first attach it's the seeded
+	// max ("from now"); on a reconnect it's the last id processed, so gap events
+	// aren't missed.
+	frames, done, cancel := startAttach(m.ctx, m.source, m.lastEventID)
 	m.attachCancel = cancel
 	m.attachFrames = frames
 	m.attachDone = done
@@ -287,14 +317,16 @@ func attachCmd(ctx context.Context, frames chan json.RawMessage, done chan error
 
 // startAttach launches source.Attach on a background goroutine that
 // forwards frames onto a channel, and returns the channels plus a cancel
-// func the model uses to stop it on drill-out. This keeps the actual
-// blocking Attach call off Bubble Tea's Update goroutine.
-func startAttach(parent context.Context, source DataSource) (frames chan json.RawMessage, done chan error, cancel context.CancelFunc) {
+// func the model uses to stop it. afterID is the resume cursor: >0 resumes
+// from a known id (a reconnect passes the last id it processed), <=0 seeds from
+// the current max (initial attach). This keeps the actual blocking Attach call
+// off Bubble Tea's Update goroutine.
+func startAttach(parent context.Context, source DataSource, afterID int64) (frames chan json.RawMessage, done chan error, cancel context.CancelFunc) {
 	ctx, cancel := context.WithCancel(parent)
 	frames = make(chan json.RawMessage, 32)
 	done = make(chan error, 1)
 	go func() {
-		err := source.Attach(ctx, func(raw json.RawMessage) error {
+		err := source.Attach(ctx, afterID, func(raw json.RawMessage) error {
 			select {
 			case frames <- raw:
 			case <-ctx.Done():
@@ -406,6 +438,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if !ok {
 			// Undecodable frame: nothing to act on, but keep the stream alive.
 			return rearm()
+		}
+
+		// Advance the resume cursor: on a later reconnect, ensureAttach resumes
+		// from the highest id processed so gap events aren't missed. Events stream
+		// in ascending id order, but guard with a max in case of any reordering.
+		if ev.ID > m.lastEventID {
+			m.lastEventID = ev.ID
 		}
 
 		// Apply the event as a live delta to the macro/meso snapshot so a
@@ -655,11 +694,6 @@ func (m Model) View() string {
 	}
 }
 
-// renderFrame renders one raw Attach event frame as a single human-
-// readable log line. Best-effort: an event whose shape doesn't match the
-// expected {kind, task_id, ...} form still renders as raw JSON rather than
-// being dropped, so nothing observed over the wire silently disappears
-// from the pane.
 // decodeEvent parses one Attach frame into the typed ipc.AttachEvent. ok is
 // false for a frame that can't be decoded or carries no kind — the caller drops
 // it (there is nothing to render or apply).
