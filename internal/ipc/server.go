@@ -23,6 +23,26 @@ const acceptRetryDelay = 50 * time.Millisecond
 // leaves ServerOptions.HeartbeatInterval unset.
 const defaultHeartbeatInterval = 10 * time.Second
 
+// Per-connection safety bounds. Clients are dumb and short-lived (dial → one
+// request line → response → close), so a request that hasn't fully arrived
+// within requestReadTimeout, or a response that can't be flushed within
+// responseWriteTimeout, means a slow/half-open/uncooperative client — NOT
+// legitimate work. Without these a bad client leaks its conn goroutine + wg
+// slot (hanging Stop()'s wg.Wait forever), and an unbounded request read lets
+// one client OOM the supervisor. Attach re-arms its own per-frame write
+// deadline; the request-read deadline is cleared once its request is parsed.
+const (
+	requestReadTimeout   = 30 * time.Second
+	responseWriteTimeout = 30 * time.Second
+	// maxRequestBytes caps a single request line so a client can't stream an
+	// unbounded body with no newline and exhaust server memory. Most requests
+	// are tiny JSON control messages, but CmdPlanImport embeds a whole
+	// operator-supplied markdown plan file in its args — so the cap must be
+	// large enough for a realistic plan while still bounding a runaway client.
+	// 32MiB comfortably fits any hand-authored plan and its JSON escaping.
+	maxRequestBytes = 32 << 20
+)
+
 // Handler handles a single client request. Attach streams events by
 // calling emit repeatedly; other commands return (reply, nil) and the
 // server transmits a single Response frame.
@@ -75,6 +95,20 @@ type Server struct {
 	wg                sync.WaitGroup
 	stopCh            chan struct{}
 	heartbeatCh       chan struct{}
+
+	// conns tracks every accepted connection so Stop can close them all,
+	// unblocking any handler parked in a read/write immediately — so shutdown
+	// drains promptly even against a half-open or non-reading client, rather
+	// than waiting out that connection's per-op deadline. connsMu guards it.
+	//
+	// stopConn, when non-nil, is the connection whose CmdStop request TRIGGERED
+	// this shutdown. closeConns skips it so its handler can still write the stop
+	// response before its own deferred Close runs — otherwise the requester
+	// would see ErrClosed even though the supervisor stopped cleanly, breaking
+	// the documented stop-command reply contract.
+	connsMu  sync.Mutex
+	conns    map[net.Conn]struct{}
+	stopConn net.Conn
 }
 
 // ServerOptions configures a Server.
@@ -128,7 +162,52 @@ func NewServer(opts ServerOptions) (*Server, error) {
 		heartbeatInterval: interval,
 		stopCh:            make(chan struct{}),
 		heartbeatCh:       make(chan struct{}),
+		conns:             make(map[net.Conn]struct{}),
 	}, nil
+}
+
+// trackConn registers a live connection (or, if the server is already
+// stopping, closes it immediately and returns false so the caller doesn't
+// serve a request during shutdown). deregister via untrackConn.
+func (s *Server) trackConn(conn net.Conn) bool {
+	s.connsMu.Lock()
+	defer s.connsMu.Unlock()
+	select {
+	case <-s.stopCh:
+		return false
+	default:
+	}
+	s.conns[conn] = struct{}{}
+	return true
+}
+
+func (s *Server) untrackConn(conn net.Conn) {
+	s.connsMu.Lock()
+	delete(s.conns, conn)
+	s.connsMu.Unlock()
+}
+
+// closeConns closes every tracked connection (except the one whose CmdStop
+// triggered this shutdown, if any), unblocking any handler parked in a
+// read/write so Stop's wg.Wait drains promptly. The skipped stop-requester's
+// handler writes its response and then closes its own conn via its defer.
+func (s *Server) closeConns() {
+	s.connsMu.Lock()
+	for c := range s.conns {
+		if c == s.stopConn {
+			continue
+		}
+		_ = c.Close()
+	}
+	s.connsMu.Unlock()
+}
+
+// markStopConn records the connection currently serving a CmdStop so closeConns
+// won't close it out from under its unwritten response.
+func (s *Server) markStopConn(conn net.Conn) {
+	s.connsMu.Lock()
+	s.stopConn = conn
+	s.connsMu.Unlock()
 }
 
 // Start binds the socket and begins accepting connections in a background
@@ -160,6 +239,11 @@ func (s *Server) Stop() error {
 	if s.listener != nil {
 		_ = s.listener.Close()
 	}
+	// Close every live connection so any handler parked in a read/write returns
+	// at once — otherwise wg.Wait would block until each stuck conn hit its own
+	// deadline (or forever, before deadlines existed). This is what makes Stop
+	// drain promptly even against a half-open or non-reading client.
+	s.closeConns()
 	s.wg.Wait()
 	_ = cleanupEndpoint(s.socketPath)
 	return nil
@@ -229,7 +313,20 @@ func (s *Server) acceptLoop() {
 func (s *Server) handleConn(conn net.Conn) {
 	defer func() { _ = conn.Close() }()
 
-	reader := bufio.NewReader(conn)
+	// Register so Stop can close this conn and unblock us instantly on shutdown.
+	// If the server is already stopping, don't serve — just return (conn is
+	// closed by the defer above).
+	if !s.trackConn(conn) {
+		return
+	}
+	defer s.untrackConn(conn)
+
+	// Bound the request read: a half-open client that never sends a newline
+	// must not park this goroutine (and its wg slot) forever — that would leak
+	// it and hang Stop()'s wg.Wait. The LimitReader caps how much one client can
+	// stream before the newline, so a client can't OOM the server either.
+	_ = conn.SetReadDeadline(time.Now().Add(requestReadTimeout))
+	reader := bufio.NewReader(io.LimitReader(conn, maxRequestBytes))
 	line, err := reader.ReadBytes('\n')
 	if err != nil {
 		if !errors.Is(err, io.EOF) {
@@ -237,9 +334,27 @@ func (s *Server) handleConn(conn net.Conn) {
 		}
 		return
 	}
+	// Request is in hand: clear the read deadline. A streaming Attach lives far
+	// longer than requestReadTimeout, and a request/response conn does no
+	// further reads, so leaving the deadline set would false-trip either.
+	_ = conn.SetReadDeadline(time.Time{})
 	var req Request
 	if err := json.Unmarshal(line, &req); err != nil {
 		s.writeResponse(conn, Response{Error: fmt.Sprintf("malformed request: %v", err)})
+		return
+	}
+
+	// Reject a request from a newer protocol than this server speaks BEFORE
+	// dispatch — a future version may reuse a command name with changed payload
+	// semantics, so decoding it as our version would mis-execute it. (dispatchDrive
+	// double-checks for the drive commands; this covers the observe/enqueue/stop
+	// surface too.)
+	if req.ProtoVersion > ProtoVersion {
+		s.writeResponse(conn, Response{
+			Ok:    false,
+			Code:  CodeUnsupportedCommand,
+			Error: fmt.Sprintf("protocol version %d not supported (this supervisor speaks v%d)", req.ProtoVersion, ProtoVersion),
+		})
 		return
 	}
 
@@ -273,6 +388,10 @@ func (s *Server) handleConn(conn net.Conn) {
 			s.writeResponse(conn, Response{Error: fmt.Sprintf("decode stop args: %v", err)})
 			return
 		}
+		// HandleStop triggers the supervisor's shutdown, which calls our own
+		// Stop() → closeConns() — possibly before we write the reply below.
+		// Mark this conn so closeConns skips it, preserving the stop response.
+		s.markStopConn(conn)
 		err := s.handler.HandleStop(ctx, args)
 		s.writeResponse(conn, Response{Ok: err == nil, Error: errString(err)})
 	case CmdReloadConfig:
@@ -284,6 +403,11 @@ func (s *Server) handleConn(conn net.Conn) {
 			if err != nil {
 				return err
 			}
+			// Per-frame write deadline: a slow/vanished Attach client applying
+			// backpressure must not block the emitter (and, via it, the
+			// supervisor) indefinitely — a timed-out write returns an error that
+			// ends the subscription instead.
+			_ = conn.SetWriteDeadline(time.Now().Add(responseWriteTimeout))
 			_, werr := conn.Write(frame)
 			return werr
 		}
@@ -414,6 +538,10 @@ func (s *Server) writeResponse(conn net.Conn, resp Response) {
 		s.logger.Error("ipc encode response", "err", err)
 		return
 	}
+	// Bound the write: a client that stops reading (or vanishes) must not park
+	// this handler in a blocked conn.Write, holding its wg slot and hanging
+	// Stop(). The deadline turns that into a prompt write error instead.
+	_ = conn.SetWriteDeadline(time.Now().Add(responseWriteTimeout))
 	if _, err := conn.Write(frame); err != nil {
 		s.logger.Debug("ipc write response", "err", err)
 	}
