@@ -47,6 +47,23 @@ type Handler interface {
 	HandleAttach(ctx context.Context, emit func(json.RawMessage) error) error
 }
 
+// DriveHandler is the OPTIONAL v2 drive surface. A Handler that also
+// implements DriveHandler gains the plan-import/plan-set-status/task-approve/
+// worker-kill commands; one that does not still serves the v1 observe surface,
+// and the server answers a drive command with an unsupported_command response.
+// Keeping it a separate interface means existing v1 Handler implementations
+// (and their test doubles) compile unchanged.
+type DriveHandler interface {
+	// HandlePlanImport creates + activates a plan from markdown.
+	HandlePlanImport(ctx context.Context, args PlanImportArgs) (PlanImportReply, error)
+	// HandlePlanSetStatus changes a plan's lifecycle status (validated).
+	HandlePlanSetStatus(ctx context.Context, args PlanSetStatusArgs) (PlanSetStatusReply, error)
+	// HandleTaskApprove clears the approval gate on a ready_pending_approval task.
+	HandleTaskApprove(ctx context.Context, args TaskApproveArgs) error
+	// HandleWorkerKill kills a running worker via kill-and-reclaim.
+	HandleWorkerKill(ctx context.Context, args WorkerKillArgs) error
+}
+
 // Server is the repo-service IPC server. One instance per repo service.
 type Server struct {
 	socketPath        string
@@ -273,14 +290,98 @@ func (s *Server) handleConn(conn net.Conn) {
 		attachErr := s.handler.HandleAttach(ctx, emit)
 		// Final frame: single Response signals end-of-stream.
 		s.writeResponse(conn, Response{Ok: attachErr == nil, Error: errString(attachErr)})
+
+	case CmdPlanImport, CmdPlanSetStatus, CmdTaskApprove, CmdWorkerKill:
+		s.dispatchDrive(ctx, conn, req)
+
 	default:
-		s.writeResponse(conn, Response{Error: fmt.Sprintf("unknown command: %q", req.Cmd)})
+		s.writeResponse(conn, Response{
+			Ok:    false,
+			Error: fmt.Sprintf("unknown command: %q", req.Cmd),
+			Code:  CodeUnsupportedCommand,
+		})
 	}
+}
+
+// dispatchDrive routes a v2 drive command. If the handler does not implement
+// DriveHandler, the command is answered with an unsupported_command response
+// so an older supervisor fails cleanly against a newer client.
+func (s *Server) dispatchDrive(ctx context.Context, conn net.Conn, req Request) {
+	dh, ok := s.handler.(DriveHandler)
+	if !ok {
+		s.writeResponse(conn, Response{
+			Ok:    false,
+			Error: fmt.Sprintf("drive command %q not supported by this supervisor", req.Cmd),
+			Code:  CodeUnsupportedCommand,
+		})
+		return
+	}
+
+	switch req.Cmd {
+	case CmdPlanImport:
+		var args PlanImportArgs
+		if !s.decodeArgs(conn, req.Args, &args) {
+			return
+		}
+		reply, err := dh.HandlePlanImport(ctx, args)
+		s.writeResult(conn, reply, err)
+	case CmdPlanSetStatus:
+		var args PlanSetStatusArgs
+		if !s.decodeArgs(conn, req.Args, &args) {
+			return
+		}
+		reply, err := dh.HandlePlanSetStatus(ctx, args)
+		s.writeResult(conn, reply, err)
+	case CmdTaskApprove:
+		var args TaskApproveArgs
+		if !s.decodeArgs(conn, req.Args, &args) {
+			return
+		}
+		err := dh.HandleTaskApprove(ctx, args)
+		s.writeResult(conn, OKReply{OK: err == nil}, err)
+	case CmdWorkerKill:
+		var args WorkerKillArgs
+		if !s.decodeArgs(conn, req.Args, &args) {
+			return
+		}
+		err := dh.HandleWorkerKill(ctx, args)
+		s.writeResult(conn, OKReply{OK: err == nil}, err)
+	}
+}
+
+// decodeArgs unmarshals req.Args into dst, writing an invalid_args response
+// and returning false on a decode failure. Empty args decode to the zero
+// value (some commands accept all-optional args).
+func (s *Server) decodeArgs(conn net.Conn, raw json.RawMessage, dst any) bool {
+	if len(raw) == 0 {
+		return true
+	}
+	if err := json.Unmarshal(raw, dst); err != nil {
+		s.writeResponse(conn, Response{
+			Ok:    false,
+			Error: fmt.Sprintf("decode args: %v", err),
+			Code:  CodeInvalidArgs,
+		})
+		return false
+	}
+	return true
+}
+
+// Coded is implemented by handler errors that carry a stable machine-readable
+// error class (Code* consts). writeResult copies it into Response.Code so the
+// client can branch on the failure kind.
+type Coded interface {
+	Code() string
 }
 
 func (s *Server) writeResult(conn net.Conn, data any, err error) {
 	if err != nil {
-		s.writeResponse(conn, Response{Error: err.Error()})
+		resp := Response{Error: err.Error()}
+		var c Coded
+		if errors.As(err, &c) {
+			resp.Code = c.Code()
+		}
+		s.writeResponse(conn, resp)
 		return
 	}
 	raw, marshErr := json.Marshal(data)

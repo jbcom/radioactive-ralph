@@ -57,3 +57,4 @@ site/pnpm-debug.log*
 # Leftover binary from ad-hoc builds
 /ralph
 
+/radioactive_ralph

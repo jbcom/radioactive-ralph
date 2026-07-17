@@ -577,3 +577,77 @@ func TestMarkDoneIgnoresStaleCompletionFromReclaimedSession(t *testing.T) {
 		t.Fatalf("B MarkDone (real owner): %v", err)
 	}
 }
+
+func TestApproveTask(t *testing.T) {
+	ctx := context.Background()
+	s := openTestStore(t)
+	projectID := mustCreateProject(t, s, "approve-project")
+	planID := mustCreatePlan(t, s, projectID, "approve-plan")
+
+	// Create a task and force it into ready_pending_approval.
+	if err := s.CreateTask(ctx, CreateTaskOpts{PlanID: planID, ID: "t", Description: "gated"}); err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+	if _, err := s.db.ExecContext(ctx,
+		`UPDATE tasks SET status='ready_pending_approval' WHERE plan_id=? AND id=?`, planID, "t"); err != nil {
+		t.Fatalf("set gate: %v", err)
+	}
+
+	found, changed, err := s.ApproveTask(ctx, planID, "t")
+	if err != nil || !found || !changed {
+		t.Fatalf("ApproveTask = (found=%v changed=%v err=%v), want (true,true,nil)", found, changed, err)
+	}
+	got, _ := s.GetTask(ctx, planID, "t")
+	if got.Status != TaskStatusReady {
+		t.Errorf("status = %q, want ready after approve", got.Status)
+	}
+
+	// Idempotent: approving again is a benign no-change success.
+	found, changed, err = s.ApproveTask(ctx, planID, "t")
+	if err != nil || !found || changed {
+		t.Errorf("second ApproveTask = (found=%v changed=%v err=%v), want (true,false,nil)", found, changed, err)
+	}
+
+	// Unknown task → found=false, no error.
+	found, _, err = s.ApproveTask(ctx, planID, "nope")
+	if err != nil || found {
+		t.Errorf("ApproveTask(unknown) = (found=%v err=%v), want (false,nil)", found, err)
+	}
+}
+
+func TestReclaimWorker(t *testing.T) {
+	ctx := context.Background()
+	s := openTestStore(t)
+	projectID := mustCreateProject(t, s, "reclaim-project")
+	planID := mustCreatePlan(t, s, projectID, "reclaim-plan")
+	sessionID, workerID := mustCreateSessionAndWorker(t, s, "1")
+
+	if err := s.CreateTask(ctx, CreateTaskOpts{PlanID: planID, ID: "t", Description: "work"}); err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+	if _, err := s.ClaimNextReady(ctx, planID, sessionID, workerID); err != nil {
+		t.Fatalf("ClaimNextReady: %v", err)
+	}
+	if err := s.SetWorkerTask(ctx, workerID, planID, "t"); err != nil {
+		t.Fatalf("SetWorkerTask: %v", err)
+	}
+
+	found, err := s.ReclaimWorker(ctx, workerID)
+	if err != nil || !found {
+		t.Fatalf("ReclaimWorker = (found=%v err=%v), want (true,nil)", found, err)
+	}
+	// Task requeued to pending; worker terminated.
+	got, _ := s.GetTask(ctx, planID, "t")
+	if got.Status != TaskStatusPending {
+		t.Errorf("task status = %q, want pending after worker kill", got.Status)
+	}
+	if got.ClaimedByWorkerID != "" {
+		t.Errorf("task still claimed by worker %q after kill", got.ClaimedByWorkerID)
+	}
+
+	// Unknown worker → found=false, no error.
+	found, err = s.ReclaimWorker(ctx, "no-such-worker")
+	if err != nil || found {
+		t.Errorf("ReclaimWorker(unknown) = (found=%v err=%v), want (false,nil)", found, err)
+	}
+}

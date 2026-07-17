@@ -671,3 +671,37 @@ func scanTasks(rows *sql.Rows) ([]Task, error) {
 	}
 	return out, rows.Err()
 }
+
+// ApproveTask clears the approval gate on a task: it transitions a
+// ready_pending_approval task to ready so dispatch can pick it up. Idempotent
+// on the desired end state — approving a task that is already ready (or past
+// it) returns found=true, changed=false rather than erroring. found=false (no
+// error) when the task doesn't exist, so the caller can surface CodeNotFound.
+func (s *Store) ApproveTask(ctx context.Context, planID, taskID string) (found, changed bool, err error) {
+	var status string
+	err = s.db.QueryRowContext(ctx,
+		`SELECT status FROM tasks WHERE plan_id = ? AND id = ?`, planID, taskID,
+	).Scan(&status)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, false, nil
+	}
+	if err != nil {
+		return false, false, fmt.Errorf("store: load task for approve: %w", err)
+	}
+	if status != string(TaskStatusReadyPendingApproval) {
+		// Already approved / not awaiting approval — idempotent success.
+		return true, false, nil
+	}
+	res, err := s.db.ExecContext(ctx, `
+		UPDATE tasks SET status = 'ready'
+		WHERE plan_id = ? AND id = ? AND status = 'ready_pending_approval'
+	`, planID, taskID)
+	if err != nil {
+		return false, false, fmt.Errorf("store: approve task: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, false, fmt.Errorf("store: approve rows affected: %w", err)
+	}
+	return true, n > 0, nil
+}

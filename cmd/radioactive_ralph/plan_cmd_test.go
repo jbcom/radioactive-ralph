@@ -5,37 +5,17 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/jbcom/radioactive-ralph/internal/store"
+	"github.com/jbcom/radioactive-ralph/internal/supervisor"
 )
 
-func TestDerivePlanTitleUsesFirstHeading(t *testing.T) {
-	got := derivePlanTitle("# Rebuild the runtime\n\nsome body\n", "/plans/x.md")
-	if got != "Rebuild the runtime" {
-		t.Errorf("title = %q, want %q", got, "Rebuild the runtime")
-	}
-}
-
-func TestDerivePlanTitleFallsBackToFilename(t *testing.T) {
-	got := derivePlanTitle("no heading here\n", "/plans/my-plan.md")
-	if got != "my-plan" {
-		t.Errorf("title = %q, want %q (filename sans extension)", got, "my-plan")
-	}
-}
-
-func TestSlugify(t *testing.T) {
-	cases := map[string]string{
-		"Rebuild the Runtime":  "rebuild-the-runtime",
-		"  Trailing/Leading  ": "trailing-leading",
-		"UPPER_and_snake":      "upper-and-snake",
-		"a---b":                "a-b",
-		"!!!":                  "plan",
-		"Ship v2.0 (final)":    "ship-v2-0-final",
-	}
-	for in, want := range cases {
-		if got := slugify(in); got != want {
-			t.Errorf("slugify(%q) = %q, want %q", in, got, want)
-		}
+func TestPlanTitleFallbackUsesFilename(t *testing.T) {
+	// With no heading, plan.Title falls back to planTitleFallback (the
+	// filename sans extension).
+	if got := planTitleFallback("/plans/my-plan.md"); got != "my-plan" {
+		t.Errorf("planTitleFallback = %q, want %q", got, "my-plan")
 	}
 }
 
@@ -132,5 +112,63 @@ func TestPlanImportDuplicateSlugRejected(t *testing.T) {
 	second.SetArgs([]string{"plan", "import", planPath})
 	if err := second.Execute(); err == nil {
 		t.Fatal("second import with the same slug: want error, got nil")
+	}
+}
+
+// TestPlanImportUsesSupervisorWhenReachable verifies that when a supervisor is
+// running, `plan import` routes through the IPC plan-import command (single
+// writer of record) rather than a direct store write. We start a real
+// supervisor, import a plan, and confirm it landed active in the shared store.
+func TestPlanImportUsesSupervisorWhenReachable(t *testing.T) {
+	stateDir := t.TempDir()
+	t.Setenv("RALPH_STATE_DIR", stateDir)
+	projectDir := t.TempDir()
+	chdir(t, projectDir)
+
+	st, err := store.Open(context.Background(), store.Options{DSN: store.DSN(storeDBPath(stateDir))})
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	done := make(chan error, 1)
+	go func() { done <- supervisor.Run(ctx, supervisor.Options{RuntimeDir: stateDir, Store: st}) }()
+
+	// Wait for the supervisor to be reachable.
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if c, ferr := supervisor.Find(stateDir); ferr == nil {
+			_ = c.Close()
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	planPath := filepath.Join(projectDir, "plan.md")
+	if err := os.WriteFile(planPath, []byte("# Via IPC\n\n1. step\n"), 0o600); err != nil {
+		t.Fatalf("write plan: %v", err)
+	}
+
+	cmd := newRootCmd(context.Background())
+	cmd.SetArgs([]string{"plan", "import", planPath})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("plan import: %v", err)
+	}
+
+	plans, err := st.ListPlans(context.Background(), "", nil)
+	if err != nil {
+		t.Fatalf("ListPlans: %v", err)
+	}
+	if len(plans) != 1 || plans[0].Title != "Via IPC" || plans[0].Status != store.PlanStatusActive {
+		t.Fatalf("plan not imported via supervisor as active: %+v", plans)
+	}
+
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("supervisor did not exit within 3s")
 	}
 }

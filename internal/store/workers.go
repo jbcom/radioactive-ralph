@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"time"
 )
@@ -166,4 +167,61 @@ func (s *Store) ClearWorkerTask(ctx context.Context, workerID, status string) er
 		return fmt.Errorf("store: clear worker task: %w", err)
 	}
 	return nil
+}
+
+// ReclaimWorker forcibly reclaims a worker's in-flight task and marks the
+// worker terminated — the store side of an operator/GUI "kill this worker"
+// action. It mirrors the reaper's reclaim: the worker's running task (if any)
+// goes back to 'pending' with its claim cleared (so it re-dispatches), and the
+// worker row is marked terminated. found=false (no error) when workerID is
+// unknown, so a kill of an already-gone worker is a benign no-op the caller
+// can surface as CodeNotFound. The actual subprocess is killed by the
+// orchestrator/provider layer that owns the pty; this only does the store-side
+// bookkeeping.
+func (s *Store) ReclaimWorker(ctx context.Context, workerID string) (found bool, err error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return false, fmt.Errorf("store: begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	var planID, taskID sql.NullString
+	err = tx.QueryRowContext(ctx,
+		`SELECT current_plan_id, current_task_id FROM workers WHERE id = ?`, workerID,
+	).Scan(&planID, &taskID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("store: load worker: %w", err)
+	}
+
+	// Requeue the worker's running task (if it still holds one).
+	if planID.Valid && taskID.Valid {
+		if _, err := tx.ExecContext(ctx, `
+			UPDATE tasks
+			SET status = 'pending',
+			    reclaim_count = reclaim_count + 1,
+			    claimed_by_session = NULL,
+			    claimed_by_worker_id = NULL
+			WHERE plan_id = ? AND id = ? AND status = 'running'
+		`, planID.String, taskID.String); err != nil {
+			return false, fmt.Errorf("store: requeue killed worker task: %w", err)
+		}
+	}
+
+	now := s.clock.Now().UTC().Format(time.RFC3339)
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE workers
+		SET current_plan_id = NULL, current_task_id = NULL,
+		    status = 'terminated', last_heartbeat = ?
+		WHERE id = ?
+	`, now, workerID); err != nil {
+		return false, fmt.Errorf("store: terminate worker: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return false, fmt.Errorf("store: commit: %w", err)
+	}
+	return true, nil
 }
