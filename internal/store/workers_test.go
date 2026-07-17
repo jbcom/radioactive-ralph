@@ -263,6 +263,44 @@ func TestCountRunningWorkers(t *testing.T) {
 	}
 }
 
+// TestListRunningWorkers returns running workers with their row id + assigned
+// plan/task — the read backing the status reply's per-worker detail so a client
+// can name a specific worker to kill. Terminated/idle workers are excluded.
+func TestListRunningWorkers(t *testing.T) {
+	ctx := context.Background()
+	s := openTestStore(t)
+	projectID := mustCreateProject(t, s, "lrw-project")
+	planID := mustCreatePlan(t, s, projectID, "lrw-plan")
+	sessionID, workerID := mustCreateSessionAndWorker(t, s, "1")
+	_, idleWorker := mustCreateSessionAndWorker(t, s, "2")
+
+	if err := s.CreateTask(ctx, CreateTaskOpts{PlanID: planID, ID: "t", Description: "d"}); err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+	if _, err := s.ClaimNextReady(ctx, planID, sessionID, workerID); err != nil {
+		t.Fatalf("ClaimNextReady: %v", err)
+	}
+	if err := s.SetWorkerTask(ctx, workerID, planID, "t"); err != nil {
+		t.Fatalf("SetWorkerTask: %v", err)
+	}
+	// Mark the second worker idle so it must be excluded.
+	if err := s.ClearWorkerTask(ctx, idleWorker, "idle"); err != nil {
+		t.Fatalf("ClearWorkerTask: %v", err)
+	}
+
+	running, err := s.ListRunningWorkers(ctx)
+	if err != nil {
+		t.Fatalf("ListRunningWorkers: %v", err)
+	}
+	if len(running) != 1 {
+		t.Fatalf("running workers = %d, want 1 (idle excluded)", len(running))
+	}
+	w := running[0]
+	if w.ID != workerID || w.PlanID != planID || w.TaskID != "t" {
+		t.Errorf("running worker = %+v, want id=%s plan=%s task=t", w, workerID, planID)
+	}
+}
+
 // TestReclaimWorkerRequeuesAllClaimedTasks proves a kill of a fan-out worker
 // requeues EVERY task the worker claimed, not just the one recorded in
 // current_task_id. The store keys the requeue on claimed_by_worker_id, so a

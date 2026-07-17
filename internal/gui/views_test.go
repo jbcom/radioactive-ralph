@@ -22,6 +22,7 @@ func newTestUI(t *testing.T, f *fakeController) *ui {
 	t.Cleanup(a.Quit)
 	w := a.NewWindow("test")
 	u := newUI(context.Background(), f, "proj", w)
+	u.syncRender = true // render + drive inline so taps are immediately assertable
 	w.SetContent(u.root)
 	return u
 }
@@ -124,7 +125,7 @@ func TestMicro_KillButtonCallsKillWorker(t *testing.T) {
 	f.plans = []store.Plan{{ID: "p1", Title: "P", Status: store.PlanStatusActive}}
 	f.tasks["p1"] = []store.Task{{ID: "t1", Description: "running task", Status: store.TaskStatusRunning}}
 	f.status = ipc.StatusReply{
-		Workers: []ipc.WorkerSummary{{PlanID: "p1", TaskID: "t1", ProviderSessionID: "w-123"}},
+		Workers: []ipc.WorkerSummary{{WorkerID: "w-123", PlanID: "p1", TaskID: "t1"}},
 	}
 	u := newTestUI(t, f)
 	u.selectedPlan = "p1"

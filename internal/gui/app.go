@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sync"
 	"time"
 
 	"fyne.io/fyne/v2"
@@ -13,6 +14,9 @@ import (
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/driver/desktop"
 	"fyne.io/fyne/v2/widget"
+	"github.com/jbcom/radioactive-ralph/internal/ipc"
+	"github.com/jbcom/radioactive-ralph/internal/orch"
+	"github.com/jbcom/radioactive-ralph/internal/store"
 )
 
 // refreshInterval is how often the GUI re-fetches Status + the current view's
@@ -97,9 +101,16 @@ type ui struct {
 	body      *fyne.Container // swapped per drill level
 	errBanner *widget.Label
 
-	// drill state: which plan/task is selected (empty = macro level).
+	// mu guards the drill selection, which is written by tap handlers on the
+	// main thread and read by gather() on the refresh/attach goroutine.
+	mu           sync.Mutex
 	selectedPlan string
 	selectedTask string
+
+	// syncRender, when set (tests only), makes refreshNow/drive/drillTo run inline
+	// and synchronously (no goroutine, no fyne.Do queueing) so a test can tap a
+	// button and immediately assert the result. Production is always async.
+	syncRender bool
 }
 
 func newUI(ctx context.Context, c Controller, project string, w fyne.Window) *ui {
@@ -144,15 +155,90 @@ func (u *ui) runAttach(ctx context.Context) {
 	})
 }
 
-// refreshNow re-fetches Status plus the current drill level's data and rebuilds
-// the view on Fyne's main thread.
+// refreshNow gathers a complete data snapshot for the current drill level OFF
+// the Fyne main thread (all the IPC/store reads happen here, on the refresh or
+// attach goroutine), then hands it to fyne.Do to render. Keeping every blocking
+// read off the UI thread means a slow or unavailable socket can never freeze the
+// window — the worst case is a stale view, not a hung one.
 func (u *ui) refreshNow() {
+	// Snapshot the drill selection under the lock (it is written by tap handlers
+	// on the main thread; this is the one cross-thread read).
+	u.mu.Lock()
+	plan, task := u.selectedPlan, u.selectedTask
+	u.mu.Unlock()
+
+	snap := u.gather(plan, task)
+
+	paint := func() {
+		u.setError(snap.err)
+		u.header.SetText(headerText(snap.status))
+		u.render(snap)
+	}
+	if u.syncRender {
+		paint() // tests: render inline so assertions see it immediately
+		return
+	}
+	fyne.Do(paint)
+}
+
+// snapshot is one fully-gathered view state: the status plus exactly the data
+// the current drill level renders. All fields are filled off the main thread by
+// gather; render() only reads them.
+type snapshot struct {
+	level        drillLevel
+	selectedPlan string
+	selectedTask string
+	status       ipc.StatusReply
+	err          error
+
+	plans    []store.Plan
+	progress map[string]orch.Progress // planID -> progress (macro)
+	tasks    []store.Task             // meso
+	events   []store.Event            // micro
+	killID   string                   // micro: worker id running the selected task ("" = none)
+}
+
+type drillLevel int
+
+const (
+	levelMacro drillLevel = iota
+	levelMeso
+	levelMicro
+)
+
+// gather performs all reads for the drill level implied by (plan, task) off the
+// main thread and returns a render-ready snapshot. The first error encountered
+// is recorded in snapshot.err (surfaced as a banner) but never aborts the whole
+// gather — a partial view beats a blank one.
+func (u *ui) gather(plan, task string) snapshot {
+	s := snapshot{selectedPlan: plan, selectedTask: task}
 	st, err := u.ctrl.Status(u.ctx)
-	fyne.Do(func() {
-		u.setError(err)
-		u.header.SetText(headerText(st))
-		u.rebuildBody()
-	})
+	s.status = st
+	s.err = err
+
+	switch {
+	case plan != "" && task != "":
+		s.level = levelMicro
+		s.events, _ = u.ctrl.ListTaskEvents(u.ctx, plan, task, 50)
+		for _, w := range st.Workers {
+			if w.PlanID == plan && w.TaskID == task {
+				s.killID = w.WorkerID // store worker-row id — the kill key
+				break
+			}
+		}
+	case plan != "":
+		s.level = levelMeso
+		s.tasks, _ = u.ctrl.ListTasks(u.ctx, plan)
+	default:
+		s.level = levelMacro
+		s.plans, _ = u.ctrl.ListPlans(u.ctx, u.project)
+		s.progress = make(map[string]orch.Progress, len(s.plans))
+		for _, p := range s.plans {
+			pr, _ := u.ctrl.PlanProgress(u.ctx, p.ID)
+			s.progress[p.ID] = pr
+		}
+	}
+	return s
 }
 
 func (u *ui) setError(err error) {

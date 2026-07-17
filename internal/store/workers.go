@@ -148,6 +148,47 @@ func (s *Store) CountRunningWorkers(ctx context.Context) (int, error) {
 	return n, nil
 }
 
+// RunningWorker is one currently-running worker row, projected for the observe
+// surface (status/GUI): the worker's own id — which WorkerKill/ReclaimWorker
+// key on — plus what it is working on. Distinct from WorkerOpts (create-time
+// input) and from any provider-session id.
+type RunningWorker struct {
+	ID       string
+	Provider string
+	PlanID   string
+	TaskID   string
+}
+
+// ListRunningWorkers returns every worker row currently status='running', with
+// the worker id and its current plan/task. It is the read backing the status
+// reply's per-worker detail so a client (the GUI) can name a specific worker to
+// kill. Workers with no assigned task are still listed (PlanID/TaskID empty).
+func (s *Store) ListRunningWorkers(ctx context.Context) ([]RunningWorker, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, provider, COALESCE(current_plan_id, ''), COALESCE(current_task_id, '')
+		FROM workers
+		WHERE status = 'running'
+		ORDER BY started_at
+	`)
+	if err != nil {
+		return nil, fmt.Errorf("store: list running workers: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var out []RunningWorker
+	for rows.Next() {
+		var w RunningWorker
+		if err := rows.Scan(&w.ID, &w.Provider, &w.PlanID, &w.TaskID); err != nil {
+			return nil, fmt.Errorf("store: scan running worker: %w", err)
+		}
+		out = append(out, w)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("store: iterate running workers: %w", err)
+	}
+	return out, nil
+}
+
 // ClearWorkerTask clears the active task from one worker row and marks it
 // idle or terminated (status defaults to "idle" when empty).
 func (s *Store) ClearWorkerTask(ctx context.Context, workerID, status string) error {
