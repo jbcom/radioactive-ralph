@@ -483,7 +483,7 @@ func (s *Store) AppendMessage(ctx context.Context, o AppendMessageOpts) error
 AppendMessage records one worker\<\-\>orchestrator A2A message \(most importantly, evidence a worker submits when it believes a task is done\). This ONLY logs the message — it never changes task status. Only internal/orch.VerifyAndComplete may transition a task to done.
 
 <a name="Store.ApproveTask"></a>
-### func \(\*Store\) [ApproveTask](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/tasks.go#L760>)
+### func \(\*Store\) [ApproveTask](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/tasks.go#L779>)
 
 ```go
 func (s *Store) ApproveTask(ctx context.Context, planID, taskID string) (found, changed bool, err error)
@@ -609,7 +609,7 @@ func (s *Store) Emit(ctx context.Context, o EmitOpts) error
 Emit appends one event row. Used for events not already covered by a more specific transactional helper \(e.g. task claim/done/failed emit their own events inline so the status transition and audit row commit atomically\).
 
 <a name="Store.EventsAfter"></a>
-### func \(\*Store\) [EventsAfter](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/events.go#L105>)
+### func \(\*Store\) [EventsAfter](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/events.go#L111>)
 
 ```go
 func (s *Store) EventsAfter(ctx context.Context, projectID string, afterID int64, limit int) ([]Event, error)
@@ -690,13 +690,13 @@ func (s *Store) ListPlans(ctx context.Context, projectID string, statuses []Plan
 ListPlans returns plans for a project matching filter. Empty filter → active \+ paused. Empty projectID lists across all projects.
 
 <a name="Store.ListProjectEvents"></a>
-### func \(\*Store\) [ListProjectEvents](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/events.go#L54>)
+### func \(\*Store\) [ListProjectEvents](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/events.go#L60>)
 
 ```go
 func (s *Store) ListProjectEvents(ctx context.Context, projectID string, limit int) ([]Event, error)
 ```
 
-ListProjectEvents returns the most recent events for one project first.
+ListProjectEvents returns the most recent events for one project, newest first. Scoping includes plan\-linked events \(see eventProjectScope\) — the headline lifecycle rows \(task.claimed/done/failed/…\) carry only plan\_id and no project\_id, so a bare \`project\_id = ?\` filter would silently drop exactly the events a backlog/overview view exists to show, and would DISAGREE with the live tail \(EventsAfter uses the same scope\). Keeping both on eventProjectScope means the macro/backlog snapshot and the live stream show the same set.
 
 <a name="Store.ListRunningWorkers"></a>
 ### func \(\*Store\) [ListRunningWorkers](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/workers.go#L196>)
@@ -764,7 +764,7 @@ MarkFailedWithPayload transitions a running task to failed or retries while pres
 Both UPDATEs are guarded by \`status = 'running' AND claimed\_by\_session = sessionID\`, the same owner guard MarkDone and MarkBlocked carry. Without the owner guard a stale failure report from a worker whose claim the reaper already reclaimed \(and possibly reassigned to a new worker\) would flip the task back to pending / failed and clear the NEW owner's claim — double execution plus a dropped completion. When the guard matches nothing the task has moved on under a different session; MarkFailed returns ErrTaskNotOwnedRunning so the caller can drop the stale report rather than resurrect the task.
 
 <a name="Store.MaxEventID"></a>
-### func \(\*Store\) [MaxEventID](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/events.go#L139>)
+### func \(\*Store\) [MaxEventID](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/events.go#L145>)
 
 ```go
 func (s *Store) MaxEventID(ctx context.Context, projectID string) (int64, error)
