@@ -754,3 +754,49 @@ func TestReclaimWorker(t *testing.T) {
 		t.Errorf("ReclaimWorker(unknown) = (found=%v err=%v), want (false,nil)", found, err)
 	}
 }
+
+// TestCreateTaskRequiresApprovalStartsGated confirms a task created with
+// RequiresApproval starts in ready_pending_approval (held behind the gate),
+// not pending — the producer for the approval flow.
+func TestCreateTaskRequiresApprovalStartsGated(t *testing.T) {
+	ctx := context.Background()
+	s := openTestStore(t)
+	projectID := mustCreateProject(t, s, "gate-producer-project")
+	planID := mustCreatePlan(t, s, projectID, "gate-producer-plan")
+
+	if err := s.CreateTask(ctx, CreateTaskOpts{
+		PlanID: planID, ID: "gated", Description: "deploy", RequiresApproval: true,
+	}); err != nil {
+		t.Fatalf("CreateTask(gated): %v", err)
+	}
+	if err := s.CreateTask(ctx, CreateTaskOpts{
+		PlanID: planID, ID: "open", Description: "build",
+	}); err != nil {
+		t.Fatalf("CreateTask(open): %v", err)
+	}
+
+	gated, err := s.GetTask(ctx, planID, "gated")
+	if err != nil {
+		t.Fatalf("GetTask(gated): %v", err)
+	}
+	if gated.Status != TaskStatusReadyPendingApproval {
+		t.Errorf("gated task status = %q, want ready_pending_approval", gated.Status)
+	}
+	open, err := s.GetTask(ctx, planID, "open")
+	if err != nil {
+		t.Fatalf("GetTask(open): %v", err)
+	}
+	if open.Status != TaskStatusPending {
+		t.Errorf("non-gated task status = %q, want pending", open.Status)
+	}
+
+	// The gate holds: an unapproved gated task is not claimable, but the open
+	// one is. (Ready() excludes ready_pending_approval.)
+	ready, err := s.Ready(ctx, planID)
+	if err != nil {
+		t.Fatalf("Ready: %v", err)
+	}
+	if len(ready) != 1 || ready[0].ID != "open" {
+		t.Fatalf("Ready = %+v, want only the open task (gated one held)", ready)
+	}
+}

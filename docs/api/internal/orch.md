@@ -117,7 +117,7 @@ type AcceptanceChecker func(ctx context.Context, dir string, acceptanceJSON stri
 ```
 
 <a name="BindingResolver"></a>
-## type [BindingResolver](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/orch/orchestrator.go#L38>)
+## type [BindingResolver](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/orch/orchestrator.go#L39>)
 
 BindingResolver picks the provider binding to use for one dispatch. Exists so tests and callers can supply a fixed/fake binding without a real config.toml. Defaults to always resolving "claude" via provider.ResolveBinding with zero File/Local config \(i.e. the built\-in claude capability record\).
 
@@ -126,7 +126,7 @@ type BindingResolver func(ctx context.Context, projectID string, parallelGroup b
 ```
 
 <a name="Clock"></a>
-## type [Clock](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/orch/orchestrator.go#L42>)
+## type [Clock](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/orch/orchestrator.go#L43>)
 
 Clock abstracts time.Now for deterministic tests \(enforcement\-prompt cadence, spend windows\).
 
@@ -177,7 +177,7 @@ func (e *ErrSpendCapExceeded) Error() string
 
 
 <a name="Option"></a>
-## type [Option](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/orch/orchestrator.go#L209>)
+## type [Option](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/orch/orchestrator.go#L221>)
 
 Option configures an Orchestrator at construction time.
 
@@ -186,7 +186,7 @@ type Option func(*Orchestrator)
 ```
 
 <a name="WithAcceptanceChecker"></a>
-### func [WithAcceptanceChecker](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/orch/orchestrator.go#L273>)
+### func [WithAcceptanceChecker](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/orch/orchestrator.go#L285>)
 
 ```go
 func WithAcceptanceChecker(c AcceptanceChecker) Option
@@ -195,7 +195,7 @@ func WithAcceptanceChecker(c AcceptanceChecker) Option
 WithAcceptanceChecker overrides the mechanical acceptance checker used by VerifyAndComplete. Primarily for tests.
 
 <a name="WithBaseContext"></a>
-### func [WithBaseContext](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/orch/orchestrator.go#L239>)
+### func [WithBaseContext](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/orch/orchestrator.go#L251>)
 
 ```go
 func WithBaseContext(ctx context.Context) Option
@@ -204,7 +204,7 @@ func WithBaseContext(ctx context.Context) Option
 WithBaseContext sets the long\-lived context the async dispatch goroutines run under \(provider turn \+ store writes \+ verification\). The supervisor passes its run context so dispatched work survives past the per\-request IPC context that drove it. A nil ctx is ignored \(keeps the Background default\).
 
 <a name="WithBindingResolver"></a>
-### func [WithBindingResolver](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/orch/orchestrator.go#L219>)
+### func [WithBindingResolver](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/orch/orchestrator.go#L231>)
 
 ```go
 func WithBindingResolver(f BindingResolver) Option
@@ -213,7 +213,7 @@ func WithBindingResolver(f BindingResolver) Option
 WithBindingResolver overrides how an Orchestrator picks a provider binding for a dispatch. Primarily for tests.
 
 <a name="WithClock"></a>
-### func [WithClock](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/orch/orchestrator.go#L224>)
+### func [WithClock](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/orch/orchestrator.go#L236>)
 
 ```go
 func WithClock(c Clock) Option
@@ -222,7 +222,7 @@ func WithClock(c Clock) Option
 WithClock overrides the Orchestrator's time source. Primarily for tests.
 
 <a name="WithDecisionLogRoot"></a>
-### func [WithDecisionLogRoot](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/orch/orchestrator.go#L279>)
+### func [WithDecisionLogRoot](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/orch/orchestrator.go#L291>)
 
 ```go
 func WithDecisionLogRoot(dir string) Option
@@ -231,7 +231,7 @@ func WithDecisionLogRoot(dir string) Option
 WithDecisionLogRoot overrides the XDG\-ish root directory used for per\-worker decision logs \(see lifecycle.go\). Primarily for tests.
 
 <a name="WithMaxParallel"></a>
-### func [WithMaxParallel](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/orch/orchestrator.go#L250>)
+### func [WithMaxParallel](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/orch/orchestrator.go#L262>)
 
 ```go
 func WithMaxParallel(n int) Option
@@ -240,7 +240,7 @@ func WithMaxParallel(n int) Option
 WithMaxParallel bounds how many steps DispatchNext will dispatch in one call for a parallel group. Zero/negative means unbounded \(bounded only by the number of ready steps\).
 
 <a name="WithRunnerFactory"></a>
-### func [WithRunnerFactory](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/orch/orchestrator.go#L213>)
+### func [WithRunnerFactory](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/orch/orchestrator.go#L225>)
 
 ```go
 func WithRunnerFactory(f RunnerFactory) Option
@@ -249,7 +249,7 @@ func WithRunnerFactory(f RunnerFactory) Option
 WithRunnerFactory overrides how an Orchestrator resolves a provider.Runner for a binding. Primarily for tests.
 
 <a name="WithSpendCap"></a>
-### func [WithSpendCap](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/orch/orchestrator.go#L262>)
+### func [WithSpendCap](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/orch/orchestrator.go#L274>)
 
 ```go
 func WithSpendCap(providerName string, capUSD float64) Option
@@ -258,7 +258,7 @@ func WithSpendCap(providerName string, capUSD float64) Option
 WithSpendCap sets a per\-provider spend cap in USD. A provider with no configured cap \(or a cap of 0\) is treated as uncapped.
 
 <a name="WithWatchdog"></a>
-### func [WithWatchdog](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/orch/orchestrator.go#L256>)
+### func [WithWatchdog](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/orch/orchestrator.go#L268>)
 
 ```go
 func WithWatchdog(cfg agent.WatchdogConfig) Option
@@ -267,7 +267,7 @@ func WithWatchdog(cfg agent.WatchdogConfig) Option
 WithWatchdog overrides the stall/prompt watchdog configuration used for dispatched workers.
 
 <a name="Orchestrator"></a>
-## type [Orchestrator](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/orch/orchestrator.go#L46-L125>)
+## type [Orchestrator](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/orch/orchestrator.go#L47-L126>)
 
 Orchestrator dispatches workers against a plan and is the sole authority that may mark a task done \(via VerifyAndComplete\).
 
@@ -278,7 +278,7 @@ type Orchestrator struct {
 ```
 
 <a name="New"></a>
-### func [New](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/orch/orchestrator.go#L287>)
+### func [New](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/orch/orchestrator.go#L299>)
 
 ```go
 func New(st *store.Store, opts ...Option) *Orchestrator
@@ -298,7 +298,7 @@ AbsorbDecisionLog reads workerID's XDG decision log \(if any\) and emits its con
 A missing decision log file is not an error — most workers write no decisions and that's fine; AbsorbDecisionLog is a no\-op in that case.
 
 <a name="Orchestrator.DispatchNext"></a>
-### func \(\*Orchestrator\) [DispatchNext](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/orch/orchestrator.go#L390>)
+### func \(\*Orchestrator\) [DispatchNext](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/orch/orchestrator.go#L402>)
 
 ```go
 func (o *Orchestrator) DispatchNext(ctx context.Context, projectID, planID string) (dispatched int, err error)
@@ -318,7 +318,7 @@ func (o *Orchestrator) HandleContextEnd(ctx context.Context, a *agent.Agent, pla
 HandleContextEnd is called when a worker signals it has hit its own "manual end" \(e.g. the underlying CLI's own end\-of\-context marker, or an operator\-visible equivalent\) rather than a stall or a normal turn completion. Per decision "context\-management": kill the worker and re\-dispatch fresh from plan\-scoped context — this is cheap because all durable state lives in the store, not in the worker's own memory. The caller \(DispatchNext's dispatch loop or an equivalent driver\) is responsible for actually re\-dispatching; HandleContextEnd's job is only to kill cleanly and release the task claim so it becomes ready again.
 
 <a name="Orchestrator.KillWorker"></a>
-### func \(\*Orchestrator\) [KillWorker](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/orch/orchestrator.go#L198>)
+### func \(\*Orchestrator\) [KillWorker](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/orch/orchestrator.go#L210>)
 
 ```go
 func (o *Orchestrator) KillWorker(workerID string) bool
@@ -336,7 +336,7 @@ func (o *Orchestrator) PlanProgress(ctx context.Context, planID string) (Progres
 PlanProgress computes Progress for planID by parsing its stored markdown and comparing the full step\-id universe \(plan.Plan.StepIDs\) against the store's done\-set \(the same done\-set DispatchNext feeds into plan.DecomposeRefs\).
 
 <a name="Orchestrator.SetBaseContext"></a>
-### func \(\*Orchestrator\) [SetBaseContext](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/orch/orchestrator.go#L630>)
+### func \(\*Orchestrator\) [SetBaseContext](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/orch/orchestrator.go#L736>)
 
 ```go
 func (o *Orchestrator) SetBaseContext(ctx context.Context)
@@ -354,7 +354,7 @@ func (o *Orchestrator) VerifyAndComplete(ctx context.Context, planID, taskID str
 VerifyAndComplete is THE BACKBONE: it never trusts a worker's termination or self\-report. It checks ev against task's acceptance criteria — re\-running mechanical checks in pure Go — and only marks the task done in the store if verification passes. Otherwise it marks the task failed \(retryable, per the task's normal retry budget\) and emits a worker.verification\_failed event carrying the rejection reason.
 
 <a name="Orchestrator.Wait"></a>
-### func \(\*Orchestrator\) [Wait](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/orch/orchestrator.go#L652>)
+### func \(\*Orchestrator\) [Wait](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/orch/orchestrator.go#L758>)
 
 ```go
 func (o *Orchestrator) Wait()
@@ -384,7 +384,7 @@ type Progress struct {
 ```
 
 <a name="RunnerFactory"></a>
-## type [RunnerFactory](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/orch/orchestrator.go#L31>)
+## type [RunnerFactory](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/orch/orchestrator.go#L32>)
 
 RunnerFactory resolves a provider.Runner for a binding. Exists so tests can inject a fake runner without a real agent CLI. Defaults to provider.NewRunner.
 

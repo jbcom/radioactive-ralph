@@ -253,3 +253,59 @@ func TestParseHeadingLevelSkip(t *testing.T) {
 		t.Errorf("SubGroups[0].Level = %d, want 3", top.SubGroups[0].Level)
 	}
 }
+
+func TestParseApprovalMarker(t *testing.T) {
+	md := []byte(`# Ship
+
+- build the thing
+- Deploy to production [approval]
+- run smoke tests [APPROVAL]
+`)
+	p, err := Parse(md)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	steps := p.Groups[0].Steps
+	if len(steps) != 3 {
+		t.Fatalf("want 3 steps, got %d", len(steps))
+	}
+	// Ungated step: no marker, no flag.
+	if steps[0].RequiresApproval {
+		t.Errorf("step 0 RequiresApproval = true, want false")
+	}
+	if steps[0].Text != "build the thing" {
+		t.Errorf("step 0 Text = %q, want %q", steps[0].Text, "build the thing")
+	}
+	// Gated step: flag set, marker stripped from Text.
+	if !steps[1].RequiresApproval {
+		t.Errorf("step 1 RequiresApproval = false, want true ([approval] marker)")
+	}
+	if steps[1].Text != "Deploy to production" {
+		t.Errorf("step 1 Text = %q, want the marker stripped", steps[1].Text)
+	}
+	// Marker is case-insensitive.
+	if !steps[2].RequiresApproval {
+		t.Errorf("step 2 RequiresApproval = false, want true ([APPROVAL] is case-insensitive)")
+	}
+	if steps[2].Text != "run smoke tests" {
+		t.Errorf("step 2 Text = %q, want the marker stripped", steps[2].Text)
+	}
+}
+
+func TestParseUnknownBracketTokenIsNotAMarker(t *testing.T) {
+	md := []byte(`# Ship
+
+- fix bug [WIP]
+`)
+	p, err := Parse(md)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	step := p.Groups[0].Steps[0]
+	if step.RequiresApproval {
+		t.Errorf("RequiresApproval = true for an unrelated bracket token, want false")
+	}
+	if step.Text != "fix bug [WIP]" {
+		t.Errorf("Text = %q, want the unknown bracket token left intact", step.Text)
+	}
+}

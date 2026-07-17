@@ -110,7 +110,7 @@ type Plan struct {
 ```
 
 <a name="Parse"></a>
-### func [Parse](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plan/parse.go#L78>)
+### func [Parse](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plan/parse.go#L88>)
 
 ```go
 func Parse(md []byte) (*Plan, error)
@@ -173,19 +173,29 @@ func (e PlanError) String() string
 
 
 <a name="Step"></a>
-## type [Step](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plan/parse.go#L64-L72>)
+## type [Step](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plan/parse.go#L64-L82>)
 
 Step is a single unit of work: the list item text plus any trailing paragraph\(s\) of detail found alongside the list under the same heading.
 
 ```go
 type Step struct {
-    // Text is the trimmed text of the list item itself.
+    // Text is the trimmed text of the list item itself, with any recognized
+    // trailing marker (see RequiresApproval) stripped off.
     Text string
 
     // Detail is the trimmed, newline-joined text of any paragraphs found
     // in the same section as the list (narrative elaborating the step).
     // Empty when there is no such detail.
     Detail string
+
+    // RequiresApproval is true when the step carries the `[approval]` marker
+    // (case-insensitive, at the end of the list-item text). Such a step is
+    // materialized as a task in status 'ready_pending_approval': it is held
+    // out of dispatch until an operator approves it (GUI/IPC ApproveTask),
+    // which transitions it to 'ready' so it becomes claimable. This is the
+    // human-in-the-loop gate — the producer for the approval flow the
+    // observe/drive surface already exposes.
+    RequiresApproval bool
 }
 ```
 

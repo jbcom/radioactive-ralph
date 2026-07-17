@@ -73,6 +73,12 @@ var DefaultStallTimeout = 3 * time.Minute
 var ErrAgentBlocked = errors.New("provider: agent blocked (killed by watchdog)")
 ```
 
+<a name="ErrStreamJSONLineTooLong"></a>ErrStreamJSONLineTooLong reports that a stream\-json provider emitted a single frame larger than declarativeStreamJSONLineMax \(16MiB\). The turn is failed \(and retried\) rather than completed: the CLI was killed mid\-stream, so any text parsed before the oversized frame is PARTIAL, and reporting it as a successful turn would let the judgment\-only acceptance check \(mechanicalAcceptanceCheck: non\-empty output ⇒ done\) mark a step complete on the strength of a forcibly\-terminated worker. That partial text is discarded entirely — it reaches neither AssistantOutput nor rawOutput — so a killed turn can never satisfy verification.
+
+```go
+var ErrStreamJSONLineTooLong = errors.New("provider: stream-json line exceeded 16MiB limit")
+```
+
 <a name="DefaultWatchdogConfig"></a>
 ## func [DefaultWatchdogConfig](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/watchdog.go#L54>)
 
@@ -92,7 +98,7 @@ func StreamJSONWatchdogConfig() agent.WatchdogConfig
 StreamJSONWatchdogConfig is the watchdog config for providers driven in a structured stream\-json mode \(claude/opencode: \`\-\-output\-format stream\-json\`\). Their normal output is JSON frames whose text can innocently contain prompt\-like words \("permission", "continue?"\), which content\-blind matching would misread and KILL a valid turn. It keeps the prompt patterns but sets SkipPromptMatchOnJSONLines: patterns are matched ONLY on lines that are NOT valid JSON, so a legitimate JSON frame is never a false prompt while a GENUINE raw interactive prompt \(never valid JSON\) is still caught immediately — not merely by the slower stall timeout.
 
 <a name="ValidateBinding"></a>
-## func [ValidateBinding](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/declarative.go#L159>)
+## func [ValidateBinding](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/declarative.go#L189>)
 
 ```go
 func ValidateBinding(binding Binding) error
@@ -217,7 +223,7 @@ func (CodexRunner) Run(ctx context.Context, binding Binding, req Request) (Resul
 Run executes one non\-interactive Codex turn.
 
 <a name="DeclarativeRunner"></a>
-## type [DeclarativeRunner](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/declarative.go#L40>)
+## type [DeclarativeRunner](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/declarative.go#L52>)
 
 DeclarativeRunner executes a config\-defined provider binding. It supports a small set of framing modes that cover the common provider CLI shapes without requiring a custom Go runner.
 
@@ -226,7 +232,7 @@ type DeclarativeRunner struct{}
 ```
 
 <a name="DeclarativeRunner.Run"></a>
-### func \(DeclarativeRunner\) [Run](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/declarative.go#L43>)
+### func \(DeclarativeRunner\) [Run](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/declarative.go#L55>)
 
 ```go
 func (DeclarativeRunner) Run(ctx context.Context, binding Binding, req Request) (Result, error)

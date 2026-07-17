@@ -485,6 +485,24 @@ func (o *Orchestrator) DispatchNext(ctx context.Context, projectID, planID strin
 	}
 
 	for i := 0; i < limit; i++ {
+		// Skip a step still held behind the approval gate BEFORE acquiring a
+		// dispatch slot, reserving spend, or spawning worker/session rows — a
+		// gated task is deliberately unclaimable, so without this pre-check every
+		// tick would allocate orphan session + worker rows ClaimNextReady can't
+		// use (see stepGateBlocks).
+		gated, err := o.stepGateBlocks(ctx, planID, refs[i], readySteps[i])
+		if err != nil {
+			return dispatched, err
+		}
+		if gated {
+			// Sequential: a gated step blocks the rest (they depend on it) → stop.
+			// Parallel: the others are independent → keep scanning.
+			if !parallel {
+				break
+			}
+			continue
+		}
+
 		// Try to acquire a dispatch slot BEFORE claiming a task. If the semaphore
 		// is full, there's no free capacity right now: stop the pass rather than
 		// claim a task we can't run or block the lock. The next tick / enqueue
@@ -492,131 +510,157 @@ func (o *Orchestrator) DispatchNext(ctx context.Context, projectID, planID strin
 		if !o.acquireDispatchSlot() {
 			break
 		}
-		releaseSlot := true // release inline on any pre-launch early exit below
-		spendProvider := "" // set once checkSpendCap reserves; released with the slot
-		release := func() {
-			if releaseSlot {
-				o.releaseDispatchSlot()
-				releaseSlot = false
-			}
-			if spendProvider != "" {
-				o.releaseSpendReservation(projectID, spendProvider)
-				spendProvider = ""
-			}
-		}
 
-		binding, err := o.resolveBinding(ctx, projectID, parallel)
+		launched, err := o.dispatchReadyStep(ctx, dispatchStepArgs{
+			projectID: projectID, projectDir: projectDir, planID: planID,
+			parsedPlan: parsedPlan, storeTitle: storedPlan.Title, groupHeading: groupHeading,
+			parallel: parallel, ref: refs[i], step: readySteps[i],
+		})
 		if err != nil {
-			release()
-			return dispatched, fmt.Errorf("orch: resolve binding: %w", err)
-		}
-
-		if err := o.checkSpendCap(ctx, projectID, binding.Name); err != nil {
-			// Spend-cap refusal is not a fatal DispatchNext error: other
-			// steps (possibly on an uncapped provider) may still be
-			// dispatchable. Record the refusal and move to the next ready
-			// step.
-			release()
-			_ = o.store.Emit(ctx, store.EmitOpts{
-				ProjectID: projectID,
-				PlanID:    planID,
-				Kind:      "worker.admission_refused",
-				Stream:    "service",
-				PayloadJSON: mustPayloadJSON(store.EventPayload{
-					Reason: err.Error(),
-				}),
-			})
-			continue
-		}
-		// checkSpendCap reserved an in-flight slot for a capped provider; record
-		// it so release() frees it on any pre-launch early exit below, and so
-		// ownership can transfer to the async goroutine on a successful launch.
-		spendProvider = binding.Name
-
-		sessionID, workerID, err := o.spawnWorkerRows(ctx, binding)
-		if err != nil {
-			release()
 			return dispatched, err
 		}
-
-		ds, err := o.claimStepTask(ctx, planID, parsedPlan, refs[i], readySteps[i], sessionID, workerID)
-		if err != nil {
-			// Release the worker row we just spawned — otherwise it leaks in
-			// 'running' with no task (CreateWorker hardcodes status='running').
-			release()
-			_ = o.store.ClearWorkerTask(ctx, workerID, "crashed")
-			return dispatched, err
+		if launched {
+			dispatched++
 		}
-		if ds == nil {
-			// Nothing ready to claim (lost the race to another claimer, or
-			// the task doesn't exist yet under this plan — see
-			// claimStepTask). Not an error; just nothing to dispatch here.
-			// Release the worker row we just spawned since it will never
-			// be assigned a task.
-			release()
-			_ = o.store.ClearWorkerTask(ctx, workerID, "idle")
-			continue
-		}
-		if err := o.store.SetWorkerTask(ctx, workerID, planID, ds.task.ID); err != nil {
-			release()
-			return dispatched, fmt.Errorf("orch: set worker task: %w", err)
-		}
-
-		scoped := scopedContext{
-			PlanTitle:    planTitle(parsedPlan, storedPlan.Title),
-			GroupHeading: groupHeading,
-			StepText:     ds.step.Text,
-			StepDetail:   ds.step.Detail,
-		}
-
-		// Launch the provider turn asynchronously: the claim above (fast store
-		// I/O) has happened synchronously under the caller's dispatchMu, but the
-		// slow agent turn + verify must run off the lock. The slot and the
-		// inflight WaitGroup are released when the goroutine finishes; ownership of
-		// releaseSlot transfers to the goroutine here, so the loop's inline release
-		// no longer fires for this iteration.
-		releaseSlot = false
-		reservedProvider := spendProvider // transfer the reservation to the goroutine
-		spendProvider = ""                // loop's release() must not also free it
-		o.inflight.Add(1)
-		// Run under baseCtx, NOT the caller's ctx: HandleEnqueue's ctx is the IPC
-		// request context, cancelled the moment the request handler returns, which
-		// would kill this goroutine's run + store writes.
-		runCtx := o.dispatchBaseCtx()
-		go func() {
-			// LAST defer ⇒ runs FIRST during unwinding: recover the panic and
-			// record it BEFORE inflight.Done() below signals Wait(), so the
-			// dispatch_panic event is written while the store is guaranteed live
-			// (Wait() gates supervisor shutdown / store close). A panicking turn
-			// becomes a logged failure, never a supervisor crash.
-			defer o.inflight.Done()
-			defer o.releaseDispatchSlot()
-			// Release the spend reservation once the turn's usage is recorded
-			// (dispatchWorker records it before returning), freeing the capped
-			// provider for its next turn.
-			defer o.releaseSpendReservation(projectID, reservedProvider)
-			defer o.recoverDispatchPanic(runCtx, projectID, planID, panicCleanup{
-				sessionID: sessionID,
-				workerID:  workerID,
-				taskIDs:   []string{ds.task.ID},
-			})
-			if err := o.dispatchWorker(runCtx, projectID, projectDir, planID, sessionID, workerID, binding, ds, scoped); err != nil {
-				// Async: no caller to return to. A dispatch error for one worker
-				// must never abort the pass or wedge the supervisor — log it as a
-				// store event (same shape as spend-cap refusal) and move on.
-				_ = o.store.Emit(runCtx, store.EmitOpts{
-					ProjectID:   projectID,
-					PlanID:      planID,
-					Kind:        "worker.dispatch_error",
-					Stream:      "service",
-					PayloadJSON: mustPayloadJSON(store.EventPayload{Reason: err.Error()}),
-				})
-			}
-		}()
-		dispatched++
 	}
 
 	return dispatched, nil
+}
+
+// dispatchStepArgs bundles the per-step inputs dispatchReadyStep needs, so the
+// call site stays readable rather than passing a dozen positional arguments.
+type dispatchStepArgs struct {
+	projectID, projectDir, planID string
+	parsedPlan                    *plan.Plan
+	storeTitle, groupHeading      string
+	parallel                      bool
+	ref                           plan.StepRef
+	step                          plan.Step
+}
+
+// dispatchReadyStep runs one iteration of DispatchNext's per-step body with a
+// dispatch slot ALREADY acquired by the caller. It resolves the binding, checks
+// the spend cap, spawns the worker rows, claims the task, and launches the async
+// turn — releasing the slot inline on any pre-launch early exit and transferring
+// its ownership to the goroutine on a successful launch. Returns launched=true
+// only when the async turn was started (so the caller counts it); a spend-cap
+// refusal or a lost claim returns launched=false with no error (the caller moves
+// on), and a real fault returns the error.
+func (o *Orchestrator) dispatchReadyStep(ctx context.Context, a dispatchStepArgs) (launched bool, err error) {
+	releaseSlot := true // release inline on any pre-launch early exit below
+	spendProvider := "" // set once checkSpendCap reserves; released with the slot
+	release := func() {
+		if releaseSlot {
+			o.releaseDispatchSlot()
+			releaseSlot = false
+		}
+		if spendProvider != "" {
+			o.releaseSpendReservation(a.projectID, spendProvider)
+			spendProvider = ""
+		}
+	}
+
+	binding, err := o.resolveBinding(ctx, a.projectID, a.parallel)
+	if err != nil {
+		release()
+		return false, fmt.Errorf("orch: resolve binding: %w", err)
+	}
+
+	if err := o.checkSpendCap(ctx, a.projectID, binding.Name); err != nil {
+		// Spend-cap refusal is not a fatal error: other steps (possibly on an
+		// uncapped provider) may still be dispatchable. Record it and move on.
+		release()
+		_ = o.store.Emit(ctx, store.EmitOpts{
+			ProjectID:   a.projectID,
+			PlanID:      a.planID,
+			Kind:        "worker.admission_refused",
+			Stream:      "service",
+			PayloadJSON: mustPayloadJSON(store.EventPayload{Reason: err.Error()}),
+		})
+		return false, nil
+	}
+	// checkSpendCap reserved an in-flight slot for a capped provider; record it
+	// so release() frees it on any pre-launch early exit below, and so ownership
+	// can transfer to the async goroutine on a successful launch.
+	spendProvider = binding.Name
+
+	sessionID, workerID, err := o.spawnWorkerRows(ctx, binding)
+	if err != nil {
+		release()
+		return false, err
+	}
+
+	ds, err := o.claimStepTask(ctx, a.planID, a.parsedPlan, a.ref, a.step, sessionID, workerID)
+	if err != nil {
+		// Release the worker row we just spawned — otherwise it leaks in
+		// 'running' with no task (CreateWorker hardcodes status='running').
+		release()
+		_ = o.store.ClearWorkerTask(ctx, workerID, "crashed")
+		return false, err
+	}
+	if ds == nil {
+		// Nothing ready to claim (lost the race to another claimer). Not an
+		// error; release the worker row since it will never be assigned a task.
+		release()
+		_ = o.store.ClearWorkerTask(ctx, workerID, "idle")
+		return false, nil
+	}
+	if err := o.store.SetWorkerTask(ctx, workerID, a.planID, ds.task.ID); err != nil {
+		release()
+		return false, fmt.Errorf("orch: set worker task: %w", err)
+	}
+
+	scoped := scopedContext{
+		PlanTitle:    planTitle(a.parsedPlan, a.storeTitle),
+		GroupHeading: a.groupHeading,
+		StepText:     ds.step.Text,
+		StepDetail:   ds.step.Detail,
+	}
+
+	// Launch the provider turn asynchronously: the claim above (fast store I/O)
+	// ran synchronously under the caller's dispatchMu, but the slow agent turn +
+	// verify must run off the lock. The slot and the inflight WaitGroup are
+	// released when the goroutine finishes; ownership of releaseSlot transfers to
+	// the goroutine here, so release() no longer fires for this step.
+	releaseSlot = false
+	reservedProvider := spendProvider // transfer the reservation to the goroutine
+	spendProvider = ""                // release() must not also free it
+	o.inflight.Add(1)
+	// Run under baseCtx, NOT the caller's ctx: HandleEnqueue's ctx is the IPC
+	// request context, cancelled the moment the request handler returns, which
+	// would kill this goroutine's run + store writes.
+	runCtx := o.dispatchBaseCtx()
+	go func() {
+		// LAST defer ⇒ runs FIRST during unwinding: recover the panic and record
+		// it BEFORE inflight.Done() below signals Wait(), so the dispatch_panic
+		// event is written while the store is guaranteed live (Wait() gates
+		// supervisor shutdown / store close). A panicking turn becomes a logged
+		// failure, never a supervisor crash.
+		defer o.inflight.Done()
+		defer o.releaseDispatchSlot()
+		// Release the spend reservation once the turn's usage is recorded
+		// (dispatchWorker records it before returning), freeing the capped
+		// provider for its next turn.
+		defer o.releaseSpendReservation(a.projectID, reservedProvider)
+		defer o.recoverDispatchPanic(runCtx, a.projectID, a.planID, panicCleanup{
+			sessionID: sessionID,
+			workerID:  workerID,
+			taskIDs:   []string{ds.task.ID},
+		})
+		if err := o.dispatchWorker(runCtx, a.projectID, a.projectDir, a.planID, sessionID, workerID, binding, ds, scoped); err != nil {
+			// Async: no caller to return to. A dispatch error for one worker must
+			// never abort the pass or wedge the supervisor — log it as a store
+			// event (same shape as spend-cap refusal) and move on.
+			_ = o.store.Emit(runCtx, store.EmitOpts{
+				ProjectID:   a.projectID,
+				PlanID:      a.planID,
+				Kind:        "worker.dispatch_error",
+				Stream:      "service",
+				PayloadJSON: mustPayloadJSON(store.EventPayload{Reason: err.Error()}),
+			})
+		}
+	}()
+	return true, nil
 }
 
 // panicCleanup carries the claim/worker bookkeeping recoverDispatchPanic needs
@@ -813,31 +857,57 @@ func (o *Orchestrator) spawnWorkerRows(ctx context.Context, binding provider.Bin
 // store.ClaimNextReady bound to that specific task id, under sessionID/
 // workerID (see spawnWorkerRows). Returns nil (no error) if the task could
 // not be claimed right now (e.g. another dispatcher claimed it first).
+// materializeStepTask ensures the task for ref exists in the store (idempotent),
+// creating it on first sight with the step's acceptance criteria and approval
+// gate. It returns the current task row so the caller can inspect its status
+// (e.g. to skip a step still held behind the approval gate) BEFORE allocating
+// any worker/session rows for it. Separated from claimStepTask so the dispatch
+// loop can gate-check a step without paying the worker-row cost for a task that
+// isn't claimable yet.
+func (o *Orchestrator) materializeStepTask(ctx context.Context, planID string, ref plan.StepRef, step plan.Step) (*store.Task, error) {
+	taskID := ref.ID()
+	if existing, err := o.store.GetTask(ctx, planID, taskID); err == nil {
+		return existing, nil
+	}
+	// First sight of this step: materialize it. A concurrent dispatcher losing
+	// the create race is fine — the unique (plan_id, id) constraint means only
+	// one CreateTask wins; the loser just re-reads the row below.
+	acceptance, jsonErr := defaultAcceptanceJSON(step)
+	if jsonErr != nil {
+		return nil, fmt.Errorf("orch: build acceptance for %s: %w", taskID, jsonErr)
+	}
+	// Only the benign "another dispatcher already created this row" race
+	// (ErrDuplicateTask) is tolerable here. A REAL insert failure (disk full,
+	// DB busy, I/O) must surface, not be swallowed into a silent stall.
+	if err := o.store.CreateTask(ctx, store.CreateTaskOpts{
+		PlanID:           planID,
+		ID:               taskID,
+		Description:      step.Text,
+		AcceptanceJSON:   acceptance,
+		RequiresApproval: step.RequiresApproval,
+	}); err != nil && !errors.Is(err, store.ErrDuplicateTask) {
+		return nil, fmt.Errorf("orch: materialize task %s: %w", taskID, err)
+	}
+	return o.store.GetTask(ctx, planID, taskID)
+}
+
+// stepGateBlocks materializes ref's task (idempotent) and reports whether it is
+// currently held behind the approval gate (status ready_pending_approval), i.e.
+// not yet dispatchable. The dispatch loop calls this before allocating any
+// worker/session rows so a gated step never spawns rows that ClaimNextReady
+// can't use.
+func (o *Orchestrator) stepGateBlocks(ctx context.Context, planID string, ref plan.StepRef, step plan.Step) (bool, error) {
+	task, err := o.materializeStepTask(ctx, planID, ref, step)
+	if err != nil {
+		return false, err
+	}
+	return task.Status == store.TaskStatusReadyPendingApproval, nil
+}
+
 func (o *Orchestrator) claimStepTask(ctx context.Context, planID string, p *plan.Plan, ref plan.StepRef, step plan.Step, sessionID, workerID string) (*dispatchedStep, error) {
 	taskID := ref.ID()
-
-	if _, err := o.store.GetTask(ctx, planID, taskID); err != nil {
-		// First sight of this step: materialize it as a pending task. A
-		// concurrent dispatcher losing the create race is fine — the
-		// unique (plan_id, id) constraint means only one CreateTask wins;
-		// the loser proceeds straight to the claim attempt below, which is
-		// the one that must be race-safe.
-		acceptance, jsonErr := defaultAcceptanceJSON(step)
-		if jsonErr != nil {
-			return nil, fmt.Errorf("orch: build acceptance for %s: %w", taskID, jsonErr)
-		}
-		// Only the benign "another dispatcher already created this row" race
-		// (ErrDuplicateTask) is tolerable here — the loser falls through to
-		// the race-safe claim below. A REAL insert failure (disk full, DB
-		// busy, I/O) must surface, not be swallowed into a silent stall.
-		if err := o.store.CreateTask(ctx, store.CreateTaskOpts{
-			PlanID:         planID,
-			ID:             taskID,
-			Description:    step.Text,
-			AcceptanceJSON: acceptance,
-		}); err != nil && !errors.Is(err, store.ErrDuplicateTask) {
-			return nil, fmt.Errorf("orch: materialize task %s: %w", taskID, err)
-		}
+	if _, err := o.materializeStepTask(ctx, planID, ref, step); err != nil {
+		return nil, err
 	}
 
 	claimed, err := o.store.ClaimNextReady(ctx, planID, sessionID, workerID)
