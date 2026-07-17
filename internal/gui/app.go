@@ -126,10 +126,20 @@ type ui struct {
 	errBanner *widget.Label
 
 	// mu guards the drill selection, which is written by tap handlers on the
-	// main thread and read by gather() on the refresh/attach goroutine.
+	// main thread and read by gather() on the refresh/attach goroutine. It also
+	// guards refreshSeq (below).
 	mu           sync.Mutex
 	selectedPlan string
 	selectedTask string
+
+	// refreshSeq orders concurrent refreshes. refreshNow is fired from four
+	// sources (1s ticker, each live event, each drive, each drill); their
+	// off-thread gather()s can finish out of order, so a slow older gather could
+	// repaint stale data (even a drill level the user already left) after a newer
+	// one. Each refreshNow claims an incrementing seq; paint() no-ops if a newer
+	// seq has already painted. Guarded by mu.
+	refreshSeq     uint64
+	lastPaintedSeq uint64
 
 	// syncRender, when set (tests only), makes refreshNow/drive/drillTo run inline
 	// and synchronously (no goroutine, no fyne.Do queueing) so a test can tap a
@@ -185,15 +195,28 @@ func (u *ui) runAttach(ctx context.Context) {
 // read off the UI thread means a slow or unavailable socket can never freeze the
 // window — the worst case is a stale view, not a hung one.
 func (u *ui) refreshNow() {
-	// Snapshot the drill selection under the lock (it is written by tap handlers
-	// on the main thread; this is the one cross-thread read).
+	// Snapshot the drill selection AND claim an ordering seq under the lock (the
+	// selection is written by tap handlers on the main thread; this is the one
+	// cross-thread read).
 	u.mu.Lock()
 	plan, task := u.selectedPlan, u.selectedTask
+	u.refreshSeq++
+	seq := u.refreshSeq
 	u.mu.Unlock()
 
 	snap := u.gather(plan, task)
 
 	paint := func() {
+		// Drop a stale paint: if a newer refresh already painted, this gather's
+		// data is out of date (possibly a drill level the user already left).
+		u.mu.Lock()
+		if seq < u.lastPaintedSeq {
+			u.mu.Unlock()
+			return
+		}
+		u.lastPaintedSeq = seq
+		u.mu.Unlock()
+
 		u.setError(snap.err)
 		u.header.SetText(headerText(snap.status, snap.err))
 		u.render(snap)
