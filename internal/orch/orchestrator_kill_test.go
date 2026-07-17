@@ -202,5 +202,59 @@ func TestDispatchSemaphoreBoundsInFlightTurns(t *testing.T) {
 	o.Wait()
 }
 
+// TestDispatchHeartbeatsRunningWorker proves a long-running provider turn keeps
+// its worker's store heartbeat fresh, so the supervisor's reaper won't mistake a
+// healthy long-running worker for a crashed one and reclaim its task mid-turn.
+// (This regression was introduced by async dispatch: the reaper tick now runs
+// concurrently with turns instead of being blocked behind them.)
+func TestDispatchHeartbeatsRunningWorker(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	projectID := mustCreateTestProject(t, s, "hb-project")
+	planID := mustCreateTestPlan(t, s, projectID, "hb-plan", "Ship", twoStepSequentialPlan)
+
+	runner := &blockingRunner{started: make(chan string, 1)}
+	o := New(s,
+		WithRunnerFactory(func(provider.Binding) (provider.Runner, error) { return runner, nil }),
+		WithBindingResolver(fakeBindingResolver("claude", false)),
+		withHeartbeatInterval(15*time.Millisecond),
+	)
+
+	if _, err := o.DispatchNext(ctx, projectID, planID); err != nil {
+		t.Fatalf("DispatchNext: %v", err)
+	}
+	select {
+	case <-runner.started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("provider turn never started")
+	}
+	workerID := waitForRegisteredWorker(t, o)
+
+	readHeartbeat := func() string {
+		var hb string
+		if err := s.DB().QueryRowContext(ctx, "SELECT last_heartbeat FROM workers WHERE id = ?", workerID).Scan(&hb); err != nil {
+			t.Fatalf("read worker heartbeat: %v", err)
+		}
+		return hb
+	}
+	first := readHeartbeat()
+
+	// Wait for several heartbeat intervals; the worker's heartbeat must advance
+	// while its turn is still blocked (proving the beat fires during the turn).
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if readHeartbeat() != first {
+			break
+		}
+		time.Sleep(15 * time.Millisecond)
+	}
+	if readHeartbeat() == first {
+		t.Fatal("worker heartbeat did not advance during the running turn — the reaper would reclaim a healthy long-running worker")
+	}
+
+	o.KillWorker(workerID)
+	o.Wait()
+}
+
 // blockingRunner must satisfy provider.Runner.
 var _ provider.Runner = (*blockingRunner)(nil)

@@ -93,6 +93,11 @@ type Orchestrator struct {
 	inflight    sync.WaitGroup
 	dispatchSem chan struct{} // buffered to maxParallel; nil disables the bound
 
+	// heartbeatInterval overrides workerHeartbeatInterval for tests (so a test
+	// can prove the running-worker heartbeat fires without waiting 20s). Zero uses
+	// the production constant.
+	heartbeatInterval time.Duration
+
 	// baseCtx is the context the ASYNC dispatch goroutines run under — the
 	// provider turn, store writes, and verification. It must outlive the
 	// per-dispatch caller's ctx: DispatchNext is driven from HandleEnqueue, whose
@@ -105,6 +110,51 @@ type Orchestrator struct {
 	// reads it concurrently from the tick / HandleEnqueue.
 	baseCtxMu sync.RWMutex
 	baseCtx   context.Context
+}
+
+// workerHeartbeatInterval is how often a running worker's store heartbeat is
+// refreshed during its (now asynchronous) provider turn. It MUST be well below
+// the supervisor's staleAfter (90s) or the reaper would reclaim a healthy
+// long-running worker mid-turn — a regression the async dispatch introduced,
+// since the reaper tick now runs concurrently with provider turns instead of
+// being blocked behind them. 20s gives several beats within the staleness
+// window.
+const workerHeartbeatInterval = 20 * time.Second
+
+// runWithHeartbeat runs fn (a provider turn) while periodically refreshing
+// workerID's store heartbeat, so the supervisor's reaper does not mistake a
+// legitimately long-running worker for a crashed one and reclaim its task
+// out from under it. The heartbeat goroutine stops the instant fn returns.
+// hbCtx bounds the heartbeat loop (the dispatch base context); heartbeat write
+// errors are ignored — a missed beat is self-correcting on the next tick, and a
+// heartbeat failure must never fail the turn.
+func (o *Orchestrator) runWithHeartbeat(hbCtx context.Context, workerID string, fn func() (provider.Result, error)) (provider.Result, error) {
+	interval := workerHeartbeatInterval
+	if o.heartbeatInterval > 0 {
+		interval = o.heartbeatInterval // test override
+	}
+	done := make(chan struct{})
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		t := time.NewTicker(interval)
+		defer t.Stop()
+		for {
+			select {
+			case <-done:
+				return
+			case <-hbCtx.Done():
+				return
+			case <-t.C:
+				_ = o.store.HeartbeatWorker(hbCtx, workerID)
+			}
+		}
+	}()
+	result, err := fn()
+	close(done)
+	wg.Wait()
+	return result, err
 }
 
 // registerWorker records cancel as the way to abort workerID's in-flight run
@@ -161,6 +211,13 @@ func WithBindingResolver(f BindingResolver) Option {
 // WithClock overrides the Orchestrator's time source. Primarily for tests.
 func WithClock(c Clock) Option {
 	return func(o *Orchestrator) { o.now = c }
+}
+
+// withHeartbeatInterval overrides the running-worker heartbeat cadence. Test-only
+// (unexported) so a test can observe a heartbeat within milliseconds instead of
+// the 20s production interval.
+func withHeartbeatInterval(d time.Duration) Option {
+	return func(o *Orchestrator) { o.heartbeatInterval = d }
 }
 
 // WithBaseContext sets the long-lived context the async dispatch goroutines run
@@ -778,7 +835,7 @@ func (o *Orchestrator) dispatchWorker(ctx context.Context, projectID, projectDir
 	// returns (not at function end) so the timeout resources aren't held
 	// through the slower post-run store writes + VerifyAndComplete, which use
 	// the parent ctx.
-	result, runErr := func() (provider.Result, error) {
+	result, runErr := o.runWithHeartbeat(ctx, workerID, func() (provider.Result, error) {
 		// A cancelable run context registered under workerID so an operator/GUI
 		// worker-kill can abort this provider turn (see KillWorker). The stall
 		// timeout, when set, layers on top of the same cancelable context.
@@ -792,13 +849,23 @@ func (o *Orchestrator) dispatchWorker(ctx context.Context, projectID, projectDir
 		deregister := o.registerWorker(workerID, cancel)
 		defer deregister()
 		return runner.Run(runCtx, binding, req)
-	}()
+	})
+
+	// Post-run store writes (usage, evidence, mark-failed/verify, clear-worker)
+	// run under persistCtx, NOT ctx. ctx is the supervisor's run context, which
+	// shutdown cancels to abort the in-flight provider turn — but once the turn
+	// has produced its result, that result MUST be recorded (spend accounting) and
+	// verified, or a nearly-complete turn is silently lost on shutdown and its
+	// task stuck 'running'. persistCtx is detached from ctx's cancellation with a
+	// bounded timeout so these writes land even as ctx is being torn down.
+	persistCtx, persistCancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+	defer persistCancel()
 
 	// Spend is real the moment tokens were billed, independent of whether
 	// the work is ultimately accepted by VerifyAndComplete — record it
 	// unconditionally so spend-cap accounting stays accurate even for
 	// rejected/failed turns.
-	if err := o.recordUsage(ctx, projectID, workerID, binding.Name, string(req.Model), result.Usage); err != nil {
+	if err := o.recordUsage(persistCtx, projectID, workerID, binding.Name, string(req.Model), result.Usage); err != nil {
 		return fmt.Errorf("orch: record usage: %w", err)
 	}
 
@@ -818,7 +885,7 @@ func (o *Orchestrator) dispatchWorker(ctx context.Context, projectID, projectDir
 	if err != nil {
 		return fmt.Errorf("orch: marshal evidence message: %w", err)
 	}
-	if err := o.store.AppendMessage(ctx, store.AppendMessageOpts{
+	if err := o.store.AppendMessage(persistCtx, store.AppendMessageOpts{
 		WorkerID:    workerID,
 		PlanID:      planID,
 		TaskID:      ds.task.ID,
@@ -832,17 +899,17 @@ func (o *Orchestrator) dispatchWorker(ctx context.Context, projectID, projectDir
 		// A stale failure report (the reaper reclaimed this worker's claim
 		// mid-run and possibly reassigned the task) is benign — the current
 		// owner keeps its work; we just release this now-defunct worker.
-		if _, err := o.store.MarkFailed(ctx, planID, ds.task.ID, sessionID, runErr.Error(), 3); err != nil && !errors.Is(err, store.ErrTaskNotOwnedRunning) {
+		if _, err := o.store.MarkFailed(persistCtx, planID, ds.task.ID, sessionID, runErr.Error(), 3); err != nil && !errors.Is(err, store.ErrTaskNotOwnedRunning) {
 			return fmt.Errorf("orch: mark failed after run error: %w", err)
 		}
-		_ = o.store.ClearWorkerTask(ctx, workerID, "crashed")
+		_ = o.store.ClearWorkerTask(persistCtx, workerID, "crashed")
 		return nil
 	}
 
-	if _, err := o.VerifyAndComplete(ctx, planID, ds.task.ID, ev); err != nil {
+	if _, err := o.VerifyAndComplete(persistCtx, planID, ds.task.ID, ev); err != nil {
 		return fmt.Errorf("orch: verify and complete: %w", err)
 	}
-	_ = o.store.ClearWorkerTask(ctx, workerID, "idle")
+	_ = o.store.ClearWorkerTask(persistCtx, workerID, "idle")
 	return nil
 }
 
@@ -973,7 +1040,7 @@ func (o *Orchestrator) runFanoutGroup(ctx context.Context, projectID, projectDir
 	// returns so it isn't held through the per-task verification below. The run
 	// context is also registered under workerID so a worker-kill cancels the
 	// whole fan-out turn (see KillWorker).
-	result, runErr := func() (provider.Result, error) {
+	result, runErr := o.runWithHeartbeat(ctx, workerID, func() (provider.Result, error) {
 		runCtx, cancel := context.WithCancel(ctx)
 		defer cancel()
 		if o.watchdogConfig.StallTimeout > 0 {
@@ -984,12 +1051,19 @@ func (o *Orchestrator) runFanoutGroup(ctx context.Context, projectID, projectDir
 		deregister := o.registerWorker(workerID, cancel)
 		defer deregister()
 		return runner.Run(runCtx, binding, req)
-	}()
+	})
+
+	// Post-run writes run under persistCtx (detached from ctx's shutdown
+	// cancellation, bounded timeout) so a nearly-complete fan-out turn's evidence
+	// + verification still land even as the supervisor tears ctx down. See the
+	// same note in dispatchWorker.
+	persistCtx, persistCancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+	defer persistCancel()
 
 	// Spend is real the moment tokens were billed, independent of
 	// per-task verification outcome — record it once for the group's one
 	// provider turn.
-	if err := o.recordUsage(ctx, projectID, workerID, binding.Name, string(req.Model), result.Usage); err != nil {
+	if err := o.recordUsage(persistCtx, projectID, workerID, binding.Name, string(req.Model), result.Usage); err != nil {
 		return fmt.Errorf("orch: record usage: %w", err)
 	}
 
@@ -1011,7 +1085,7 @@ func (o *Orchestrator) runFanoutGroup(ctx context.Context, projectID, projectDir
 		if err != nil {
 			return fmt.Errorf("orch: marshal evidence message: %w", err)
 		}
-		if err := o.store.AppendMessage(ctx, store.AppendMessageOpts{
+		if err := o.store.AppendMessage(persistCtx, store.AppendMessageOpts{
 			WorkerID:    workerID,
 			PlanID:      planID,
 			TaskID:      ds.task.ID,
@@ -1026,11 +1100,11 @@ func (o *Orchestrator) runFanoutGroup(ctx context.Context, projectID, projectDir
 		for _, ds := range claimed {
 			// Benign if the reaper already reclaimed/reassigned this task —
 			// don't stomp the new owner (see MarkFailed's owner guard).
-			if _, err := o.store.MarkFailed(ctx, planID, ds.task.ID, sessionID, runErr.Error(), 3); err != nil && !errors.Is(err, store.ErrTaskNotOwnedRunning) {
+			if _, err := o.store.MarkFailed(persistCtx, planID, ds.task.ID, sessionID, runErr.Error(), 3); err != nil && !errors.Is(err, store.ErrTaskNotOwnedRunning) {
 				return fmt.Errorf("orch: mark failed after run error: %w", err)
 			}
 		}
-		_ = o.store.ClearWorkerTask(ctx, workerID, "crashed")
+		_ = o.store.ClearWorkerTask(persistCtx, workerID, "crashed")
 		return nil
 	}
 
@@ -1041,11 +1115,11 @@ func (o *Orchestrator) runFanoutGroup(ctx context.Context, projectID, projectDir
 	// mechanically re-checks (or falls back to non-empty-evidence
 	// judgment) per task.
 	for _, ds := range claimed {
-		if _, err := o.VerifyAndComplete(ctx, planID, ds.task.ID, ev); err != nil {
+		if _, err := o.VerifyAndComplete(persistCtx, planID, ds.task.ID, ev); err != nil {
 			return fmt.Errorf("orch: verify and complete %s: %w", ds.task.ID, err)
 		}
 	}
-	_ = o.store.ClearWorkerTask(ctx, workerID, "idle")
+	_ = o.store.ClearWorkerTask(persistCtx, workerID, "idle")
 	return nil
 }
 
