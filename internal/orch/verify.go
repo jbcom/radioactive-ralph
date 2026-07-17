@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/jbcom/radioactive-ralph/internal/a2a"
@@ -39,16 +40,49 @@ type Acceptance struct {
 	Dir string `json:"dir,omitempty"`
 }
 
-// defaultAcceptanceJSON derives a first-cut Acceptance for a freshly
-// materialized step task. Steps don't (yet) carry an explicit acceptance
-// grammar in the plan markdown (that is a follow-on to Phase 6a's plan
-// grammar), so absent a richer signal every step is judgment-only: no
-// Command/FileExists is set, and VerifyAndComplete falls back to requiring
-// non-empty evidence output. This keeps DispatchNext/VerifyAndComplete
-// wiring complete end-to-end today while leaving room for a plan-level
-// acceptance annotation later without changing the Acceptance shape.
-func defaultAcceptanceJSON(_ plan.Step) (string, error) {
-	return "", nil
+// acceptCommandRe matches an inline acceptance-command annotation in a plan
+// step: a backtick-wrapped `accept: <shell command>` marker. The command is
+// re-run by VerifyAndComplete and must exit 0 for the step to be accepted —
+// this is what makes completion mechanically verified rather than "the
+// worker produced some output".
+var acceptCommandRe = regexp.MustCompile("`accept:\\s*([^`]+)`")
+
+// acceptFileRe matches an inline `accept-file: <path>` marker: the named
+// file (relative to the project dir) must exist for the step to be accepted.
+var acceptFileRe = regexp.MustCompile("`accept-file:\\s*([^`]+)`")
+
+// defaultAcceptanceJSON derives an Acceptance for a freshly materialized
+// step task by scanning the step's text and detail for inline acceptance
+// annotations — `accept: <command>` (a shell command re-run that must exit
+// 0) and/or `accept-file: <path>` (a file that must exist). This keeps the
+// heuristic-markdown philosophy: acceptance criteria live inline in the plan
+// prose, not in a separate grammar file. A step with no annotation returns
+// an empty acceptance (judgment-only: VerifyAndComplete falls back to
+// requiring non-empty evidence output), so plans that don't opt into
+// mechanical checks still work — but any step that DOES carry an annotation
+// is genuinely re-verified, closing the "any non-empty output passes" gap.
+func defaultAcceptanceJSON(step plan.Step) (string, error) {
+	haystack := step.Text
+	if step.Detail != "" {
+		haystack += "\n" + step.Detail
+	}
+
+	var acc Acceptance
+	if m := acceptCommandRe.FindStringSubmatch(haystack); m != nil {
+		acc.Command = strings.TrimSpace(m[1])
+	}
+	if m := acceptFileRe.FindStringSubmatch(haystack); m != nil {
+		acc.FileExists = strings.TrimSpace(m[1])
+	}
+
+	if acc.Command == "" && acc.FileExists == "" {
+		return "", nil
+	}
+	raw, err := json.Marshal(acc)
+	if err != nil {
+		return "", fmt.Errorf("orch: marshal derived acceptance: %w", err)
+	}
+	return string(raw), nil
 }
 
 // AcceptanceChecker re-runs a task's acceptance criteria in pure Go and
@@ -132,7 +166,11 @@ func (o *Orchestrator) VerifyAndComplete(ctx context.Context, planID, taskID str
 		return false, fmt.Errorf("orch: load task for verification: %w", err)
 	}
 
-	ok, reason, err := o.acceptanceCheck(ctx, o.projectDirFor(task), task.AcceptanceJSON, ev)
+	dir, err := o.projectDirFor(ctx, task.PlanID)
+	if err != nil {
+		return false, err
+	}
+	ok, reason, err := o.acceptanceCheck(ctx, dir, task.AcceptanceJSON, ev)
 	if err != nil {
 		return false, fmt.Errorf("orch: run acceptance check: %w", err)
 	}
@@ -186,12 +224,27 @@ func (o *Orchestrator) VerifyAndComplete(ctx context.Context, planID, taskID str
 	return true, nil
 }
 
-// projectDirFor resolves the working directory VerifyAndComplete's
-// acceptance re-check should run in. In this phase there is no per-task
-// working-directory column, so it always returns ".", i.e. the process's
-// own working directory (the project checkout the orchestrator itself is
-// running in). A future phase may thread a per-plan/per-project working
-// directory from the store's project record.
-func (o *Orchestrator) projectDirFor(_ *store.Task) string {
-	return "."
+// projectDirFor resolves the working directory an acceptance re-check (and a
+// dispatched worker) should run in for the plan's owning project: the
+// project's recorded abs_path checkout, NOT the orchestrator process's own
+// cwd. Supervisor mode's working directory is deliberately irrelevant (§4),
+// so trusting "." would run acceptance commands and workers against wherever
+// the supervisor service happened to be started — commonly not any project
+// at all. When the project has no recorded abs_path (should not happen for a
+// project created via --init, which always seeds one) it falls back to "."
+// so a bare/test project without a fingerprint still runs somewhere rather
+// than erroring.
+func (o *Orchestrator) projectDirFor(ctx context.Context, planID string) (string, error) {
+	p, err := o.store.GetPlan(ctx, planID)
+	if err != nil {
+		return "", fmt.Errorf("orch: load plan for project dir: %w", err)
+	}
+	dir, found, err := o.store.ProjectAbsPath(ctx, p.ProjectID)
+	if err != nil {
+		return "", err
+	}
+	if !found || dir == "" {
+		return ".", nil
+	}
+	return dir, nil
 }

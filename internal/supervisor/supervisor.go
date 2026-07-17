@@ -171,9 +171,12 @@ func hostname() string {
 	return h
 }
 
-// tick runs one reaper pass: reclaim stale worker/session claims and
-// refresh this supervisor's own session heartbeat so peers/reapers never
-// mistake it for stale.
+// tick runs one periodic pass: reclaim stale worker/session claims, refresh
+// this supervisor's own session heartbeat, and DRIVE DISPATCH for every
+// active plan store-wide. The dispatch pass is what makes an active plan
+// progress on its own — without it, DispatchNext would only ever run in
+// response to an explicit HandleEnqueue IPC call, and the periodic loop
+// would be a reaper-only heartbeat with no way to actually advance work.
 func (s *Supervisor) tick(ctx context.Context) {
 	if _, err := s.store.ReclaimStale(ctx, staleAfter); err != nil {
 		s.log("reaper tick failed", "err", err)
@@ -181,6 +184,45 @@ func (s *Supervisor) tick(ctx context.Context) {
 	if err := s.store.HeartbeatSession(ctx, s.sessionID); err != nil {
 		s.log("session heartbeat failed", "err", err)
 	}
+	// The tick is a best-effort autonomous heartbeat: a transient
+	// list-plans/DB error must not tear the loop down, so it is logged and
+	// swallowed here (HandleEnqueue, an interactive IPC call, surfaces the
+	// same error to its caller instead).
+	if n, err := s.dispatchActivePlans(ctx); err != nil {
+		s.log("dispatch tick failed", "err", err)
+	} else if n > 0 {
+		s.log("dispatched ready steps", "count", n)
+	}
+}
+
+// dispatchActivePlans runs one DispatchNext pass against every active/paused
+// plan store-wide (bounded by maxEnqueueDispatchPlans), returning the total
+// number of steps dispatched. Shared by the periodic tick (autonomous
+// progress) and HandleEnqueue (explicit wake). The supervisor is
+// project-agnostic — it has no notion of "the current project" — so this
+// scans all projects' active work, not just one.
+//
+// A ListPlans failure is returned as an error (callers decide whether to
+// surface or swallow it). A per-plan DispatchNext failure, by contrast, is
+// logged and skipped: one bad plan must not stop the others from advancing.
+func (s *Supervisor) dispatchActivePlans(ctx context.Context) (int, error) {
+	plans, err := s.store.ListPlans(ctx, "", nil)
+	if err != nil {
+		return 0, fmt.Errorf("supervisor: list active plans: %w", err)
+	}
+	total := 0
+	for i, p := range plans {
+		if i >= maxEnqueueDispatchPlans {
+			break
+		}
+		n, err := s.orch.DispatchNext(ctx, p.ProjectID, p.ID)
+		if err != nil {
+			s.log("dispatch failed", "plan", p.ID, "err", err)
+			continue
+		}
+		total += n
+	}
+	return total, nil
 }
 
 // shutdown stops the IPC server (which also unlinks the socket file),
@@ -259,22 +301,9 @@ func (s *Supervisor) HandleStatus(ctx context.Context) (ipc.StatusReply, error) 
 // unset, the number of steps dispatched, best-effort) so a caller has some
 // return value acknowledging its enqueue signal was acted upon.
 func (s *Supervisor) HandleEnqueue(ctx context.Context, args ipc.EnqueueArgs) (ipc.EnqueueReply, error) {
-	plans, err := s.store.ListPlans(ctx, "", nil)
+	total, err := s.dispatchActivePlans(ctx)
 	if err != nil {
-		return ipc.EnqueueReply{}, fmt.Errorf("supervisor: list active plans: %w", err)
-	}
-
-	total := 0
-	for i, p := range plans {
-		if i >= maxEnqueueDispatchPlans {
-			break
-		}
-		n, err := s.orch.DispatchNext(ctx, p.ProjectID, p.ID)
-		if err != nil {
-			s.log("dispatch failed", "plan", p.ID, "err", err)
-			continue
-		}
-		total += n
+		return ipc.EnqueueReply{}, err
 	}
 
 	taskID := args.TaskID

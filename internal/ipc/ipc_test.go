@@ -400,7 +400,7 @@ func TestSocketAliveStale(t *testing.T) {
 }
 
 func TestServiceEndpointUnix(t *testing.T) {
-	endpoint, heartbeat := serviceEndpointForGOOS("linux", "/tmp/ralph/sessions")
+	endpoint, heartbeat := serviceEndpointForGOOS("linux", "/tmp", "/tmp/ralph/sessions")
 	if endpoint != "/tmp/ralph/sessions/service.sock" {
 		t.Fatalf("endpoint = %q", endpoint)
 	}
@@ -409,9 +409,34 @@ func TestServiceEndpointUnix(t *testing.T) {
 	}
 }
 
+func TestServiceEndpointUnixLongPathFallsBackToTempDir(t *testing.T) {
+	// A sessionsDir long enough that sessionsDir/service.sock exceeds the
+	// sun_path limit must relocate the socket under tempDir, while the
+	// heartbeat file stays in sessionsDir.
+	sessionsDir := "/var/folders/8j/" + strings.Repeat("deep/", 25) + "sessions"
+	if len("/tmp/ralph/sessions/service.sock") > maxUnixSocketPath {
+		t.Fatalf("test premise wrong: short path already exceeds limit")
+	}
+	endpoint, heartbeat := serviceEndpointForGOOS("linux", "/tmp", sessionsDir)
+	if len(endpoint) > maxUnixSocketPath {
+		t.Fatalf("fallback endpoint %q is still too long (%d bytes)", endpoint, len(endpoint))
+	}
+	if !strings.HasPrefix(endpoint, "/tmp/rralph-") || !strings.HasSuffix(endpoint, ".sock") {
+		t.Fatalf("endpoint = %q, want /tmp/rralph-<token>.sock", endpoint)
+	}
+	if heartbeat != sessionsDir+"/service.sock.alive" {
+		t.Fatalf("heartbeat = %q, want it colocated with sessionsDir", heartbeat)
+	}
+	// Determinism: same sessionsDir → same socket, so client and supervisor agree.
+	endpoint2, _ := serviceEndpointForGOOS("linux", "/tmp", sessionsDir)
+	if endpoint != endpoint2 {
+		t.Fatalf("non-deterministic fallback: %q != %q", endpoint, endpoint2)
+	}
+}
+
 func TestServiceEndpointWindows(t *testing.T) {
 	sessionsDir := `C:\Users\me\AppData\Local\radioactive-ralph\sessions`
-	endpoint, heartbeat := serviceEndpointForGOOS("windows", sessionsDir)
+	endpoint, heartbeat := serviceEndpointForGOOS("windows", `C:\Windows\Temp`, sessionsDir)
 	sum := sha256.Sum256([]byte(sessionsDir))
 	token := hex.EncodeToString(sum[:])[:12]
 	wantEndpoint := `\\.\pipe\radioactive_ralph-` + token + `-service`

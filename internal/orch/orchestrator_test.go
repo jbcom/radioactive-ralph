@@ -48,8 +48,12 @@ func newTestStore(t *testing.T) *store.Store {
 
 func mustCreateTestProject(t *testing.T, s *store.Store, name string) string {
 	t.Helper()
+	// A real directory: the orchestrator now launches workers and runs
+	// acceptance re-checks in the project's recorded abs_path checkout (not
+	// the process cwd), so a nonexistent path would make exec chdir fail.
+	dir := t.TempDir()
 	id, err := s.CreateProject(context.Background(), name, []store.Fingerprint{
-		{Kind: store.FingerprintKindAbsPath, Value: "/tmp/" + name},
+		{Kind: store.FingerprintKindAbsPath, Value: dir},
 	})
 	if err != nil {
 		t.Fatalf("CreateProject: %v", err)

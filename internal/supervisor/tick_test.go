@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/jbcom/radioactive-ralph/internal/orch"
+	"github.com/jbcom/radioactive-ralph/internal/provider"
 	"github.com/jbcom/radioactive-ralph/internal/store"
 	"github.com/jonboulle/clockwork"
 )
@@ -171,5 +172,65 @@ func TestHostname(t *testing.T) {
 	// return a non-empty string.
 	if h := hostname(); h == "" {
 		t.Log("hostname() returned empty — acceptable per its documented fallback, but worth knowing in CI logs")
+	}
+}
+
+// tickFakeRunner is a canned successful provider.Runner for tick-dispatch
+// tests: it records call count and returns non-empty output so the
+// orchestrator's judgment-only acceptance fallback accepts the step.
+type tickFakeRunner struct{ calls int }
+
+func (f *tickFakeRunner) Run(context.Context, provider.Binding, provider.Request) (provider.Result, error) {
+	f.calls++
+	return provider.Result{AssistantOutput: "did the work"}, nil
+}
+
+// TestTickDrivesDispatchForActivePlan proves the periodic tick — not just an
+// explicit HandleEnqueue — advances an active plan. Without the dispatch
+// pass in tick(), a seeded active plan would sit forever unless a client
+// happened to call Enqueue. Here a single tick() must dispatch the plan's
+// one ready step and drive it to done.
+func TestTickDrivesDispatchForActivePlan(t *testing.T) {
+	sup := newTestSupervisor(t, nil)
+	ctx := context.Background()
+
+	runner := &tickFakeRunner{}
+	sup.orch = orch.New(sup.store,
+		orch.WithRunnerFactory(func(provider.Binding) (provider.Runner, error) { return runner, nil }),
+		orch.WithBindingResolver(func(context.Context, string, bool) (provider.Binding, error) {
+			return provider.Binding{Name: "claude", Config: provider.BindingConfig{Type: "claude", Binary: "true"}}, nil
+		}),
+	)
+
+	projectID, err := sup.store.CreateProject(ctx, "tick-project", []store.Fingerprint{
+		{Kind: store.FingerprintKindAbsPath, Value: t.TempDir()},
+	})
+	if err != nil {
+		t.Fatalf("CreateProject: %v", err)
+	}
+	planID, err := sup.store.CreatePlan(ctx, store.CreatePlanOpts{
+		ProjectID:      projectID,
+		Slug:           "tick-plan",
+		Title:          "Ship",
+		SourceMarkdown: "# Ship\n\n1. write the code\n",
+	})
+	if err != nil {
+		t.Fatalf("CreatePlan: %v", err)
+	}
+	if err := sup.store.SetPlanStatus(ctx, planID, store.PlanStatusActive); err != nil {
+		t.Fatalf("SetPlanStatus: %v", err)
+	}
+
+	sup.tick(ctx)
+
+	if runner.calls != 1 {
+		t.Fatalf("runner.calls = %d, want 1 — tick must dispatch the active plan's ready step", runner.calls)
+	}
+	task, err := sup.store.GetTask(ctx, planID, "0.0")
+	if err != nil {
+		t.Fatalf("GetTask: %v", err)
+	}
+	if task.Status != store.TaskStatusDone {
+		t.Errorf("task status = %q, want done after the tick-triggered dispatch", task.Status)
 	}
 }

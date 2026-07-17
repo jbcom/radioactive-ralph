@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/jbcom/radioactive-ralph/internal/orch"
 	"github.com/jbcom/radioactive-ralph/internal/rlog"
 	"github.com/jbcom/radioactive-ralph/internal/store"
 	"github.com/jbcom/radioactive-ralph/internal/supervisor"
@@ -43,10 +44,19 @@ func runSupervisorMode(ctx context.Context, logFormat string) error {
 	}
 	logger := rlog.New(mode, os.Stderr)
 
+	// Build the orchestrator with a config-backed binding resolver: stored
+	// virtual config (a project's or the user's default_provider/provider
+	// key) selects the provider, instead of every dispatch deterministically
+	// falling back to the built-in claude binding. Without this, the
+	// supervisor's default orch.New(store) would ignore stored config
+	// entirely and always run claude.
+	orchestrator := orch.New(st, orch.WithBindingResolver(storeBindingResolver(st)))
+
 	logger.Info("supervisor.starting", "state_root", stateRoot)
 	err = supervisor.Run(ctx, supervisor.Options{
-		RuntimeDir: stateRoot,
-		Store:      st,
+		RuntimeDir:   stateRoot,
+		Store:        st,
+		Orchestrator: orchestrator,
 		Logger: func(msg string, args ...any) {
 			logger.Info(msg, args...)
 		},

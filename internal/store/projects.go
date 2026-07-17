@@ -129,6 +129,33 @@ func (s *Store) TouchProjectLastSeen(ctx context.Context, projectID string) erro
 	return nil
 }
 
+// ProjectAbsPath returns the most recently recorded absolute-path
+// fingerprint for a project, or found=false when the project has no
+// abs_path identifier. The orchestrator uses this to launch workers in the
+// project's own checkout: supervisor mode's working directory is
+// deliberately irrelevant (§4), so a dispatch must resolve the target repo
+// explicitly rather than inheriting the supervisor process's cwd.
+//
+// A project can accumulate more than one abs_path (the same repo cloned to
+// two locations, or moved); the most recently added one is returned as the
+// best current guess at where the operator is working now.
+func (s *Store) ProjectAbsPath(ctx context.Context, projectID string) (path string, found bool, err error) {
+	row := s.db.QueryRowContext(ctx, `
+		SELECT value FROM project_identifiers
+		WHERE project_id = ? AND kind = ?
+		ORDER BY added_at DESC
+		LIMIT 1
+	`, projectID, FingerprintKindAbsPath)
+	err = row.Scan(&path)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, fmt.Errorf("store: project abs path: %w", err)
+	}
+	return path, true, nil
+}
+
 // Fingerprints computes the identity fingerprints for a directory: always
 // the cleaned absolute path, plus — best-effort, if dir is a git
 // repository — the root-commit sha and any "origin" remote URL. A

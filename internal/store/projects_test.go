@@ -306,3 +306,47 @@ func TestAddProjectIdentifiersMissingProject(t *testing.T) {
 		t.Error("AddProjectIdentifiers against a missing project: want error (FK violation), got nil")
 	}
 }
+
+func TestProjectAbsPathReturnsRecordedCheckout(t *testing.T) {
+	ctx := context.Background()
+	s := openTestStore(t)
+
+	id, err := s.CreateProject(ctx, "AbsPath Project", []Fingerprint{
+		{Kind: FingerprintKindAbsPath, Value: "/work/repo"},
+		{Kind: FingerprintKindGitRemote, Value: "git@github.com:me/repo.git"},
+	})
+	if err != nil {
+		t.Fatalf("CreateProject: %v", err)
+	}
+
+	path, found, err := s.ProjectAbsPath(ctx, id)
+	if err != nil {
+		t.Fatalf("ProjectAbsPath: %v", err)
+	}
+	if !found {
+		t.Fatal("ProjectAbsPath found=false for a project seeded with an abs_path")
+	}
+	if path != "/work/repo" {
+		t.Errorf("abs path = %q, want %q", path, "/work/repo")
+	}
+}
+
+func TestProjectAbsPathMissingIsNotFound(t *testing.T) {
+	ctx := context.Background()
+	s := openTestStore(t)
+
+	// A project seeded with only a git remote (no abs_path) reports not-found.
+	id, err := s.CreateProject(ctx, "Remote Only", []Fingerprint{
+		{Kind: FingerprintKindGitRemote, Value: "git@github.com:me/repo.git"},
+	})
+	if err != nil {
+		t.Fatalf("CreateProject: %v", err)
+	}
+	_, found, err := s.ProjectAbsPath(ctx, id)
+	if err != nil {
+		t.Fatalf("ProjectAbsPath: %v", err)
+	}
+	if found {
+		t.Error("ProjectAbsPath found=true for a project with no abs_path identifier")
+	}
+}

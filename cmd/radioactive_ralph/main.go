@@ -72,6 +72,10 @@ func newRootCmd(ctx context.Context) *cobra.Command {
 		// not initialized, etc.) are expected-path outcomes, not usage
 		// mistakes; printing the full usage block on every one is noise.
 		SilenceUsage: true,
+		// SilenceErrors: run() already prints the returned error with the
+		// "radioactive_ralph:" prefix, so letting cobra also print it to
+		// stderr during Execute() would duplicate every error message.
+		SilenceErrors: true,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return dispatchRoot(cmd.Context(), cmd, flags)
 		},
@@ -94,6 +98,7 @@ func newRootCmd(ctx context.Context) *cobra.Command {
 
 	root.AddCommand(newDoctorCmd())
 	root.AddCommand(newServiceCmd())
+	root.AddCommand(newPlanCmd())
 
 	return root
 }

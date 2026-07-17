@@ -248,6 +248,14 @@ func (o *Orchestrator) DispatchNext(ctx context.Context, projectID, planID strin
 
 	groupHeading := groupHeadingFor(parsedPlan, refs[0])
 
+	// Resolve the project's checkout dir ONCE for this dispatch pass. Every
+	// worker for this plan runs in the project's own tree, not the
+	// supervisor's cwd (§4: supervisor working directory is irrelevant).
+	projectDir, err := o.projectDirFor(ctx, planID)
+	if err != nil {
+		return 0, err
+	}
+
 	limit := len(readySteps)
 	if !parallel {
 		// A sequential leaf group only ever returns its first not-done
@@ -274,7 +282,7 @@ func (o *Orchestrator) DispatchNext(ctx context.Context, projectID, planID strin
 			return dispatched, fmt.Errorf("orch: resolve binding: %w", err)
 		}
 		if binding.Config.NativeFanout {
-			n, err := o.dispatchFanoutGroup(ctx, projectID, planID, parsedPlan, storedPlan.Title, groupHeading, binding, readySteps[:limit], refs[:limit])
+			n, err := o.dispatchFanoutGroup(ctx, projectID, projectDir, planID, parsedPlan, storedPlan.Title, groupHeading, binding, readySteps[:limit], refs[:limit])
 			if err != nil {
 				return dispatched, err
 			}
@@ -334,7 +342,7 @@ func (o *Orchestrator) DispatchNext(ctx context.Context, projectID, planID strin
 			StepDetail:   ds.step.Detail,
 		}
 
-		if err := o.dispatchWorker(ctx, projectID, planID, sessionID, workerID, binding, ds, scoped); err != nil {
+		if err := o.dispatchWorker(ctx, projectID, projectDir, planID, sessionID, workerID, binding, ds, scoped); err != nil {
 			return dispatched, err
 		}
 		dispatched++
@@ -524,7 +532,7 @@ func mustPayloadJSON(p store.EventPayload) string {
 // this layer (e.g. a Runner variant that exposes its *agent.Agent) can
 // additionally react to Prompt-pattern detection mid-turn; today that
 // signal is only available to callers inside the provider package itself.
-func (o *Orchestrator) dispatchWorker(ctx context.Context, projectID, planID, sessionID, workerID string, binding provider.Binding, ds *dispatchedStep, scoped scopedContext) error {
+func (o *Orchestrator) dispatchWorker(ctx context.Context, projectID, projectDir, planID, sessionID, workerID string, binding provider.Binding, ds *dispatchedStep, scoped scopedContext) error {
 	runner, err := o.newRunner(binding)
 	if err != nil {
 		return fmt.Errorf("orch: resolve runner for %q: %w", binding.Name, err)
@@ -537,7 +545,7 @@ func (o *Orchestrator) dispatchWorker(ctx context.Context, projectID, planID, se
 	}
 
 	req := provider.Request{
-		WorkingDir: ".",
+		WorkingDir: projectDir,
 		UserPrompt: scoped.prompt(),
 	}
 
@@ -607,7 +615,7 @@ func (o *Orchestrator) dispatchWorker(ctx context.Context, projectID, planID, se
 // Admission (spend-cap) is checked once for the whole group, since only
 // one provider turn is actually run — a group that can't be admitted
 // dispatches nothing and returns 0 rather than partially claiming tasks.
-func (o *Orchestrator) dispatchFanoutGroup(ctx context.Context, projectID, planID string, parsedPlan *plan.Plan, storeTitle, groupHeading string, binding provider.Binding, steps []plan.Step, refs []plan.StepRef) (dispatched int, err error) {
+func (o *Orchestrator) dispatchFanoutGroup(ctx context.Context, projectID, projectDir, planID string, parsedPlan *plan.Plan, storeTitle, groupHeading string, binding provider.Binding, steps []plan.Step, refs []plan.StepRef) (dispatched int, err error) {
 	if err := o.checkSpendCap(ctx, projectID, binding.Name); err != nil {
 		_ = o.store.Emit(ctx, store.EmitOpts{
 			ProjectID: projectID,
@@ -670,7 +678,7 @@ func (o *Orchestrator) dispatchFanoutGroup(ctx context.Context, projectID, planI
 	}
 
 	req := provider.Request{
-		WorkingDir: ".",
+		WorkingDir: projectDir,
 		UserPrompt: scoped.prompt(),
 	}
 	result, runErr := runner.Run(runCtx, binding, req)

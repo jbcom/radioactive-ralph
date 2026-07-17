@@ -6,12 +6,24 @@ package agent
 import (
 	"bufio"
 	"context"
+	"errors"
+	"fmt"
 	"os"
 	"os/exec"
+	"runtime"
 	"sync"
 
 	"github.com/creack/pty"
 )
+
+// ErrPTYUnsupported is returned by Start on platforms where creack/pty
+// cannot allocate a pseudo-terminal — in practice, native Windows, where
+// pty.Start returns pty.ErrUnsupported because there is no ConPTY-backed
+// implementation. Ralph's control model requires owning the agent's pty, so
+// on Windows operators run Ralph under WSL. Callers can match this with
+// errors.Is to distinguish "this host can't host agents" from a transient
+// spawn failure.
+var ErrPTYUnsupported = fmt.Errorf("agent: pty allocation is unsupported on %s; run radioactive-ralph under WSL on Windows", runtime.GOOS)
 
 // Options configures one agent subprocess.
 type Options struct {
@@ -44,6 +56,9 @@ func Start(ctx context.Context, opts Options) (*Agent, error) {
 	}
 	ptmx, err := pty.Start(cmd)
 	if err != nil {
+		if errors.Is(err, pty.ErrUnsupported) {
+			return nil, ErrPTYUnsupported
+		}
 		return nil, err
 	}
 	a := &Agent{

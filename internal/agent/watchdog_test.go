@@ -1,3 +1,7 @@
+//go:build !windows
+
+// Watchdog tests drive a real pty-backed agent (see agent_test.go's build
+// note); native Windows has no pty, so they build only on Unix/WSL.
 package agent
 
 import (

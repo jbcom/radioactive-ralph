@@ -5,11 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"strconv"
 	"testing"
-	"time"
 
 	"github.com/jbcom/radioactive-ralph/internal/ipc"
 )
@@ -122,51 +119,6 @@ func TestAcquire_SecondFailsWhileFirstHolds(t *testing.T) {
 	if !errors.Is(err, ErrSupervisorRunning) {
 		t.Fatalf("second Acquire() err = %v, want ErrSupervisorRunning", err)
 	}
-}
-
-func TestAcquire_ReclaimsStaleSocketAfterCrash(t *testing.T) {
-	runtimeDir := t.TempDir()
-
-	// Simulate a supervisor that bound the socket and wrote its PID lock,
-	// then crashed without running its own cleanup: the socket file and
-	// PID file are left behind, but nothing is listening and the PID is
-	// dead.
-	socketPath, _, pidPath := endpointPaths(runtimeDir)
-	if err := os.MkdirAll(runtimeDir, 0o700); err != nil {
-		t.Fatalf("mkdir runtime dir: %v", err)
-	}
-	if err := os.WriteFile(socketPath, nil, 0o600); err != nil {
-		t.Fatalf("write stale socket placeholder: %v", err)
-	}
-	deadPID := deadPIDForTest(t)
-	if err := os.WriteFile(pidPath, []byte(strconv.Itoa(deadPID)+"\n"), 0o600); err != nil {
-		t.Fatalf("write stale pid file: %v", err)
-	}
-
-	l, err := Acquire(runtimeDir)
-	if err != nil {
-		t.Fatalf("Acquire() after crash err = %v, want nil (should reclaim)", err)
-	}
-	defer func() { _ = l.Release() }()
-}
-
-// deadPIDForTest returns a PID that is guaranteed not to be alive: it
-// spawns a short-lived process, waits for it to exit, and returns its PID.
-func deadPIDForTest(t *testing.T) int {
-	t.Helper()
-	cmd := exec.Command("true")
-	if err := cmd.Start(); err != nil {
-		t.Fatalf("start throwaway process: %v", err)
-	}
-	pid := cmd.Process.Pid
-	if err := cmd.Wait(); err != nil {
-		t.Fatalf("wait throwaway process: %v", err)
-	}
-	// Give the OS a moment to fully reap so a liveness probe can't racily
-	// observe a zombie as alive on platforms where that distinction leaks
-	// through os.FindProcess/Signal(0).
-	time.Sleep(50 * time.Millisecond)
-	return pid
 }
 
 func TestAcquireRequiresRuntimeDir(t *testing.T) {

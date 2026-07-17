@@ -3,6 +3,7 @@ package service
 import (
 	"encoding/json"
 	"os"
+	"path"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -101,7 +102,7 @@ func TestWindowsServiceArgs(t *testing.T) {
 
 func TestInstallLaunchdWritesPlist(t *testing.T) {
 	home := t.TempDir()
-	path, err := Install(InstallOptions{
+	plistPath, err := Install(InstallOptions{
 		Backend:  BackendLaunchd,
 		HomeDir:  home,
 		RalphBin: "/usr/local/bin/radioactive_ralph",
@@ -109,12 +110,16 @@ func TestInstallLaunchdWritesPlist(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Install: %v", err)
 	}
-	raw, err := os.ReadFile(path) //nolint:gosec // test-controlled path
+	raw, err := os.ReadFile(plistPath) //nolint:gosec // test-controlled path
 	if err != nil {
 		t.Fatalf("read plist: %v", err)
 	}
 	content := string(raw)
-	wantLogPath := filepath.Join(home, "Library", "Logs", "radioactive-ralph", "supervisor.log")
+	// The plist is a macOS artifact and always uses forward-slash paths
+	// (launchd's XML), so match with path.Join, not filepath.Join — the
+	// latter would use backslashes when this test runs on a Windows host and
+	// spuriously fail to find the (correct, slash-separated) log path.
+	wantLogPath := path.Join(home, "Library", "Logs", "radioactive-ralph", "supervisor.log")
 	for _, needle := range []string{
 		`<key>Label</key>`, `jbcom.radioactive-ralph.supervisor`,
 		`<key>ProgramArguments</key>`, `/usr/local/bin/radioactive_ralph`,

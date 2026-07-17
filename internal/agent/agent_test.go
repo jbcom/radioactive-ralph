@@ -1,3 +1,10 @@
+//go:build !windows
+
+// These tests exercise real pty allocation (creack/pty) and a POSIX shell,
+// neither of which exists on native Windows — creack/pty returns
+// ErrUnsupported there. The Windows boundary is asserted in
+// agent_windows_test.go instead. Operators on Windows run Ralph under WSL,
+// where this file's Unix build applies.
 package agent
 
 import (
