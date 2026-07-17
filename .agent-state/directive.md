@@ -214,11 +214,14 @@ Next concrete item (now runnable — #180/#182 merged):
   clearest shape). One finding: a stale, misleading orphaned renderFrame doc
   comment (renamed to decodeEvent in #182, falsely claimed undecodable frames
   render as raw JSON) — deleted, folded into #184.
-- [ ] [WAIT] Next product feature — gated on #184 landing (it touches model.go,
-  so building the next TUI feature now would fork). Once #184 merges, pick per
-  directive 0: live macro plan-PROGRESS deltas (a done/failed frame recomputes
-  the plan's counter, not just the event pane); OR GUI true per-event delta
-  apply; OR a NEW area (provider coverage, observability, DX). Agent's call then.
+- [ ] Independent next item (does NOT touch model.go, so it runs in parallel with
+  the #184 wait — routing around the external wait per directive 0): dependency
+  freshness + CVE sweep. `go list -m -u all` / `govulncheck ./...`, bump any
+  outdated/vulnerable module, land build+test+lint green. Self-contained
+  (go.mod/go.sum + any small API adjustment), zero overlap with #184.
+- [ ] After #184 lands, the model.go-touching TUI features (live macro
+  plan-PROGRESS deltas; GUI per-event delta apply) or a NEW area become available;
+  pick per directive 0.
 
 ## Notes
 
