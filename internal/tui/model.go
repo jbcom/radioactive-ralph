@@ -694,11 +694,6 @@ func (m Model) View() string {
 	}
 }
 
-// renderFrame renders one raw Attach event frame as a single human-
-// readable log line. Best-effort: an event whose shape doesn't match the
-// expected {kind, task_id, ...} form still renders as raw JSON rather than
-// being dropped, so nothing observed over the wire silently disappears
-// from the pane.
 // decodeEvent parses one Attach frame into the typed ipc.AttachEvent. ok is
 // false for a frame that can't be decoded or carries no kind — the caller drops
 // it (there is nothing to render or apply).
