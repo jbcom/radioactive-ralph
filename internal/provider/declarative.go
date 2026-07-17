@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -357,7 +358,23 @@ func runStreamJSONCommand(ctx context.Context, dir, bin string, args []string) (
 		}
 	}
 	if scanErr := scanner.Err(); scanErr != nil {
+		// We've stopped reading stdout, so the CLI may still be blocked WRITING the
+		// rest of an oversized line into a full pipe — a plain cmd.Wait() would
+		// hang. Kill the process tree first so Wait returns promptly.
+		if cmd.Process != nil {
+			_ = killProcessTree(cmd.Process)
+		}
 		_ = cmd.Wait()
+		if errors.Is(scanErr, bufio.ErrTooLong) {
+			// A single stream-json line exceeded declarativeStreamJSONLineMax
+			// (16MiB). SALVAGE rather than discard: the assistant text parsed from
+			// the frames BEFORE the oversized line is a degraded-but-usable turn
+			// result, and failing the whole turn would throw away real work for one
+			// pathological frame. Return the accumulated output with no error; the
+			// caller then verifies it normally. (raw is also returned for the audit
+			// trail.)
+			return strings.TrimSpace(assistant.String()), raw.String(), nil
+		}
 		return "", raw.String(), fmt.Errorf("provider: scan stream-json: %w", scanErr)
 	}
 	if err := cmd.Wait(); err != nil {

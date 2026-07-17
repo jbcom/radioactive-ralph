@@ -220,6 +220,37 @@ printf '%s\n' '"}'
 	}
 }
 
+// TestDeclarativeStreamJSONSalvagesOutputPastOversizedLine proves that a single
+// stream-json line exceeding the 16MiB cap does NOT discard the whole turn: the
+// assistant text parsed from the frames BEFORE the oversized line is salvaged and
+// returned with no error, rather than failing the turn and throwing away real
+// work for one pathological frame.
+func TestDeclarativeStreamJSONSalvagesOutputPastOversizedLine(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell-script fake CLI is Unix-only")
+	}
+	// First a normal assistant frame (usable output), THEN a single line far over
+	// the 16MiB scanner cap (no trailing newline needed — the scanner trips on it).
+	bin := writeFakeCLI(t, "fake-oversized.sh", `#!/bin/sh
+printf '%s\n' '{"type":"assistant","text":"salvaged good frame"}'
+dd if=/dev/zero bs=1048576 count=17 2>/dev/null | tr '\000' a
+`)
+	result, err := DeclarativeRunner{}.Run(context.Background(), Binding{
+		Name:            "stream",
+		BinaryFromLocal: true,
+		Config: BindingConfig{
+			Type:   "stream-json",
+			Binary: bin,
+		},
+	}, Request{WorkingDir: t.TempDir()})
+	if err != nil {
+		t.Fatalf("oversized line should salvage prior output, not fail the turn: %v", err)
+	}
+	if !strings.Contains(result.AssistantOutput, "salvaged good frame") {
+		t.Fatalf("output = %q, want the pre-oversized-line assistant text salvaged", result.AssistantOutput)
+	}
+}
+
 func TestParseClaudeUsage(t *testing.T) {
 	raw := []byte(`{"type":"result","subtype":"success","total_cost_usd":0.0421,` +
 		`"usage":{"input_tokens":1200,"output_tokens":800,` +
