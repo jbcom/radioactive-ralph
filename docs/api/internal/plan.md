@@ -25,6 +25,7 @@ Plans are markdown documents parsed with goldmark into an AST and decomposed heu
 - [func DecomposeRefs\(p \*Plan, done map\[string\]bool\) \(readyNow \[\]Step, refs \[\]StepRef, parallel bool\)](<#DecomposeRefs>)
 - [func Slug\(title string\) string](<#Slug>)
 - [func Title\(markdown, fallback string\) string](<#Title>)
+- [func ValidateForImport\(md \[\]byte\) error](<#ValidateForImport>)
 - [type Group](<#Group>)
 - [type Plan](<#Plan>)
   - [func Parse\(md \[\]byte\) \(\*Plan, error\)](<#Parse>)
@@ -37,6 +38,8 @@ Plans are markdown documents parsed with goldmark into an AST and decomposed heu
   - [func Decompose\(p \*Plan, done map\[string\]bool\) \(readyNow \[\]Step, parallel bool\)](<#Decompose>)
 - [type StepRef](<#StepRef>)
   - [func \(r StepRef\) ID\(\) string](<#StepRef.ID>)
+- [type ValidationErrors](<#ValidationErrors>)
+  - [func \(errs ValidationErrors\) Error\(\) string](<#ValidationErrors.Error>)
 
 
 <a name="DecomposeRefs"></a>
@@ -65,6 +68,15 @@ func Title(markdown, fallback string) string
 ```
 
 Title returns the plan markdown's first level\-1 heading, or fallback \(e.g. a filename sans extension\) when there is none or it is blank. Shared by the \`plan import\` CLI and the supervisor's plan\-import IPC handler so both derive identical titles.
+
+<a name="ValidateForImport"></a>
+## func [ValidateForImport](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plan/validate.go#L52>)
+
+```go
+func ValidateForImport(md []byte) error
+```
+
+ValidateForImport is the plan\-ingress contract. It rejects empty/no\-step documents and every ambiguity reported by Validate before a project or plan row is created. This is intentionally stricter than Parse, which remains useful for inspecting already\-stored historical input.
 
 <a name="Group"></a>
 ## type [Group](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plan/parse.go#L40-L60>)
@@ -137,7 +149,7 @@ func (p *Plan) StepIDs() []string
 StepIDs returns the stable ID \(see StepRef.ID\) for every step in the plan, in document order. This is the full universe of valid keys for a done\-set map, and is useful for validating/seeding one.
 
 <a name="PlanError"></a>
-## type [PlanError](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plan/validate.go#L21-L24>)
+## type [PlanError](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plan/validate.go#L22-L25>)
 
 PlanError describes one advisory ambiguity found in a plan document. Line is 1\-based, matching editor conventions; it is 0 when the finding applies to the document as a whole rather than one location.
 
@@ -151,20 +163,20 @@ type PlanError struct {
 ```
 
 <a name="Validate"></a>
-### func [Validate](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plan/validate.go#L47>)
+### func [Validate](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plan/validate.go#L92>)
 
 ```go
 func Validate(md []byte) []PlanError
 ```
 
-Validate parses md and flags grammar ambiguities the heuristic decomposer \(Parse/Decompose\) has to guess through. Validate is advisory: it never blocks Parse from running, but a plan with findings is a plan whose dispatch order may not be what its author intended. Findings are:
+Validate parses md and flags grammar ambiguities the heuristic decomposer \(Parse/Decompose\) has to guess through. Validate itself is advisory so callers can inspect historical input; ValidateForImport converts its findings into an ingress\-blocking error. Findings are:
 
 - a section with both a list and a leading bare paragraph, which is ambiguous under the disambiguation rule \(list =\> step\-group, bare paragraph with no list =\> narrative\) when the paragraph precedes the list and could be misread as an intended first step;
 - a section that mixes an ordered and an unordered list \-\- Parse picks the first list's orderedness for Group.Parallel and silently folds the rest in, which is very likely not what the author meant;
 - an empty group: a heading whose section \(recursing into subheadings\) has no steps at all.
 
 <a name="PlanError.String"></a>
-### func \(PlanError\) [String](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plan/validate.go#L26>)
+### func \(PlanError\) [String](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plan/validate.go#L27>)
 
 ```go
 func (e PlanError) String() string
@@ -235,5 +247,23 @@ func (r StepRef) ID() string
 ```
 
 ID returns a stable, deterministic string key for this step, suitable for use in a done\-set. It is derived purely from position in the plan tree \(e.g. "0.1.2"\), not from step text, so it stays stable across re\-parses of the same document and is independent of wording edits that don't change structure.
+
+<a name="ValidationErrors"></a>
+## type [ValidationErrors](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plan/validate.go#L38>)
+
+ValidationErrors is the import\-blocking form of Validate's findings. Parse remains permissive for read\-only inspection of historical plans, while ingress must fail closed instead of persisting a document whose dispatch order the heuristic grammar cannot determine.
+
+```go
+type ValidationErrors []PlanError
+```
+
+<a name="ValidationErrors.Error"></a>
+### func \(ValidationErrors\) [Error](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plan/validate.go#L40>)
+
+```go
+func (errs ValidationErrors) Error() string
+```
+
+
 
 Generated by [gomarkdoc](<https://github.com/princjef/gomarkdoc>)
