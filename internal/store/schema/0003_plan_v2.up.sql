@@ -17,7 +17,7 @@ CREATE TABLE task_output_reservations (
   plan_id   TEXT NOT NULL,
   task_id   TEXT NOT NULL,
   path      TEXT NOT NULL,
-  mode      TEXT NOT NULL,
+  mode      TEXT NOT NULL CHECK (mode = 'exclusive'),
   PRIMARY KEY (plan_id, task_id, path),
   FOREIGN KEY (plan_id, task_id) REFERENCES tasks(plan_id, id) ON DELETE CASCADE
 );

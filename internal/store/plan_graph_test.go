@@ -69,6 +69,26 @@ func TestCreatePlanGraphRollsBackOnInvalidDependency(t *testing.T) {
 	}
 }
 
+func TestCreatePlanGraphRejectsCycleBeforeMaterialization(t *testing.T) {
+	s := openTestStore(t)
+	ctx := context.Background()
+	projectID := mustCreateProject(t, s, "plan-v2-cycle")
+	_, err := s.CreatePlanGraph(ctx, CreatePlanGraphOpts{
+		Plan: CreatePlanOpts{ProjectID: projectID, Slug: "cycle", Title: "Cycle"},
+		Tasks: []GraphTaskSpec{
+			{ID: "one", Description: "one", TeamPath: "team", MetadataJSON: `{}`, DependsOn: []string{"two"}},
+			{ID: "two", Description: "two", TeamPath: "team", MetadataJSON: `{}`, DependsOn: []string{"one"}},
+		},
+	})
+	if err == nil {
+		t.Fatal("cyclic graph accepted")
+	}
+	plans, listErr := s.ListPlans(ctx, projectID, []PlanStatus{PlanStatusDraft})
+	if listErr != nil || len(plans) != 0 {
+		t.Fatalf("plans after rejected cycle = %+v, %v", plans, listErr)
+	}
+}
+
 func TestTaskExecutionProvenanceAndCapabilityBlock(t *testing.T) {
 	s := openTestStore(t)
 	ctx := context.Background()

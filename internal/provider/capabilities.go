@@ -3,7 +3,9 @@ package provider
 import "fmt"
 
 const (
-	CapabilityLocalAgent   = "local-agent"
+	// CapabilityLocalAgent means the provider has a shipped local runner.
+	CapabilityLocalAgent = "local-agent"
+	// CapabilityNativeFanout means the provider has verified internal fan-out.
 	CapabilityNativeFanout = "native-fanout"
 )
 

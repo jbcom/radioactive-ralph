@@ -5,9 +5,10 @@ description: The markdown grammar plans are decomposed from, and how completion 
 
 # Plan format
 
-Plans are plain markdown, decomposed **heuristically** over the parsed
-document structure (`goldmark`, pure Go) — no LLM involved in
-decomposition, no separate plan-definition language to learn.
+Plans are plain markdown parsed with `goldmark` in pure Go. The default
+format is decomposed heuristically; an additive `ralph.plan/v2` task block
+can opt a whole plan into an explicit, machine-validated DAG. No LLM is
+involved in either decomposition path.
 
 ## Grammar
 
@@ -45,6 +46,93 @@ decomposition, no separate plan-definition language to learn.
 "Fix the login bug" is a parallel step-group (unordered list); "Ship it"
 is sequential (ordered list) and only starts once every step in "Fix the
 login bug" is done.
+
+## Explicit task DAGs (`ralph.plan/v2`)
+
+Use v2 when several teams or providers need a durable execution contract
+instead of heading/list-order inference. Every list item must contain exactly
+one indented `ralph-task` fenced block. Once any step uses the block, every
+step must use it; mixed legacy/v2 plans are rejected.
+
+````markdown
+# Story
+
+- Draft the story contract
+
+  ```ralph-task
+  {
+    "id": "story.draft",
+    "after": [],
+    "team": "studio/narrative",
+    "requires": ["local-agent"],
+    "providers": ["claude", "codex"],
+    "differentFrom": [],
+    "inputs": [
+      {
+        "path": "docs/creative-contract.md",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      }
+    ],
+    "outputs": [
+      {"path": "artifacts/story.json", "mode": "exclusive"}
+    ]
+  }
+  ```
+
+- Review the contract independently
+
+  ```ralph-task
+  {
+    "id": "story.review",
+    "after": ["story.draft"],
+    "team": "studio/quality/narrative",
+    "requires": ["local-agent"],
+    "providers": ["claude", "codex"],
+    "differentFrom": ["story.draft"],
+    "inputs": [],
+    "outputs": [
+      {"path": "artifacts/story-review.json", "mode": "exclusive"}
+    ]
+  }
+  ```
+````
+
+Replace the example hash with the file's real SHA-256. Imported hashes must
+be exactly 64 lowercase hexadecimal characters.
+
+All eight JSON fields are required, even when an array is empty. Unknown
+fields, `null` values, duplicate values, malformed IDs, unknown task
+references, cycles, and unsafe paths are rejected before any plan row is
+created.
+
+| Field | Contract |
+| --- | --- |
+| `id` | Stable task identity: 1–128 lowercase letters, digits, `.`, `_`, or `-`. |
+| `after` | Explicit dependency IDs. In v2 this DAG, not list type or heading order, determines readiness. |
+| `team` | Hierarchical ownership path such as `studio/art/characters`. It is persisted with the task. |
+| `requires` | Closed provider-capability list. Current values are `local-agent` and `native-fanout`; unknown values fail import. |
+| `providers` | Optional shipped-provider allowlist. Empty means the project's configured provider pool. |
+| `differentFrom` | Tasks whose recorded provider may not run this task. Each reference must also be reachable through `after`, so provenance exists before scheduling. |
+| `inputs` | Project-relative files plus exact SHA-256. Ralph hashes the bytes again immediately before dispatch. |
+| `outputs` | Project-relative paths reserved with mode `exclusive`. |
+
+Task metadata, dependency edges, team ownership, output declarations,
+assigned provider, blocked reason, and completion evidence are durable SQLite
+records. Import and graph materialization are one transaction.
+
+V2 scheduling fails closed:
+
+- no configured provider satisfying the allowlist, capability requirements,
+  and `differentFrom` exclusions moves the task to `blocked_capability`;
+- a missing, changed, or symlink-escaped input moves it to `blocked_input`;
+- an exclusive output that overlaps a running task's output in the same
+  project remains unclaimed and is retried after the owner finishes;
+- output paths that overlap inside one plan are only legal when the DAG orders
+  their writers.
+
+Input and output paths use portable forward-slash, project-relative spelling.
+Absolute paths, `..` traversal, backslashes, and symlinks escaping the project
+root are rejected.
 
 ## Approval gates
 
@@ -91,13 +179,14 @@ until it converges on a plan that covers the work end-to-end
 (`internal/genesis`). Headless mode emits the final markdown; the TUI
 renders it for review (scroll, or hand off to `$EDITOR`) before it's
 accepted. You can also skip this and hand-write the plan directly — the
-refined document *is* the plan; there's no separate machine format it
-gets compiled into.
+refined markdown document remains the source of truth. V2 task blocks add
+execution contracts in place rather than compiling the plan into a second
+file.
 
 ## How the orchestrator uses it
 
-The orchestrator (`internal/orch`) computes what's ready from the plan's
-AST plus the database's done-state for each step, dispatches ready steps
+The orchestrator (`internal/orch`) computes what's ready from the legacy
+plan AST or the materialized v2 dependency graph, dispatches ready steps
 to agent workers with plan-scoped context, and **verifies** each
 completion against the step's acceptance criteria (a command that must
 exit 0, a file that must exist, or — absent either — the worker's

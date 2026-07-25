@@ -69,6 +69,37 @@ func TestHandlePlanImport_InvalidGrammarIsInvalidArgsAndCreatesNothing(t *testin
 	}
 }
 
+func TestHandlePlanImport_InvalidV2CapabilityIsInvalidArgs(t *testing.T) {
+	sup := newTestSupervisor(t, nil)
+	ctx := context.Background()
+	projectID, err := sup.store.CreateProject(ctx, "v2-invalid", []store.Fingerprint{{
+		Kind: store.FingerprintKindAbsPath, Value: t.TempDir(),
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	markdown := `# V2
+
+- task
+
+  ` + "```ralph-task" + `
+  {"id":"task.one","after":[],"team":"studio/test","requires":["telepathy"],"providers":[],"differentFrom":[],"inputs":[],"outputs":[]}
+  ` + "```" + `
+`
+	_, err = sup.HandlePlanImport(ctx, ipc.PlanImportArgs{
+		Project: projectID, Markdown: markdown,
+	})
+	if !ipc.IsCode(err, ipc.CodeInvalidArgs) {
+		t.Fatalf("error = %v, want CodeInvalidArgs", err)
+	}
+	plans, listErr := sup.store.ListPlans(ctx, projectID, []store.PlanStatus{
+		store.PlanStatusDraft, store.PlanStatusActive,
+	})
+	if listErr != nil || len(plans) != 0 {
+		t.Fatalf("plans = %+v, %v; want none", plans, listErr)
+	}
+}
+
 func TestHandlePlanImport_DuplicateSlugIsConflict(t *testing.T) {
 	sup := newTestSupervisor(t, nil)
 	ctx := context.Background()

@@ -15,12 +15,16 @@ Package provider adapts configured CLI backends into radioactive\_ralph's provid
 
 ## Index
 
+- [Constants](<#constants>)
 - [Variables](<#variables>)
 - [func DefaultWatchdogConfig\(\) agent.WatchdogConfig](<#DefaultWatchdogConfig>)
+- [func KnownCapability\(name string\) bool](<#KnownCapability>)
 - [func StreamJSONWatchdogConfig\(\) agent.WatchdogConfig](<#StreamJSONWatchdogConfig>)
 - [func ValidateBinding\(binding Binding\) error](<#ValidateBinding>)
 - [type Binding](<#Binding>)
   - [func ResolveBinding\(cfg File, local Local, fromConfig VariantFile\) \(Binding, error\)](<#ResolveBinding>)
+  - [func ResolveShippedBinding\(name string\) \(Binding, error\)](<#ResolveShippedBinding>)
+  - [func \(b Binding\) SupportsRequirements\(requirements \[\]string\) bool](<#Binding.SupportsRequirements>)
 - [type BindingConfig](<#BindingConfig>)
 - [type ClaudeRunner](<#ClaudeRunner>)
   - [func \(ClaudeRunner\) Run\(ctx context.Context, binding Binding, req Request\) \(Result, error\)](<#ClaudeRunner.Run>)
@@ -41,6 +45,19 @@ Package provider adapts configured CLI backends into radioactive\_ralph's provid
 - [type Usage](<#Usage>)
 - [type VariantFile](<#VariantFile>)
 
+
+## Constants
+
+<a name="CapabilityLocalAgent"></a>
+
+```go
+const (
+    // CapabilityLocalAgent means the provider has a shipped local runner.
+    CapabilityLocalAgent = "local-agent"
+    // CapabilityNativeFanout means the provider has verified internal fan-out.
+    CapabilityNativeFanout = "native-fanout"
+)
+```
 
 ## Variables
 
@@ -88,6 +105,15 @@ func DefaultWatchdogConfig() agent.WatchdogConfig
 
 DefaultWatchdogConfig returns a WatchdogConfig seeded with DefaultStallTimeout and DefaultPromptPatterns. Runners call this \(rather than constructing agent.WatchdogConfig\{\} directly\) so every provider gets the same baseline prompt/stall detection unless a caller has a reason to override it. Use this ONLY for providers whose output is free\-form pane text where a raw interactive prompt could actually appear \(see StreamJSONWatchdogConfig for the structured\-output case\).
 
+<a name="KnownCapability"></a>
+## func [KnownCapability](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/capabilities.go#L14>)
+
+```go
+func KnownCapability(name string) bool
+```
+
+KnownCapability reports whether a task requirement is part of Ralph's closed capability vocabulary.
+
 <a name="StreamJSONWatchdogConfig"></a>
 ## func [StreamJSONWatchdogConfig](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/watchdog.go#L70>)
 
@@ -134,6 +160,24 @@ func ResolveBinding(cfg File, local Local, fromConfig VariantFile) (Binding, err
 ```
 
 ResolveBinding picks the provider for one variant.
+
+<a name="ResolveShippedBinding"></a>
+### func [ResolveShippedBinding](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/capabilities.go#L44>)
+
+```go
+func ResolveShippedBinding(name string) (Binding, error)
+```
+
+ResolveShippedBinding resolves a built\-in provider by its stable name.
+
+<a name="Binding.SupportsRequirements"></a>
+### func \(Binding\) [SupportsRequirements](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/capabilities.go#L25>)
+
+```go
+func (b Binding) SupportsRequirements(requirements []string) bool
+```
+
+SupportsRequirements reports whether a binding satisfies every requirement. Unknown capabilities fail closed.
 
 <a name="BindingConfig"></a>
 ## type [BindingConfig](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/binding.go#L37-L73>)

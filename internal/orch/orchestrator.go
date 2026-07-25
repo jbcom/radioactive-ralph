@@ -476,16 +476,9 @@ func (o *Orchestrator) DispatchNext(ctx context.Context, projectID, planID strin
 	if err != nil {
 		return 0, fmt.Errorf("orch: load plan: %w", err)
 	}
-	if storedPlan.SourceMarkdown == "" {
-		return 0, fmt.Errorf("orch: plan %q has no source markdown", planID)
-	}
-
-	parsedPlan, err := plan.Parse([]byte(storedPlan.SourceMarkdown))
+	parsedPlan, err := parseExecutionPlan(storedPlan)
 	if err != nil {
-		return 0, fmt.Errorf("orch: parse plan markdown: %w", err)
-	}
-	if err := plan.ValidateV2(parsedPlan); err != nil {
-		return 0, fmt.Errorf("orch: validate plan graph: %w", err)
+		return 0, err
 	}
 	if parsedPlan.V2 {
 		return o.dispatchNextV2(ctx, projectID, planID, storedPlan, parsedPlan)
@@ -634,6 +627,20 @@ func (o *Orchestrator) DispatchNext(ctx context.Context, projectID, planID strin
 	}
 
 	return dispatched, nil
+}
+
+func parseExecutionPlan(storedPlan *store.Plan) (*plan.Plan, error) {
+	if storedPlan.SourceMarkdown == "" {
+		return nil, fmt.Errorf("orch: plan %q has no source markdown", storedPlan.ID)
+	}
+	parsed, err := plan.Parse([]byte(storedPlan.SourceMarkdown))
+	if err != nil {
+		return nil, fmt.Errorf("orch: parse plan markdown: %w", err)
+	}
+	if err := plan.ValidateV2(parsed); err != nil {
+		return nil, fmt.Errorf("orch: validate plan graph: %w", err)
+	}
+	return parsed, nil
 }
 
 // dispatchStepArgs bundles the per-step inputs dispatchReadyStep needs, so the

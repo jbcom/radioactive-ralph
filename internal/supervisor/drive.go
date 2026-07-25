@@ -69,6 +69,9 @@ func (s *Supervisor) HandlePlanImport(ctx context.Context, args ipc.PlanImportAr
 		if isDuplicateSlug(err) {
 			return zero, &codedError{ipc.CodeConflict, err.Error()}
 		}
+		if errors.Is(err, orch.ErrInvalidPlanContract) {
+			return zero, &codedError{ipc.CodeInvalidArgs, err.Error()}
+		}
 		return zero, fmt.Errorf("supervisor: create plan: %w", err)
 	}
 	return ipc.PlanImportReply{PlanID: planID, Slug: slug, Title: title}, nil

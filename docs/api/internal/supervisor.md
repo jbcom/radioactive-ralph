@@ -161,7 +161,7 @@ HandleEnqueue drives one real dispatch pass via internal/orch instead of returni
 args.Description/args.TaskID name the work the caller wanted enqueued, but a store task cannot be created without a plan\_id \(tasks.plan\_id is a NOT NULL foreign key\) and EnqueueArgs carries no plan reference — so HandleEnqueue's job today is exactly "wake up dispatch for whatever is already ready", the same effect an enqueue is meant to have \(make already\-known work actually run\), not "materialize a new ad hoc task with no plan to belong to". EnqueueReply.Inserted reports whether anything was actually dispatched; TaskID echoes args.TaskID \(or, if unset, the number of steps dispatched, best\-effort\) so a caller has some return value acknowledging its enqueue signal was acted upon.
 
 <a name="Supervisor.HandlePlanImport"></a>
-### func \(\*Supervisor\) [HandlePlanImport](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/supervisor/drive.go#L37>)
+### func \(\*Supervisor\) [HandlePlanImport](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/supervisor/drive.go#L38>)
 
 ```go
 func (s *Supervisor) HandlePlanImport(ctx context.Context, args ipc.PlanImportArgs) (ipc.PlanImportReply, error)
@@ -170,7 +170,7 @@ func (s *Supervisor) HandlePlanImport(ctx context.Context, args ipc.PlanImportAr
 HandlePlanImport creates a plan from markdown and activates it — the same logic the \`plan import\` CLI runs, moved server\-side.
 
 <a name="Supervisor.HandlePlanSetStatus"></a>
-### func \(\*Supervisor\) [HandlePlanSetStatus](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/supervisor/drive.go#L89>)
+### func \(\*Supervisor\) [HandlePlanSetStatus](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/supervisor/drive.go#L90>)
 
 ```go
 func (s *Supervisor) HandlePlanSetStatus(ctx context.Context, args ipc.PlanSetStatusArgs) (ipc.PlanSetStatusReply, error)
@@ -206,7 +206,7 @@ func (s *Supervisor) HandleStop(_ context.Context, _ ipc.StopArgs) error
 HandleStop breaks Run's select loop, which triggers shutdown. Graceful vs. immediate is not yet differentiated \(no in\-flight plan work exists yet to wait on\) — both simply request shutdown.
 
 <a name="Supervisor.HandleTaskApprove"></a>
-### func \(\*Supervisor\) [HandleTaskApprove](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/supervisor/drive.go#L108>)
+### func \(\*Supervisor\) [HandleTaskApprove](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/supervisor/drive.go#L109>)
 
 ```go
 func (s *Supervisor) HandleTaskApprove(ctx context.Context, args ipc.TaskApproveArgs) error
@@ -215,7 +215,7 @@ func (s *Supervisor) HandleTaskApprove(ctx context.Context, args ipc.TaskApprove
 HandleTaskApprove clears the approval gate on a ready\_pending\_approval task.
 
 <a name="Supervisor.HandleWorkerKill"></a>
-### func \(\*Supervisor\) [HandleWorkerKill](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/supervisor/drive.go#L131>)
+### func \(\*Supervisor\) [HandleWorkerKill](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/supervisor/drive.go#L132>)
 
 ```go
 func (s *Supervisor) HandleWorkerKill(ctx context.Context, args ipc.WorkerKillArgs) error

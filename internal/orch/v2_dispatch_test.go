@@ -73,6 +73,10 @@ func TestV2DispatchHonorsDAGProviderSeparationAndPersistsEvidence(t *testing.T) 
 			t.Fatalf("metadata %s = %+v", taskID, metadata)
 		}
 	}
+	progress, err := o.PlanProgress(ctx, planID)
+	if err != nil || progress != (Progress{Done: 2, Total: 2}) {
+		t.Fatalf("progress = %+v, %v; want 2/2", progress, err)
+	}
 }
 
 func TestV2DispatchBlocksWhenProviderSeparationExhaustsPool(t *testing.T) {
@@ -141,6 +145,41 @@ func TestV2DispatchHashMismatchNeverInvokesProvider(t *testing.T) {
 	task, _ := st.GetTask(ctx, planID, "task.hash")
 	if task.Status != store.TaskStatusBlockedInput {
 		t.Fatalf("status = %s, want blocked_input", task.Status)
+	}
+}
+
+func TestV2AdmissionCapSkipsBlockedCandidateWithoutStarvingReadyWork(t *testing.T) {
+	ctx := context.Background()
+	st := newTestStore(t)
+	projectDir := t.TempDir()
+	projectID, _ := st.CreateProject(ctx, "v2-cap", []store.Fingerprint{{
+		Kind: store.FingerprintKindAbsPath, Value: projectDir,
+	}})
+	input := []byte("current")
+	_ = os.WriteFile(filepath.Join(projectDir, "contract.md"), input, 0o600)
+	md := "# Team\n\n" +
+		v2RuntimeStep("task.stale", nil, []string{"claude"}, nil, fmt.Sprintf("%064d", 0)) + "\n" +
+		v2RuntimeStep("task.ready", nil, []string{"claude"}, nil, fmt.Sprintf("%x", sha256.Sum256(input)))
+	runner := &bindingRecordingRunner{}
+	o := New(st,
+		WithMaxParallel(1),
+		WithRunnerFactory(func(provider.Binding) (provider.Runner, error) { return runner, nil }),
+		WithConstrainedBindingResolver(constrainedTestPool("claude")),
+	)
+	planID, err := o.ImportPlan(ctx, ImportPlanOpts{
+		ProjectID: projectID, Slug: "cap", Title: "Cap", Markdown: md,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count, err := o.DispatchNext(ctx, projectID, planID); err != nil || count != 1 {
+		t.Fatalf("DispatchNext = %d, %v; want one admitted worker", count, err)
+	}
+	o.Wait()
+	stale, _ := st.GetTask(ctx, planID, "task.stale")
+	ready, _ := st.GetTask(ctx, planID, "task.ready")
+	if stale.Status != store.TaskStatusBlockedInput || ready.Status != store.TaskStatusDone {
+		t.Fatalf("stale=%s ready=%s", stale.Status, ready.Status)
 	}
 }
 

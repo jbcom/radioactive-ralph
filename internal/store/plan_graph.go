@@ -53,6 +53,9 @@ func (s *Store) CreatePlanGraph(ctx context.Context, opts CreatePlanGraphOpts) (
 	if len(opts.Tasks) == 0 {
 		return "", fmt.Errorf("store: plan graph requires tasks")
 	}
+	if err := validateGraphSpecs(opts.Tasks); err != nil {
+		return "", err
+	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return "", fmt.Errorf("store: begin plan graph: %w", err)

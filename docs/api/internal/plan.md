@@ -26,11 +26,13 @@ Plans are markdown documents parsed with goldmark into an AST and decomposed heu
 - [func Slug\(title string\) string](<#Slug>)
 - [func Title\(markdown, fallback string\) string](<#Title>)
 - [func ValidateForImport\(md \[\]byte\) error](<#ValidateForImport>)
+- [func ValidateV2\(parsed \*Plan\) error](<#ValidateV2>)
 - [type Group](<#Group>)
 - [type Plan](<#Plan>)
   - [func Parse\(md \[\]byte\) \(\*Plan, error\)](<#Parse>)
   - [func \(p \*Plan\) StepAt\(ref StepRef\) \(Step, Group, error\)](<#Plan.StepAt>)
   - [func \(p \*Plan\) StepIDs\(\) \[\]string](<#Plan.StepIDs>)
+  - [func \(p \*Plan\) V2Tasks\(\) \[\]V2Task](<#Plan.V2Tasks>)
 - [type PlanError](<#PlanError>)
   - [func Validate\(md \[\]byte\) \[\]PlanError](<#Validate>)
   - [func \(e PlanError\) String\(\) string](<#PlanError.String>)
@@ -38,12 +40,16 @@ Plans are markdown documents parsed with goldmark into an AST and decomposed heu
   - [func Decompose\(p \*Plan, done map\[string\]bool\) \(readyNow \[\]Step, parallel bool\)](<#Decompose>)
 - [type StepRef](<#StepRef>)
   - [func \(r StepRef\) ID\(\) string](<#StepRef.ID>)
+- [type TaskInput](<#TaskInput>)
+- [type TaskMetadata](<#TaskMetadata>)
+- [type TaskOutput](<#TaskOutput>)
+- [type V2Task](<#V2Task>)
 - [type ValidationErrors](<#ValidationErrors>)
   - [func \(errs ValidationErrors\) Error\(\) string](<#ValidationErrors.Error>)
 
 
 <a name="DecomposeRefs"></a>
-## func [DecomposeRefs](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plan/decompose.go#L142>)
+## func [DecomposeRefs](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plan/decompose.go#L146>)
 
 ```go
 func DecomposeRefs(p *Plan, done map[string]bool) (readyNow []Step, refs []StepRef, parallel bool)
@@ -78,51 +84,47 @@ func ValidateForImport(md []byte) error
 
 ValidateForImport is the plan\-ingress contract. It rejects empty/no\-step documents and every ambiguity reported by Validate before a project or plan row is created. This is intentionally stricter than Parse, which remains useful for inspecting already\-stored historical input.
 
-<a name="Group"></a>
-## type [Group](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plan/parse.go#L40-L60>)
+<a name="ValidateV2"></a>
+## func [ValidateV2](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plan/v2_validate.go#L10>)
 
-Group is a single heading's section. A Group either carries Steps \(it is a leaf: no child subheadings appear in its section\) or SubGroups \(it has child subheadings, which carry the ordering\) \-\- never both.
+```go
+func ValidateV2(parsed *Plan) error
+```
+
+ValidateV2 checks identity, dependency, and exclusive\-output invariants.
+
+<a name="Group"></a>
+## type [Group](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plan/types.go#L13-L19>)
+
+Group is a heading section. It carries either Steps or SubGroups.
 
 ```go
 type Group struct {
-    // Heading is the trimmed text of the heading line.
-    Heading string
-
-    // Level is the heading level (1-6).
-    Level int
-
-    // Parallel is true when this leaf group's steps come from an
-    // unordered list (dispatchable together). It is false for an
-    // ordered-list leaf (steps run one at a time) and is meaningless
-    // (left false) for a non-leaf group.
-    Parallel bool
-
-    // Steps holds this leaf group's steps in document order. Empty for
-    // a non-leaf group.
-    Steps []Step
-
-    // SubGroups holds this group's child subheadings in document order.
-    // Empty for a leaf group.
+    Heading   string
+    Level     int
+    Parallel  bool
+    Steps     []Step
     SubGroups []Group
 }
 ```
 
 <a name="Plan"></a>
-## type [Plan](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plan/parse.go#L30-L35>)
+## type [Plan](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plan/types.go#L4-L10>)
 
 Plan is the parsed, nested representation of a plan document.
 
 ```go
 type Plan struct {
-    // Groups holds the top-level (heading level 1) groups in document
-    // order. Document order is dependency order: Groups[0] completes
-    // before Groups[1] starts, and so on.
+    // Groups holds the top-level groups in dependency order.
     Groups []Group
+
+    // V2 is true when every step carries strict ralph-task JSON metadata.
+    V2  bool
 }
 ```
 
 <a name="Parse"></a>
-### func [Parse](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plan/parse.go#L88>)
+### func [Parse](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plan/parse.go#L33>)
 
 ```go
 func Parse(md []byte) (*Plan, error)
@@ -131,7 +133,7 @@ func Parse(md []byte) (*Plan, error)
 Parse parses plan markdown into a Plan. Parse uses goldmark's core parser only \(block \+ inline\); GFM extensions \(tables, strikethrough, autolinks, task\-list checkboxes, etc.\) are deliberately not enabled \-\- the plan grammar is intentionally small.
 
 <a name="Plan.StepAt"></a>
-### func \(\*Plan\) [StepAt](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plan/decompose.go#L153>)
+### func \(\*Plan\) [StepAt](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plan/decompose.go#L157>)
 
 ```go
 func (p *Plan) StepAt(ref StepRef) (Step, Group, error)
@@ -146,7 +148,16 @@ StepAt resolves a StepRef back to its Step and owning Group, primarily for calle
 func (p *Plan) StepIDs() []string
 ```
 
-StepIDs returns the stable ID \(see StepRef.ID\) for every step in the plan, in document order. This is the full universe of valid keys for a done\-set map, and is useful for validating/seeding one.
+StepIDs returns every step's stable identity in document order. Legacy steps use their positional StepRef ID; v2 steps use their explicit metadata ID so progress and durable task state share the same key.
+
+<a name="Plan.V2Tasks"></a>
+### func \(\*Plan\) [V2Tasks](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plan/v2.go#L58>)
+
+```go
+func (p *Plan) V2Tasks() []V2Task
+```
+
+V2Tasks flattens v2 tasks in deterministic document order.
 
 <a name="PlanError"></a>
 ## type [PlanError](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plan/validate.go#L22-L25>)
@@ -163,7 +174,7 @@ type PlanError struct {
 ```
 
 <a name="Validate"></a>
-### func [Validate](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plan/validate.go#L92>)
+### func [Validate](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plan/validate.go#L95>)
 
 ```go
 func Validate(md []byte) []PlanError
@@ -185,34 +196,24 @@ func (e PlanError) String() string
 
 
 <a name="Step"></a>
-## type [Step](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plan/parse.go#L64-L82>)
+## type [Step](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plan/types.go#L22-L30>)
 
-Step is a single unit of work: the list item text plus any trailing paragraph\(s\) of detail found alongside the list under the same heading.
+Step is one list item plus its optional narrative detail and metadata.
 
 ```go
 type Step struct {
-    // Text is the trimmed text of the list item itself, with any recognized
-    // trailing marker (see RequiresApproval) stripped off.
-    Text string
-
-    // Detail is the trimmed, newline-joined text of any paragraphs found
-    // in the same section as the list (narrative elaborating the step).
-    // Empty when there is no such detail.
-    Detail string
-
-    // RequiresApproval is true when the step carries the `[approval]` marker
-    // (case-insensitive, at the end of the list-item text). Such a step is
-    // materialized as a task in status 'ready_pending_approval': it is held
-    // out of dispatch until an operator approves it (GUI/IPC ApproveTask),
-    // which transitions it to 'ready' so it becomes claimable. This is the
-    // human-in-the-loop gate — the producer for the approval flow the
-    // observe/drive surface already exposes.
+    Text             string
+    Detail           string
     RequiresApproval bool
+
+    // Metadata opts this step into stable identity and explicit DAG semantics.
+    // Nil preserves the legacy heading/list execution contract.
+    Metadata *TaskMetadata
 }
 ```
 
 <a name="Decompose"></a>
-### func [Decompose](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plan/decompose.go#L92>)
+### func [Decompose](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plan/decompose.go#L96>)
 
 ```go
 func Decompose(p *Plan, done map[string]bool) (readyNow []Step, parallel bool)
@@ -247,6 +248,61 @@ func (r StepRef) ID() string
 ```
 
 ID returns a stable, deterministic string key for this step, suitable for use in a done\-set. It is derived purely from position in the plan tree \(e.g. "0.1.2"\), not from step text, so it stays stable across re\-parses of the same document and is independent of wording edits that don't change structure.
+
+<a name="TaskInput"></a>
+## type [TaskInput](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plan/v2.go#L39-L42>)
+
+TaskInput pins one project\-relative file to its exact content hash.
+
+```go
+type TaskInput struct {
+    Path   string `json:"path"`
+    SHA256 string `json:"sha256"`
+}
+```
+
+<a name="TaskMetadata"></a>
+## type [TaskMetadata](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plan/v2.go#L27-L36>)
+
+TaskMetadata is the additive ralph.plan/v2 contract embedded in a list item as one strict JSON fenced block labelled ralph\-task.
+
+```go
+type TaskMetadata struct {
+    ID            string       `json:"id"`
+    After         []string     `json:"after"`
+    Team          string       `json:"team"`
+    Requires      []string     `json:"requires"`
+    Providers     []string     `json:"providers"`
+    DifferentFrom []string     `json:"differentFrom"`
+    Inputs        []TaskInput  `json:"inputs"`
+    Outputs       []TaskOutput `json:"outputs"`
+}
+```
+
+<a name="TaskOutput"></a>
+## type [TaskOutput](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plan/v2.go#L45-L48>)
+
+TaskOutput declares one project\-relative exclusive output reservation.
+
+```go
+type TaskOutput struct {
+    Path string `json:"path"`
+    Mode string `json:"mode"`
+}
+```
+
+<a name="V2Task"></a>
+## type [V2Task](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plan/v2.go#L51-L55>)
+
+V2Task pairs a task with its hierarchy and document order.
+
+```go
+type V2Task struct {
+    Step         Step
+    GroupHeading string
+    Order        int
+}
+```
 
 <a name="ValidationErrors"></a>
 ## type [ValidationErrors](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plan/validate.go#L38>)

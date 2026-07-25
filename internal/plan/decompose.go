@@ -28,13 +28,17 @@ func (r StepRef) ID() string {
 	return strings.Join(parts, ".")
 }
 
-// StepIDs returns the stable ID (see StepRef.ID) for every step in the
-// plan, in document order. This is the full universe of valid keys for a
-// done-set map, and is useful for validating/seeding one.
+// StepIDs returns every step's stable identity in document order. Legacy
+// steps use their positional StepRef ID; v2 steps use their explicit metadata
+// ID so progress and durable task state share the same key.
 func (p *Plan) StepIDs() []string {
 	var ids []string
-	walkGroups(p.Groups, nil, func(ref StepRef, _ Step) {
-		ids = append(ids, ref.ID())
+	walkGroups(p.Groups, nil, func(ref StepRef, step Step) {
+		if step.Metadata != nil {
+			ids = append(ids, step.Metadata.ID)
+		} else {
+			ids = append(ids, ref.ID())
+		}
 	})
 	return ids
 }

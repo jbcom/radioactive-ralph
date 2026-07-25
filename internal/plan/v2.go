@@ -35,11 +35,13 @@ type TaskMetadata struct {
 	Outputs       []TaskOutput `json:"outputs"`
 }
 
+// TaskInput pins one project-relative file to its exact content hash.
 type TaskInput struct {
 	Path   string `json:"path"`
 	SHA256 string `json:"sha256"`
 }
 
+// TaskOutput declares one project-relative exclusive output reservation.
 type TaskOutput struct {
 	Path string `json:"path"`
 	Mode string `json:"mode"`

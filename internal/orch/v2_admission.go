@@ -50,7 +50,7 @@ func secureProjectPath(projectDir, relative string, mustExist bool) (string, err
 		return "", fmt.Errorf("path escapes project root")
 	}
 
-	resolved := candidate
+	var resolved string
 	if mustExist {
 		resolved, err = filepath.EvalSymlinks(candidate)
 	} else {

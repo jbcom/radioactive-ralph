@@ -2,6 +2,7 @@ package orch
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/jbcom/radioactive-ralph/internal/plan"
@@ -30,12 +31,11 @@ func (o *Orchestrator) dispatchNextV2(
 		return 0, err
 	}
 
-	limit := len(ready)
-	if o.maxParallel > 0 && limit > o.maxParallel {
-		limit = o.maxParallel
-	}
 	dispatched := 0
-	for i := 0; i < limit; i++ {
+	for i := range ready {
+		if o.maxParallel > 0 && dispatched >= o.maxParallel {
+			break
+		}
 		v2Task, ok := byID[ready[i].ID]
 		if !ok {
 			return dispatched, fmt.Errorf("orch: materialized v2 task %s missing from source", ready[i].ID)
@@ -49,6 +49,14 @@ func (o *Orchestrator) dispatchNextV2(
 		}
 		denied, err := o.separatedProviders(ctx, planID, metadata)
 		if err != nil {
+			if errors.Is(err, ErrNoCapableProvider) {
+				if blockErr := o.store.MarkBlockedCapability(
+					ctx, planID, metadata.ID, err.Error(),
+				); blockErr != nil {
+					return dispatched, fmt.Errorf("orch: persist separation block: %w", blockErr)
+				}
+				continue
+			}
 			return dispatched, err
 		}
 		constraints := BindingConstraints{
@@ -88,7 +96,7 @@ func (o *Orchestrator) separatedProviders(
 			return nil, fmt.Errorf("orch: load provider provenance for %s: %w", taskID, err)
 		}
 		if execution.AssignedProvider == "" {
-			return nil, fmt.Errorf("orch: dependency %s has no provider provenance", taskID)
+			return nil, noCapableProvider("dependency %s has no provider provenance", taskID)
 		}
 		if !seen[execution.AssignedProvider] {
 			seen[execution.AssignedProvider] = true

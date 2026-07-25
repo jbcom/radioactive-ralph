@@ -48,6 +48,11 @@ because an agent said so.
   heuristically (heading = group, unordered list = parallel steps, ordered =
   sequential). The orchestrator dispatches steps with scoped context and
   verifies each against its acceptance criteria before marking it done.
+- **Explicit DAGs when inference is not enough.** Add strict `ralph-task` JSON
+  blocks to opt a plan into stable task IDs, arbitrary `after` edges,
+  hierarchical teams, provider capability/independence rules, content-hashed
+  inputs, exclusive outputs, and durable provenance without breaking legacy
+  markdown plans.
 - **Local-only providers.** `claude`, `codex`, `opencode` — the agent loop and
   tool execution run locally (hosted model inference is fine). A2A coordination
   vocabulary comes from the official [`a2aproject/a2a-go`](https://github.com/a2aproject/a2a-go).

@@ -3,12 +3,17 @@ package orch
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	"github.com/jbcom/radioactive-ralph/internal/plan"
 	"github.com/jbcom/radioactive-ralph/internal/provider"
 	"github.com/jbcom/radioactive-ralph/internal/store"
 )
+
+// ErrInvalidPlanContract classifies a syntactically valid markdown plan whose
+// v2 provider/capability contract cannot be admitted.
+var ErrInvalidPlanContract = errors.New("orch: invalid plan contract")
 
 // ImportPlanOpts is the shared CLI/supervisor plan ingress contract.
 type ImportPlanOpts struct {
@@ -22,7 +27,7 @@ type ImportPlanOpts struct {
 // and activates every task and edge of a ralph.plan/v2 graph.
 func (o *Orchestrator) ImportPlan(ctx context.Context, opts ImportPlanOpts) (string, error) {
 	if err := plan.ValidateForImport([]byte(opts.Markdown)); err != nil {
-		return "", fmt.Errorf("orch: invalid plan: %w", err)
+		return "", fmt.Errorf("%w: %v", ErrInvalidPlanContract, err)
 	}
 	parsed, err := plan.Parse([]byte(opts.Markdown))
 	if err != nil {
@@ -32,7 +37,7 @@ func (o *Orchestrator) ImportPlan(ctx context.Context, opts ImportPlanOpts) (str
 		return o.importLegacyPlan(ctx, opts)
 	}
 	if err := o.validateV2Bindings(ctx, opts.ProjectID, parsed); err != nil {
-		return "", err
+		return "", fmt.Errorf("%w: %v", ErrInvalidPlanContract, err)
 	}
 
 	tasks := make([]store.GraphTaskSpec, 0, len(parsed.V2Tasks()))
