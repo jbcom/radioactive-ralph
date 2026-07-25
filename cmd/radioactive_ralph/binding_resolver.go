@@ -6,6 +6,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/jbcom/radioactive-ralph/internal/orch"
 	"github.com/jbcom/radioactive-ralph/internal/provider"
 	"github.com/jbcom/radioactive-ralph/internal/store"
 	"github.com/jbcom/radioactive-ralph/internal/vconfig"
@@ -18,13 +19,12 @@ import (
 // at both scopes — the layering, not a different name, expresses precedence.
 const providerConfigKey = "provider"
 
-// providersConfigKey selects a Ralph-managed provider pool. Unlike the
-// singular provider key, a pool deliberately disables each selected
-// binding's NativeFanout capability: one ready plan step becomes one Ralph
-// worker, and successive workers are distributed across the configured
-// providers. That is what makes a 16-step parallel plan visibly become 16
-// independently supervised workers rather than one provider invocation that
-// may or may not create opaque subagents of its own.
+// providersConfigKey selects one or more providers. A multi-provider selection
+// is a Ralph-managed pool and deliberately disables each selected binding's
+// NativeFanout capability: one ready plan step becomes one Ralph worker, and
+// successive workers are distributed across the configured providers. A
+// one-element canonical selection retains ordinary single-provider semantics,
+// including NativeFanout.
 const providersConfigKey = "providers"
 
 // storeBindingResolver returns an orch.BindingResolver that selects the
@@ -32,18 +32,19 @@ const providersConfigKey = "providers"
 // the orchestrator's built-in always-claude default. It resolves the
 // effective config for the project (DB layers only — the headless supervisor
 // has no --config-file/--user-config-file flags to thread) and reads
-// providersConfigKey first, then providerConfigKey. An unset key falls back to
+// the canonical providersConfigKey, with providerConfigKey accepted only as a
+// legacy one-element alias. An unset selection falls back to
 // provider.ResolveBinding's own "claude" default, so a project with no provider
 // configured still works.
 //
 // The per-project cursor is guarded because dispatches are asynchronous even
 // though DispatchNext currently serializes claim passes. Keeping the resolver
 // independently safe prevents a later caller from introducing a data race.
-func storeBindingResolver(st *store.Store) func(ctx context.Context, projectID string, parallelGroup bool) (provider.Binding, error) {
+func storeBindingResolver(st *store.Store) orch.BindingResolver {
 	var mu sync.Mutex
 	nextByProject := map[string]uint64{}
 
-	return func(ctx context.Context, projectID string, _ bool) (provider.Binding, error) {
+	return func(ctx context.Context, projectID string, _ bool, purpose orch.BindingResolutionPurpose) (provider.Binding, error) {
 		names, pooled, err := resolveProviderNames(ctx, st, projectID)
 		if err != nil {
 			return provider.Binding{}, err
@@ -54,7 +55,9 @@ func storeBindingResolver(st *store.Store) func(ctx context.Context, projectID s
 			mu.Lock()
 			cursor := nextByProject[projectID]
 			name = names[cursor%uint64(len(names))]
-			nextByProject[projectID] = cursor + 1
+			if purpose == orch.BindingDispatch {
+				nextByProject[projectID] = cursor + 1
+			}
 			mu.Unlock()
 		}
 
@@ -73,10 +76,12 @@ func storeBindingResolver(st *store.Store) func(ctx context.Context, projectID s
 	}
 }
 
-// resolveProviderNames reads the effective provider selection for a project
-// from the virtual-config layer. A plural providers array is a Ralph-managed
-// round-robin pool and wins over the backward-compatible singular provider
-// key. An entirely unset selection returns no names (not an error), letting
+// resolveProviderNames reads the effective provider selection in source
+// precedence order instead of flattening differently named aliases into one
+// map. A project-stanza legacy singular selection must override a stored or
+// user-scope canonical pool; checking each layer independently preserves that
+// relationship while old databases migrate to the canonical providers key.
+// An entirely unset selection returns no names (not an error), letting
 // ResolveBinding apply its built-in default.
 func resolveProviderNames(ctx context.Context, st *store.Store, projectID string) ([]string, bool, error) {
 	// No file overrides: the supervisor runs headless, so only the DB-backed
@@ -85,40 +90,41 @@ func resolveProviderNames(ctx context.Context, st *store.Store, projectID string
 	if err != nil {
 		return nil, false, fmt.Errorf("resolve user config: %w", err)
 	}
-	projectsCfg, err := vconfig.ResolveProjects(ctx, st, userCfg, projectID)
-	if err != nil {
-		return nil, false, fmt.Errorf("resolve project config: %w", err)
-	}
-	// ModeOverride: resolve the effective config at runtime without
-	// persisting anything (the supervisor is only reading which provider to
-	// use, not mutating stored config).
-	effective, err := vconfig.EffectiveProject(ctx, st, projectsCfg, projectID, "", vconfig.ModeOverride)
-	if err != nil {
-		return nil, false, fmt.Errorf("resolve effective project config: %w", err)
+	return resolveProviderNamesFromUserConfig(ctx, st, userCfg, projectID)
+}
+
+func resolveProviderNamesFromUserConfig(ctx context.Context, st *store.Store, userCfg vconfig.UserConfig, projectID string) ([]string, bool, error) {
+	// A per-project stanza is the highest project layer. Resolve it before the
+	// stored project baseline so an alias change across layers still obeys
+	// precedence (provider="codex" overrides providers=[...] below it).
+	if projectOverlay, ok := userCfg.Projects[projectID]; ok {
+		names, found, err := providerSelectionFromValues(projectOverlay)
+		if err != nil {
+			return nil, false, fmt.Errorf("resolve project provider selection: %w", err)
+		}
+		if found {
+			return names, len(names) > 1, nil
+		}
 	}
 
-	if raw, ok := effective.Values[providersConfigKey]; ok {
-		names, err := stringSliceValue(raw)
-		if err != nil {
-			return nil, false, fmt.Errorf("resolve %s: %w", providersConfigKey, err)
-		}
-		return names, true, nil
+	storedProject, err := vconfig.ResolveProjects(ctx, st, vconfig.UserConfig{}, projectID)
+	if err != nil {
+		return nil, false, fmt.Errorf("resolve stored project config: %w", err)
 	}
-	if v, ok := stringValue(effective.Values[providerConfigKey]); ok {
-		return []string{v}, false, nil
+	names, found, err := providerSelectionFromValues(storedProject.Values)
+	if err != nil {
+		return nil, false, fmt.Errorf("resolve stored provider selection: %w", err)
 	}
-	// ResolveProjects normally carries USER values into effective, but retain
-	// the explicit fallback for compatibility with stores created by early
-	// supervisor builds.
-	if raw, ok := userCfg.Values[providersConfigKey]; ok {
-		names, err := stringSliceValue(raw)
-		if err != nil {
-			return nil, false, fmt.Errorf("resolve user %s: %w", providersConfigKey, err)
-		}
-		return names, true, nil
+	if found {
+		return names, len(names) > 1, nil
 	}
-	if v, ok := stringValue(userCfg.Values[providerConfigKey]); ok {
-		return []string{v}, false, nil
+
+	names, found, err = providerSelectionFromValues(userCfg.Values)
+	if err != nil {
+		return nil, false, fmt.Errorf("resolve user provider selection: %w", err)
+	}
+	if found {
+		return names, len(names) > 1, nil
 	}
 	return nil, false, nil
 }

@@ -421,7 +421,7 @@ func TestTickDrivesDispatchForActivePlan(t *testing.T) {
 	runner := &tickFakeRunner{}
 	sup.orch = orch.New(sup.store,
 		orch.WithRunnerFactory(func(provider.Binding) (provider.Runner, error) { return runner, nil }),
-		orch.WithBindingResolver(func(context.Context, string, bool) (provider.Binding, error) {
+		orch.WithBindingResolver(func(context.Context, string, bool, orch.BindingResolutionPurpose) (provider.Binding, error) {
 			return provider.Binding{Name: "claude", Config: provider.BindingConfig{Type: "claude", Binary: "true"}}, nil
 		}),
 	)

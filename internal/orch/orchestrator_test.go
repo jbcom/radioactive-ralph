@@ -109,7 +109,7 @@ const threeStepParallelPlan = `# Fan out wide
 `
 
 func fakeBindingResolver(name string, nativeFanout bool) BindingResolver {
-	return func(_ context.Context, _ string, _ bool) (provider.Binding, error) {
+	return func(_ context.Context, _ string, _ bool, _ BindingResolutionPurpose) (provider.Binding, error) {
 		return provider.Binding{
 			Name:   name,
 			Config: provider.BindingConfig{Type: name, Binary: "true", NativeFanout: nativeFanout},

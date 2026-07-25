@@ -69,6 +69,98 @@ func TestSetProjectConfigRequiresProjectIDAndKey(t *testing.T) {
 	}
 }
 
+func TestApplyProjectConfigAtomicallyReplacesAliasedSelection(t *testing.T) {
+	ctx := context.Background()
+	s := openTestStore(t)
+	projectID := mustCreateProject(t, s, "replace-config-project")
+
+	if err := s.ApplyProjectConfig(ctx, projectID, map[string]string{
+		"provider":  `"claude"`,
+		"unrelated": `"keep-me"`,
+	}, nil); err != nil {
+		t.Fatalf("seed config: %v", err)
+	}
+	if err := s.ApplyProjectConfig(ctx, projectID, map[string]string{
+		"providers": `["codex","opencode"]`,
+	}, []string{"provider"}); err != nil {
+		t.Fatalf("replace provider selection: %v", err)
+	}
+
+	cfg, err := s.GetProjectConfig(ctx, projectID)
+	if err != nil {
+		t.Fatalf("GetProjectConfig: %v", err)
+	}
+	if _, exists := cfg["provider"]; exists {
+		t.Errorf("legacy provider key survived replacement: %+v", cfg)
+	}
+	if cfg["providers"] != `["codex","opencode"]` {
+		t.Errorf("providers = %q, want canonical array", cfg["providers"])
+	}
+	if cfg["unrelated"] != `"keep-me"` {
+		t.Errorf("unrelated config = %q, want preserved", cfg["unrelated"])
+	}
+}
+
+func TestApplyProjectConfigValidatesBeforeMutation(t *testing.T) {
+	ctx := context.Background()
+	s := openTestStore(t)
+	projectID := mustCreateProject(t, s, "validate-config-project")
+
+	if err := s.SetProjectConfig(ctx, projectID, "provider", `"claude"`); err != nil {
+		t.Fatalf("seed config: %v", err)
+	}
+	err := s.ApplyProjectConfig(ctx, projectID,
+		map[string]string{"": `["codex"]`},
+		[]string{"provider"},
+	)
+	if err == nil {
+		t.Fatal("ApplyProjectConfig with empty upsert key: want error")
+	}
+
+	cfg, err := s.GetProjectConfig(ctx, projectID)
+	if err != nil {
+		t.Fatalf("GetProjectConfig: %v", err)
+	}
+	if cfg["provider"] != `"claude"` {
+		t.Errorf("provider changed after rejected mutation: %+v", cfg)
+	}
+}
+
+func TestApplyProjectConfigRollsBackDeletesWhenUpsertFails(t *testing.T) {
+	ctx := context.Background()
+	s := openTestStore(t)
+	projectID := mustCreateProject(t, s, "rollback-config-project")
+
+	if err := s.SetProjectConfig(ctx, projectID, "provider", `"claude"`); err != nil {
+		t.Fatalf("seed config: %v", err)
+	}
+	if _, err := s.DB().ExecContext(ctx, `
+		CREATE TRIGGER reject_failed_config
+		BEFORE INSERT ON project_config
+		WHEN NEW.key = 'force-failure'
+		BEGIN
+			SELECT RAISE(ABORT, 'forced config failure');
+		END
+	`); err != nil {
+		t.Fatalf("create failure trigger: %v", err)
+	}
+
+	err := s.ApplyProjectConfig(ctx, projectID,
+		map[string]string{"force-failure": `"boom"`},
+		[]string{"provider"},
+	)
+	if err == nil {
+		t.Fatal("ApplyProjectConfig: want forced upsert error")
+	}
+	cfg, err := s.GetProjectConfig(ctx, projectID)
+	if err != nil {
+		t.Fatalf("GetProjectConfig: %v", err)
+	}
+	if cfg["provider"] != `"claude"` {
+		t.Errorf("provider delete was not rolled back: %+v", cfg)
+	}
+}
+
 func TestGetProjectConfigEmptyForUnknownProject(t *testing.T) {
 	ctx := context.Background()
 	s := openTestStore(t)

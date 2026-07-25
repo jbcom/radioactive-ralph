@@ -94,7 +94,7 @@ func TestE2E_LiveDispatchWithRealProviderCLI(t *testing.T) {
 	}
 
 	o := orch.New(st,
-		orch.WithBindingResolver(func(_ context.Context, _ string, _ bool) (provider.Binding, error) {
+		orch.WithBindingResolver(func(_ context.Context, _ string, _ bool, _ orch.BindingResolutionPurpose) (provider.Binding, error) {
 			return provider.ResolveBinding(provider.File{}, provider.Local{}, provider.VariantFile{Provider: providerName})
 		}),
 		orch.WithSpendCap(providerName, liveSpendCapUSD),

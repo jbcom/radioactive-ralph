@@ -115,7 +115,7 @@ func TestE2E_DispatchThroughRealSupervisorWithFakeProvider(t *testing.T) {
 
 	fakeClaudeBin := filepath.Join(fakeClaudeDir, "claude")
 	o := orch.New(st,
-		orch.WithBindingResolver(func(_ context.Context, _ string, _ bool) (provider.Binding, error) {
+		orch.WithBindingResolver(func(_ context.Context, _ string, _ bool, _ orch.BindingResolutionPurpose) (provider.Binding, error) {
 			return provider.Binding{
 				Name:   "claude",
 				Config: provider.BindingConfig{Type: "claude", Binary: fakeClaudeBin},

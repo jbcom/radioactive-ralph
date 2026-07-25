@@ -4,6 +4,7 @@ import (
 	"context"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/jbcom/radioactive-ralph/internal/provider"
 	"github.com/jbcom/radioactive-ralph/internal/store"
@@ -12,6 +13,55 @@ import (
 type bindingRecordingRunner struct {
 	mu       sync.Mutex
 	bindings []string
+}
+
+type purposeAwarePoolResolver struct {
+	mu         sync.Mutex
+	names      []string
+	next       map[string]int
+	probes     map[string]int
+	dispatches map[string]int
+}
+
+func newPurposeAwarePoolResolver(names ...string) *purposeAwarePoolResolver {
+	return &purposeAwarePoolResolver{
+		names:      names,
+		next:       make(map[string]int),
+		probes:     make(map[string]int),
+		dispatches: make(map[string]int),
+	}
+}
+
+func (r *purposeAwarePoolResolver) resolve(_ context.Context, projectID string, _ bool, purpose BindingResolutionPurpose) (provider.Binding, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	name := r.names[r.next[projectID]%len(r.names)]
+	if purpose == BindingDispatch {
+		r.next[projectID]++
+		r.dispatches[projectID]++
+	} else {
+		r.probes[projectID]++
+	}
+	return provider.Binding{
+		Name:   name,
+		Config: provider.BindingConfig{Type: name, Binary: "true", NativeFanout: false},
+	}, nil
+}
+
+func (r *purposeAwarePoolResolver) counts(projectID string) (probes, dispatches int) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.probes[projectID], r.dispatches[projectID]
+}
+
+type bindingBlockingRunner struct {
+	started chan string
+}
+
+func (r *bindingBlockingRunner) Run(ctx context.Context, binding provider.Binding, _ provider.Request) (provider.Result, error) {
+	r.started <- binding.Name
+	<-ctx.Done()
+	return provider.Result{}, ctx.Err()
 }
 
 func (r *bindingRecordingRunner) Run(_ context.Context, binding provider.Binding, _ provider.Request) (provider.Result, error) {
@@ -118,9 +168,9 @@ func TestDispatchNextNonFanoutProviderDispatchesOneWorkerPerStep(t *testing.T) {
 }
 
 // TestDispatchNextRalphManagedPoolDoesNotSkipProbeBinding proves the native
-// fan-out capability probe is reused as the first actual worker binding. A
-// round-robin resolver must therefore be called exactly once per dispatched
-// worker and all pool members remain eligible.
+// fan-out capability probe peeks without consuming the pool cursor. Each
+// admitted worker gets one dispatch resolution, and all pool members remain
+// eligible.
 func TestDispatchNextRalphManagedPoolDoesNotSkipProbeBinding(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
@@ -129,22 +179,11 @@ func TestDispatchNextRalphManagedPoolDoesNotSkipProbeBinding(t *testing.T) {
 
 	runner := &bindingRecordingRunner{}
 	names := []string{"claude", "codex", "opencode"}
-	var resolveMu sync.Mutex
-	resolveCalls := 0
-	resolve := func(context.Context, string, bool) (provider.Binding, error) {
-		resolveMu.Lock()
-		name := names[resolveCalls%len(names)]
-		resolveCalls++
-		resolveMu.Unlock()
-		return provider.Binding{
-			Name:   name,
-			Config: provider.BindingConfig{Type: name, Binary: "true", NativeFanout: false},
-		}, nil
-	}
+	pool := newPurposeAwarePoolResolver(names...)
 
 	o := New(s,
 		WithRunnerFactory(func(provider.Binding) (provider.Runner, error) { return runner, nil }),
-		WithBindingResolver(resolve),
+		WithBindingResolver(pool.resolve),
 	)
 	dispatched, err := o.DispatchNext(ctx, projectID, planID)
 	if err != nil {
@@ -155,11 +194,9 @@ func TestDispatchNextRalphManagedPoolDoesNotSkipProbeBinding(t *testing.T) {
 	}
 	o.Wait()
 
-	resolveMu.Lock()
-	gotResolveCalls := resolveCalls
-	resolveMu.Unlock()
-	if gotResolveCalls != 3 {
-		t.Fatalf("binding resolver calls = %d, want exactly 3 (one per worker)", gotResolveCalls)
+	probes, dispatches := pool.counts(projectID)
+	if probes != 1 || dispatches != 3 {
+		t.Fatalf("binding resolver calls = probes:%d dispatches:%d, want probes:1 dispatches:3", probes, dispatches)
 	}
 
 	got := runner.names()
@@ -171,6 +208,134 @@ func TestDispatchNextRalphManagedPoolDoesNotSkipProbeBinding(t *testing.T) {
 		if counts[name] != 1 {
 			t.Errorf("provider %q worker count = %d, want 1; all bindings = %v", name, counts[name], got)
 		}
+	}
+}
+
+func TestDispatchNextSaturatedProbeDoesNotConsumePoolCursor(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	fillerProjectID := mustCreateTestProject(t, s, "pool-saturation-fill")
+	fillerPlanA := mustCreateTestPlan(t, s, fillerProjectID, "fill-a", "Fill A", twoStepSequentialPlan)
+	fillerPlanB := mustCreateTestPlan(t, s, fillerProjectID, "fill-b", "Fill B", twoStepSequentialPlan)
+	projectID := mustCreateTestProject(t, s, "pool-saturation-target")
+	planID := mustCreateTestPlan(t, s, projectID, "pool-saturation-plan", "Pool", threeStepParallelPlan)
+
+	runner := &bindingBlockingRunner{started: make(chan string, 8)}
+	pool := newPurposeAwarePoolResolver("claude", "codex")
+	o := New(s,
+		WithRunnerFactory(func(provider.Binding) (provider.Runner, error) { return runner, nil }),
+		WithBindingResolver(pool.resolve),
+		WithMaxParallel(2),
+	)
+
+	for _, fillerPlanID := range []string{fillerPlanA, fillerPlanB} {
+		n, err := o.DispatchNext(ctx, fillerProjectID, fillerPlanID)
+		if err != nil {
+			t.Fatalf("dispatch filler: %v", err)
+		}
+		if n != 1 {
+			t.Fatalf("filler dispatched = %d, want 1", n)
+		}
+	}
+	for range 2 {
+		select {
+		case <-runner.started:
+		case <-time.After(3 * time.Second):
+			t.Fatal("filler runner did not start")
+		}
+	}
+
+	n, err := o.DispatchNext(ctx, projectID, planID)
+	if err != nil {
+		t.Fatalf("DispatchNext while saturated: %v", err)
+	}
+	if n != 0 {
+		t.Fatalf("saturated dispatch = %d, want 0", n)
+	}
+	probes, dispatches := pool.counts(projectID)
+	if probes != 1 || dispatches != 0 {
+		t.Fatalf("saturated resolver calls = probes:%d dispatches:%d, want probes:1 dispatches:0", probes, dispatches)
+	}
+
+	workers := runningWorkerIDs(o)
+	if len(workers) != 2 {
+		t.Fatalf("running filler workers = %d, want 2", len(workers))
+	}
+	o.KillWorker(workers[0])
+
+	deadline := time.Now().Add(3 * time.Second)
+	for n == 0 && time.Now().Before(deadline) {
+		n, err = o.DispatchNext(ctx, projectID, planID)
+		if err != nil {
+			t.Fatalf("DispatchNext after capacity released: %v", err)
+		}
+		if n == 0 {
+			time.Sleep(5 * time.Millisecond)
+		}
+	}
+	if n != 1 {
+		t.Fatalf("dispatch after capacity released = %d, want 1", n)
+	}
+	select {
+	case name := <-runner.started:
+		if name != "claude" {
+			t.Fatalf("first admitted target binding = %q, want claude; saturated probes must not advance", name)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("target runner did not start")
+	}
+
+	for _, workerID := range runningWorkerIDs(o) {
+		o.KillWorker(workerID)
+	}
+	o.Wait()
+}
+
+const twoStepParallelApprovalPlan = `# Guarded pool
+
+- task alpha [approval]
+- task beta [approval]
+`
+
+func TestDispatchNextApprovalProbeDoesNotConsumePoolCursor(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	projectID := mustCreateTestProject(t, s, "pool-approval-project")
+	planID := mustCreateTestPlan(t, s, projectID, "pool-approval-plan", "Pool", twoStepParallelApprovalPlan)
+
+	runner := &bindingRecordingRunner{}
+	pool := newPurposeAwarePoolResolver("claude", "codex")
+	o := New(s,
+		WithRunnerFactory(func(provider.Binding) (provider.Runner, error) { return runner, nil }),
+		WithBindingResolver(pool.resolve),
+	)
+
+	n, err := o.DispatchNext(ctx, projectID, planID)
+	if err != nil {
+		t.Fatalf("DispatchNext while gated: %v", err)
+	}
+	if n != 0 {
+		t.Fatalf("gated dispatch = %d, want 0", n)
+	}
+	probes, dispatches := pool.counts(projectID)
+	if probes != 1 || dispatches != 0 {
+		t.Fatalf("gated resolver calls = probes:%d dispatches:%d, want probes:1 dispatches:0", probes, dispatches)
+	}
+
+	if found, changed, err := s.ApproveTask(ctx, planID, "0.0"); err != nil || !found || !changed {
+		t.Fatalf("ApproveTask = (found=%v changed=%v err=%v), want (true,true,nil)", found, changed, err)
+	}
+	n, err = o.DispatchNext(ctx, projectID, planID)
+	if err != nil {
+		t.Fatalf("DispatchNext after approval: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("approved dispatch = %d, want 1", n)
+	}
+	o.Wait()
+	got := runner.names()
+	if len(got) != 1 || got[0] != "claude" {
+		t.Fatalf("admitted bindings = %v, want [claude]; gated probes must not advance", got)
 	}
 }
 

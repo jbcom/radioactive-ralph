@@ -31,12 +31,27 @@ import (
 // provider.NewRunner.
 type RunnerFactory func(provider.Binding) (provider.Runner, error)
 
-// BindingResolver picks the provider binding to use for one dispatch.
+// BindingResolutionPurpose distinguishes a non-consuming capability probe from
+// a provider assignment for an admitted dispatch.
+type BindingResolutionPurpose uint8
+
+const (
+	// BindingProbe inspects the next binding's capabilities without advancing
+	// any stateful selection policy such as a round-robin provider pool.
+	BindingProbe BindingResolutionPurpose = iota
+	// BindingDispatch assigns a binding to a dispatch that has passed approval
+	// and capacity admission.
+	BindingDispatch
+)
+
+// BindingResolver picks the provider binding to use for one dispatch or
+// previews its capabilities. Stateful resolvers must not advance on
+// BindingProbe.
 // Exists so tests and callers can supply a fixed/fake binding without a
 // real config.toml. Defaults to always resolving "claude" via
 // provider.ResolveBinding with zero File/Local config (i.e. the built-in
 // claude capability record).
-type BindingResolver func(ctx context.Context, projectID string, parallelGroup bool) (provider.Binding, error)
+type BindingResolver func(ctx context.Context, projectID string, parallelGroup bool, purpose BindingResolutionPurpose) (provider.Binding, error)
 
 // Clock abstracts time.Now for deterministic tests (enforcement-prompt
 // cadence, spend windows).
@@ -300,7 +315,7 @@ func New(st *store.Store, opts ...Option) *Orchestrator {
 	o := &Orchestrator{
 		store:     st,
 		newRunner: provider.NewRunner,
-		resolveBinding: func(_ context.Context, _ string, _ bool) (provider.Binding, error) {
+		resolveBinding: func(_ context.Context, _ string, _ bool, _ BindingResolutionPurpose) (provider.Binding, error) {
 			return provider.ResolveBinding(provider.File{}, provider.Local{}, provider.VariantFile{})
 		},
 		now: time.Now,
@@ -453,13 +468,28 @@ func (o *Orchestrator) DispatchNext(ctx context.Context, projectID, planID strin
 	// claiming every ready task in the group, one provider turn, one
 	// evidence submission mapped back onto every task) rather than one
 	// worker per step.
-	var firstBinding *provider.Binding
 	if parallel && limit > 1 {
-		binding, err := o.resolveBinding(ctx, projectID, parallel)
+		binding, err := o.resolveBinding(ctx, projectID, parallel, BindingProbe)
 		if err != nil {
 			return dispatched, fmt.Errorf("orch: resolve binding: %w", err)
 		}
 		if binding.Config.NativeFanout {
+			eligibleSteps := make([]plan.Step, 0, limit)
+			eligibleRefs := make([]plan.StepRef, 0, limit)
+			for i := 0; i < limit; i++ {
+				gated, err := o.stepGateBlocks(ctx, planID, refs[i], readySteps[i])
+				if err != nil {
+					return dispatched, err
+				}
+				if !gated {
+					eligibleSteps = append(eligibleSteps, readySteps[i])
+					eligibleRefs = append(eligibleRefs, refs[i])
+				}
+			}
+			if len(eligibleSteps) == 0 {
+				return dispatched, nil
+			}
+
 			// A fan-out group is one worker / one provider turn, so it takes ONE
 			// dispatch slot. If the pipeline is full there's no capacity now —
 			// return without dispatching; the next pass retries.
@@ -473,7 +503,16 @@ func (o *Orchestrator) DispatchNext(ctx context.Context, projectID, planID strin
 					slotReleased = true
 				}
 			}
-			n, err := o.dispatchFanoutGroup(ctx, projectID, projectDir, planID, parsedPlan, storedPlan.Title, groupHeading, binding, readySteps[:limit], refs[:limit], releaseSlot)
+			binding, err = o.resolveBinding(ctx, projectID, parallel, BindingDispatch)
+			if err != nil {
+				releaseSlot()
+				return dispatched, fmt.Errorf("orch: resolve binding for dispatch: %w", err)
+			}
+			if !binding.Config.NativeFanout {
+				releaseSlot()
+				return dispatched, fmt.Errorf("orch: binding capability changed between probe and dispatch")
+			}
+			n, err := o.dispatchFanoutGroup(ctx, projectID, projectDir, planID, parsedPlan, storedPlan.Title, groupHeading, binding, eligibleSteps, eligibleRefs, releaseSlot)
 			if err != nil {
 				// dispatchFanoutGroup only returns an error on a synchronous
 				// pre-launch failure (claim/spend); the async turn was never
@@ -483,11 +522,6 @@ func (o *Orchestrator) DispatchNext(ctx context.Context, projectID, planID strin
 			}
 			return n, nil
 		}
-		// The capability probe already selected a real binding. Reuse it for
-		// the first Ralph-managed step instead of resolving a second time,
-		// which would otherwise skip one member of a round-robin provider pool
-		// on every parallel dispatch pass.
-		firstBinding = &binding
 	}
 
 	for i := 0; i < limit; i++ {
@@ -517,15 +551,10 @@ func (o *Orchestrator) DispatchNext(ctx context.Context, projectID, planID strin
 			break
 		}
 
-		var resolvedBinding *provider.Binding
-		if firstBinding != nil {
-			resolvedBinding = firstBinding
-			firstBinding = nil
-		}
 		launched, err := o.dispatchReadyStep(ctx, dispatchStepArgs{
 			projectID: projectID, projectDir: projectDir, planID: planID,
 			parsedPlan: parsedPlan, storeTitle: storedPlan.Title, groupHeading: groupHeading,
-			parallel: parallel, ref: refs[i], step: readySteps[i], binding: resolvedBinding,
+			parallel: parallel, ref: refs[i], step: readySteps[i],
 		})
 		if err != nil {
 			return dispatched, err
@@ -547,7 +576,6 @@ type dispatchStepArgs struct {
 	parallel                      bool
 	ref                           plan.StepRef
 	step                          plan.Step
-	binding                       *provider.Binding
 }
 
 // dispatchReadyStep runs one iteration of DispatchNext's per-step body with a
@@ -572,16 +600,10 @@ func (o *Orchestrator) dispatchReadyStep(ctx context.Context, a dispatchStepArgs
 		}
 	}
 
-	var binding provider.Binding
-	if a.binding != nil {
-		binding = *a.binding
-	} else {
-		var err error
-		binding, err = o.resolveBinding(ctx, a.projectID, a.parallel)
-		if err != nil {
-			release()
-			return false, fmt.Errorf("orch: resolve binding: %w", err)
-		}
+	binding, err := o.resolveBinding(ctx, a.projectID, a.parallel, BindingDispatch)
+	if err != nil {
+		release()
+		return false, fmt.Errorf("orch: resolve binding: %w", err)
 	}
 
 	if err := o.checkSpendCap(ctx, a.projectID, binding.Name); err != nil {
