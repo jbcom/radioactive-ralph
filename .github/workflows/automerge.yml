@@ -2,8 +2,8 @@ name: Automerge
 
 # Enables GitHub native auto-merge on dependabot + release-please PRs.
 # Native auto-merge waits for required checks + any required reviews,
-# then squash-merges without further action. pull_request triggers fire
-# from the target branch context, so secrets.CI_GITHUB_TOKEN is safe.
+# then squash-merges without further action. This workflow never checks out
+# or executes pull-request code.
 on:
   pull_request:
     types: [opened, reopened, synchronize, ready_for_review]
@@ -13,11 +13,24 @@ jobs:
     name: Enable auto-merge
     runs-on: ubuntu-latest
     if: >
-      github.event.pull_request.user.login == 'dependabot[bot]' ||
-      startsWith(github.event.pull_request.head.ref, 'release-please--')
+      github.repository == 'jbcom/radioactive-ralph' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      (
+        (
+          github.event.pull_request.user.login == 'dependabot[bot]' &&
+          startsWith(github.event.pull_request.head.ref, 'dependabot/')
+        ) ||
+        (
+          github.event.pull_request.user.login == 'jbdevprimary' &&
+          startsWith(github.event.pull_request.head.ref, 'release-please--')
+        )
+      )
+    permissions:
+      contents: write
+      pull-requests: write
     steps:
       - name: Enable auto-merge (squash)
         env:
-          GH_TOKEN: ${{ secrets.CI_GITHUB_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
           PR_URL: ${{ github.event.pull_request.html_url }}
         run: gh pr merge --auto --squash "$PR_URL"
