@@ -12,7 +12,7 @@ require (
 	github.com/creack/pty v1.1.24
 	github.com/google/uuid v1.6.0
 	github.com/jonboulle/clockwork v0.5.0
-	github.com/mattn/go-isatty v0.0.23
+	github.com/mattn/go-isatty v0.0.24
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/viper v1.21.0
 	github.com/yuin/goldmark v1.8.4
