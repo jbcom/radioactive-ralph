@@ -60,7 +60,7 @@ search_o() {
 [[ -x docs/install.sh ]] || fail "docs/install.sh must exist and be executable"
 
 for path in "${RETIRED_INSTALL_SURFACES[@]}"; do
-  [[ ! -e "$path" ]] || fail "retired install surface returned: $path"
+  [[ ! -e "$path" && ! -L "$path" ]] || fail "retired install surface returned: $path"
 done
 
 if search 'site/src/content/docs' "${LIVE_DOCS[@]}" .github "${LIVE_RELEASE_FILES[@]}"; then

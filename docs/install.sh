@@ -17,14 +17,30 @@ BIN="radioactive_ralph"
 VERSION="latest"
 INSTALL_DIR=""
 
+usage() {
+  cat <<'EOF'
+Usage: install.sh [--version VERSION] [--install-dir DIR]
+EOF
+}
+
 while [ $# -gt 0 ]; do
   case "$1" in
     --version)
+      if [ "$#" -lt 2 ]; then
+        echo "install.sh: --version requires a value" >&2
+        usage >&2
+        exit 2
+      fi
       VERSION="$2"; shift 2 ;;
     --install-dir)
+      if [ "$#" -lt 2 ]; then
+        echo "install.sh: --install-dir requires a value" >&2
+        usage >&2
+        exit 2
+      fi
       INSTALL_DIR="$2"; shift 2 ;;
     --help|-h)
-      sed -n '2,10p' "$0"; exit 0 ;;
+      usage; exit 0 ;;
     *)
       echo "install.sh: unknown argument: $1" >&2; exit 2 ;;
   esac
@@ -144,8 +160,8 @@ if ! printf '%s' "${PATH:-}" | tr ':' '\n' | grep -Fx "$INSTALL_DIR" >/dev/null 
   PROFILE="$HOME/.profile"
   if [ -n "${SHELL:-}" ]; then
     case "$(basename "$SHELL")" in
-      zsh) PROFILE="$HOME/.zprofile" ;;
-      bash) PROFILE="$HOME/.bash_profile" ;;
+      zsh) PROFILE="$HOME/.zshrc" ;;
+      bash) PROFILE="$HOME/.bashrc" ;;
     esac
   fi
   echo "Your current PATH does not include $INSTALL_DIR"
