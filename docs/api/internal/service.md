@@ -78,7 +78,7 @@ func Install(opts InstallOptions) (path string, err error)
 Install writes or registers the platform service definition that runs \`radioactive\_ralph \-\-supervisor\` as a per\-user auto\-restarting background process. On launchd/systemd this means writing the unit file; on Windows it also registers the SCM entry.
 
 <a name="IsServiceContext"></a>
-## func [IsServiceContext](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/service/service.go#L384>)
+## func [IsServiceContext](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/service/service.go#L405>)
 
 ```go
 func IsServiceContext() bool
@@ -96,7 +96,7 @@ func MarshalWindowsServiceConfig(opts InstallOptions) ([]byte, error)
 MarshalWindowsServiceConfig renders the Windows service config in the exact JSON form written to disk for the native service host.
 
 <a name="Start"></a>
-## func [Start](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/service/service.go#L268>)
+## func [Start](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/service/service.go#L289>)
 
 ```go
 func Start(opts InstallOptions) error
@@ -105,7 +105,7 @@ func Start(opts InstallOptions) error
 Start loads/starts the installed per\-user supervisor service so its process actually comes up. Install only WRITES the unit definition; on launchd and systemd the unit must additionally be loaded/started \(a launchd unit with RunAtLoad still needs \`launchctl bootstrap\`; systemd needs \`systemctl \-\-user start\`\). Windows SCM's install already starts it, so Start is a no\-op there. Returns nil when the start command succeeds or the platform needs no separate start.
 
 <a name="Stop"></a>
-## func [Stop](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/service/service.go#L326>)
+## func [Stop](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/service/service.go#L347>)
 
 ```go
 func Stop(opts InstallOptions) error
@@ -114,7 +114,7 @@ func Stop(opts InstallOptions) error
 Stop unloads/stops the installed service without removing its definition. It is idempotent when the service is not loaded. The operator\-facing \`service uninstall\` command calls Stop before Uninstall so KeepAlive or enabled services cannot survive after their definition is deleted.
 
 <a name="Uninstall"></a>
-## func [Uninstall](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/service/service.go#L230>)
+## func [Uninstall](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/service/service.go#L251>)
 
 ```go
 func Uninstall(opts InstallOptions) error
@@ -228,7 +228,7 @@ type InstallOptions struct {
 ```
 
 <a name="Status"></a>
-## type [Status](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/service/service.go#L404-L408>)
+## type [Status](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/service/service.go#L425-L429>)
 
 Status reports whether the per\-user supervisor service definition is installed. This only inspects the service definition on disk \(unit file present/absent\); it says nothing about whether the supervisor process is currently running — callers wanting liveness should combine this with supervisor.Find against the XDG state root.
 
@@ -241,7 +241,7 @@ type Status struct {
 ```
 
 <a name="Inspect"></a>
-### func [Inspect](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/service/service.go#L412>)
+### func [Inspect](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/service/service.go#L433>)
 
 ```go
 func Inspect(opts InstallOptions) (Status, error)

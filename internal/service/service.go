@@ -143,7 +143,15 @@ func Install(opts InstallOptions) (path string, err error) {
 	if opts.RalphBin == "" {
 		return "", ErrMissingRalphBin
 	}
-	if !filepath.IsAbs(opts.RalphBin) || strings.ContainsRune(opts.RalphBin, '\x00') {
+
+	backend := opts.Backend
+	if backend == "" {
+		backend = DetectBackend()
+	}
+	if backend == BackendUnsupported {
+		return "", fmt.Errorf("%w: %s", ErrUnsupportedBackend, runtime.GOOS)
+	}
+	if !isAbsoluteServicePath(backend, opts.RalphBin) || strings.ContainsRune(opts.RalphBin, '\x00') {
 		return "", fmt.Errorf("%w: %q", ErrInvalidRalphBin, opts.RalphBin)
 	}
 	for key, value := range opts.ExtraEnv {
@@ -153,14 +161,6 @@ func Install(opts InstallOptions) (path string, err error) {
 		if strings.ContainsRune(value, '\x00') || strings.ContainsAny(value, "\r\n") {
 			return "", fmt.Errorf("service: environment variable %s contains a forbidden NUL or newline", key)
 		}
-	}
-
-	backend := opts.Backend
-	if backend == "" {
-		backend = DetectBackend()
-	}
-	if backend == BackendUnsupported {
-		return "", fmt.Errorf("%w: %s", ErrUnsupportedBackend, runtime.GOOS)
 	}
 
 	home := opts.HomeDir
@@ -207,6 +207,27 @@ func Install(opts InstallOptions) (path string, err error) {
 		return "", fmt.Errorf("service: write %s: %w", path, err)
 	}
 	return path, nil
+}
+
+// isAbsoluteServicePath validates the executable using the target service
+// manager's path grammar, not the host that happens to render or test the
+// definition. Backend overrides are intentionally supported for cross-platform
+// artifact tests, so filepath.IsAbs alone would reject a valid POSIX launchd or
+// systemd path on Windows (and a valid drive-qualified SCM path on Unix).
+func isAbsoluteServicePath(backend Backend, value string) bool {
+	switch backend {
+	case BackendLaunchd, BackendSystemdUser:
+		return strings.HasPrefix(value, "/")
+	case BackendWindowsSCM:
+		if len(value) >= 3 &&
+			((value[0] >= 'a' && value[0] <= 'z') || (value[0] >= 'A' && value[0] <= 'Z')) &&
+			value[1] == ':' && (value[2] == '\\' || value[2] == '/') {
+			return true
+		}
+		return strings.HasPrefix(value, `\\`)
+	default:
+		return false
+	}
 }
 
 func validEnvName(name string) bool {

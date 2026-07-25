@@ -26,11 +26,14 @@ fi
 # stops it, and confirms the client reports it gone.
 tmpdir="$(mktemp -d)"
 project="$tmpdir/project"
-home="$tmpdir/home"
 state="$tmpdir/state"
-mkdir -p "$project" "$home" "$state"
+mkdir -p "$project" "$state"
 
-export HOME="$home"
+# Do not shadow HOME here. The already-running systemd user manager resolves
+# ~/.config/systemd/user from the login account it was started for, not from a
+# later environment override in this client process. Runtime state remains
+# fully isolated through RALPH_STATE_DIR; the ephemeral hosted runner safely
+# owns the real per-user unit path for the duration of this smoke.
 
 cleanup() {
   "$bin" service uninstall >/dev/null 2>&1 || true

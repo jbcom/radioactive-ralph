@@ -245,6 +245,30 @@ func TestInstallRejectsAmbiguousExecutableAndEnvironment(t *testing.T) {
 	}
 }
 
+func TestAbsoluteServicePathUsesTargetBackendGrammar(t *testing.T) {
+	tests := []struct {
+		name    string
+		backend Backend
+		value   string
+		want    bool
+	}{
+		{name: "launchd POSIX", backend: BackendLaunchd, value: "/usr/local/bin/radioactive_ralph", want: true},
+		{name: "systemd POSIX", backend: BackendSystemdUser, value: "/opt/Ralph Studio/bin/radioactive_ralph", want: true},
+		{name: "Windows drive", backend: BackendWindowsSCM, value: `C:\Program Files\radioactive-ralph\radioactive_ralph.exe`, want: true},
+		{name: "Windows UNC", backend: BackendWindowsSCM, value: `\\server\share\radioactive_ralph.exe`, want: true},
+		{name: "POSIX rejects Windows", backend: BackendLaunchd, value: `C:\radioactive_ralph.exe`, want: false},
+		{name: "Windows rejects POSIX", backend: BackendWindowsSCM, value: "/usr/local/bin/radioactive_ralph", want: false},
+		{name: "relative", backend: BackendSystemdUser, value: "radioactive_ralph", want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := isAbsoluteServicePath(tt.backend, tt.value); got != tt.want {
+				t.Fatalf("isAbsoluteServicePath(%q, %q) = %t, want %t", tt.backend, tt.value, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestUninstallRemovesUnit(t *testing.T) {
 	home := t.TempDir()
 	path, err := Install(InstallOptions{
