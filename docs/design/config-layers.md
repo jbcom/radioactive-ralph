@@ -59,6 +59,40 @@ Validation runs against the fully merged virtual layer
 key produces one error naming exactly what's missing, regardless of
 whether the gap came from the DB, a file, or a flag.
 
+## Provider selection and Ralph-managed pools
+
+A project may select one provider:
+
+```toml
+provider = "codex"
+```
+
+or a round-robin pool:
+
+```toml
+providers = ["claude", "codex", "opencode"]
+```
+
+The plural form is not a persona list. It is an execution policy: every
+ready plan step receives its own Ralph worker and successive workers are
+distributed across the named provider capability records. Ralph
+therefore suppresses `NativeFanout` for pooled bindings; a 16-step
+unordered group remains 16 visible, independently supervised workers
+instead of collapsing into one opaque provider invocation. The plural
+key wins when both forms are present. Empty, non-string, or duplicate
+pool entries fail loudly.
+
+Process-wide concurrency is a supervisor resource limit, not project
+identity, and is configured on the service environment:
+
+```sh
+radioactive_ralph service install --env RALPH_MAX_PARALLEL=16
+```
+
+`RALPH_MAX_PARALLEL` must be an integer from `1` through `256`. Invalid
+values are rejected before the installed service is rewritten or restarted.
+When unset, the historical unbounded behavior remains in effect.
+
 ## Project identity
 
 Config is keyed by project ID, not by path. See

@@ -3,7 +3,10 @@ package main
 import (
 	"context"
 	"fmt"
+	"strings"
+	"sync"
 
+	"github.com/jbcom/radioactive-ralph/internal/orch"
 	"github.com/jbcom/radioactive-ralph/internal/provider"
 	"github.com/jbcom/radioactive-ralph/internal/store"
 	"github.com/jbcom/radioactive-ralph/internal/vconfig"
@@ -16,65 +19,158 @@ import (
 // at both scopes — the layering, not a different name, expresses precedence.
 const providerConfigKey = "provider"
 
+// providersConfigKey selects one or more providers. A multi-provider selection
+// is a Ralph-managed pool and deliberately disables each selected binding's
+// NativeFanout capability: one ready plan step becomes one Ralph worker, and
+// successive workers are distributed across the configured providers. A
+// one-element canonical selection retains ordinary single-provider semantics,
+// including NativeFanout.
+const providersConfigKey = "providers"
+
 // storeBindingResolver returns an orch.BindingResolver that selects the
 // provider from stored virtual config for the dispatch's project, instead of
 // the orchestrator's built-in always-claude default. It resolves the
 // effective config for the project (DB layers only — the headless supervisor
 // has no --config-file/--user-config-file flags to thread) and reads
-// providerConfigKey; an unset key falls back to provider.ResolveBinding's own
-// "claude" default, so a project with no provider configured still works.
-func storeBindingResolver(st *store.Store) func(ctx context.Context, projectID string, parallelGroup bool) (provider.Binding, error) {
-	return func(ctx context.Context, projectID string, _ bool) (provider.Binding, error) {
-		name, err := resolveProviderName(ctx, st, projectID)
+// the canonical providersConfigKey, with providerConfigKey accepted only as a
+// legacy one-element alias. An unset selection falls back to
+// provider.ResolveBinding's own "claude" default, so a project with no provider
+// configured still works.
+//
+// The per-project cursor is guarded because dispatches are asynchronous even
+// though DispatchNext currently serializes claim passes. Keeping the resolver
+// independently safe prevents a later caller from introducing a data race.
+func storeBindingResolver(st *store.Store) orch.BindingResolver {
+	var mu sync.Mutex
+	nextByProject := map[string]uint64{}
+
+	return func(ctx context.Context, projectID string, _ bool, purpose orch.BindingResolutionPurpose) (provider.Binding, error) {
+		names, pooled, err := resolveProviderNames(ctx, st, projectID)
 		if err != nil {
 			return provider.Binding{}, err
 		}
-		return provider.ResolveBinding(
+
+		name := ""
+		if len(names) > 0 {
+			mu.Lock()
+			cursor := nextByProject[projectID]
+			name = names[cursor%uint64(len(names))]
+			if purpose == orch.BindingDispatch {
+				nextByProject[projectID] = cursor + 1
+			}
+			mu.Unlock()
+		}
+
+		binding, err := provider.ResolveBinding(
 			provider.File{DefaultProvider: name},
 			provider.Local{},
 			provider.VariantFile{},
 		)
+		if err != nil {
+			return provider.Binding{}, err
+		}
+		if pooled {
+			binding.Config.NativeFanout = false
+		}
+		return binding, nil
 	}
 }
 
-// resolveProviderName reads the effective provider name for a project from
-// the virtual-config layer. Returns "" (not an error) when no provider key
-// is configured, letting ResolveBinding apply its built-in default.
-func resolveProviderName(ctx context.Context, st *store.Store, projectID string) (string, error) {
+// resolveProviderNames reads the effective provider selection in source
+// precedence order instead of flattening differently named aliases into one
+// map. A project-stanza legacy singular selection must override a stored or
+// user-scope canonical pool; checking each layer independently preserves that
+// relationship while old databases migrate to the canonical providers key.
+// An entirely unset selection returns no names (not an error), letting
+// ResolveBinding apply its built-in default.
+func resolveProviderNames(ctx context.Context, st *store.Store, projectID string) ([]string, bool, error) {
 	// No file overrides: the supervisor runs headless, so only the DB-backed
 	// user and project layers contribute.
 	userCfg, err := vconfig.ResolveUser(ctx, st, "", "")
 	if err != nil {
-		return "", fmt.Errorf("resolve user config: %w", err)
+		return nil, false, fmt.Errorf("resolve user config: %w", err)
 	}
-	projectsCfg, err := vconfig.ResolveProjects(ctx, st, userCfg, projectID)
-	if err != nil {
-		return "", fmt.Errorf("resolve project config: %w", err)
-	}
-	// ModeOverride: resolve the effective config at runtime without
-	// persisting anything (the supervisor is only reading which provider to
-	// use, not mutating stored config).
-	effective, err := vconfig.EffectiveProject(ctx, st, projectsCfg, projectID, "", vconfig.ModeOverride)
-	if err != nil {
-		return "", fmt.Errorf("resolve effective project config: %w", err)
+	return resolveProviderNamesFromUserConfig(ctx, st, userCfg, projectID)
+}
+
+func resolveProviderNamesFromUserConfig(ctx context.Context, st *store.Store, userCfg vconfig.UserConfig, projectID string) ([]string, bool, error) {
+	// A per-project stanza is the highest project layer. Resolve it before the
+	// stored project baseline so an alias change across layers still obeys
+	// precedence (provider="codex" overrides providers=[...] below it).
+	if projectOverlay, ok := userCfg.Projects[projectID]; ok {
+		names, found, err := providerSelectionFromValues(projectOverlay)
+		if err != nil {
+			return nil, false, fmt.Errorf("resolve project provider selection: %w", err)
+		}
+		if found {
+			return names, len(names) > 1, nil
+		}
 	}
 
-	// Project-scope value wins; fall back to the user-scope default.
-	if v, ok := stringValue(effective.Values[providerConfigKey]); ok {
-		return v, nil
+	storedProject, err := vconfig.ResolveProjects(ctx, st, vconfig.UserConfig{}, projectID)
+	if err != nil {
+		return nil, false, fmt.Errorf("resolve stored project config: %w", err)
 	}
-	if v, ok := stringValue(userCfg.Values[providerConfigKey]); ok {
-		return v, nil
+	names, found, err := providerSelectionFromValues(storedProject.Values)
+	if err != nil {
+		return nil, false, fmt.Errorf("resolve stored provider selection: %w", err)
 	}
-	return "", nil
+	if found {
+		return names, len(names) > 1, nil
+	}
+
+	names, found, err = providerSelectionFromValues(userCfg.Values)
+	if err != nil {
+		return nil, false, fmt.Errorf("resolve user provider selection: %w", err)
+	}
+	if found {
+		return names, len(names) > 1, nil
+	}
+	return nil, false, nil
 }
 
 // stringValue coerces a config value to a non-empty string, reporting
 // ok=false for a missing key or a non-string/empty value.
 func stringValue(v any) (string, bool) {
 	s, ok := v.(string)
-	if !ok || s == "" {
+	if !ok || strings.TrimSpace(s) == "" {
 		return "", false
 	}
-	return s, true
+	return strings.TrimSpace(s), true
+}
+
+// stringSliceValue accepts the concrete array shapes produced by Viper and
+// encoding/json. Empty names and duplicates are rejected: either would make
+// pool distribution ambiguous and hide a configuration error.
+func stringSliceValue(v any) ([]string, error) {
+	var raw []any
+	switch values := v.(type) {
+	case []string:
+		raw = make([]any, len(values))
+		for i := range values {
+			raw[i] = values[i]
+		}
+	case []any:
+		raw = values
+	default:
+		return nil, fmt.Errorf("must be a non-empty array of provider names")
+	}
+	if len(raw) == 0 {
+		return nil, fmt.Errorf("must contain at least one provider name")
+	}
+
+	names := make([]string, 0, len(raw))
+	seen := make(map[string]struct{}, len(raw))
+	for i, value := range raw {
+		name, ok := stringValue(value)
+		if !ok {
+			return nil, fmt.Errorf("entry %d must be a non-empty string", i)
+		}
+		if _, exists := seen[name]; exists {
+			return nil, fmt.Errorf("provider %q is duplicated", name)
+		}
+		seen[name] = struct{}{}
+		names = append(names, name)
+	}
+	return names, nil
 }

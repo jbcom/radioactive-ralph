@@ -41,6 +41,10 @@ func main() {
 // code. Extracted from main so signal-context cleanup always runs before
 // the process actually exits.
 func run() int {
+	if handled, exitCode := maybeRunWindowsService(); handled {
+		return exitCode
+	}
+
 	ctx, cancel := signalContext()
 	defer cancel()
 

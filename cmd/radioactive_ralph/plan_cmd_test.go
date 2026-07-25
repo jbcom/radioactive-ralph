@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -86,6 +87,42 @@ func TestPlanImportEmptyFileRejected(t *testing.T) {
 	cmd.SetArgs([]string{"plan", "import", planPath})
 	if err := cmd.Execute(); err == nil {
 		t.Fatal("plan import of an empty file: want error, got nil")
+	}
+}
+
+func TestPlanImportRejectsAmbiguousGrammarBeforeCreatingProjectOrPlan(t *testing.T) {
+	stateDir := t.TempDir()
+	t.Setenv("RALPH_STATE_DIR", stateDir)
+	projectDir := t.TempDir()
+	chdir(t, projectDir)
+
+	planPath := filepath.Join(projectDir, "ambiguous.md")
+	raw := "# Ambiguous\n\nThis leading paragraph could be a step.\n\n- actual step\n"
+	if err := os.WriteFile(planPath, []byte(raw), 0o600); err != nil {
+		t.Fatalf("write plan: %v", err)
+	}
+
+	cmd := newRootCmd(context.Background())
+	cmd.SetArgs([]string{"plan", "import", planPath})
+	err := cmd.Execute()
+	if err == nil || !strings.Contains(err.Error(), "paragraph before its list") {
+		t.Fatalf("plan import ambiguous error = %v, want grammar finding", err)
+	}
+
+	st, openErr := store.Open(context.Background(), store.Options{DSN: store.DSN(storeDBPath(stateDir))})
+	if openErr != nil {
+		t.Fatalf("open store: %v", openErr)
+	}
+	defer func() { _ = st.Close() }()
+	plans, listErr := st.ListPlans(context.Background(), "", []store.PlanStatus{
+		store.PlanStatusDraft,
+		store.PlanStatusActive,
+	})
+	if listErr != nil {
+		t.Fatalf("ListPlans: %v", listErr)
+	}
+	if len(plans) != 0 {
+		t.Fatalf("invalid import created plans: %+v", plans)
 	}
 }
 

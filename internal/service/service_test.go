@@ -2,12 +2,14 @@ package service
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path"
 	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestDetectBackendKnownPlatforms(t *testing.T) {
@@ -165,7 +167,7 @@ func TestInstallSystemdWritesUnit(t *testing.T) {
 	for _, needle := range []string{
 		"[Unit]", "Description=radioactive-ralph durable supervisor",
 		"[Service]", "Type=simple",
-		"ExecStart=/usr/local/bin/radioactive_ralph --supervisor",
+		`ExecStart="/usr/local/bin/radioactive_ralph" --supervisor`,
 		"Restart=on-failure",
 		"[Install]", "WantedBy=default.target",
 	} {
@@ -178,9 +180,92 @@ func TestInstallSystemdWritesUnit(t *testing.T) {
 	}
 }
 
+func TestInstallSystemdQuotesExecutableAndEnvironment(t *testing.T) {
+	home := t.TempDir()
+	unitPath, err := Install(InstallOptions{
+		Backend:  BackendSystemdUser,
+		HomeDir:  home,
+		RalphBin: "/opt/Ralph Studio/bin/radioactive_ralph",
+		ExtraEnv: map[string]string{"RALPH_PATH": `/opt/Provider Tools/100%/bin`},
+	})
+	if err != nil {
+		t.Fatalf("Install(systemd quoted): %v", err)
+	}
+	raw, err := os.ReadFile(unitPath) //nolint:gosec // test-controlled path
+	if err != nil {
+		t.Fatalf("read unit: %v", err)
+	}
+	content := string(raw)
+	for _, want := range []string{
+		`ExecStart="/opt/Ralph Studio/bin/radioactive_ralph" --supervisor`,
+		`Environment="RALPH_PATH=/opt/Provider Tools/100%%/bin"`,
+	} {
+		if !strings.Contains(content, want) {
+			t.Errorf("systemd unit missing %q:\n%s", want, content)
+		}
+	}
+}
+
 func TestInstallMissingFields(t *testing.T) {
 	if _, err := Install(InstallOptions{}); err != ErrMissingRalphBin {
 		t.Errorf("expected ErrMissingRalphBin, got %v", err)
+	}
+}
+
+func TestInstallRejectsAmbiguousExecutableAndEnvironment(t *testing.T) {
+	tests := []struct {
+		name string
+		opts InstallOptions
+	}{
+		{
+			name: "relative executable",
+			opts: InstallOptions{Backend: BackendLaunchd, HomeDir: t.TempDir(), RalphBin: "radioactive_ralph"},
+		},
+		{
+			name: "invalid environment name",
+			opts: InstallOptions{
+				Backend: BackendLaunchd, HomeDir: t.TempDir(), RalphBin: "/bin/radioactive_ralph",
+				ExtraEnv: map[string]string{"NOT VALID": "value"},
+			},
+		},
+		{
+			name: "environment newline",
+			opts: InstallOptions{
+				Backend: BackendLaunchd, HomeDir: t.TempDir(), RalphBin: "/bin/radioactive_ralph",
+				ExtraEnv: map[string]string{"VALID": "first\nsecond"},
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if _, err := Install(tt.opts); err == nil {
+				t.Fatal("Install accepted an ambiguous service definition")
+			}
+		})
+	}
+}
+
+func TestAbsoluteServicePathUsesTargetBackendGrammar(t *testing.T) {
+	tests := []struct {
+		name    string
+		backend Backend
+		value   string
+		want    bool
+	}{
+		{name: "launchd POSIX", backend: BackendLaunchd, value: "/usr/local/bin/radioactive_ralph", want: true},
+		{name: "systemd POSIX", backend: BackendSystemdUser, value: "/opt/Ralph Studio/bin/radioactive_ralph", want: true},
+		{name: "Windows drive", backend: BackendWindowsSCM, value: `C:\Program Files\radioactive-ralph\radioactive_ralph.exe`, want: true},
+		{name: "Windows UNC", backend: BackendWindowsSCM, value: `\\server\share\radioactive_ralph.exe`, want: true},
+		{name: "POSIX rejects Windows", backend: BackendLaunchd, value: `C:\radioactive_ralph.exe`, want: false},
+		{name: "Windows rejects POSIX", backend: BackendWindowsSCM, value: "/usr/local/bin/radioactive_ralph", want: false},
+		{name: "relative", backend: BackendSystemdUser, value: "radioactive_ralph", want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := isAbsoluteServicePath(tt.backend, tt.value); got != tt.want {
+				t.Fatalf("isAbsoluteServicePath(%q, %q) = %t, want %t", tt.backend, tt.value, got, tt.want)
+			}
+		})
 	}
 }
 
@@ -315,14 +400,52 @@ func TestStartLaunchdRunsBootstrap(t *testing.T) {
 	if err := Start(InstallOptions{Backend: BackendLaunchd, HomeDir: t.TempDir()}); err != nil {
 		t.Fatalf("Start(launchd): %v", err)
 	}
-	if len(calls) == 0 || calls[0][0] != "launchctl" || calls[0][1] != "bootstrap" {
-		t.Fatalf("expected a launchctl bootstrap call first, got %v", calls)
+	if len(calls) != 2 {
+		t.Fatalf("launchd start calls = %v, want bootout/bootstrap", calls)
+	}
+	if calls[0][0] != "launchctl" || calls[0][1] != "bootout" ||
+		calls[1][1] != "bootstrap" {
+		t.Fatalf("expected launchctl bootout/bootstrap, got %v", calls)
 	}
 }
 
-// TestStartSystemdEnablesNow verifies the systemd path runs daemon-reload then
-// enable --now.
-func TestStartSystemdEnablesNow(t *testing.T) {
+// TestStartLaunchdRetriesAsynchronousBootout proves the live-macOS failure
+// mode: bootstrap may transiently return launchd exit 5/EIO after bootout.
+// Start owns that bounded transition and succeeds without asking the operator
+// to rerun the install command.
+func TestStartLaunchdRetriesAsynchronousBootout(t *testing.T) {
+	var calls [][]string
+	bootstrapCalls := 0
+	origExec := execCommand
+	origSleep := serviceRetrySleep
+	execCommand = func(name string, args ...string) (string, error) {
+		calls = append(calls, append([]string{name}, args...))
+		if len(args) > 0 && args[0] == "bootstrap" {
+			bootstrapCalls++
+			if bootstrapCalls == 1 {
+				return "Bootstrap failed: 5: Input/output error", errors.New("exit status 5")
+			}
+		}
+		return "", nil
+	}
+	serviceRetrySleep = func(time.Duration) {}
+	t.Cleanup(func() {
+		execCommand = origExec
+		serviceRetrySleep = origSleep
+	})
+
+	if err := Start(InstallOptions{Backend: BackendLaunchd, HomeDir: t.TempDir()}); err != nil {
+		t.Fatalf("Start(launchd retry): %v", err)
+	}
+	if bootstrapCalls != 2 {
+		t.Fatalf("bootstrap calls = %d, want 2; all calls = %v", bootstrapCalls, calls)
+	}
+}
+
+// TestStartSystemdReconcilesOnce verifies the systemd path reloads the
+// definition, enables it for login, and performs one restart that works for
+// both first install and changed-definition reinstall.
+func TestStartSystemdReconcilesOnce(t *testing.T) {
 	var calls [][]string
 	orig := execCommand
 	execCommand = func(name string, args ...string) (string, error) {
@@ -338,23 +461,101 @@ func TestStartSystemdEnablesNow(t *testing.T) {
 	for _, c := range calls {
 		joined += strings.Join(c, " ") + "\n"
 	}
-	if !strings.Contains(joined, "systemctl --user daemon-reload") || !strings.Contains(joined, "systemctl --user enable --now") {
-		t.Errorf("expected daemon-reload + enable --now, got:\n%s", joined)
+	if !strings.Contains(joined, "systemctl --user daemon-reload") ||
+		!strings.Contains(joined, "systemctl --user enable radioactive_ralph-supervisor") ||
+		!strings.Contains(joined, "systemctl --user restart") {
+		t.Errorf("expected daemon-reload + enable + restart, got:\n%s", joined)
+	}
+	if strings.Contains(joined, "enable --now") {
+		t.Errorf("systemd reconciliation starts twice via enable --now + restart:\n%s", joined)
 	}
 }
 
-// TestStartWindowsSCMIsNoop confirms Start is a no-op on Windows SCM (install
-// already starts it) — no service-manager command should run.
-func TestStartWindowsSCMIsNoop(t *testing.T) {
-	called := false
+func TestStopLaunchdBootsOutLoadedService(t *testing.T) {
+	var calls [][]string
 	orig := execCommand
-	execCommand = func(string, ...string) (string, error) { called = true; return "", nil }
+	execCommand = func(name string, args ...string) (string, error) {
+		calls = append(calls, append([]string{name}, args...))
+		return "", nil
+	}
 	t.Cleanup(func() { execCommand = orig })
 
-	if err := Start(InstallOptions{Backend: BackendWindowsSCM, HomeDir: t.TempDir()}); err != nil {
-		t.Fatalf("Start(windows): %v", err)
+	if err := Stop(InstallOptions{Backend: BackendLaunchd}); err != nil {
+		t.Fatalf("Stop(launchd): %v", err)
 	}
-	if called {
-		t.Error("Start(WindowsSCM) ran a service-manager command; want no-op")
+	if len(calls) != 2 || calls[0][1] != "print" || calls[1][1] != "bootout" {
+		t.Fatalf("launchd stop calls = %v, want print then bootout", calls)
+	}
+}
+
+func TestStopLaunchdIsIdempotentWhenNotLoaded(t *testing.T) {
+	var calls [][]string
+	orig := execCommand
+	execCommand = func(name string, args ...string) (string, error) {
+		calls = append(calls, append([]string{name}, args...))
+		return "not found", errors.New("exit status 113")
+	}
+	t.Cleanup(func() { execCommand = orig })
+
+	if err := Stop(InstallOptions{Backend: BackendLaunchd}); err != nil {
+		t.Fatalf("Stop(launchd absent): %v", err)
+	}
+	if len(calls) != 1 || calls[0][1] != "print" {
+		t.Fatalf("launchd absent stop calls = %v, want only print", calls)
+	}
+}
+
+func TestStopSystemdDisablesLoadedService(t *testing.T) {
+	var calls [][]string
+	orig := execCommand
+	execCommand = func(name string, args ...string) (string, error) {
+		calls = append(calls, append([]string{name}, args...))
+		if len(args) > 1 && args[1] == "show" {
+			return "loaded\n", nil
+		}
+		return "", nil
+	}
+	t.Cleanup(func() { execCommand = orig })
+
+	if err := Stop(InstallOptions{Backend: BackendSystemdUser}); err != nil {
+		t.Fatalf("Stop(systemd): %v", err)
+	}
+	joined := ""
+	for _, call := range calls {
+		joined += strings.Join(call, " ") + "\n"
+	}
+	if !strings.Contains(joined, "systemctl --user show") ||
+		!strings.Contains(joined, "systemctl --user disable --now radioactive_ralph-supervisor") {
+		t.Fatalf("systemd stop calls:\n%s", joined)
+	}
+}
+
+func TestUninstallSystemdRemovesDefinitionThenReloads(t *testing.T) {
+	home := t.TempDir()
+	unitPath, err := Install(InstallOptions{
+		Backend:  BackendSystemdUser,
+		HomeDir:  home,
+		RalphBin: "/usr/local/bin/radioactive_ralph",
+	})
+	if err != nil {
+		t.Fatalf("Install(systemd): %v", err)
+	}
+
+	var calls [][]string
+	orig := execCommand
+	execCommand = func(name string, args ...string) (string, error) {
+		calls = append(calls, append([]string{name}, args...))
+		return "", nil
+	}
+	t.Cleanup(func() { execCommand = orig })
+
+	if err := Uninstall(InstallOptions{Backend: BackendSystemdUser, HomeDir: home}); err != nil {
+		t.Fatalf("Uninstall(systemd): %v", err)
+	}
+	if _, err := os.Stat(unitPath); !os.IsNotExist(err) {
+		t.Fatalf("systemd unit remains after Uninstall: %v", err)
+	}
+	if len(calls) != 1 || strings.Join(calls[0], " ") != "systemctl --user daemon-reload" {
+		t.Fatalf("systemd uninstall calls = %v, want daemon-reload after remove", calls)
 	}
 }

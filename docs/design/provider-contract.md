@@ -64,6 +64,13 @@ invocation rather than spawned as N Ralph-managed workers:
 | `codex` | false (unconfirmed) | `codex exec --help` exposes no subagent/parallel-workflow flag as of the CLI version evaluated |
 | `opencode` | true | `opencode run --agent`, `opencode agent create/list` — a native multi-agent surface |
 
+Project config can deliberately choose Ralph-managed fan-out with
+`providers = ["claude", "codex", "opencode"]`. In that mode the resolver
+round-robins one binding per plan step and overrides `NativeFanout` to
+false on the resolved copy. The provider capability record remains
+truthful; only the execution policy changes. This makes every worker,
+claim, watchdog, evidence record, and failure independently observable.
+
 ## Stateful vs. stateless
 
 | Provider | State model | Binding |
@@ -81,9 +88,11 @@ ignore it.
 `ResolveBinding` picks a provider by name, falling back to the built-in
 capability record for `claude`/`codex`/`opencode` when no explicit
 override is configured, and defaulting to `claude` when nothing is
-specified. `NewRunner` maps the resolved binding's `Type` to a concrete
-`Runner` implementation. An unknown provider type fails loudly rather
-than silently defaulting.
+specified. The supervisor's store-backed resolver accepts either the
+backward-compatible singular `provider` key or the plural `providers`
+pool described above. `NewRunner` maps the resolved binding's `Type` to
+a concrete `Runner` implementation. An unknown provider type fails
+loudly rather than silently defaulting.
 
 Only a shipped binary name (`claude`, `codex`, `opencode`) may be named
 by a binding sourced from shared config; any other binary — a custom

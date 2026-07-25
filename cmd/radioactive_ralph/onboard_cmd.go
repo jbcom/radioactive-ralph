@@ -88,8 +88,9 @@ func buildOnboardPlan(stateRoot string) (onboard.Plan, error) {
 
 // installSupervisorService installs the per-user supervisor service (pointing
 // it at this executable + the resolved state root) AND starts it, so the
-// supervisor actually comes up. If the unit is already installed (its process
-// merely stopped), it skips the write and just (re)starts it — idempotent.
+// supervisor actually comes up. Re-installing deliberately rewrites the
+// definition before Start so binary, state-root, and environment changes are
+// reconciled instead of silently retaining a stale service configuration.
 func installSupervisorService(stateRoot string) error {
 	exe, err := os.Executable()
 	if err != nil {
@@ -100,13 +101,8 @@ func installSupervisorService(stateRoot string) error {
 		ExtraEnv: map[string]string{"RALPH_STATE_DIR": stateRoot},
 	}
 
-	// Install the unit unless it's already present (Inspect reports the
-	// definition on disk). Writing over an existing unit is harmless, but
-	// skipping it keeps the flow honest about "already installed, just start".
-	if status, ierr := service.Inspect(opts); ierr != nil || !status.Installed {
-		if _, err := service.Install(opts); err != nil {
-			return err
-		}
+	if _, err := service.Install(opts); err != nil {
+		return err
 	}
 	// Install only writes the definition; Start loads/starts it so the
 	// supervisor process actually comes up (see service.Start).

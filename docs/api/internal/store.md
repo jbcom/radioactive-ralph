@@ -44,6 +44,7 @@ The schema is embedded under schema/\*.sql and applied in lexical order by Migra
   - [func \(s \*Store\) AddDep\(ctx context.Context, planID, taskID, dependsOn string\) error](<#Store.AddDep>)
   - [func \(s \*Store\) AddProjectIdentifiers\(ctx context.Context, projectID string, fps \[\]Fingerprint\) error](<#Store.AddProjectIdentifiers>)
   - [func \(s \*Store\) AppendMessage\(ctx context.Context, o AppendMessageOpts\) error](<#Store.AppendMessage>)
+  - [func \(s \*Store\) ApplyProjectConfig\(ctx context.Context, projectID string, upserts map\[string\]string, deleteKeys \[\]string\) error](<#Store.ApplyProjectConfig>)
   - [func \(s \*Store\) ApproveTask\(ctx context.Context, planID, taskID string\) \(found, changed bool, err error\)](<#Store.ApproveTask>)
   - [func \(s \*Store\) Backup\(ctx context.Context, destDir string\) \(string, error\)](<#Store.Backup>)
   - [func \(s \*Store\) ClaimNextReady\(ctx context.Context, planID, sessionID, workerID string\) \(\*Task, error\)](<#Store.ClaimNextReady>)
@@ -482,6 +483,15 @@ func (s *Store) AppendMessage(ctx context.Context, o AppendMessageOpts) error
 
 AppendMessage records one worker\<\-\>orchestrator A2A message \(most importantly, evidence a worker submits when it believes a task is done\). This ONLY logs the message — it never changes task status. Only internal/orch.VerifyAndComplete may transition a task to done.
 
+<a name="Store.ApplyProjectConfig"></a>
+### func \(\*Store\) [ApplyProjectConfig](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/config.go#L44>)
+
+```go
+func (s *Store) ApplyProjectConfig(ctx context.Context, projectID string, upserts map[string]string, deleteKeys []string) error
+```
+
+ApplyProjectConfig atomically deletes and upserts a set of DB\-resident project config keys. Deletes run before upserts, so a key present in both collections ends with the upserted value. This is the mutation primitive for replacing logical config selections whose old aliases must not survive beside their canonical key.
+
 <a name="Store.ApproveTask"></a>
 ### func \(\*Store\) [ApproveTask](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/tasks.go#L779>)
 
@@ -627,7 +637,7 @@ func (s *Store) GetPlan(ctx context.Context, id string) (*Plan, error)
 GetPlan loads a plan by id.
 
 <a name="Store.GetProjectConfig"></a>
-### func \(\*Store\) [GetProjectConfig](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/config.go#L12>)
+### func \(\*Store\) [GetProjectConfig](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/config.go#L13>)
 
 ```go
 func (s *Store) GetProjectConfig(ctx context.Context, projectID string) (map[string]string, error)
@@ -861,7 +871,7 @@ func (s *Store) SetPlanStatus(ctx context.Context, id string, status PlanStatus)
 SetPlanStatus updates the plan's status column.
 
 <a name="Store.SetProjectConfig"></a>
-### func \(\*Store\) [SetProjectConfig](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/config.go#L34>)
+### func \(\*Store\) [SetProjectConfig](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/config.go#L35>)
 
 ```go
 func (s *Store) SetProjectConfig(ctx context.Context, projectID, key, value string) error

@@ -3,7 +3,11 @@ package service
 import (
 	"encoding/json"
 	"fmt"
+	"os"
+	"strings"
 )
+
+const windowsServiceConfigFlag = "--windows-service-config"
 
 // WindowsServiceConfig is the persisted config payload used by the native
 // Windows service host for the per-user supervisor service.
@@ -43,9 +47,55 @@ func ParseWindowsServiceConfig(raw []byte) (WindowsServiceConfig, error) {
 	return cfg, nil
 }
 
+// LoadWindowsServiceConfig reads the private config file named on the SCM
+// command line. The explicit path matters because an SCM service commonly
+// runs under a different account than the operator who installed it, so
+// recomputing the operator's LocalAppData directory inside the service would
+// load the wrong file.
+func LoadWindowsServiceConfig(path string) (WindowsServiceConfig, error) {
+	if strings.TrimSpace(path) == "" {
+		return WindowsServiceConfig{}, fmt.Errorf("service: windows config path required")
+	}
+	raw, err := os.ReadFile(path) //nolint:gosec // the trusted SCM definition supplies this path
+	if err != nil {
+		return WindowsServiceConfig{}, fmt.Errorf("service: read windows config %s: %w", path, err)
+	}
+	return ParseWindowsServiceConfig(raw)
+}
+
 // WindowsServiceArgs returns the radioactive_ralph argv used by the native
-// Windows SCM service entry: just --supervisor, since the per-user
-// supervisor takes no repo-scoped arguments.
+// Windows SCM service entry when no persisted environment is required. It is
+// retained as the minimal supervisor invocation contract used by callers and
+// tests outside the SCM installer.
 func WindowsServiceArgs() []string {
 	return []string{"--supervisor"}
+}
+
+// WindowsServiceArgsForConfig returns the complete SCM argv. The config path
+// is carried explicitly instead of inferred from the service account's home.
+func WindowsServiceArgsForConfig(configPath string) []string {
+	return []string{"--supervisor", windowsServiceConfigFlag, configPath}
+}
+
+// WindowsServiceConfigPath extracts the private config path from an SCM
+// invocation. It accepts both the two-argument and --flag=value spellings so
+// diagnostics remain predictable if an administrator inspects or edits the
+// service definition.
+func WindowsServiceConfigPath(args []string) (string, error) {
+	for i, arg := range args {
+		switch {
+		case arg == windowsServiceConfigFlag:
+			if i+1 >= len(args) || strings.TrimSpace(args[i+1]) == "" {
+				return "", fmt.Errorf("service: %s requires a path", windowsServiceConfigFlag)
+			}
+			return args[i+1], nil
+		case strings.HasPrefix(arg, windowsServiceConfigFlag+"="):
+			path := strings.TrimSpace(strings.TrimPrefix(arg, windowsServiceConfigFlag+"="))
+			if path == "" {
+				return "", fmt.Errorf("service: %s requires a path", windowsServiceConfigFlag)
+			}
+			return path, nil
+		}
+	}
+	return "", fmt.Errorf("service: SCM invocation is missing %s", windowsServiceConfigFlag)
 }

@@ -26,18 +26,17 @@ fi
 # stops it, and confirms the client reports it gone.
 tmpdir="$(mktemp -d)"
 project="$tmpdir/project"
-home="$tmpdir/home"
 state="$tmpdir/state"
-mkdir -p "$project" "$home" "$state"
+mkdir -p "$project" "$state"
 
-export HOME="$home"
+# Do not shadow HOME here. The already-running systemd user manager resolves
+# ~/.config/systemd/user from the login account it was started for, not from a
+# later environment override in this client process. Runtime state remains
+# fully isolated through RALPH_STATE_DIR; the ephemeral hosted runner safely
+# owns the real per-user unit path for the duration of this smoke.
 
 cleanup() {
-  if [[ -n "${unit_name:-}" ]]; then
-    systemctl --user stop "$unit_name" >/dev/null 2>&1 || true
-  fi
   "$bin" service uninstall >/dev/null 2>&1 || true
-  systemctl --user daemon-reload >/dev/null 2>&1 || true
   rm -rf "$tmpdir"
 }
 trap cleanup EXIT
@@ -53,8 +52,6 @@ if [[ ! -f "$install_path" ]]; then
 fi
 
 unit_name="$(basename "$install_path")"
-systemctl --user daemon-reload
-systemctl --user start "$unit_name"
 
 ready=0
 for _ in $(seq 1 30); do
@@ -70,7 +67,7 @@ if [[ "$ready" -ne 1 ]]; then
   exit 1
 fi
 
-systemctl --user stop "$unit_name"
+"$bin" service uninstall >/dev/null
 
 stopped=0
 for _ in $(seq 1 30); do

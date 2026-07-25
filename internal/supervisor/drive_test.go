@@ -2,6 +2,7 @@ package supervisor
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/jbcom/radioactive-ralph/internal/ipc"
@@ -39,11 +40,40 @@ func TestHandlePlanImport_MissingProjectIsInvalidArgs(t *testing.T) {
 	}
 }
 
+func TestHandlePlanImport_InvalidGrammarIsInvalidArgsAndCreatesNothing(t *testing.T) {
+	sup := newTestSupervisor(t, nil)
+	ctx := context.Background()
+	projectID, err := sup.store.CreateProject(ctx, "p", []store.Fingerprint{{
+		Kind: store.FingerprintKindAbsPath, Value: t.TempDir(),
+	}})
+	if err != nil {
+		t.Fatalf("CreateProject: %v", err)
+	}
+
+	_, err = sup.HandlePlanImport(ctx, ipc.PlanImportArgs{
+		Project:  projectID,
+		Markdown: "# Ambiguous\n\nThis paragraph comes first.\n\n- actual step\n",
+	})
+	if !ipc.IsCode(err, ipc.CodeInvalidArgs) || !strings.Contains(err.Error(), "paragraph before its list") {
+		t.Fatalf("invalid plan error = %v, want CodeInvalidArgs grammar finding", err)
+	}
+	plans, listErr := sup.store.ListPlans(ctx, projectID, []store.PlanStatus{
+		store.PlanStatusDraft,
+		store.PlanStatusActive,
+	})
+	if listErr != nil {
+		t.Fatalf("ListPlans: %v", listErr)
+	}
+	if len(plans) != 0 {
+		t.Fatalf("invalid supervisor import created plans: %+v", plans)
+	}
+}
+
 func TestHandlePlanImport_DuplicateSlugIsConflict(t *testing.T) {
 	sup := newTestSupervisor(t, nil)
 	ctx := context.Background()
 	projectID, _ := sup.store.CreateProject(ctx, "p", []store.Fingerprint{{Kind: store.FingerprintKindAbsPath, Value: t.TempDir()}})
-	args := ipc.PlanImportArgs{Markdown: "# Same\n", Project: projectID}
+	args := ipc.PlanImportArgs{Markdown: "# Same\n\n1. do the work\n", Project: projectID}
 	if _, err := sup.HandlePlanImport(ctx, args); err != nil {
 		t.Fatalf("first import: %v", err)
 	}
@@ -57,7 +87,9 @@ func TestHandlePlanSetStatus_ValidatesTransition(t *testing.T) {
 	sup := newTestSupervisor(t, nil)
 	ctx := context.Background()
 	projectID, _ := sup.store.CreateProject(ctx, "p", []store.Fingerprint{{Kind: store.FingerprintKindAbsPath, Value: t.TempDir()}})
-	reply, _ := sup.HandlePlanImport(ctx, ipc.PlanImportArgs{Markdown: "# P\n", Project: projectID})
+	reply, _ := sup.HandlePlanImport(ctx, ipc.PlanImportArgs{
+		Markdown: "# P\n\n1. do the work\n", Project: projectID,
+	})
 
 	// A valid pause.
 	if _, err := sup.HandlePlanSetStatus(ctx, ipc.PlanSetStatusArgs{PlanID: reply.PlanID, Status: "paused"}); err != nil {

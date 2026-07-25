@@ -51,6 +51,10 @@ because an agent said so.
 - **Local-only providers.** `claude`, `codex`, `opencode` — the agent loop and
   tool execution run locally (hosted model inference is fine). A2A coordination
   vocabulary comes from the official [`a2aproject/a2a-go`](https://github.com/a2aproject/a2a-go).
+- **Observable multi-provider teams.** Project config can declare
+  `providers = ["claude", "codex", "opencode"]`; Ralph assigns one supervised
+  worker per ready step across the pool. Set the process-wide ceiling with
+  `service install --env RALPH_MAX_PARALLEL=16`.
 
 ## Install
 
@@ -83,7 +87,9 @@ Microsoft credentials — so the cask install needs no security override.
 
 ```bash
 # 1. Start the supervisor (owns everything; user/XDG-level, directory-independent)
-radioactive_ralph --supervisor        # or install it as a system service
+radioactive_ralph --supervisor
+# Or install + start it with an explicit worker ceiling:
+radioactive_ralph service install --env RALPH_MAX_PARALLEL=16
 
 # 2. In a project directory, initialize it (registers the project in the user DB)
 radioactive_ralph --init

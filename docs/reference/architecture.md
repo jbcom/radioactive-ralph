@@ -1,6 +1,6 @@
 ---
 title: Architecture
-lastUpdated: 2026-07-16
+lastUpdated: 2026-07-24
 ---
 
 # Architecture
@@ -20,7 +20,8 @@ lastUpdated: 2026-07-16
   the current directory as a project.
 - **`radioactive_ralph service {install,uninstall,status}`** — manages
   the supervisor as a per-user OS service (launchd/systemd/Windows SCM)
-  so it survives logout/reboot/crash.
+  so it survives logout/reboot/crash. `service install` installs or
+  reloads the definition and starts it immediately.
 - **`radioactive_ralph doctor`** — environment checks (git, provider
   CLIs, service manager).
 
@@ -100,4 +101,9 @@ record, not a persona. "Local-only" means the CLI owns its own agent loop
 and tool execution locally, even when it calls a hosted model for
 inference. `gemini` was removed (CLI auth endpoint deprecated
 2026-06-18); `cursor-agent` is excluded (delegates session control to
-Cursor's cloud). See [Provider contract](../design/provider-contract.md).
+Cursor's cloud). A project can select a singular provider or a
+Ralph-managed provider pool; the latter creates one supervised worker per
+ready step. The supervisor-wide `RALPH_MAX_PARALLEL` environment setting
+bounds simultaneous workers. See [Provider
+contract](../design/provider-contract.md) and [Config virtual
+layers](../design/config-layers.md).

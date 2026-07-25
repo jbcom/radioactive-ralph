@@ -30,10 +30,13 @@ Service\-context detection is used to distinguish durable service launches from 
 - [func IsServiceContext\(\) bool](<#IsServiceContext>)
 - [func MarshalWindowsServiceConfig\(opts InstallOptions\) \(\[\]byte, error\)](<#MarshalWindowsServiceConfig>)
 - [func Start\(opts InstallOptions\) error](<#Start>)
+- [func Stop\(opts InstallOptions\) error](<#Stop>)
 - [func Uninstall\(opts InstallOptions\) error](<#Uninstall>)
 - [func UnitName\(b Backend\) string](<#UnitName>)
 - [func UnitPath\(b Backend, home string\) string](<#UnitPath>)
 - [func WindowsServiceArgs\(\) \[\]string](<#WindowsServiceArgs>)
+- [func WindowsServiceArgsForConfig\(configPath string\) \[\]string](<#WindowsServiceArgsForConfig>)
+- [func WindowsServiceConfigPath\(args \[\]string\) \(string, error\)](<#WindowsServiceConfigPath>)
 - [type Backend](<#Backend>)
   - [func DetectBackend\(\) Backend](<#DetectBackend>)
 - [type InstallOptions](<#InstallOptions>)
@@ -41,10 +44,17 @@ Service\-context detection is used to distinguish durable service launches from 
   - [func Inspect\(opts InstallOptions\) \(Status, error\)](<#Inspect>)
 - [type WindowsServiceConfig](<#WindowsServiceConfig>)
   - [func BuildWindowsServiceConfig\(opts InstallOptions\) WindowsServiceConfig](<#BuildWindowsServiceConfig>)
+  - [func LoadWindowsServiceConfig\(path string\) \(WindowsServiceConfig, error\)](<#LoadWindowsServiceConfig>)
   - [func ParseWindowsServiceConfig\(raw \[\]byte\) \(WindowsServiceConfig, error\)](<#ParseWindowsServiceConfig>)
 
 
 ## Variables
+
+<a name="ErrInvalidRalphBin"></a>ErrInvalidRalphBin is returned when the service executable is not an absolute, NUL\-free path. Service managers do not perform shell PATH lookup, so accepting a relative command would create a definition that cannot be reconciled predictably.
+
+```go
+var ErrInvalidRalphBin = errors.New("service: RalphBin must be an absolute path")
+```
 
 <a name="ErrMissingRalphBin"></a>ErrMissingRalphBin is returned when RalphBin is empty.
 
@@ -59,7 +69,7 @@ var ErrUnsupportedBackend = errors.New("service: unsupported platform")
 ```
 
 <a name="Install"></a>
-## func [Install](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/service/service.go#L127>)
+## func [Install](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/service/service.go#L142>)
 
 ```go
 func Install(opts InstallOptions) (path string, err error)
@@ -68,7 +78,7 @@ func Install(opts InstallOptions) (path string, err error)
 Install writes or registers the platform service definition that runs \`radioactive\_ralph \-\-supervisor\` as a per\-user auto\-restarting background process. On launchd/systemd this means writing the unit file; on Windows it also registers the SCM entry.
 
 <a name="IsServiceContext"></a>
-## func [IsServiceContext](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/service/service.go#L274>)
+## func [IsServiceContext](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/service/service.go#L405>)
 
 ```go
 func IsServiceContext() bool
@@ -77,7 +87,7 @@ func IsServiceContext() bool
 IsServiceContext reports whether the current process looks like it's running under the durable per\-user service host rather than an operator\-attached foreground invocation.
 
 <a name="MarshalWindowsServiceConfig"></a>
-## func [MarshalWindowsServiceConfig](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/service/windows_config.go#L29>)
+## func [MarshalWindowsServiceConfig](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/service/windows_config.go#L33>)
 
 ```go
 func MarshalWindowsServiceConfig(opts InstallOptions) ([]byte, error)
@@ -86,7 +96,7 @@ func MarshalWindowsServiceConfig(opts InstallOptions) ([]byte, error)
 MarshalWindowsServiceConfig renders the Windows service config in the exact JSON form written to disk for the native service host.
 
 <a name="Start"></a>
-## func [Start](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/service/service.go#L220>)
+## func [Start](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/service/service.go#L289>)
 
 ```go
 func Start(opts InstallOptions) error
@@ -94,17 +104,26 @@ func Start(opts InstallOptions) error
 
 Start loads/starts the installed per\-user supervisor service so its process actually comes up. Install only WRITES the unit definition; on launchd and systemd the unit must additionally be loaded/started \(a launchd unit with RunAtLoad still needs \`launchctl bootstrap\`; systemd needs \`systemctl \-\-user start\`\). Windows SCM's install already starts it, so Start is a no\-op there. Returns nil when the start command succeeds or the platform needs no separate start.
 
+<a name="Stop"></a>
+## func [Stop](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/service/service.go#L347>)
+
+```go
+func Stop(opts InstallOptions) error
+```
+
+Stop unloads/stops the installed service without removing its definition. It is idempotent when the service is not loaded. The operator\-facing \`service uninstall\` command calls Stop before Uninstall so KeepAlive or enabled services cannot survive after their definition is deleted.
+
 <a name="Uninstall"></a>
-## func [Uninstall](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/service/service.go#L187>)
+## func [Uninstall](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/service/service.go#L251>)
 
 ```go
 func Uninstall(opts InstallOptions) error
 ```
 
-Uninstall removes the unit file. Returns nil if already absent.
+Uninstall removes the platform service definition. It does not stop a running service; callers performing the operator\-facing uninstall lifecycle must call Stop first. Keeping definition removal separate makes render/install tests independent of a live service manager while the CLI composes the complete stop\-then\-remove operation.
 
 <a name="UnitName"></a>
-## func [UnitName](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/service/service.go#L62>)
+## func [UnitName](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/service/service.go#L71>)
 
 ```go
 func UnitName(b Backend) string
@@ -119,7 +138,7 @@ windows-scm: "radioactive_ralph-supervisor"
 ```
 
 <a name="UnitPath"></a>
-## func [UnitPath](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/service/service.go#L87>)
+## func [UnitPath](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/service/service.go#L96>)
 
 ```go
 func UnitPath(b Backend, home string) string
@@ -128,16 +147,34 @@ func UnitPath(b Backend, home string) string
 UnitPath returns the on\-disk path where the unit file will be written. Callers pass the operator's home dir \(tests inject a tmpdir\).
 
 <a name="WindowsServiceArgs"></a>
-## func [WindowsServiceArgs](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/service/windows_config.go#L49>)
+## func [WindowsServiceArgs](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/service/windows_config.go#L70>)
 
 ```go
 func WindowsServiceArgs() []string
 ```
 
-WindowsServiceArgs returns the radioactive\_ralph argv used by the native Windows SCM service entry: just \-\-supervisor, since the per\-user supervisor takes no repo\-scoped arguments.
+WindowsServiceArgs returns the radioactive\_ralph argv used by the native Windows SCM service entry when no persisted environment is required. It is retained as the minimal supervisor invocation contract used by callers and tests outside the SCM installer.
+
+<a name="WindowsServiceArgsForConfig"></a>
+## func [WindowsServiceArgsForConfig](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/service/windows_config.go#L76>)
+
+```go
+func WindowsServiceArgsForConfig(configPath string) []string
+```
+
+WindowsServiceArgsForConfig returns the complete SCM argv. The config path is carried explicitly instead of inferred from the service account's home.
+
+<a name="WindowsServiceConfigPath"></a>
+## func [WindowsServiceConfigPath](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/service/windows_config.go#L84>)
+
+```go
+func WindowsServiceConfigPath(args []string) (string, error)
+```
+
+WindowsServiceConfigPath extracts the private config path from an SCM invocation. It accepts both the two\-argument and \-\-flag=value spellings so diagnostics remain predictable if an administrator inspects or edits the service definition.
 
 <a name="Backend"></a>
-## type [Backend](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/service/service.go#L41>)
+## type [Backend](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/service/service.go#L50>)
 
 Backend identifies which platform mechanism is in use.
 
@@ -162,7 +199,7 @@ const (
 ```
 
 <a name="DetectBackend"></a>
-### func [DetectBackend](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/service/service.go#L72>)
+### func [DetectBackend](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/service/service.go#L81>)
 
 ```go
 func DetectBackend() Backend
@@ -171,7 +208,7 @@ func DetectBackend() Backend
 DetectBackend returns the appropriate backend for the current OS.
 
 <a name="InstallOptions"></a>
-## type [InstallOptions](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/service/service.go#L102-L113>)
+## type [InstallOptions](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/service/service.go#L111-L122>)
 
 InstallOptions configures an install.
 
@@ -191,7 +228,7 @@ type InstallOptions struct {
 ```
 
 <a name="Status"></a>
-## type [Status](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/service/service.go#L294-L298>)
+## type [Status](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/service/service.go#L425-L429>)
 
 Status reports whether the per\-user supervisor service definition is installed. This only inspects the service definition on disk \(unit file present/absent\); it says nothing about whether the supervisor process is currently running — callers wanting liveness should combine this with supervisor.Find against the XDG state root.
 
@@ -204,7 +241,7 @@ type Status struct {
 ```
 
 <a name="Inspect"></a>
-### func [Inspect](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/service/service.go#L302>)
+### func [Inspect](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/service/service.go#L433>)
 
 ```go
 func Inspect(opts InstallOptions) (Status, error)
@@ -213,7 +250,7 @@ func Inspect(opts InstallOptions) (Status, error)
 Inspect reports the current install status of the per\-user supervisor service definition for the detected \(or overridden\) backend.
 
 <a name="WindowsServiceConfig"></a>
-## type [WindowsServiceConfig](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/service/windows_config.go#L10-L12>)
+## type [WindowsServiceConfig](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/service/windows_config.go#L14-L16>)
 
 WindowsServiceConfig is the persisted config payload used by the native Windows service host for the per\-user supervisor service.
 
@@ -224,7 +261,7 @@ type WindowsServiceConfig struct {
 ```
 
 <a name="BuildWindowsServiceConfig"></a>
-### func [BuildWindowsServiceConfig](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/service/windows_config.go#L16>)
+### func [BuildWindowsServiceConfig](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/service/windows_config.go#L20>)
 
 ```go
 func BuildWindowsServiceConfig(opts InstallOptions) WindowsServiceConfig
@@ -232,8 +269,17 @@ func BuildWindowsServiceConfig(opts InstallOptions) WindowsServiceConfig
 
 BuildWindowsServiceConfig produces the persisted config payload for the supervisor service instance.
 
+<a name="LoadWindowsServiceConfig"></a>
+### func [LoadWindowsServiceConfig](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/service/windows_config.go#L55>)
+
+```go
+func LoadWindowsServiceConfig(path string) (WindowsServiceConfig, error)
+```
+
+LoadWindowsServiceConfig reads the private config file named on the SCM command line. The explicit path matters because an SCM service commonly runs under a different account than the operator who installed it, so recomputing the operator's LocalAppData directory inside the service would load the wrong file.
+
 <a name="ParseWindowsServiceConfig"></a>
-### func [ParseWindowsServiceConfig](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/service/windows_config.go#L38>)
+### func [ParseWindowsServiceConfig](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/service/windows_config.go#L42>)
 
 ```go
 func ParseWindowsServiceConfig(raw []byte) (WindowsServiceConfig, error)

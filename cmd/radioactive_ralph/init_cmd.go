@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -118,6 +119,9 @@ func validateProjectConfig(ctx context.Context, cmd *cobra.Command, st *store.St
 	}
 
 	var effective vconfig.ProjectConfig
+	var pendingUpserts map[string]string
+	var pendingDeletes []string
+	incomingSelectionFound := false
 	if projectConfigFile == "" {
 		effective, err = vconfig.EffectiveProject(ctx, st, projectsCfg, projectID, "", vconfig.ModeChange)
 		if err != nil {
@@ -128,9 +132,23 @@ func validateProjectConfig(ctx context.Context, cmd *cobra.Command, st *store.St
 		if err != nil {
 			return fmt.Errorf("load project-config-file %s: %w", projectConfigFile, err)
 		}
+		incoming, selectionFound, err := normalizeIncomingProviderSelection(incoming)
+		if err != nil {
+			return fmt.Errorf("validate project provider selection: %w", err)
+		}
+		incomingSelectionFound = selectionFound
 
 		overlay := incoming
-		if conflicts := vconfig.DiffConflicts(projectsCfg, incoming); len(conflicts) > 0 {
+		// Provider selection is one replaceable logical value even though legacy
+		// ingress used a differently named singular key. An explicit --init
+		// selection always replaces the stored selection; generic config keys
+		// retain the existing conflict/--force-override UX.
+		conflictInput := incoming
+		if selectionFound {
+			conflictInput = copyConfigValues(incoming)
+			delete(conflictInput, providersConfigKey)
+		}
+		if conflicts := vconfig.DiffConflicts(projectsCfg, conflictInput); len(conflicts) > 0 {
 			forceOverride, _ := cmd.Flags().GetBool(flagForceOverride)
 			if forceOverride {
 				fmt.Printf("radioactive_ralph: --force-override applying %d conflicting key(s) from %s:\n%s",
@@ -142,9 +160,29 @@ func validateProjectConfig(ctx context.Context, cmd *cobra.Command, st *store.St
 			}
 		}
 
-		effective, err = vconfig.EffectiveProjectFromValues(ctx, st, projectsCfg, projectID, overlay, vconfig.ModeChange)
+		base := projectsCfg
+		if selectionFound {
+			base.Values = copyConfigValues(projectsCfg.Values)
+			delete(base.Values, providerConfigKey)
+		}
+		effective, err = vconfig.EffectiveProjectFromValues(ctx, st, base, projectID, overlay, vconfig.ModeOverride)
 		if err != nil {
 			return fmt.Errorf("resolve effective project config: %w", err)
+		}
+
+		encoded, err := encodeProjectConfigValues(overlay)
+		if err != nil {
+			return err
+		}
+		pendingUpserts = encoded
+		if selectionFound {
+			pendingDeletes = []string{providerConfigKey}
+		}
+	}
+
+	if !incomingSelectionFound {
+		if _, _, err := resolveProviderNamesFromUserConfig(ctx, st, userCfg, projectID); err != nil {
+			return fmt.Errorf("validate effective provider selection: %w", err)
 		}
 	}
 
@@ -152,7 +190,32 @@ func validateProjectConfig(ctx context.Context, cmd *cobra.Command, st *store.St
 	if missing := vconfig.Validate(effective, requiredKeys); len(missing) > 0 {
 		return fmt.Errorf("%s", vconfig.FormatMissing(missing))
 	}
+	if pendingUpserts != nil {
+		if err := st.ApplyProjectConfig(ctx, projectID, pendingUpserts, pendingDeletes); err != nil {
+			return fmt.Errorf("persist project config: %w", err)
+		}
+	}
 	return nil
+}
+
+func copyConfigValues(values map[string]any) map[string]any {
+	out := make(map[string]any, len(values))
+	for key, value := range values {
+		out[key] = value
+	}
+	return out
+}
+
+func encodeProjectConfigValues(values map[string]any) (map[string]string, error) {
+	encoded := make(map[string]string, len(values))
+	for key, value := range values {
+		raw, err := json.Marshal(value)
+		if err != nil {
+			return nil, fmt.Errorf("encode project config %q: %w", key, err)
+		}
+		encoded[key] = string(raw)
+	}
+	return encoded, nil
 }
 
 // formatConflicts renders one line per conflict, sorted by key for stable

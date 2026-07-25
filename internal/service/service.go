@@ -27,6 +27,8 @@ import (
 	"path"
 	"path/filepath"
 	"runtime"
+	"strings"
+	"time"
 )
 
 // execCommand runs a command and returns its combined output. A package var so
@@ -36,6 +38,13 @@ var execCommand = func(name string, args ...string) (string, error) {
 	out, err := exec.Command(name, args...).CombinedOutput() //nolint:gosec // fixed service-manager argv, not user input
 	return string(out), err
 }
+
+var serviceRetrySleep = time.Sleep
+
+const (
+	launchdBootstrapAttempts = 30
+	launchdBootstrapDelay    = 100 * time.Millisecond
+)
 
 // Backend identifies which platform mechanism is in use.
 type Backend string
@@ -120,6 +129,12 @@ var ErrUnsupportedBackend = errors.New("service: unsupported platform")
 // ErrMissingRalphBin is returned when RalphBin is empty.
 var ErrMissingRalphBin = errors.New("service: RalphBin required")
 
+// ErrInvalidRalphBin is returned when the service executable is not an
+// absolute, NUL-free path. Service managers do not perform shell PATH lookup,
+// so accepting a relative command would create a definition that cannot be
+// reconciled predictably.
+var ErrInvalidRalphBin = errors.New("service: RalphBin must be an absolute path")
+
 // Install writes or registers the platform service definition that runs
 // `radioactive_ralph --supervisor` as a per-user auto-restarting background
 // process. On launchd/systemd this means writing the unit file; on Windows
@@ -135,6 +150,17 @@ func Install(opts InstallOptions) (path string, err error) {
 	}
 	if backend == BackendUnsupported {
 		return "", fmt.Errorf("%w: %s", ErrUnsupportedBackend, runtime.GOOS)
+	}
+	if !isAbsoluteServicePath(backend, opts.RalphBin) || strings.ContainsRune(opts.RalphBin, '\x00') {
+		return "", fmt.Errorf("%w: %q", ErrInvalidRalphBin, opts.RalphBin)
+	}
+	for key, value := range opts.ExtraEnv {
+		if !validEnvName(key) {
+			return "", fmt.Errorf("service: invalid environment variable name %q", key)
+		}
+		if strings.ContainsRune(value, '\x00') || strings.ContainsAny(value, "\r\n") {
+			return "", fmt.Errorf("service: environment variable %s contains a forbidden NUL or newline", key)
+		}
 	}
 
 	home := opts.HomeDir
@@ -183,7 +209,45 @@ func Install(opts InstallOptions) (path string, err error) {
 	return path, nil
 }
 
-// Uninstall removes the unit file. Returns nil if already absent.
+// isAbsoluteServicePath validates the executable using the target service
+// manager's path grammar, not the host that happens to render or test the
+// definition. Backend overrides are intentionally supported for cross-platform
+// artifact tests, so filepath.IsAbs alone would reject a valid POSIX launchd or
+// systemd path on Windows (and a valid drive-qualified SCM path on Unix).
+func isAbsoluteServicePath(backend Backend, value string) bool {
+	switch backend {
+	case BackendLaunchd, BackendSystemdUser:
+		return strings.HasPrefix(value, "/")
+	case BackendWindowsSCM:
+		if len(value) >= 3 &&
+			((value[0] >= 'a' && value[0] <= 'z') || (value[0] >= 'A' && value[0] <= 'Z')) &&
+			value[1] == ':' && (value[2] == '\\' || value[2] == '/') {
+			return true
+		}
+		return strings.HasPrefix(value, `\\`)
+	default:
+		return false
+	}
+}
+
+func validEnvName(name string) bool {
+	if name == "" {
+		return false
+	}
+	for i, r := range name {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || r == '_' || (i > 0 && r >= '0' && r <= '9') {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+// Uninstall removes the platform service definition. It does not stop a
+// running service; callers performing the operator-facing uninstall
+// lifecycle must call Stop first. Keeping definition removal separate makes
+// render/install tests independent of a live service manager while the CLI
+// composes the complete stop-then-remove operation.
 func Uninstall(opts InstallOptions) error {
 	backend := opts.Backend
 	if backend == "" {
@@ -206,6 +270,11 @@ func Uninstall(opts InstallOptions) error {
 	}
 	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("service: remove %s: %w", path, err)
+	}
+	if backend == BackendSystemdUser {
+		if out, err := runService("systemctl", "--user", "daemon-reload"); err != nil {
+			return fmt.Errorf("service: systemctl daemon-reload after remove: %w\n%s", err, out)
+		}
 	}
 	return nil
 }
@@ -236,28 +305,90 @@ func Start(opts InstallOptions) error {
 		domain := fmt.Sprintf("gui/%d", os.Getuid())
 		label := UnitName(backend)
 		path := UnitPath(backend, home)
-		// bootstrap loads + (via RunAtLoad) starts; kickstart -k ensures a
-		// fresh start even if a stale instance was already bootstrapped.
-		if out, err := runService("launchctl", "bootstrap", domain, path); err != nil {
+		// Reload the definition on every install/start. launchd caches a loaded
+		// plist, so bootstrapping over an existing label returns EIO and leaves
+		// old ProgramArguments/environment active. bootout is intentionally
+		// best-effort: a first install has nothing loaded yet. The bootout
+		// transition is asynchronous on macOS: even after `launchctl print`
+		// stops finding the label, an immediate bootstrap can transiently return
+		// exit 5/EIO. Retry that bounded transition instead of requiring the
+		// operator to rerun service install.
+		_, _ = runService("launchctl", "bootout", domain+"/"+label)
+		if out, err := bootstrapLaunchd(domain, path); err != nil {
 			return fmt.Errorf("service: launchctl bootstrap: %w\n%s", err, out)
 		}
-		_, _ = runService("launchctl", "kickstart", "-k", domain+"/"+label)
+		// RunAtLoad + KeepAlive make bootstrap itself the start operation. A
+		// following `kickstart -k` only kills the process bootstrap just created,
+		// adding a needless restart and another launchd race.
 		return nil
 	case BackendSystemdUser:
 		unit := UnitName(backend)
 		if out, err := runService("systemctl", "--user", "daemon-reload"); err != nil {
 			return fmt.Errorf("service: systemctl daemon-reload: %w\n%s", err, out)
 		}
-		if out, err := runService("systemctl", "--user", "enable", "--now", unit); err != nil {
-			return fmt.Errorf("service: systemctl enable --now: %w\n%s", err, out)
+		if out, err := runService("systemctl", "--user", "enable", unit); err != nil {
+			return fmt.Errorf("service: systemctl enable: %w\n%s", err, out)
+		}
+		if out, err := runService("systemctl", "--user", "restart", unit); err != nil {
+			return fmt.Errorf("service: systemctl restart: %w\n%s", err, out)
 		}
 		return nil
 	case BackendWindowsSCM:
-		// installWindowsService already starts the SCM entry.
-		return nil
+		return startWindowsService(opts)
 	default:
 		return fmt.Errorf("%w: %s", ErrUnsupportedBackend, backend)
 	}
+}
+
+// Stop unloads/stops the installed service without removing its definition.
+// It is idempotent when the service is not loaded. The operator-facing
+// `service uninstall` command calls Stop before Uninstall so KeepAlive or
+// enabled services cannot survive after their definition is deleted.
+func Stop(opts InstallOptions) error {
+	backend := opts.Backend
+	if backend == "" {
+		backend = DetectBackend()
+	}
+
+	switch backend {
+	case BackendLaunchd:
+		domainTarget := fmt.Sprintf("gui/%d/%s", os.Getuid(), UnitName(backend))
+		if _, err := runService("launchctl", "print", domainTarget); err != nil {
+			return nil
+		}
+		if out, err := runService("launchctl", "bootout", domainTarget); err != nil {
+			return fmt.Errorf("service: launchctl bootout: %w\n%s", err, out)
+		}
+		return nil
+	case BackendSystemdUser:
+		unit := UnitName(backend)
+		out, err := runService("systemctl", "--user", "show", unit, "--property=LoadState", "--value")
+		if err == nil && strings.TrimSpace(out) != "not-found" {
+			if disableOut, disableErr := runService("systemctl", "--user", "disable", "--now", unit); disableErr != nil {
+				return fmt.Errorf("service: systemctl disable --now: %w\n%s", disableErr, disableOut)
+			}
+		}
+		return nil
+	case BackendWindowsSCM:
+		return stopWindowsService(opts)
+	default:
+		return fmt.Errorf("%w: %s", ErrUnsupportedBackend, backend)
+	}
+}
+
+func bootstrapLaunchd(domain, unitPath string) (string, error) {
+	var lastOut string
+	var lastErr error
+	for attempt := 1; attempt <= launchdBootstrapAttempts; attempt++ {
+		lastOut, lastErr = runService("launchctl", "bootstrap", domain, unitPath)
+		if lastErr == nil {
+			return lastOut, nil
+		}
+		if attempt < launchdBootstrapAttempts {
+			serviceRetrySleep(launchdBootstrapDelay)
+		}
+	}
+	return lastOut, lastErr
 }
 
 // runService runs a service-manager command, returning combined output for

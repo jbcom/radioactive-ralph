@@ -8,6 +8,14 @@ func installWindowsService(_ InstallOptions, _ string) (string, error) {
 	return "", fmt.Errorf("%w: windows-scm", ErrUnsupportedBackend)
 }
 
+func startWindowsService(_ InstallOptions) error {
+	return fmt.Errorf("%w: windows-scm", ErrUnsupportedBackend)
+}
+
 func uninstallWindowsService(_ InstallOptions, _ string) error {
+	return fmt.Errorf("%w: windows-scm", ErrUnsupportedBackend)
+}
+
+func stopWindowsService(_ InstallOptions) error {
 	return fmt.Errorf("%w: windows-scm", ErrUnsupportedBackend)
 }

@@ -74,7 +74,7 @@ func TestHandleEnqueue_DispatchesSeededPlan(t *testing.T) {
 	runner := &fakeRunner{}
 	o := orch.New(st,
 		orch.WithRunnerFactory(func(provider.Binding) (provider.Runner, error) { return runner, nil }),
-		orch.WithBindingResolver(func(context.Context, string, bool) (provider.Binding, error) {
+		orch.WithBindingResolver(func(context.Context, string, bool, orch.BindingResolutionPurpose) (provider.Binding, error) {
 			return provider.Binding{Name: "claude", Config: provider.BindingConfig{Type: "claude", Binary: "true"}}, nil
 		}),
 	)
@@ -149,7 +149,7 @@ func TestDispatchActivePlans_SkipsPausedPlan(t *testing.T) {
 	runner := &fakeRunner{}
 	o := orch.New(st,
 		orch.WithRunnerFactory(func(provider.Binding) (provider.Runner, error) { return runner, nil }),
-		orch.WithBindingResolver(func(context.Context, string, bool) (provider.Binding, error) {
+		orch.WithBindingResolver(func(context.Context, string, bool, orch.BindingResolutionPurpose) (provider.Binding, error) {
 			return provider.Binding{Name: "claude", Config: provider.BindingConfig{Type: "claude", Binary: "true"}}, nil
 		}),
 	)
@@ -264,7 +264,7 @@ func TestHandleEnqueueContinuesPastADispatchFailure(t *testing.T) {
 	}
 
 	sup.orch = orch.New(sup.store,
-		orch.WithBindingResolver(func(context.Context, string, bool) (provider.Binding, error) {
+		orch.WithBindingResolver(func(context.Context, string, bool, orch.BindingResolutionPurpose) (provider.Binding, error) {
 			return provider.Binding{}, errFailingBindingResolver
 		}),
 	)

@@ -31,12 +31,27 @@ import (
 // provider.NewRunner.
 type RunnerFactory func(provider.Binding) (provider.Runner, error)
 
-// BindingResolver picks the provider binding to use for one dispatch.
+// BindingResolutionPurpose distinguishes a non-consuming capability probe from
+// a provider assignment for an admitted dispatch.
+type BindingResolutionPurpose uint8
+
+const (
+	// BindingProbe inspects the next binding's capabilities without advancing
+	// any stateful selection policy such as a round-robin provider pool.
+	BindingProbe BindingResolutionPurpose = iota
+	// BindingDispatch assigns a binding to a dispatch that has passed approval
+	// and capacity admission.
+	BindingDispatch
+)
+
+// BindingResolver picks the provider binding to use for one dispatch or
+// previews its capabilities. Stateful resolvers must not advance on
+// BindingProbe.
 // Exists so tests and callers can supply a fixed/fake binding without a
 // real config.toml. Defaults to always resolving "claude" via
 // provider.ResolveBinding with zero File/Local config (i.e. the built-in
 // claude capability record).
-type BindingResolver func(ctx context.Context, projectID string, parallelGroup bool) (provider.Binding, error)
+type BindingResolver func(ctx context.Context, projectID string, parallelGroup bool, purpose BindingResolutionPurpose) (provider.Binding, error)
 
 // Clock abstracts time.Now for deterministic tests (enforcement-prompt
 // cadence, spend windows).
@@ -300,7 +315,7 @@ func New(st *store.Store, opts ...Option) *Orchestrator {
 	o := &Orchestrator{
 		store:     st,
 		newRunner: provider.NewRunner,
-		resolveBinding: func(_ context.Context, _ string, _ bool) (provider.Binding, error) {
+		resolveBinding: func(_ context.Context, _ string, _ bool, _ BindingResolutionPurpose) (provider.Binding, error) {
 			return provider.ResolveBinding(provider.File{}, provider.Local{}, provider.VariantFile{})
 		},
 		now: time.Now,
@@ -433,15 +448,12 @@ func (o *Orchestrator) DispatchNext(ctx context.Context, projectID, planID strin
 		return 0, err
 	}
 
-	limit := len(readySteps)
+	candidateLimit := len(readySteps)
 	if !parallel {
 		// A sequential leaf group only ever returns its first not-done
 		// step (see plan.Decompose), but guard explicitly anyway: never
 		// dispatch more than one step from a non-parallel group at once.
-		limit = 1
-	}
-	if o.maxParallel > 0 && limit > o.maxParallel {
-		limit = o.maxParallel
+		candidateLimit = 1
 	}
 
 	// Fan-out delegation: when the ready group is Parallel AND the binding
@@ -453,12 +465,31 @@ func (o *Orchestrator) DispatchNext(ctx context.Context, projectID, planID strin
 	// claiming every ready task in the group, one provider turn, one
 	// evidence submission mapped back onto every task) rather than one
 	// worker per step.
-	if parallel && limit > 1 {
-		binding, err := o.resolveBinding(ctx, projectID, parallel)
+	if parallel && candidateLimit > 1 {
+		binding, err := o.resolveBinding(ctx, projectID, parallel, BindingProbe)
 		if err != nil {
 			return dispatched, fmt.Errorf("orch: resolve binding: %w", err)
 		}
 		if binding.Config.NativeFanout {
+			// Native fan-out consumes one Ralph worker, so scan the complete
+			// ready group. maxParallel bounds admitted workers, not the number
+			// of independent tasks that one provider-native fan-out may own.
+			eligibleSteps := make([]plan.Step, 0, candidateLimit)
+			eligibleRefs := make([]plan.StepRef, 0, candidateLimit)
+			for i := 0; i < candidateLimit; i++ {
+				gated, err := o.stepGateBlocks(ctx, planID, refs[i], readySteps[i])
+				if err != nil {
+					return dispatched, err
+				}
+				if !gated {
+					eligibleSteps = append(eligibleSteps, readySteps[i])
+					eligibleRefs = append(eligibleRefs, refs[i])
+				}
+			}
+			if len(eligibleSteps) == 0 {
+				return dispatched, nil
+			}
+
 			// A fan-out group is one worker / one provider turn, so it takes ONE
 			// dispatch slot. If the pipeline is full there's no capacity now —
 			// return without dispatching; the next pass retries.
@@ -472,7 +503,16 @@ func (o *Orchestrator) DispatchNext(ctx context.Context, projectID, planID strin
 					slotReleased = true
 				}
 			}
-			n, err := o.dispatchFanoutGroup(ctx, projectID, projectDir, planID, parsedPlan, storedPlan.Title, groupHeading, binding, readySteps[:limit], refs[:limit], releaseSlot)
+			binding, err = o.resolveBinding(ctx, projectID, parallel, BindingDispatch)
+			if err != nil {
+				releaseSlot()
+				return dispatched, fmt.Errorf("orch: resolve binding for dispatch: %w", err)
+			}
+			if !binding.Config.NativeFanout {
+				releaseSlot()
+				return dispatched, fmt.Errorf("orch: binding capability changed between probe and dispatch")
+			}
+			n, err := o.dispatchFanoutGroup(ctx, projectID, projectDir, planID, parsedPlan, storedPlan.Title, groupHeading, binding, eligibleSteps, eligibleRefs, releaseSlot)
 			if err != nil {
 				// dispatchFanoutGroup only returns an error on a synchronous
 				// pre-launch failure (claim/spend); the async turn was never
@@ -484,7 +524,13 @@ func (o *Orchestrator) DispatchNext(ctx context.Context, projectID, planID strin
 		}
 	}
 
-	for i := 0; i < limit; i++ {
+	for i := 0; i < candidateLimit; i++ {
+		// maxParallel is an admission budget, not a prefix length. Keep scanning
+		// past approval- or spend-gated candidates and stop only after this pass
+		// has actually admitted the configured number of workers.
+		if o.maxParallel > 0 && dispatched >= o.maxParallel {
+			break
+		}
 		// Skip a step still held behind the approval gate BEFORE acquiring a
 		// dispatch slot, reserving spend, or spawning worker/session rows — a
 		// gated task is deliberately unclaimable, so without this pre-check every
@@ -560,7 +606,7 @@ func (o *Orchestrator) dispatchReadyStep(ctx context.Context, a dispatchStepArgs
 		}
 	}
 
-	binding, err := o.resolveBinding(ctx, a.projectID, a.parallel)
+	binding, err := o.resolveBinding(ctx, a.projectID, a.parallel, BindingDispatch)
 	if err != nil {
 		release()
 		return false, fmt.Errorf("orch: resolve binding: %w", err)

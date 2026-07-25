@@ -27,9 +27,6 @@ export HOME="$home"
 export RALPH_STATE_DIR="$state"
 
 cleanup() {
-  if [[ -n "${label:-}" ]]; then
-    launchctl bootout "gui/$(id -u)/$label" >/dev/null 2>&1 || true
-  fi
   "$bin" service uninstall >/dev/null 2>&1 || true
   rm -rf "$tmpdir"
 }
@@ -52,9 +49,6 @@ fi
 label="$(basename "$install_path" .plist)"
 domain="gui/$(id -u)"
 
-launchctl bootstrap "$domain" "$install_path"
-launchctl kickstart -k "$domain/$label" >/dev/null 2>&1 || true
-
 ready=0
 for _ in $(seq 1 30); do
   if (cd "$project" && "$bin") 2>/dev/null | grep -q "supervisor is up"; then
@@ -69,8 +63,7 @@ if [[ "$ready" -ne 1 ]]; then
   exit 1
 fi
 
-launchctl bootout "$domain/$label"
-label=""
+"$bin" service uninstall >/dev/null
 
 stopped=0
 for _ in $(seq 1 30); do
