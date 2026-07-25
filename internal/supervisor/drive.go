@@ -42,6 +42,12 @@ func (s *Supervisor) HandlePlanImport(ctx context.Context, args ipc.PlanImportAr
 	if len(args.Markdown) == 0 {
 		return zero, &codedError{ipc.CodeInvalidArgs, "plan-import: markdown required"}
 	}
+	if err := plan.ValidateForImport([]byte(args.Markdown)); err != nil {
+		return zero, &codedError{
+			ipc.CodeInvalidArgs,
+			fmt.Sprintf("plan-import: invalid markdown: %v", err),
+		}
+	}
 
 	title := args.Title
 	if title == "" {

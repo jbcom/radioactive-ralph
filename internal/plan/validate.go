@@ -2,6 +2,7 @@ package plan
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/yuin/goldmark"
 	"github.com/yuin/goldmark/ast"
@@ -30,10 +31,54 @@ func (e PlanError) String() string {
 	return e.Msg
 }
 
+// ValidationErrors is the import-blocking form of Validate's findings. Parse
+// remains permissive for read-only inspection of historical plans, while
+// ingress must fail closed instead of persisting a document whose dispatch
+// order the heuristic grammar cannot determine.
+type ValidationErrors []PlanError
+
+func (errs ValidationErrors) Error() string {
+	parts := make([]string, len(errs))
+	for i, finding := range errs {
+		parts[i] = finding.String()
+	}
+	return strings.Join(parts, "; ")
+}
+
+// ValidateForImport is the plan-ingress contract. It rejects empty/no-step
+// documents and every ambiguity reported by Validate before a project or plan
+// row is created. This is intentionally stricter than Parse, which remains
+// useful for inspecting already-stored historical input.
+func ValidateForImport(md []byte) error {
+	if strings.TrimSpace(string(md)) == "" {
+		return ValidationErrors{{Msg: "plan markdown is empty"}}
+	}
+	if findings := Validate(md); len(findings) > 0 {
+		return ValidationErrors(findings)
+	}
+	parsed, err := Parse(md)
+	if err != nil {
+		return fmt.Errorf("parse plan: %w", err)
+	}
+	if countPlanSteps(parsed.Groups) == 0 {
+		return ValidationErrors{{Msg: "plan has no steps"}}
+	}
+	return nil
+}
+
+func countPlanSteps(groups []Group) int {
+	total := 0
+	for _, group := range groups {
+		total += len(group.Steps)
+		total += countPlanSteps(group.SubGroups)
+	}
+	return total
+}
+
 // Validate parses md and flags grammar ambiguities the heuristic decomposer
-// (Parse/Decompose) has to guess through. Validate is advisory: it never
-// blocks Parse from running, but a plan with findings is a plan whose
-// dispatch order may not be what its author intended. Findings are:
+// (Parse/Decompose) has to guess through. Validate itself is advisory so
+// callers can inspect historical input; ValidateForImport converts its
+// findings into an ingress-blocking error. Findings are:
 //
 //   - a section with both a list and a leading bare paragraph, which is
 //     ambiguous under the disambiguation rule (list => step-group, bare

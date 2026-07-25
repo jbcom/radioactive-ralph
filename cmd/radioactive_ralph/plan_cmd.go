@@ -70,6 +70,9 @@ func runPlanImport(ctx context.Context, cmd *cobra.Command, planPath, slug strin
 	if strings.TrimSpace(markdown) == "" {
 		return fmt.Errorf("plan file %s is empty", planPath)
 	}
+	if err := plan.ValidateForImport(raw); err != nil {
+		return fmt.Errorf("plan file %s is invalid: %w", planPath, err)
+	}
 
 	title := plan.Title(markdown, planTitleFallback(planPath))
 	if slug == "" {
