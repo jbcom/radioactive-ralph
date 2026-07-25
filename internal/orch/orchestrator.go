@@ -448,15 +448,12 @@ func (o *Orchestrator) DispatchNext(ctx context.Context, projectID, planID strin
 		return 0, err
 	}
 
-	limit := len(readySteps)
+	candidateLimit := len(readySteps)
 	if !parallel {
 		// A sequential leaf group only ever returns its first not-done
 		// step (see plan.Decompose), but guard explicitly anyway: never
 		// dispatch more than one step from a non-parallel group at once.
-		limit = 1
-	}
-	if o.maxParallel > 0 && limit > o.maxParallel {
-		limit = o.maxParallel
+		candidateLimit = 1
 	}
 
 	// Fan-out delegation: when the ready group is Parallel AND the binding
@@ -468,15 +465,18 @@ func (o *Orchestrator) DispatchNext(ctx context.Context, projectID, planID strin
 	// claiming every ready task in the group, one provider turn, one
 	// evidence submission mapped back onto every task) rather than one
 	// worker per step.
-	if parallel && limit > 1 {
+	if parallel && candidateLimit > 1 {
 		binding, err := o.resolveBinding(ctx, projectID, parallel, BindingProbe)
 		if err != nil {
 			return dispatched, fmt.Errorf("orch: resolve binding: %w", err)
 		}
 		if binding.Config.NativeFanout {
-			eligibleSteps := make([]plan.Step, 0, limit)
-			eligibleRefs := make([]plan.StepRef, 0, limit)
-			for i := 0; i < limit; i++ {
+			// Native fan-out consumes one Ralph worker, so scan the complete
+			// ready group. maxParallel bounds admitted workers, not the number
+			// of independent tasks that one provider-native fan-out may own.
+			eligibleSteps := make([]plan.Step, 0, candidateLimit)
+			eligibleRefs := make([]plan.StepRef, 0, candidateLimit)
+			for i := 0; i < candidateLimit; i++ {
 				gated, err := o.stepGateBlocks(ctx, planID, refs[i], readySteps[i])
 				if err != nil {
 					return dispatched, err
@@ -524,7 +524,13 @@ func (o *Orchestrator) DispatchNext(ctx context.Context, projectID, planID strin
 		}
 	}
 
-	for i := 0; i < limit; i++ {
+	for i := 0; i < candidateLimit; i++ {
+		// maxParallel is an admission budget, not a prefix length. Keep scanning
+		// past approval- or spend-gated candidates and stop only after this pass
+		// has actually admitted the configured number of workers.
+		if o.maxParallel > 0 && dispatched >= o.maxParallel {
+			break
+		}
 		// Skip a step still held behind the approval gate BEFORE acquiring a
 		// dispatch slot, reserving spend, or spawning worker/session rows — a
 		// gated task is deliberately unclaimable, so without this pre-check every

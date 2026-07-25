@@ -329,6 +329,60 @@ func TestDispatchNextMaxParallelBoundsDispatch(t *testing.T) {
 	}
 }
 
+const gatedParallelPrefixPlan = `# Ship the feature
+
+- approve production account [approval]
+- approve public announcement [approval]
+- run independent package proof
+`
+
+// TestDispatchNextMaxParallelScansPastGatedPrefix proves the worker limit is
+// applied to admitted workers rather than truncating the ready candidate list.
+// Otherwise the first two gated tasks permanently hide the independent third
+// task when maxParallel is two.
+func TestDispatchNextMaxParallelScansPastGatedPrefix(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	projectID := mustCreateTestProject(t, s, "gated-prefix-project")
+	planID := mustCreateTestPlan(
+		t,
+		s,
+		projectID,
+		"gated-prefix-plan",
+		"Ship",
+		gatedParallelPrefixPlan,
+	)
+
+	runner := &fakeRunner{results: []provider.Result{{AssistantOutput: "proof complete"}}}
+	o := New(s,
+		WithRunnerFactory(func(provider.Binding) (provider.Runner, error) { return runner, nil }),
+		WithBindingResolver(fakeBindingResolver("claude", false)),
+		WithMaxParallel(2),
+	)
+
+	dispatched, err := o.DispatchNext(ctx, projectID, planID)
+	if err != nil {
+		t.Fatalf("DispatchNext: %v", err)
+	}
+	o.Wait()
+	if dispatched != 1 {
+		t.Fatalf("dispatched = %d, want the ungated task behind the gated prefix", dispatched)
+	}
+	if len(runner.callReqs()) != 1 ||
+		!strings.Contains(runner.callReqs()[0].UserPrompt, "independent package proof") {
+		t.Fatalf("runner requests = %#v, want only the independent package proof", runner.callReqs())
+	}
+	for _, stepID := range []string{"0.0", "0.1"} {
+		task, err := s.GetTask(ctx, planID, stepID)
+		if err != nil {
+			t.Fatalf("GetTask(%s): %v", stepID, err)
+		}
+		if task.Status != store.TaskStatusReadyPendingApproval {
+			t.Fatalf("task %s status = %q, want ready_pending_approval", stepID, task.Status)
+		}
+	}
+}
+
 // TestDispatchNextNothingReadyReturnsZero confirms a fully-done plan
 // dispatches nothing and errors nothing.
 func TestDispatchNextNothingReadyReturnsZero(t *testing.T) {
