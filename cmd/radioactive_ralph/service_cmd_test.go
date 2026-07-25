@@ -180,12 +180,15 @@ func TestServiceInstallHonorsExplicitPath(t *testing.T) {
 }
 
 func TestServiceExecutionPathIsAbsoluteDeduplicatedAndIncludesBinaryDir(t *testing.T) {
+	root := t.TempDir()
+	ralphDir := filepath.Join(root, "ralph-bin")
+	toolsDir := filepath.Join(root, "tools-bin")
 	got := serviceExecutionPath(
-		"/custom/ralph/bin/radioactive_ralph",
-		strings.Join([]string{"/tools/bin", "relative/bin", "/tools/bin"}, string(os.PathListSeparator)),
+		filepath.Join(ralphDir, "radioactive_ralph"),
+		strings.Join([]string{toolsDir, "relative/bin", toolsDir}, string(os.PathListSeparator)),
 	)
 	entries := filepath.SplitList(got)
-	if len(entries) == 0 || entries[0] != "/custom/ralph/bin" {
+	if len(entries) == 0 || entries[0] != ralphDir {
 		t.Fatalf("serviceExecutionPath = %v, want Ralph binary directory first", entries)
 	}
 	count := 0
@@ -193,12 +196,12 @@ func TestServiceExecutionPathIsAbsoluteDeduplicatedAndIncludesBinaryDir(t *testi
 		if !filepath.IsAbs(entry) {
 			t.Errorf("serviceExecutionPath contains relative entry %q", entry)
 		}
-		if entry == "/tools/bin" {
+		if entry == toolsDir {
 			count++
 		}
 	}
 	if count != 1 {
-		t.Errorf("/tools/bin appears %d times, want once in %v", count, entries)
+		t.Errorf("%s appears %d times, want once in %v", toolsDir, count, entries)
 	}
 }
 
