@@ -69,7 +69,7 @@ confirm each one.
 - [ ] `scoop bucket add jbcom https://github.com/jbcom/pkgs && scoop install radioactive-ralph` —
       verified against `dist/scoop/bucket/radioactive-ralph.json`
 - [ ] `curl -sSL https://jonbogaty.com/radioactive-ralph/install.sh | sh` —
-      verified against `site/public/install.sh`: `BIN` matches binary
+      verified against `docs/install.sh`: `BIN` matches binary
       name, `ARCHIVE` template matches GoReleaser naming
 - [ ] Public install docs expose only the stable install surface:
       Homebrew, Scoop, and the curl installer.

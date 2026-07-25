@@ -23,7 +23,7 @@ set of native package formats each ecosystem expects, verifiable by signature.
   archives, `checksums.txt` **cosign-signed** (keyless), Homebrew + Scoop
   manifests published to `jbcom/pkgs` via PR.
 - `.goreleaser.chocolatey.yaml`: Chocolatey publish from a Windows runner.
-- `site/public/install.sh`: curl-pipe installer — resolves latest, downloads the
+- `docs/install.sh`: curl-pipe installer — resolves latest, downloads the
   arch archive, verifies its SHA-256 against `checksums.txt`, extracts the CLI.
 - `release.yml`: one ubuntu goreleaser job + one windows chocolatey job.
 - Icon source: `assets/brand/ralph-mascot.png`.

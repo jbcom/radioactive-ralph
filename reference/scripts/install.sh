@@ -3,7 +3,7 @@
 #
 # This file is intentionally not the live installer. The shipped product is the
 # Go binary in the repo root. Use:
-#   - site/public/install.sh
+#   - docs/install.sh
 #   - docs/getting-started/index.md
 #
 # Keeping a short redirect here is safer than preserving the old plugin/MCP-era
@@ -15,7 +15,7 @@ cat >&2 <<'EOF'
 reference/scripts/install.sh is archival only.
 
 The live installer for radioactive-ralph is:
-  site/public/install.sh
+  docs/install.sh
 
 The live setup instructions are:
   docs/getting-started/index.md

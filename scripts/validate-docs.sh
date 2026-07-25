@@ -20,7 +20,16 @@ LIVE_DOCS=(
 LIVE_RELEASE_FILES=(
   .goreleaser.yaml
   .goreleaser.chocolatey.yaml
+  docs/install.sh
+)
+
+RETIRED_INSTALL_SURFACES=(
+  site/package.json
+  site/pnpm-lock.yaml
   site/public/install.sh
+  reference/pyproject.toml
+  reference/tox.ini
+  reference/uv.lock
 )
 
 fail() {
@@ -47,6 +56,12 @@ search_o() {
     grep -R -n -o -E --binary-files=without-match --exclude-dir=.git --exclude-dir=_build -- "$pattern" "$@"
   fi
 }
+
+[[ -x docs/install.sh ]] || fail "docs/install.sh must exist and be executable"
+
+for path in "${RETIRED_INSTALL_SURFACES[@]}"; do
+  [[ ! -e "$path" ]] || fail "retired install surface returned: $path"
+done
 
 if search 'site/src/content/docs' "${LIVE_DOCS[@]}" .github "${LIVE_RELEASE_FILES[@]}"; then
   fail "found stale references to site/src/content/docs"
