@@ -2,12 +2,14 @@ package service
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path"
 	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestDetectBackendKnownPlatforms(t *testing.T) {
@@ -315,8 +317,45 @@ func TestStartLaunchdRunsBootstrap(t *testing.T) {
 	if err := Start(InstallOptions{Backend: BackendLaunchd, HomeDir: t.TempDir()}); err != nil {
 		t.Fatalf("Start(launchd): %v", err)
 	}
-	if len(calls) == 0 || calls[0][0] != "launchctl" || calls[0][1] != "bootstrap" {
-		t.Fatalf("expected a launchctl bootstrap call first, got %v", calls)
+	if len(calls) != 2 {
+		t.Fatalf("launchd start calls = %v, want bootout/bootstrap", calls)
+	}
+	if calls[0][0] != "launchctl" || calls[0][1] != "bootout" ||
+		calls[1][1] != "bootstrap" {
+		t.Fatalf("expected launchctl bootout/bootstrap, got %v", calls)
+	}
+}
+
+// TestStartLaunchdRetriesAsynchronousBootout proves the live-macOS failure
+// mode: bootstrap may transiently return launchd exit 5/EIO after bootout.
+// Start owns that bounded transition and succeeds without asking the operator
+// to rerun the install command.
+func TestStartLaunchdRetriesAsynchronousBootout(t *testing.T) {
+	var calls [][]string
+	bootstrapCalls := 0
+	origExec := execCommand
+	origSleep := serviceRetrySleep
+	execCommand = func(name string, args ...string) (string, error) {
+		calls = append(calls, append([]string{name}, args...))
+		if len(args) > 0 && args[0] == "bootstrap" {
+			bootstrapCalls++
+			if bootstrapCalls == 1 {
+				return "Bootstrap failed: 5: Input/output error", errors.New("exit status 5")
+			}
+		}
+		return "", nil
+	}
+	serviceRetrySleep = func(time.Duration) {}
+	t.Cleanup(func() {
+		execCommand = origExec
+		serviceRetrySleep = origSleep
+	})
+
+	if err := Start(InstallOptions{Backend: BackendLaunchd, HomeDir: t.TempDir()}); err != nil {
+		t.Fatalf("Start(launchd retry): %v", err)
+	}
+	if bootstrapCalls != 2 {
+		t.Fatalf("bootstrap calls = %d, want 2; all calls = %v", bootstrapCalls, calls)
 	}
 }
 
@@ -338,8 +377,10 @@ func TestStartSystemdEnablesNow(t *testing.T) {
 	for _, c := range calls {
 		joined += strings.Join(c, " ") + "\n"
 	}
-	if !strings.Contains(joined, "systemctl --user daemon-reload") || !strings.Contains(joined, "systemctl --user enable --now") {
-		t.Errorf("expected daemon-reload + enable --now, got:\n%s", joined)
+	if !strings.Contains(joined, "systemctl --user daemon-reload") ||
+		!strings.Contains(joined, "systemctl --user enable --now") ||
+		!strings.Contains(joined, "systemctl --user restart") {
+		t.Errorf("expected daemon-reload + enable --now + restart, got:\n%s", joined)
 	}
 }
 

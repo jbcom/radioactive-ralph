@@ -27,6 +27,7 @@ import (
 	"path"
 	"path/filepath"
 	"runtime"
+	"time"
 )
 
 // execCommand runs a command and returns its combined output. A package var so
@@ -36,6 +37,13 @@ var execCommand = func(name string, args ...string) (string, error) {
 	out, err := exec.Command(name, args...).CombinedOutput() //nolint:gosec // fixed service-manager argv, not user input
 	return string(out), err
 }
+
+var serviceRetrySleep = time.Sleep
+
+const (
+	launchdBootstrapAttempts = 30
+	launchdBootstrapDelay    = 100 * time.Millisecond
+)
 
 // Backend identifies which platform mechanism is in use.
 type Backend string
@@ -236,12 +244,21 @@ func Start(opts InstallOptions) error {
 		domain := fmt.Sprintf("gui/%d", os.Getuid())
 		label := UnitName(backend)
 		path := UnitPath(backend, home)
-		// bootstrap loads + (via RunAtLoad) starts; kickstart -k ensures a
-		// fresh start even if a stale instance was already bootstrapped.
-		if out, err := runService("launchctl", "bootstrap", domain, path); err != nil {
+		// Reload the definition on every install/start. launchd caches a loaded
+		// plist, so bootstrapping over an existing label returns EIO and leaves
+		// old ProgramArguments/environment active. bootout is intentionally
+		// best-effort: a first install has nothing loaded yet. The bootout
+		// transition is asynchronous on macOS: even after `launchctl print`
+		// stops finding the label, an immediate bootstrap can transiently return
+		// exit 5/EIO. Retry that bounded transition instead of requiring the
+		// operator to rerun service install.
+		_, _ = runService("launchctl", "bootout", domain+"/"+label)
+		if out, err := bootstrapLaunchd(domain, path); err != nil {
 			return fmt.Errorf("service: launchctl bootstrap: %w\n%s", err, out)
 		}
-		_, _ = runService("launchctl", "kickstart", "-k", domain+"/"+label)
+		// RunAtLoad + KeepAlive make bootstrap itself the start operation. A
+		// following `kickstart -k` only kills the process bootstrap just created,
+		// adding a needless restart and another launchd race.
 		return nil
 	case BackendSystemdUser:
 		unit := UnitName(backend)
@@ -251,6 +268,9 @@ func Start(opts InstallOptions) error {
 		if out, err := runService("systemctl", "--user", "enable", "--now", unit); err != nil {
 			return fmt.Errorf("service: systemctl enable --now: %w\n%s", err, out)
 		}
+		if out, err := runService("systemctl", "--user", "restart", unit); err != nil {
+			return fmt.Errorf("service: systemctl restart: %w\n%s", err, out)
+		}
 		return nil
 	case BackendWindowsSCM:
 		// installWindowsService already starts the SCM entry.
@@ -258,6 +278,21 @@ func Start(opts InstallOptions) error {
 	default:
 		return fmt.Errorf("%w: %s", ErrUnsupportedBackend, backend)
 	}
+}
+
+func bootstrapLaunchd(domain, unitPath string) (string, error) {
+	var lastOut string
+	var lastErr error
+	for attempt := 1; attempt <= launchdBootstrapAttempts; attempt++ {
+		lastOut, lastErr = runService("launchctl", "bootstrap", domain, unitPath)
+		if lastErr == nil {
+			return lastOut, nil
+		}
+		if attempt < launchdBootstrapAttempts {
+			serviceRetrySleep(launchdBootstrapDelay)
+		}
+	}
+	return lastOut, lastErr
 }
 
 // runService runs a service-manager command, returning combined output for

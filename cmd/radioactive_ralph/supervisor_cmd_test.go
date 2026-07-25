@@ -71,3 +71,30 @@ func TestRunSupervisorModeJSONLogFormat(t *testing.T) {
 		t.Errorf(`rec["event"] = %v, want "supervisor.starting"`, rec["event"])
 	}
 }
+
+func TestSupervisorMaxParallel(t *testing.T) {
+	tests := []struct {
+		name    string
+		value   string
+		want    int
+		wantErr bool
+	}{
+		{name: "unset preserves unbounded default", value: "", want: 0},
+		{name: "sixteen", value: "16", want: 16},
+		{name: "trimmed", value: " 8 ", want: 8},
+		{name: "zero rejected", value: "0", wantErr: true},
+		{name: "negative rejected", value: "-2", wantErr: true},
+		{name: "nonnumeric rejected", value: "many", wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := supervisorMaxParallel(func(string) string { return tt.value })
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("supervisorMaxParallel error = %v, wantErr %v", err, tt.wantErr)
+			}
+			if got != tt.want {
+				t.Errorf("supervisorMaxParallel = %d, want %d", got, tt.want)
+			}
+		})
+	}
+}

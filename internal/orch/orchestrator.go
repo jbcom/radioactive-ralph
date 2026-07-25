@@ -453,6 +453,7 @@ func (o *Orchestrator) DispatchNext(ctx context.Context, projectID, planID strin
 	// claiming every ready task in the group, one provider turn, one
 	// evidence submission mapped back onto every task) rather than one
 	// worker per step.
+	var firstBinding *provider.Binding
 	if parallel && limit > 1 {
 		binding, err := o.resolveBinding(ctx, projectID, parallel)
 		if err != nil {
@@ -482,6 +483,11 @@ func (o *Orchestrator) DispatchNext(ctx context.Context, projectID, planID strin
 			}
 			return n, nil
 		}
+		// The capability probe already selected a real binding. Reuse it for
+		// the first Ralph-managed step instead of resolving a second time,
+		// which would otherwise skip one member of a round-robin provider pool
+		// on every parallel dispatch pass.
+		firstBinding = &binding
 	}
 
 	for i := 0; i < limit; i++ {
@@ -511,10 +517,15 @@ func (o *Orchestrator) DispatchNext(ctx context.Context, projectID, planID strin
 			break
 		}
 
+		var resolvedBinding *provider.Binding
+		if firstBinding != nil {
+			resolvedBinding = firstBinding
+			firstBinding = nil
+		}
 		launched, err := o.dispatchReadyStep(ctx, dispatchStepArgs{
 			projectID: projectID, projectDir: projectDir, planID: planID,
 			parsedPlan: parsedPlan, storeTitle: storedPlan.Title, groupHeading: groupHeading,
-			parallel: parallel, ref: refs[i], step: readySteps[i],
+			parallel: parallel, ref: refs[i], step: readySteps[i], binding: resolvedBinding,
 		})
 		if err != nil {
 			return dispatched, err
@@ -536,6 +547,7 @@ type dispatchStepArgs struct {
 	parallel                      bool
 	ref                           plan.StepRef
 	step                          plan.Step
+	binding                       *provider.Binding
 }
 
 // dispatchReadyStep runs one iteration of DispatchNext's per-step body with a
@@ -560,10 +572,16 @@ func (o *Orchestrator) dispatchReadyStep(ctx context.Context, a dispatchStepArgs
 		}
 	}
 
-	binding, err := o.resolveBinding(ctx, a.projectID, a.parallel)
-	if err != nil {
-		release()
-		return false, fmt.Errorf("orch: resolve binding: %w", err)
+	var binding provider.Binding
+	if a.binding != nil {
+		binding = *a.binding
+	} else {
+		var err error
+		binding, err = o.resolveBinding(ctx, a.projectID, a.parallel)
+		if err != nil {
+			release()
+			return false, fmt.Errorf("orch: resolve binding: %w", err)
+		}
 	}
 
 	if err := o.checkSpendCap(ctx, a.projectID, binding.Name); err != nil {

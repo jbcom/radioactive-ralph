@@ -76,3 +76,57 @@ func TestStoreBindingResolverDefaultsToClaude(t *testing.T) {
 		t.Errorf("binding.Name = %q, want claude (default for an unconfigured project)", binding.Name)
 	}
 }
+
+// TestStoreBindingResolverProviderPoolRoundRobins proves a plural providers
+// config creates independently supervised Ralph workers across the pool. It
+// also proves NativeFanout is suppressed for Claude/OpenCode while pooled, so
+// one parallel plan group cannot collapse back into one opaque provider turn.
+func TestStoreBindingResolverProviderPoolRoundRobins(t *testing.T) {
+	ctx := context.Background()
+	st := openBindingTestStore(t)
+
+	projectID, err := st.CreateProject(ctx, "pool-project", []store.Fingerprint{
+		{Kind: store.FingerprintKindAbsPath, Value: t.TempDir()},
+	})
+	if err != nil {
+		t.Fatalf("CreateProject: %v", err)
+	}
+	if err := st.SetProjectConfig(ctx, projectID, providersConfigKey, `["claude","codex","opencode"]`); err != nil {
+		t.Fatalf("SetProjectConfig: %v", err)
+	}
+
+	resolve := storeBindingResolver(st)
+	want := []string{"claude", "codex", "opencode", "claude"}
+	for i, wantName := range want {
+		binding, err := resolve(ctx, projectID, true)
+		if err != nil {
+			t.Fatalf("resolve binding %d: %v", i, err)
+		}
+		if binding.Name != wantName {
+			t.Errorf("binding %d name = %q, want %q", i, binding.Name, wantName)
+		}
+		if binding.Config.NativeFanout {
+			t.Errorf("binding %d (%s) NativeFanout = true, want false for Ralph-managed pool", i, binding.Name)
+		}
+	}
+}
+
+func TestStoreBindingResolverRejectsInvalidProviderPool(t *testing.T) {
+	ctx := context.Background()
+	st := openBindingTestStore(t)
+
+	projectID, err := st.CreateProject(ctx, "bad-pool-project", []store.Fingerprint{
+		{Kind: store.FingerprintKindAbsPath, Value: t.TempDir()},
+	})
+	if err != nil {
+		t.Fatalf("CreateProject: %v", err)
+	}
+	if err := st.SetProjectConfig(ctx, projectID, providersConfigKey, `["claude","claude"]`); err != nil {
+		t.Fatalf("SetProjectConfig: %v", err)
+	}
+
+	_, err = storeBindingResolver(st)(ctx, projectID, true)
+	if err == nil {
+		t.Fatal("expected duplicate provider pool to fail")
+	}
+}

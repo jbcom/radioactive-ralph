@@ -7,6 +7,8 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/jbcom/radioactive-ralph/internal/service"
 )
 
 // TestServiceInstallUninstallStatusRoundTrip drives the `service
@@ -20,6 +22,7 @@ func TestServiceInstallUninstallStatusRoundTrip(t *testing.T) {
 	}
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	startCalls := stubSupervisorServiceStart(t)
 
 	statusCmd := newRootCmd(context.Background())
 	var statusOut strings.Builder
@@ -33,6 +36,9 @@ func TestServiceInstallUninstallStatusRoundTrip(t *testing.T) {
 	installCmd.SetArgs([]string{"service", "install", "--bin", "/usr/local/bin/radioactive_ralph"})
 	if err := installCmd.Execute(); err != nil {
 		t.Fatalf("service install: %v", err)
+	}
+	if *startCalls != 1 {
+		t.Fatalf("service install start calls = %d, want 1", *startCalls)
 	}
 
 	// Confirm the unit file landed somewhere under home and execs
@@ -54,6 +60,7 @@ func TestServiceInstallUninstallStatusRoundTrip(t *testing.T) {
 	if !found {
 		t.Fatal("no installed unit file under HOME references --supervisor")
 	}
+	assertInstalledUnitContains(t, home, "PATH")
 
 	uninstallCmd := newRootCmd(context.Background())
 	uninstallCmd.SetArgs([]string{"service", "uninstall"})
@@ -68,6 +75,7 @@ func TestServiceInstallDefaultsBinToOwnExecutable(t *testing.T) {
 	}
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	stubSupervisorServiceStart(t)
 
 	cmd := newRootCmd(context.Background())
 	cmd.SetArgs([]string{"service", "install"})
@@ -114,6 +122,7 @@ func TestServiceInstallWithEnv(t *testing.T) {
 	}
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	stubSupervisorServiceStart(t)
 
 	cmd := newRootCmd(context.Background())
 	cmd.SetArgs([]string{
@@ -150,6 +159,49 @@ func TestServiceInstallWithEnv(t *testing.T) {
 	}
 }
 
+func TestServiceInstallHonorsExplicitPath(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("service install on windows requires SCM access")
+	}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	stubSupervisorServiceStart(t)
+
+	cmd := newRootCmd(context.Background())
+	cmd.SetArgs([]string{
+		"service", "install",
+		"--bin", "/usr/local/bin/radioactive_ralph",
+		"--env", "PATH=/controlled/provider/bin:/usr/bin",
+	})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("service install explicit PATH: %v", err)
+	}
+	assertInstalledUnitContains(t, home, "/controlled/provider/bin")
+}
+
+func TestServiceExecutionPathIsAbsoluteDeduplicatedAndIncludesBinaryDir(t *testing.T) {
+	got := serviceExecutionPath(
+		"/custom/ralph/bin/radioactive_ralph",
+		strings.Join([]string{"/tools/bin", "relative/bin", "/tools/bin"}, string(os.PathListSeparator)),
+	)
+	entries := filepath.SplitList(got)
+	if len(entries) == 0 || entries[0] != "/custom/ralph/bin" {
+		t.Fatalf("serviceExecutionPath = %v, want Ralph binary directory first", entries)
+	}
+	count := 0
+	for _, entry := range entries {
+		if !filepath.IsAbs(entry) {
+			t.Errorf("serviceExecutionPath contains relative entry %q", entry)
+		}
+		if entry == "/tools/bin" {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Errorf("/tools/bin appears %d times, want once in %v", count, entries)
+	}
+}
+
 func TestServiceInstallRejectsMalformedEnv(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("service install on windows requires SCM access")
@@ -162,4 +214,36 @@ func TestServiceInstallRejectsMalformedEnv(t *testing.T) {
 	if err := cmd.Execute(); err == nil {
 		t.Fatal("expected an error for a malformed --env value")
 	}
+}
+
+func assertInstalledUnitContains(t *testing.T, home, value string) {
+	t.Helper()
+	found := false
+	_ = filepath.WalkDir(home, func(path string, d os.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return nil
+		}
+		raw, readErr := os.ReadFile(path) //nolint:gosec // test-controlled tempdir
+		if readErr == nil && strings.Contains(string(raw), value) {
+			found = true
+		}
+		return nil
+	})
+	if !found {
+		t.Fatalf("installed unit under %s does not contain %q", home, value)
+	}
+}
+
+func stubSupervisorServiceStart(t *testing.T) *int {
+	t.Helper()
+	original := startSupervisorService
+	calls := 0
+	startSupervisorService = func(service.InstallOptions) error {
+		calls++
+		return nil
+	}
+	t.Cleanup(func() {
+		startSupervisorService = original
+	})
+	return &calls
 }

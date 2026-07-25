@@ -2,11 +2,30 @@ package orch
 
 import (
 	"context"
+	"sync"
 	"testing"
 
 	"github.com/jbcom/radioactive-ralph/internal/provider"
 	"github.com/jbcom/radioactive-ralph/internal/store"
 )
+
+type bindingRecordingRunner struct {
+	mu       sync.Mutex
+	bindings []string
+}
+
+func (r *bindingRecordingRunner) Run(_ context.Context, binding provider.Binding, _ provider.Request) (provider.Result, error) {
+	r.mu.Lock()
+	r.bindings = append(r.bindings, binding.Name)
+	r.mu.Unlock()
+	return provider.Result{AssistantOutput: "done"}, nil
+}
+
+func (r *bindingRecordingRunner) names() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]string(nil), r.bindings...)
+}
 
 // TestDispatchNextNativeFanoutDelegatesWholeGroupToOneWorker is the proof
 // for the fan-out delegation implementation: a 3-step PARALLEL group whose
@@ -95,6 +114,63 @@ func TestDispatchNextNonFanoutProviderDispatchesOneWorkerPerStep(t *testing.T) {
 	}
 	if progress.Done != 3 || progress.Total != 3 {
 		t.Errorf("progress = %+v, want Done=3 Total=3", progress)
+	}
+}
+
+// TestDispatchNextRalphManagedPoolDoesNotSkipProbeBinding proves the native
+// fan-out capability probe is reused as the first actual worker binding. A
+// round-robin resolver must therefore be called exactly once per dispatched
+// worker and all pool members remain eligible.
+func TestDispatchNextRalphManagedPoolDoesNotSkipProbeBinding(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	projectID := mustCreateTestProject(t, s, "pool-project")
+	planID := mustCreateTestPlan(t, s, projectID, "pool-plan", "Pool", threeStepParallelPlan)
+
+	runner := &bindingRecordingRunner{}
+	names := []string{"claude", "codex", "opencode"}
+	var resolveMu sync.Mutex
+	resolveCalls := 0
+	resolve := func(context.Context, string, bool) (provider.Binding, error) {
+		resolveMu.Lock()
+		name := names[resolveCalls%len(names)]
+		resolveCalls++
+		resolveMu.Unlock()
+		return provider.Binding{
+			Name:   name,
+			Config: provider.BindingConfig{Type: name, Binary: "true", NativeFanout: false},
+		}, nil
+	}
+
+	o := New(s,
+		WithRunnerFactory(func(provider.Binding) (provider.Runner, error) { return runner, nil }),
+		WithBindingResolver(resolve),
+	)
+	dispatched, err := o.DispatchNext(ctx, projectID, planID)
+	if err != nil {
+		t.Fatalf("DispatchNext: %v", err)
+	}
+	if dispatched != 3 {
+		t.Fatalf("dispatched = %d, want 3", dispatched)
+	}
+	o.Wait()
+
+	resolveMu.Lock()
+	gotResolveCalls := resolveCalls
+	resolveMu.Unlock()
+	if gotResolveCalls != 3 {
+		t.Fatalf("binding resolver calls = %d, want exactly 3 (one per worker)", gotResolveCalls)
+	}
+
+	got := runner.names()
+	counts := map[string]int{}
+	for _, name := range got {
+		counts[name]++
+	}
+	for _, name := range names {
+		if counts[name] != 1 {
+			t.Errorf("provider %q worker count = %d, want 1; all bindings = %v", name, counts[name], got)
+		}
 	}
 }
 

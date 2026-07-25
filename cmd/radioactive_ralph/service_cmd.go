@@ -3,11 +3,15 @@ package main
 import (
 	"fmt"
 	"os"
+	"path/filepath"
+	"runtime"
 	"strings"
 
 	"github.com/jbcom/radioactive-ralph/internal/service"
 	"github.com/spf13/cobra"
 )
+
+var startSupervisorService = service.Start
 
 // newServiceCmd wires internal/service's per-user auto-restart definition
 // as `radioactive_ralph service install|uninstall|status`. Installing
@@ -47,11 +51,18 @@ func newServiceInstallCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			path, err := service.Install(service.InstallOptions{RalphBin: bin, ExtraEnv: extraEnv})
+			if _, explicitlySet := extraEnv["PATH"]; !explicitlySet {
+				extraEnv["PATH"] = serviceExecutionPath(bin, os.Getenv("PATH"))
+			}
+			opts := service.InstallOptions{RalphBin: bin, ExtraEnv: extraEnv}
+			path, err := service.Install(opts)
 			if err != nil {
 				return fmt.Errorf("install service: %w", err)
 			}
-			fmt.Printf("radioactive_ralph: installed supervisor service definition at %s\n", path)
+			if err := startSupervisorService(opts); err != nil {
+				return fmt.Errorf("start installed service: %w", err)
+			}
+			fmt.Printf("radioactive_ralph: installed and started supervisor service at %s\n", path)
 			return nil
 		},
 	}
@@ -60,11 +71,48 @@ func newServiceInstallCmd() *cobra.Command {
 	return cmd
 }
 
+// serviceExecutionPath persists a safe, absolute-only subset of the
+// operator's current PATH into the user service. launchd starts agents with
+// only /usr/bin:/bin:/usr/sbin:/sbin, which cannot find Homebrew or ~/.local
+// provider CLIs; systemd user-manager PATHs have the same shell-vs-service
+// drift. The Ralph binary's directory is always first, duplicate/relative
+// entries are removed, and platform defaults keep basic OS tools available.
+func serviceExecutionPath(ralphBin, current string) string {
+	candidates := []string{filepath.Dir(ralphBin)}
+	candidates = append(candidates, filepath.SplitList(current)...)
+	switch runtime.GOOS {
+	case "windows":
+		// Preserve the inherited absolute Windows paths above; there is no
+		// portable synthetic SystemRoot path to add without expanding env.
+	default:
+		candidates = append(candidates,
+			"/opt/homebrew/bin",
+			"/usr/local/bin",
+			"/usr/bin",
+			"/bin",
+			"/usr/sbin",
+			"/sbin",
+		)
+	}
+
+	seen := make(map[string]struct{}, len(candidates))
+	paths := make([]string, 0, len(candidates))
+	for _, candidate := range candidates {
+		clean := filepath.Clean(strings.TrimSpace(candidate))
+		if clean == "." || !filepath.IsAbs(clean) {
+			continue
+		}
+		if _, exists := seen[clean]; exists {
+			continue
+		}
+		seen[clean] = struct{}{}
+		paths = append(paths, clean)
+	}
+	return strings.Join(paths, string(os.PathListSeparator))
+}
+
 // parseEnvPairs parses repeated --env KEY=VALUE flag values into a map.
 func parseEnvPairs(pairs []string) (map[string]string, error) {
-	if len(pairs) == 0 {
-		return nil, nil
-	}
 	out := make(map[string]string, len(pairs))
 	for _, p := range pairs {
 		k, v, ok := strings.Cut(p, "=")

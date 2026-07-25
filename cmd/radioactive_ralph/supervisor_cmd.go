@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strconv"
+	"strings"
 
 	"github.com/jbcom/radioactive-ralph/internal/orch"
 	"github.com/jbcom/radioactive-ralph/internal/rlog"
@@ -11,6 +13,8 @@ import (
 	"github.com/jbcom/radioactive-ralph/internal/supervisor"
 	"github.com/jbcom/radioactive-ralph/internal/xdg"
 )
+
+const maxParallelEnv = "RALPH_MAX_PARALLEL"
 
 // runSupervisorMode opens the single user-level store (spec §6) and runs
 // the supervisor until ctx is cancelled or a client asks it to stop. The
@@ -44,15 +48,26 @@ func runSupervisorMode(ctx context.Context, logFormat string) error {
 	}
 	logger := rlog.New(mode, os.Stderr)
 
+	maxParallel, err := supervisorMaxParallel(os.Getenv)
+	if err != nil {
+		return err
+	}
+
 	// Build the orchestrator with a config-backed binding resolver: stored
 	// virtual config (a project's or the user's default_provider/provider
 	// key) selects the provider, instead of every dispatch deterministically
 	// falling back to the built-in claude binding. Without this, the
 	// supervisor's default orch.New(store) would ignore stored config
 	// entirely and always run claude.
-	orchestrator := orch.New(st, orch.WithBindingResolver(storeBindingResolver(st)))
+	orchestratorOptions := []orch.Option{
+		orch.WithBindingResolver(storeBindingResolver(st)),
+	}
+	if maxParallel > 0 {
+		orchestratorOptions = append(orchestratorOptions, orch.WithMaxParallel(maxParallel))
+	}
+	orchestrator := orch.New(st, orchestratorOptions...)
 
-	logger.Info("supervisor.starting", "state_root", stateRoot)
+	logger.Info("supervisor.starting", "state_root", stateRoot, "max_parallel", maxParallel)
 	err = supervisor.Run(ctx, supervisor.Options{
 		RuntimeDir:   stateRoot,
 		Store:        st,
@@ -64,4 +79,20 @@ func runSupervisorMode(ctx context.Context, logFormat string) error {
 	// supervisor.Run's errors already carry the "supervisor:" prefix; don't
 	// double it.
 	return err
+}
+
+// supervisorMaxParallel converts the launchd/systemd-friendly environment
+// setting into the orchestrator's process-wide worker limit. Unset preserves
+// the existing unbounded default. A present value must be positive so a typo
+// cannot silently disable the bound.
+func supervisorMaxParallel(getenv func(string) string) (int, error) {
+	raw := strings.TrimSpace(getenv(maxParallelEnv))
+	if raw == "" {
+		return 0, nil
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil || n <= 0 {
+		return 0, fmt.Errorf("%s must be a positive integer, got %q", maxParallelEnv, raw)
+	}
+	return n, nil
 }
