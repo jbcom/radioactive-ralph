@@ -89,8 +89,9 @@ identity, and is configured on the service environment:
 radioactive_ralph service install --env RALPH_MAX_PARALLEL=16
 ```
 
-`RALPH_MAX_PARALLEL` must be a positive integer. When unset, the
-historical unbounded behavior remains in effect.
+`RALPH_MAX_PARALLEL` must be an integer from `1` through `256`. Invalid
+values are rejected before the installed service is rewritten or restarted.
+When unset, the historical unbounded behavior remains in effect.
 
 ## Project identity
 

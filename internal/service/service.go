@@ -27,6 +27,7 @@ import (
 	"path"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"time"
 )
 
@@ -128,6 +129,12 @@ var ErrUnsupportedBackend = errors.New("service: unsupported platform")
 // ErrMissingRalphBin is returned when RalphBin is empty.
 var ErrMissingRalphBin = errors.New("service: RalphBin required")
 
+// ErrInvalidRalphBin is returned when the service executable is not an
+// absolute, NUL-free path. Service managers do not perform shell PATH lookup,
+// so accepting a relative command would create a definition that cannot be
+// reconciled predictably.
+var ErrInvalidRalphBin = errors.New("service: RalphBin must be an absolute path")
+
 // Install writes or registers the platform service definition that runs
 // `radioactive_ralph --supervisor` as a per-user auto-restarting background
 // process. On launchd/systemd this means writing the unit file; on Windows
@@ -135,6 +142,17 @@ var ErrMissingRalphBin = errors.New("service: RalphBin required")
 func Install(opts InstallOptions) (path string, err error) {
 	if opts.RalphBin == "" {
 		return "", ErrMissingRalphBin
+	}
+	if !filepath.IsAbs(opts.RalphBin) || strings.ContainsRune(opts.RalphBin, '\x00') {
+		return "", fmt.Errorf("%w: %q", ErrInvalidRalphBin, opts.RalphBin)
+	}
+	for key, value := range opts.ExtraEnv {
+		if !validEnvName(key) {
+			return "", fmt.Errorf("service: invalid environment variable name %q", key)
+		}
+		if strings.ContainsRune(value, '\x00') || strings.ContainsAny(value, "\r\n") {
+			return "", fmt.Errorf("service: environment variable %s contains a forbidden NUL or newline", key)
+		}
 	}
 
 	backend := opts.Backend
@@ -191,7 +209,24 @@ func Install(opts InstallOptions) (path string, err error) {
 	return path, nil
 }
 
-// Uninstall removes the unit file. Returns nil if already absent.
+func validEnvName(name string) bool {
+	if name == "" {
+		return false
+	}
+	for i, r := range name {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || r == '_' || (i > 0 && r >= '0' && r <= '9') {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+// Uninstall removes the platform service definition. It does not stop a
+// running service; callers performing the operator-facing uninstall
+// lifecycle must call Stop first. Keeping definition removal separate makes
+// render/install tests independent of a live service manager while the CLI
+// composes the complete stop-then-remove operation.
 func Uninstall(opts InstallOptions) error {
 	backend := opts.Backend
 	if backend == "" {
@@ -214,6 +249,11 @@ func Uninstall(opts InstallOptions) error {
 	}
 	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("service: remove %s: %w", path, err)
+	}
+	if backend == BackendSystemdUser {
+		if out, err := runService("systemctl", "--user", "daemon-reload"); err != nil {
+			return fmt.Errorf("service: systemctl daemon-reload after remove: %w\n%s", err, out)
+		}
 	}
 	return nil
 }
@@ -265,16 +305,51 @@ func Start(opts InstallOptions) error {
 		if out, err := runService("systemctl", "--user", "daemon-reload"); err != nil {
 			return fmt.Errorf("service: systemctl daemon-reload: %w\n%s", err, out)
 		}
-		if out, err := runService("systemctl", "--user", "enable", "--now", unit); err != nil {
-			return fmt.Errorf("service: systemctl enable --now: %w\n%s", err, out)
+		if out, err := runService("systemctl", "--user", "enable", unit); err != nil {
+			return fmt.Errorf("service: systemctl enable: %w\n%s", err, out)
 		}
 		if out, err := runService("systemctl", "--user", "restart", unit); err != nil {
 			return fmt.Errorf("service: systemctl restart: %w\n%s", err, out)
 		}
 		return nil
 	case BackendWindowsSCM:
-		// installWindowsService already starts the SCM entry.
+		return startWindowsService(opts)
+	default:
+		return fmt.Errorf("%w: %s", ErrUnsupportedBackend, backend)
+	}
+}
+
+// Stop unloads/stops the installed service without removing its definition.
+// It is idempotent when the service is not loaded. The operator-facing
+// `service uninstall` command calls Stop before Uninstall so KeepAlive or
+// enabled services cannot survive after their definition is deleted.
+func Stop(opts InstallOptions) error {
+	backend := opts.Backend
+	if backend == "" {
+		backend = DetectBackend()
+	}
+
+	switch backend {
+	case BackendLaunchd:
+		domainTarget := fmt.Sprintf("gui/%d/%s", os.Getuid(), UnitName(backend))
+		if _, err := runService("launchctl", "print", domainTarget); err != nil {
+			return nil
+		}
+		if out, err := runService("launchctl", "bootout", domainTarget); err != nil {
+			return fmt.Errorf("service: launchctl bootout: %w\n%s", err, out)
+		}
 		return nil
+	case BackendSystemdUser:
+		unit := UnitName(backend)
+		out, err := runService("systemctl", "--user", "show", unit, "--property=LoadState", "--value")
+		if err == nil && strings.TrimSpace(out) != "not-found" {
+			if disableOut, disableErr := runService("systemctl", "--user", "disable", "--now", unit); disableErr != nil {
+				return fmt.Errorf("service: systemctl disable --now: %w\n%s", disableErr, disableOut)
+			}
+		}
+		return nil
+	case BackendWindowsSCM:
+		return stopWindowsService(opts)
 	default:
 		return fmt.Errorf("%w: %s", ErrUnsupportedBackend, backend)
 	}

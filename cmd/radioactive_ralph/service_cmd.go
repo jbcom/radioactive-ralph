@@ -6,12 +6,16 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 
 	"github.com/jbcom/radioactive-ralph/internal/service"
+	"github.com/jbcom/radioactive-ralph/internal/xdg"
 	"github.com/spf13/cobra"
 )
 
 var startSupervisorService = service.Start
+var stopSupervisorService = service.Stop
+var waitSupervisorServiceReady = waitSupervisorReachable
 
 // newServiceCmd wires internal/service's per-user auto-restart definition
 // as `radioactive_ralph service install|uninstall|status`. Installing
@@ -38,7 +42,7 @@ func newServiceInstallCmd() *cobra.Command {
 		Use:          "install",
 		Short:        "Install the supervisor as a per-user auto-restarting service",
 		SilenceUsage: true,
-		RunE: func(_ *cobra.Command, _ []string) error {
+		RunE: func(cmd *cobra.Command, _ []string) error {
 			bin := ralphBin
 			if bin == "" {
 				exe, err := os.Executable()
@@ -51,6 +55,11 @@ func newServiceInstallCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			if _, configured := extraEnv[maxParallelEnv]; configured {
+				if _, err := supervisorMaxParallel(func(key string) string { return extraEnv[key] }); err != nil {
+					return fmt.Errorf("validate service environment: %w", err)
+				}
+			}
 			if _, explicitlySet := extraEnv["PATH"]; !explicitlySet {
 				extraEnv["PATH"] = serviceExecutionPath(bin, os.Getenv("PATH"))
 			}
@@ -61,6 +70,16 @@ func newServiceInstallCmd() *cobra.Command {
 			}
 			if err := startSupervisorService(opts); err != nil {
 				return fmt.Errorf("start installed service: %w", err)
+			}
+			stateRoot := strings.TrimSpace(extraEnv["RALPH_STATE_DIR"])
+			if stateRoot == "" {
+				stateRoot, err = xdg.StateRoot()
+				if err != nil {
+					return fmt.Errorf("resolve service state root: %w", err)
+				}
+			}
+			if !waitSupervisorServiceReady(cmd.Context(), stateRoot, 10*time.Second) {
+				return fmt.Errorf("service manager accepted the start, but the supervisor endpoint at %s did not become ready", stateRoot)
 			}
 			fmt.Printf("radioactive_ralph: installed and started supervisor service at %s\n", path)
 			return nil
@@ -75,8 +94,10 @@ func newServiceInstallCmd() *cobra.Command {
 // operator's current PATH into the user service. launchd starts agents with
 // only /usr/bin:/bin:/usr/sbin:/sbin, which cannot find Homebrew or ~/.local
 // provider CLIs; systemd user-manager PATHs have the same shell-vs-service
-// drift. The Ralph binary's directory is always first, duplicate/relative
-// entries are removed, and platform defaults keep basic OS tools available.
+// drift. The Ralph binary's directory is always first. Duplicate, relative,
+// nonexistent, non-directory, and group/other-writable entries are removed;
+// an operator who intentionally needs a different trust policy can pass an
+// explicit --env PATH=... value.
 func serviceExecutionPath(ralphBin, current string) string {
 	candidates := []string{filepath.Dir(ralphBin)}
 	candidates = append(candidates, filepath.SplitList(current)...)
@@ -102,6 +123,9 @@ func serviceExecutionPath(ralphBin, current string) string {
 		if clean == "." || !filepath.IsAbs(clean) {
 			continue
 		}
+		if !servicePathDirAllowed(clean) {
+			continue
+		}
 		if _, exists := seen[clean]; exists {
 			continue
 		}
@@ -109,6 +133,17 @@ func serviceExecutionPath(ralphBin, current string) string {
 		paths = append(paths, clean)
 	}
 	return strings.Join(paths, string(os.PathListSeparator))
+}
+
+func servicePathDirAllowed(candidate string) bool {
+	info, err := os.Stat(candidate)
+	if err != nil || !info.IsDir() {
+		return false
+	}
+	if runtime.GOOS == "windows" {
+		return true
+	}
+	return info.Mode().Perm()&0o022 == 0
 }
 
 // parseEnvPairs parses repeated --env KEY=VALUE flag values into a map.
@@ -130,10 +165,13 @@ func newServiceUninstallCmd() *cobra.Command {
 		Short:        "Remove the per-user supervisor service definition",
 		SilenceUsage: true,
 		RunE: func(_ *cobra.Command, _ []string) error {
+			if err := stopSupervisorService(service.InstallOptions{}); err != nil {
+				return fmt.Errorf("stop service before uninstall: %w", err)
+			}
 			if err := service.Uninstall(service.InstallOptions{}); err != nil {
 				return fmt.Errorf("uninstall service: %w", err)
 			}
-			fmt.Println("radioactive_ralph: supervisor service definition removed")
+			fmt.Println("radioactive_ralph: supervisor service stopped and definition removed")
 			return nil
 		},
 	}

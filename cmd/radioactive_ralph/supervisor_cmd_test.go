@@ -85,6 +85,7 @@ func TestSupervisorMaxParallel(t *testing.T) {
 		{name: "zero rejected", value: "0", wantErr: true},
 		{name: "negative rejected", value: "-2", wantErr: true},
 		{name: "nonnumeric rejected", value: "many", wantErr: true},
+		{name: "process storm rejected", value: "257", wantErr: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

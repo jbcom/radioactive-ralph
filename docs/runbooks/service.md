@@ -31,7 +31,8 @@ radioactive_ralph service install
 Writes `~/Library/LaunchAgents/jbcom.radioactive-ralph.supervisor.plist`
 and bootstraps/restarts it. Re-running the command reloads changed binary
 or environment settings rather than leaving launchd's cached definition
-active. Verify:
+active. The command does not report success until the supervisor endpoint
+answers. Verify:
 
 ```sh
 launchctl list | grep radioactive-ralph
@@ -44,7 +45,8 @@ radioactive_ralph service install
 ```
 
 Writes `~/.config/systemd/user/radioactive_ralph-supervisor.service` and
-enables + starts it. Verify:
+reloads, enables, and starts it. The command does not report success until
+the supervisor endpoint answers. Verify:
 
 ```sh
 systemctl --user status radioactive_ralph-supervisor
@@ -60,15 +62,17 @@ radioactive_ralph service install --env RALPH_MAX_PARALLEL=16
 ```
 
 The generated service definition persists the value across login and
-restart. Re-run `service install` with the intended environment whenever
-changing the bound.
+restart. Valid values are `1` through `256`; values outside that range are
+rejected before an existing service is changed. Re-run `service install`
+with the intended environment whenever changing the bound.
 
-`service install` also persists a de-duplicated, absolute-only execution
-`PATH` derived from the installing shell, with the Ralph binary directory
-first and standard Homebrew/system paths included. This is required on
-macOS because launchd's default path omits Homebrew and `~/.local` agent
-CLIs. Override it explicitly only when you intend to constrain provider
-lookup:
+`service install` also persists a de-duplicated execution `PATH` derived
+from the installing shell, with the Ralph binary directory first and
+standard Homebrew/system paths included. Relative, missing, non-directory,
+and group/other-writable inferred entries are discarded. This is required
+on macOS because launchd's default path omits Homebrew and `~/.local` agent
+CLIs. An explicit `--env PATH=...` is an operator-controlled override and
+is not filtered:
 
 ```sh
 radioactive_ralph service install \
@@ -81,7 +85,9 @@ radioactive_ralph service install \
 radioactive_ralph service install
 ```
 
-Registers a service via SCM. Requires an elevated terminal. Verify:
+Registers or updates the service via SCM, applies its persisted environment,
+starts it, and waits for the supervisor endpoint. Requires an elevated
+terminal. Verify:
 
 ```powershell
 Get-Service radioactive_ralph-supervisor
@@ -91,13 +97,19 @@ Get-Service radioactive_ralph-supervisor
 
 ```sh
 radioactive_ralph service status      # report this machine's installed-service state
-radioactive_ralph service uninstall   # remove the service definition
+radioactive_ralph service uninstall   # stop the service, then remove its definition
 ```
 
 `service status` reports the resolved backend (launchd/systemd/SCM) and
-whether it's installed, plus the unit path. Uninstalling removes only the
-OS-service registration; the binary and the user-level database are
-untouched.
+whether it's installed, plus the unit path. Uninstalling first stops the
+managed supervisor, then removes the OS-service registration; the binary
+and the user-level database are untouched.
+
+> [!WARNING]
+> Re-running `service install` reconciles the definition by restarting the
+> one machine-wide supervisor. A restart terminates supervisor-owned provider
+> processes and interrupts in-flight workers. Pause or finish active plans
+> before changing the service binary or environment.
 
 ## 3. Logs
 

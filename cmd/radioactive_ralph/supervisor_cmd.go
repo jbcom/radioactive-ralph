@@ -14,7 +14,10 @@ import (
 	"github.com/jbcom/radioactive-ralph/internal/xdg"
 )
 
-const maxParallelEnv = "RALPH_MAX_PARALLEL"
+const (
+	maxParallelEnv   = "RALPH_MAX_PARALLEL"
+	maxParallelLimit = 256
+)
 
 // runSupervisorMode opens the single user-level store (spec §6) and runs
 // the supervisor until ctx is cancelled or a client asks it to stop. The
@@ -91,8 +94,8 @@ func supervisorMaxParallel(getenv func(string) string) (int, error) {
 		return 0, nil
 	}
 	n, err := strconv.Atoi(raw)
-	if err != nil || n <= 0 {
-		return 0, fmt.Errorf("%s must be a positive integer, got %q", maxParallelEnv, raw)
+	if err != nil || n <= 0 || n > maxParallelLimit {
+		return 0, fmt.Errorf("%s must be an integer from 1 through %d, got %q", maxParallelEnv, maxParallelLimit, raw)
 	}
 	return n, nil
 }

@@ -33,11 +33,7 @@ mkdir -p "$project" "$home" "$state"
 export HOME="$home"
 
 cleanup() {
-  if [[ -n "${unit_name:-}" ]]; then
-    systemctl --user stop "$unit_name" >/dev/null 2>&1 || true
-  fi
   "$bin" service uninstall >/dev/null 2>&1 || true
-  systemctl --user daemon-reload >/dev/null 2>&1 || true
   rm -rf "$tmpdir"
 }
 trap cleanup EXIT
@@ -53,8 +49,6 @@ if [[ ! -f "$install_path" ]]; then
 fi
 
 unit_name="$(basename "$install_path")"
-systemctl --user daemon-reload
-systemctl --user start "$unit_name"
 
 ready=0
 for _ in $(seq 1 30); do
@@ -70,7 +64,7 @@ if [[ "$ready" -ne 1 ]]; then
   exit 1
 fi
 
-systemctl --user stop "$unit_name"
+"$bin" service uninstall >/dev/null
 
 stopped=0
 for _ in $(seq 1 30); do
