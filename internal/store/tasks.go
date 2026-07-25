@@ -18,6 +18,8 @@ const (
 	TaskStatusReady                TaskStatus = "ready"
 	TaskStatusReadyPendingApproval TaskStatus = "ready_pending_approval"
 	TaskStatusBlocked              TaskStatus = "blocked"
+	TaskStatusBlockedCapability    TaskStatus = "blocked_capability"
+	TaskStatusBlockedInput         TaskStatus = "blocked_input"
 	TaskStatusRunning              TaskStatus = "running"
 	TaskStatusDone                 TaskStatus = "done"
 	TaskStatusFailed               TaskStatus = "failed"
@@ -241,8 +243,8 @@ func (s *Store) StatusCounts(ctx context.Context) (StatusCounts, error) {
 			c.Running = n
 		case string(TaskStatusReadyPendingApproval):
 			c.Approval = n
-		case string(TaskStatusBlocked):
-			c.Blocked = n
+		case string(TaskStatusBlocked), string(TaskStatusBlockedCapability), string(TaskStatusBlockedInput):
+			c.Blocked += n
 		case string(TaskStatusFailed):
 			c.Failed = n
 		}
@@ -505,6 +507,12 @@ func (s *Store) MarkDone(ctx context.Context, planID, taskID, sessionID string, 
 		VALUES (?, ?, 'worker.completed', ?, 'worker', ?)
 	`, planID, taskID, sessionID, jsonOrEmptyObject(evidenceJSON)); err != nil {
 		return nil, fmt.Errorf("store: log done: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE task_metadata SET completion_evidence_json = ?, blocked_reason = NULL
+		WHERE plan_id = ? AND task_id = ?
+	`, jsonOrEmptyObject(evidenceJSON), planID, taskID); err != nil {
+		return nil, fmt.Errorf("store: persist completion evidence: %w", err)
 	}
 
 	if err := tx.Commit(); err != nil {

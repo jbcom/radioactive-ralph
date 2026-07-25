@@ -65,6 +65,8 @@ func TestStatusCounts(t *testing.T) {
 		"run": TaskStatusRunning,
 		"ap":  TaskStatusReadyPendingApproval,
 		"bl":  TaskStatusBlocked,
+		"bc":  TaskStatusBlockedCapability,
+		"bi":  TaskStatusBlockedInput,
 		"f1":  TaskStatusFailed,
 		"dn":  TaskStatusDone,
 		"pd":  TaskStatusPending,
@@ -82,7 +84,7 @@ func TestStatusCounts(t *testing.T) {
 	if err != nil {
 		t.Fatalf("StatusCounts: %v", err)
 	}
-	want := StatusCounts{ActivePlans: 1, Ready: 2, Running: 1, Approval: 1, Blocked: 1, Failed: 1}
+	want := StatusCounts{ActivePlans: 1, Ready: 2, Running: 1, Approval: 1, Blocked: 3, Failed: 1}
 	if c != want {
 		t.Errorf("StatusCounts = %+v, want %+v", c, want)
 	}

@@ -63,7 +63,7 @@ func runSupervisorMode(ctx context.Context, logFormat string) error {
 	// supervisor's default orch.New(store) would ignore stored config
 	// entirely and always run claude.
 	orchestratorOptions := []orch.Option{
-		orch.WithBindingResolver(storeBindingResolver(st)),
+		orch.WithConstrainedBindingResolver(storeConstrainedBindingResolver(st)),
 	}
 	if maxParallel > 0 {
 		orchestratorOptions = append(orchestratorOptions, orch.WithMaxParallel(maxParallel))

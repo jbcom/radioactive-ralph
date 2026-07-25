@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/jbcom/radioactive-ralph/internal/ipc"
+	"github.com/jbcom/radioactive-ralph/internal/orch"
 	"github.com/jbcom/radioactive-ralph/internal/plan"
 	"github.com/jbcom/radioactive-ralph/internal/store"
 )
@@ -58,20 +59,17 @@ func (s *Supervisor) HandlePlanImport(ctx context.Context, args ipc.PlanImportAr
 		slug = plan.Slug(title)
 	}
 
-	planID, err := s.store.CreatePlan(ctx, store.CreatePlanOpts{
-		ProjectID:      args.Project,
-		Slug:           slug,
-		Title:          title,
-		SourceMarkdown: args.Markdown,
+	planID, err := s.orch.ImportPlan(ctx, orch.ImportPlanOpts{
+		ProjectID: args.Project,
+		Slug:      slug,
+		Title:     title,
+		Markdown:  args.Markdown,
 	})
 	if err != nil {
 		if isDuplicateSlug(err) {
 			return zero, &codedError{ipc.CodeConflict, err.Error()}
 		}
 		return zero, fmt.Errorf("supervisor: create plan: %w", err)
-	}
-	if err := s.store.SetPlanStatus(ctx, planID, store.PlanStatusActive); err != nil {
-		return zero, fmt.Errorf("supervisor: activate plan: %w", err)
 	}
 	return ipc.PlanImportReply{PlanID: planID, Slug: slug, Title: title}, nil
 }

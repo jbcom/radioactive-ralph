@@ -63,6 +63,9 @@ func ValidateForImport(md []byte) error {
 	if countPlanSteps(parsed.Groups) == 0 {
 		return ValidationErrors{{Msg: "plan has no steps"}}
 	}
+	if err := ValidateV2(parsed); err != nil {
+		return fmt.Errorf("validate plan v2: %w", err)
+	}
 	return nil
 }
 

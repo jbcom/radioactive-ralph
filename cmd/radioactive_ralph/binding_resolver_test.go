@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"sync"
@@ -339,5 +340,45 @@ func TestStoreBindingResolverConcurrentRoundRobinIsBalanced(t *testing.T) {
 		if counts[name] != calls/len(names) {
 			t.Errorf("provider %q calls = %d, want %d; counts=%v", name, counts[name], calls/len(names), counts)
 		}
+	}
+}
+
+func TestStoreConstrainedBindingResolverFiltersWithoutConsumingProbe(t *testing.T) {
+	ctx := context.Background()
+	st := openBindingTestStore(t)
+	projectID, err := st.CreateProject(ctx, "constrained-pool", []store.Fingerprint{{
+		Kind: store.FingerprintKindAbsPath, Value: t.TempDir(),
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetProjectConfig(
+		ctx, projectID, providersConfigKey, `["claude","codex","opencode"]`,
+	); err != nil {
+		t.Fatal(err)
+	}
+	resolve := storeConstrainedBindingResolver(st)
+	constraints := orch.BindingConstraints{
+		AllowedProviders: []string{"claude", "codex"},
+		DeniedProviders:  []string{"claude"},
+		Requirements:     []string{"local-agent"},
+	}
+	probe, err := resolve(ctx, projectID, false, orch.BindingProbe, constraints)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dispatch, err := resolve(ctx, projectID, false, orch.BindingDispatch, constraints)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if probe.Name != "codex" || dispatch.Name != "codex" {
+		t.Fatalf("probe=%s dispatch=%s, want codex/codex", probe.Name, dispatch.Name)
+	}
+	_, err = resolve(ctx, projectID, false, orch.BindingDispatch, orch.BindingConstraints{
+		AllowedProviders: []string{"codex"},
+		Requirements:     []string{"native-fanout"},
+	})
+	if !errors.Is(err, orch.ErrNoCapableProvider) {
+		t.Fatalf("error = %v, want ErrNoCapableProvider", err)
 	}
 }

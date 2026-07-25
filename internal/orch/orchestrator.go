@@ -62,13 +62,14 @@ type Clock func() time.Time
 type Orchestrator struct {
 	store *store.Store
 
-	newRunner       RunnerFactory
-	resolveBinding  BindingResolver
-	now             Clock
-	maxParallel     int
-	watchdogConfig  agent.WatchdogConfig
-	spendCapUSD     map[string]float64 // provider name -> cap; 0/absent = uncapped
-	acceptanceCheck AcceptanceChecker
+	newRunner                 RunnerFactory
+	resolveBinding            BindingResolver
+	resolveConstrainedBinding ConstrainedBindingResolver
+	now                       Clock
+	maxParallel               int
+	watchdogConfig            agent.WatchdogConfig
+	spendCapUSD               map[string]float64 // provider name -> cap; 0/absent = uncapped
+	acceptanceCheck           AcceptanceChecker
 
 	// decisionLogAbsorb, when set, is invoked by AbsorbDecisionLog (see
 	// lifecycle.go) instead of the default XDG-backed implementation. Test
@@ -244,7 +245,26 @@ func WithRunnerFactory(f RunnerFactory) Option {
 // WithBindingResolver overrides how an Orchestrator picks a provider
 // binding for a dispatch. Primarily for tests.
 func WithBindingResolver(f BindingResolver) Option {
-	return func(o *Orchestrator) { o.resolveBinding = f }
+	return func(o *Orchestrator) {
+		o.resolveBinding = f
+		o.resolveConstrainedBinding = unconstrainedAdapter(f)
+	}
+}
+
+// WithConstrainedBindingResolver installs a provider selector that enforces
+// ralph.plan/v2 task constraints. Legacy dispatches use it with no constraints.
+func WithConstrainedBindingResolver(f ConstrainedBindingResolver) Option {
+	return func(o *Orchestrator) {
+		o.resolveConstrainedBinding = f
+		o.resolveBinding = func(
+			ctx context.Context,
+			projectID string,
+			parallel bool,
+			purpose BindingResolutionPurpose,
+		) (provider.Binding, error) {
+			return f(ctx, projectID, parallel, purpose, BindingConstraints{})
+		}
+	}
 }
 
 // WithClock overrides the Orchestrator's time source. Primarily for tests.
@@ -312,13 +332,41 @@ func WithDecisionLogRoot(dir string) Option {
 // parallelism, a 5-minute stall timeout, no spend caps, and the built-in
 // mechanical acceptance checker.
 func New(st *store.Store, opts ...Option) *Orchestrator {
+	defaultConstrainedResolver := func(
+		_ context.Context,
+		_ string,
+		_ bool,
+		_ BindingResolutionPurpose,
+		constraints BindingConstraints,
+	) (provider.Binding, error) {
+		binding, err := provider.ResolveBinding(provider.File{}, provider.Local{}, provider.VariantFile{})
+		if err != nil {
+			return provider.Binding{}, err
+		}
+		if len(constraints.AllowedProviders) > 0 &&
+			!containsString(constraints.AllowedProviders, binding.Name) {
+			return provider.Binding{}, noCapableProvider("default provider %s is not allowed", binding.Name)
+		}
+		if containsString(constraints.DeniedProviders, binding.Name) ||
+			!binding.SupportsRequirements(constraints.Requirements) {
+			return provider.Binding{}, noCapableProvider("default provider %s does not satisfy task constraints", binding.Name)
+		}
+		return binding, nil
+	}
+	defaultResolver := func(
+		ctx context.Context,
+		projectID string,
+		parallel bool,
+		purpose BindingResolutionPurpose,
+	) (provider.Binding, error) {
+		return defaultConstrainedResolver(ctx, projectID, parallel, purpose, BindingConstraints{})
+	}
 	o := &Orchestrator{
-		store:     st,
-		newRunner: provider.NewRunner,
-		resolveBinding: func(_ context.Context, _ string, _ bool, _ BindingResolutionPurpose) (provider.Binding, error) {
-			return provider.ResolveBinding(provider.File{}, provider.Local{}, provider.VariantFile{})
-		},
-		now: time.Now,
+		store:                     st,
+		newRunner:                 provider.NewRunner,
+		resolveBinding:            defaultResolver,
+		resolveConstrainedBinding: defaultConstrainedResolver,
+		now:                       time.Now,
 		watchdogConfig: agent.WatchdogConfig{
 			StallTimeout: 5 * time.Minute,
 		},
@@ -335,6 +383,15 @@ func New(st *store.Store, opts ...Option) *Orchestrator {
 		o.dispatchSem = make(chan struct{}, o.maxParallel)
 	}
 	return o
+}
+
+func containsString(values []string, candidate string) bool {
+	for _, value := range values {
+		if value == candidate {
+			return true
+		}
+	}
+	return false
 }
 
 // scopedContext is the plan-scoped context handed to a dispatched worker:
@@ -426,6 +483,12 @@ func (o *Orchestrator) DispatchNext(ctx context.Context, projectID, planID strin
 	parsedPlan, err := plan.Parse([]byte(storedPlan.SourceMarkdown))
 	if err != nil {
 		return 0, fmt.Errorf("orch: parse plan markdown: %w", err)
+	}
+	if err := plan.ValidateV2(parsedPlan); err != nil {
+		return 0, fmt.Errorf("orch: validate plan graph: %w", err)
+	}
+	if parsedPlan.V2 {
+		return o.dispatchNextV2(ctx, projectID, planID, storedPlan, parsedPlan)
 	}
 
 	done, err := o.doneSet(ctx, planID)
@@ -582,6 +645,7 @@ type dispatchStepArgs struct {
 	parallel                      bool
 	ref                           plan.StepRef
 	step                          plan.Step
+	constraints                   *BindingConstraints
 }
 
 // dispatchReadyStep runs one iteration of DispatchNext's per-step body with a
@@ -606,9 +670,24 @@ func (o *Orchestrator) dispatchReadyStep(ctx context.Context, a dispatchStepArgs
 		}
 	}
 
-	binding, err := o.resolveBinding(ctx, a.projectID, a.parallel, BindingDispatch)
+	var binding provider.Binding
+	if a.constraints != nil {
+		binding, err = o.resolveConstrainedBinding(
+			ctx, a.projectID, a.parallel, BindingDispatch, *a.constraints,
+		)
+	} else {
+		binding, err = o.resolveBinding(ctx, a.projectID, a.parallel, BindingDispatch)
+	}
 	if err != nil {
 		release()
+		if a.step.Metadata != nil && errors.Is(err, ErrNoCapableProvider) {
+			if blockErr := o.store.MarkBlockedCapability(
+				ctx, a.planID, a.step.Metadata.ID, err.Error(),
+			); blockErr != nil {
+				return false, fmt.Errorf("orch: persist capability block: %w", blockErr)
+			}
+			return false, nil
+		}
 		return false, fmt.Errorf("orch: resolve binding: %w", err)
 	}
 
@@ -650,6 +729,14 @@ func (o *Orchestrator) dispatchReadyStep(ctx context.Context, a dispatchStepArgs
 		release()
 		_ = o.store.ClearWorkerTask(ctx, workerID, "idle")
 		return false, nil
+	}
+	if a.step.Metadata != nil {
+		if err := o.store.RecordTaskProvider(ctx, a.planID, ds.task.ID, binding.Name); err != nil {
+			release()
+			_ = o.store.ReleaseClaim(ctx, a.planID, ds.task.ID, sessionID, "provider provenance write failed")
+			_ = o.store.ClearWorkerTask(ctx, workerID, "crashed")
+			return false, fmt.Errorf("orch: record task provider: %w", err)
+		}
 	}
 	if err := o.store.SetWorkerTask(ctx, workerID, a.planID, ds.task.ID); err != nil {
 		release()
@@ -912,6 +999,9 @@ func (o *Orchestrator) spawnWorkerRows(ctx context.Context, binding provider.Bin
 // isn't claimable yet.
 func (o *Orchestrator) materializeStepTask(ctx context.Context, planID string, ref plan.StepRef, step plan.Step) (*store.Task, error) {
 	taskID := ref.ID()
+	if step.Metadata != nil {
+		taskID = step.Metadata.ID
+	}
 	if existing, err := o.store.GetTask(ctx, planID, taskID); err == nil {
 		return existing, nil
 	}
@@ -952,18 +1042,30 @@ func (o *Orchestrator) stepGateBlocks(ctx context.Context, planID string, ref pl
 
 func (o *Orchestrator) claimStepTask(ctx context.Context, planID string, p *plan.Plan, ref plan.StepRef, step plan.Step, sessionID, workerID string) (*dispatchedStep, error) {
 	taskID := ref.ID()
+	if step.Metadata != nil {
+		taskID = step.Metadata.ID
+	}
 	if _, err := o.materializeStepTask(ctx, planID, ref, step); err != nil {
 		return nil, err
 	}
 
-	claimed, err := o.store.ClaimNextReady(ctx, planID, sessionID, workerID)
+	var claimed *store.Task
+	var err error
+	if step.Metadata != nil {
+		claimed, err = o.store.ClaimReadyTask(ctx, planID, taskID, sessionID, workerID)
+	} else {
+		claimed, err = o.store.ClaimNextReady(ctx, planID, sessionID, workerID)
+	}
 	if err != nil {
-		if err == store.ErrNoReadyTask { //nolint:errorlint // sentinel comparison mirrors store's own doc'd usage
+		if errors.Is(err, store.ErrNoReadyTask) || errors.Is(err, store.ErrOutputReserved) {
 			return nil, nil
 		}
 		return nil, fmt.Errorf("orch: claim %s: %w", taskID, err)
 	}
 	if claimed.ID != taskID {
+		if step.Metadata != nil {
+			return nil, fmt.Errorf("orch: exact claim returned %q, want %q", claimed.ID, taskID)
+		}
 		// ClaimNextReady claimed a DIFFERENT ready task (e.g. sequence
 		// ordering picked another id first). That's fine — it is still a
 		// valid step to dispatch, so resolve it back to its plan.Step via

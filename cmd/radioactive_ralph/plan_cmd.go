@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/jbcom/radioactive-ralph/internal/ipc"
+	"github.com/jbcom/radioactive-ralph/internal/orch"
 	"github.com/jbcom/radioactive-ralph/internal/plan"
 	"github.com/jbcom/radioactive-ralph/internal/store"
 	"github.com/jbcom/radioactive-ralph/internal/supervisor"
@@ -113,20 +114,17 @@ func runPlanImport(ctx context.Context, cmd *cobra.Command, planPath, slug strin
 	}
 	defer func() { _ = st.Close() }()
 
-	planID, err := st.CreatePlan(ctx, store.CreatePlanOpts{
-		ProjectID:      projectID,
-		Slug:           slug,
-		Title:          title,
-		SourceMarkdown: markdown,
+	orchestrator := orch.New(st,
+		orch.WithConstrainedBindingResolver(storeConstrainedBindingResolver(st)),
+	)
+	_, err = orchestrator.ImportPlan(ctx, orch.ImportPlanOpts{
+		ProjectID: projectID,
+		Slug:      slug,
+		Title:     title,
+		Markdown:  markdown,
 	})
 	if err != nil {
 		return fmt.Errorf("create plan: %w", err)
-	}
-	// A freshly imported plan is meant to run: activate it so the
-	// supervisor's periodic dispatch loop picks it up (ListPlans with an
-	// empty filter returns active+paused plans).
-	if err := st.SetPlanStatus(ctx, planID, store.PlanStatusActive); err != nil {
-		return fmt.Errorf("activate plan: %w", err)
 	}
 
 	fmt.Printf("radioactive_ralph: imported plan %q (%s) — active\n", title, slug)

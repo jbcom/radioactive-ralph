@@ -76,6 +76,78 @@ func storeBindingResolver(st *store.Store) orch.BindingResolver {
 	}
 }
 
+// storeConstrainedBindingResolver applies the same project pool policy as the
+// legacy resolver, then filters it through ralph.plan/v2 allow, separation,
+// and capability constraints before advancing the round-robin cursor.
+func storeConstrainedBindingResolver(st *store.Store) orch.ConstrainedBindingResolver {
+	var mu sync.Mutex
+	nextByProject := map[string]uint64{}
+
+	return func(
+		ctx context.Context,
+		projectID string,
+		_ bool,
+		purpose orch.BindingResolutionPurpose,
+		constraints orch.BindingConstraints,
+	) (provider.Binding, error) {
+		names, pooled, err := resolveProviderNames(ctx, st, projectID)
+		if err != nil {
+			return provider.Binding{}, err
+		}
+		if len(names) == 0 {
+			names = []string{"claude"}
+		}
+
+		allowed := stringSet(constraints.AllowedProviders)
+		denied := stringSet(constraints.DeniedProviders)
+		eligible := make([]provider.Binding, 0, len(names))
+		for _, name := range names {
+			if len(allowed) > 0 {
+				if _, ok := allowed[name]; !ok {
+					continue
+				}
+			}
+			if _, blocked := denied[name]; blocked {
+				continue
+			}
+			binding, err := provider.ResolveShippedBinding(name)
+			if err != nil {
+				return provider.Binding{}, err
+			}
+			if binding.SupportsRequirements(constraints.Requirements) {
+				if pooled {
+					binding.Config.NativeFanout = false
+				}
+				eligible = append(eligible, binding)
+			}
+		}
+		if len(eligible) == 0 {
+			return provider.Binding{}, fmt.Errorf(
+				"%w: project %s pool cannot satisfy providers=%v denied=%v requires=%v",
+				orch.ErrNoCapableProvider, projectID, constraints.AllowedProviders,
+				constraints.DeniedProviders, constraints.Requirements,
+			)
+		}
+
+		mu.Lock()
+		cursor := nextByProject[projectID]
+		binding := eligible[cursor%uint64(len(eligible))]
+		if purpose == orch.BindingDispatch {
+			nextByProject[projectID] = cursor + 1
+		}
+		mu.Unlock()
+		return binding, nil
+	}
+}
+
+func stringSet(values []string) map[string]struct{} {
+	set := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		set[value] = struct{}{}
+	}
+	return set
+}
+
 // resolveProviderNames reads the effective provider selection in source
 // precedence order instead of flattening differently named aliases into one
 // map. A project-stanza legacy singular selection must override a stored or
