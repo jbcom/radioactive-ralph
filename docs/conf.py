@@ -51,6 +51,7 @@ html_theme = "shibuya"
 html_logo = "_static/ralph-mascot.png"
 html_favicon = "_static/ralph-mascot.png"
 html_static_path = ["_static"]
+html_extra_path = ["install.sh"]
 html_css_files = ["custom.css"]
 
 html_theme_options = {

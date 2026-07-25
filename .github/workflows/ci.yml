@@ -480,6 +480,6 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y shellcheck desktop-file-utils
       - name: Shellcheck packaging + install scripts
-        run: shellcheck packaging/linux/build-appimage.sh packaging/macos/publish-cask.sh site/public/install.sh
+        run: shellcheck packaging/linux/build-appimage.sh packaging/macos/publish-cask.sh docs/install.sh scripts/verify-docs-artifact.sh
       - name: Validate the .desktop launcher
         run: desktop-file-validate packaging/linux/radioactive-ralph.desktop

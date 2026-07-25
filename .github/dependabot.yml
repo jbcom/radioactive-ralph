@@ -1,6 +1,8 @@
 version: 2
 updates:
-  - package-ecosystem: pip
+  # The supported runtime is the repo-root Go module. The retained site/ and
+  # reference/ sources are intentionally non-installable historical archives.
+  - package-ecosystem: gomod
     directory: /
     schedule:
       interval: weekly

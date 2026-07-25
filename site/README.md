@@ -17,9 +17,15 @@ experiments. Do **NOT**:
 - Point workflows or edit links back at this tree
 - Copy installer or demo instructions from here into live docs
 
-The one exception: `site/public/install.sh` is the live curl-pipe
-installer that GitHub Pages serves. The rest of the directory is
-not published.
+This tree is source reference only. Its `package.json` and lockfile were
+removed because a frozen package-manager surface falsely implied that the
+prototype was supported and produced recurring dependency alerts. The last
+installable snapshot remains recoverable from Git history, including commit
+`394acab`.
 
-When the live docs reach 1.0, `site/` will be deleted entirely
-except for `public/install.sh`, which will move to the repo root.
+The canonical curl installer now lives at [`../docs/install.sh`](../docs/install.sh).
+Sphinx copies that file into the root of the Pages artifact, where it is served
+as `https://jonbogaty.com/radioactive-ralph/install.sh`.
+
+When the live docs reach 1.0, the remaining prototype source can be deleted in
+one commit without losing its history.
