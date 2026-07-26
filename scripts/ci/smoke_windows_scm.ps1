@@ -671,14 +671,20 @@ func main() {
       Remove-Job -Force -ErrorAction SilentlyContinue
   }
 
-  # SCM may remap a process that exits before StartServiceCtrlDispatcher to a
-  # controller-specific status. The ProcessStopTrace ExitStatus above is the
-  # authoritative child exit code; SCM must additionally settle at
-  # Stopped/PID 0 and retain a nonzero controller-visible failure.
-  $guardAfterExit = Wait-GuardServiceStopped
-  if ([uint32]$guardAfterExit.ExitCode -eq 0) {
-    throw "legacy SCM execution guard left a zero controller-visible exit status"
+  Write-Output "legacy SCM execution guard: sc.exe start exit $startExitCode"
+  if ($startOutput.Count -gt 0) {
+    Write-Output "legacy SCM execution guard: sc.exe start output: $($startOutput -join ' | ')"
   }
+  if ($startExitCode -eq 0) {
+    throw "legacy SCM execution guard returned a successful sc.exe start: $($startOutput -join ' | ')"
+  }
+
+  # A process that exits before StartServiceCtrlDispatcher cannot report
+  # SetServiceStatus, so Win32_Service.ExitCode may remain zero. The failed
+  # sc.exe start above is the controller-visible failure; the ProcessStopTrace
+  # ExitStatus is the authoritative child exit, and SCM must settle at
+  # Stopped/PID 0.
+  $guardAfterExit = Wait-GuardServiceStopped
   $guardProcesses = @(Get-CimInstance Win32_Process -Filter "ProcessId=$guardProcessID" -ErrorAction Stop)
   if ($guardProcesses.Count -ne 0) {
     throw "legacy SCM execution guard left process $guardProcessID alive"
