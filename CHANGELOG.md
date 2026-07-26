@@ -1,6 +1,6 @@
 ---
 title: CHANGELOG
-lastUpdated: 2026-04-15
+lastUpdated: 2026-07-26
 ---
 
 # Changelog
@@ -14,6 +14,22 @@ supervisors, or the archived Python implementation even though those are no
 longer part of the live contract.
 
 ## [0.22.0](https://github.com/jbcom/radioactive-ralph/compare/v0.21.6...v0.22.0) (2026-07-26)
+
+### Windows support boundary
+
+Native Windows SCM installation and service start are intentionally disabled
+and fail before mutating the service definition or configuration. Native
+foreground mode supports the supervisor/client control plane only; provider
+workers return `ErrPTYUnsupported`. Use WSL2 with `systemd --user` for
+functional provider-backed execution. Native `service status` and
+`service uninstall` remain remediation-only commands for safely inspecting or
+removing a prior development registration.
+
+### Supervisor behavior
+
+Provider-pool admission now rejects ambiguous plans, selects providers
+atomically, validates backend-specific paths, reconciles service lifecycle
+state, and enforces configured worker ceilings after admission.
 
 
 ### Features
