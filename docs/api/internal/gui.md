@@ -24,7 +24,7 @@ This file \(controller.go\) is deliberately Fyne\-free so it compiles in the def
 
 
 <a name="Run"></a>
-## func [Run](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/gui/app.go#L40>)
+## func [Run](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/gui/app.go#L252>)
 
 ```go
 func Run(ctx context.Context, o Opts) error
@@ -80,7 +80,7 @@ func NewLiveController(runtimeDir string, st *store.Store, projectID string) Con
 NewLiveController builds the production Controller. runtimeDir is where the supervisor socket lives \(xdg.StateRoot\(\)\), st is the shared store, and projectID scopes the plan/event reads.
 
 <a name="Opts"></a>
-## type [Opts](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/gui/app.go#L27-L34>)
+## type [Opts](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/gui/app.go#L29-L51>)
 
 Opts configures Run.
 
