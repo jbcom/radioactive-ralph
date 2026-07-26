@@ -62,10 +62,10 @@ because an agent said so.
 
 | Platform | Command |
 |---|---|
-| macOS / Linux (Homebrew) | `brew tap jbcom/pkgs https://github.com/jbcom/pkgs && brew install radioactive-ralph` |
+| macOS (Homebrew cask) | `brew tap jbcom/pkgs https://github.com/jbcom/pkgs && brew install --cask radioactive-ralph` |
 | Windows Scoop | `scoop bucket add jbcom https://github.com/jbcom/pkgs && scoop install radioactive-ralph` |
-| Windows winget / Chocolatey | `winget install jbcom.radioactive-ralph` · `choco install radioactive-ralph` |
-| Linux (deb / rpm) | download the `.deb`/`.rpm` from the [latest release](https://github.com/jbcom/radioactive-ralph/releases/latest) |
+| Debian / Ubuntu | download the matching `.deb`, then `sudo apt install ./radioactive-ralph_<version>_linux_<arch>.deb` |
+| Fedora / RHEL | download the matching `.rpm`, then `sudo dnf install ./radioactive-ralph_<version>_linux_<arch>.rpm` |
 | macOS / Linux curl installer | <code>curl -sSL https://jonbogaty.com/radioactive-ralph/install.sh | sh</code> |
 
 ### Desktop app (GUI)
@@ -75,13 +75,16 @@ it watches **and drives** (approve, pause/resume, kill, import) from a window.
 
 | Platform | Command / file |
 |---|---|
-| macOS (Homebrew cask) | `brew install --cask radioactive-ralph` — opens cleanly, no Gatekeeper prompt |
+| macOS (Homebrew cask) | `brew install --cask radioactive-ralph-gui` — opens cleanly, no Gatekeeper prompt |
 | Linux (AppImage) | download the `.AppImage` from the [latest release](https://github.com/jbcom/radioactive-ralph/releases/latest), `chmod +x`, run |
-| macOS (direct) / Windows | the `.dmg` / `.exe` from the [latest release](https://github.com/jbcom/radioactive-ralph/releases/latest) |
+| macOS (direct) / Windows | best-effort `.dmg` / `.exe` downloads from the [latest release](https://github.com/jbcom/radioactive-ralph/releases/latest) |
 
 Double-clicking the app opens the GUI; from a terminal, `radioactive_ralph gui`
-does the same. Everything is signed the open-source way — no paid Apple or
-Microsoft credentials — so the cask install needs no security override.
+does the same. The macOS app is ad-hoc signed and its cask removes quarantine;
+the AppImage is unsigned but is covered by the signed, workflow-bound
+`gui-checksums.txt` manifest; the
+Windows executable is Authenticode-signed only when the optional SignPath
+credentials are configured.
 
 ## Quick start
 
@@ -110,7 +113,7 @@ start one. Nothing is written into your repository.
 
 > The `gui` subcommand only opens a window in a **GUI-enabled build** — the
 > desktop-app installs (Homebrew cask, AppImage, `.dmg`/`.exe`). The CLI-only
-> installs (Homebrew formula, Scoop, winget, Chocolatey, `.deb`/`.rpm`, the curl
+> installs (Homebrew CLI cask, Scoop, `.deb`/`.rpm`, the curl
 > installer) ship the terminal client; running `gui` there prints a note telling
 > you to install the desktop app. The Windows `.exe` is signed only once the
 > project's free SignPath enrollment is configured — until then Windows

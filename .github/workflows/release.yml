@@ -4,15 +4,137 @@ on:
   push:
     tags: ["v*"]
 
-permissions:
-  contents: write
-  packages: write
-  id-token: write
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions: {}
 
 jobs:
+  release-admission:
+    name: Admit exact Release Please handoff
+    outputs:
+      state: ${{ steps.release_state.outputs.state }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      # The PAT is reserved for cross-repository jbcom/pkgs operations.
+      # Current-repository release reads and writes use the built-in token.
+      - name: Verify release secret is set
+        env:
+          PKGS_TOKEN_SET: ${{ secrets.PKGS_GITHUB_TOKEN != '' }}
+        run: |
+          if [[ "$PKGS_TOKEN_SET" != "true" ]]; then
+            echo "::error::PKGS_GITHUB_TOKEN secret is not configured"
+            exit 1
+          fi
+          echo "Cross-repository package secret verified."
+      - name: Require repository immutable releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api \
+            -H "X-GitHub-Api-Version: 2026-03-10" \
+            "repos/${GITHUB_REPOSITORY}/immutable-releases" |
+            jq -e '.enabled == true' >/dev/null
+
+      # This job is the first dependency of every publisher. Reject manual
+      # prerelease or malformed tags before GoReleaser can upload an artifact or
+      # open a package-manager PR.
+      - name: Require stable SemVer tag
+        run: |
+          if [[ ! "$GITHUB_REF_NAME" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+            echo "::error::$GITHUB_REF_NAME is not a stable SemVer tag"
+            exit 1
+          fi
+
+      # The repository's active tag ruleset makes v* tags admin-created and
+      # immutable. Still prove the event is the checked-out tag commit on main
+      # before trusting the tag as executable release input.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Require tag commit on main
+        id: tag_provenance
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin \
+            "+refs/heads/main:refs/remotes/origin/main"
+          tag_commit="$(git rev-parse "${GITHUB_REF_NAME}^{commit}")"
+          event_commit="$(git rev-parse "${GITHUB_SHA}^{commit}")"
+          if [[ "$tag_commit" != "$event_commit" ]]; then
+            echo "::error::tag commit $tag_commit does not match event commit $event_commit"
+            exit 1
+          fi
+          if ! git merge-base --is-ancestor "$tag_commit" origin/main; then
+            echo "::error::tag commit $tag_commit is not reachable from origin/main"
+            exit 1
+          fi
+          manifest_version="$(jq -er '."."' .release-please-manifest.json)"
+          if [[ "v${manifest_version}" != "$GITHUB_REF_NAME" ]]; then
+            echo "::error::tag $GITHUB_REF_NAME does not match Release Please manifest v${manifest_version} at $event_commit"
+            exit 1
+          fi
+          echo "commit=$tag_commit" >> "$GITHUB_OUTPUT"
+
+      # `force-tag-creation` creates the tag before Release Please creates its
+      # draft. The tag event can therefore start this workflow first; wait for
+      # the handoff instead of racing GoReleaser into creating a second draft.
+      - name: Require exact Release Please release state
+        id: release_state
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG_COMMIT: ${{ steps.tag_provenance.outputs.commit }}
+        run: |
+          for attempt in {1..12}; do
+            if release_state="$(gh release view "$GITHUB_REF_NAME" \
+              --json isDraft,isPrerelease,tagName,targetCommitish \
+              --jq '[.isDraft, .isPrerelease, .tagName, .targetCommitish] | @tsv' 2>/dev/null)"; then
+              read -r is_draft is_prerelease tag_name target_commitish <<< "$release_state"
+              if [[ "$tag_name" != "$GITHUB_REF_NAME" || "$target_commitish" != "$TAG_COMMIT" ]]; then
+                echo "::error::release target does not match immutable tag commit $TAG_COMMIT"
+                exit 1
+              fi
+              if [[ "$is_draft" == "true" && "$is_prerelease" == "false" ]]; then
+                assets="$(gh release view "$GITHUB_REF_NAME" \
+                  --json assets --jq '.assets[].name')"
+                seal=false
+                bundle=false
+                grep -Fxq release-seal.json <<<"$assets" && seal=true
+                grep -Fxq release-seal.json.sigstore.json <<<"$assets" && bundle=true
+                if [[ "$seal" == true && "$bundle" == true ]]; then
+                  state=draft-sealed
+                elif [[ "$seal" == false && "$bundle" == false ]]; then
+                  state=draft-unsealed
+                else
+                  echo "::error::partial release seal; quarantine required"
+                  exit 1
+                fi
+              elif [[ "$is_draft" == "false" && "$is_prerelease" == "false" ]]; then
+                state=published
+              else
+                echo "::error::public prerelease or ambiguous release state is invalid"
+                exit 1
+              fi
+              echo "state=$state" >> "$GITHUB_OUTPUT"
+              echo "Release Please handoff state: $state"
+              exit 0
+            fi
+            echo "Waiting for Release Please draft ($attempt/12)..."
+            sleep 5
+          done
+          echo "::error::Release Please draft did not appear"
+          exit 1
+
   goreleaser:
     name: GoReleaser (linux + macOS + windows archives, brew, scoop)
+    needs: release-admission
+    if: needs.release-admission.outputs.state == 'draft-unsealed'
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -22,32 +144,32 @@ jobs:
           go-version-file: go.mod
       - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
 
-      # Pre-flight: fail fast with a readable error if CI_GITHUB_TOKEN
-      # isn't set. This PAT needs contents:write on this repo plus
-      # jbcom/pkgs (brew formula + scoop bucket land there).
-      - name: Verify release secret is set
-        env:
-          CI_TOKEN_SET: ${{ secrets.CI_GITHUB_TOKEN != '' }}
-        run: |
-          if [[ "$CI_TOKEN_SET" != "true" ]]; then
-            echo "::error::CI_GITHUB_TOKEN secret is not configured"
-            exit 1
-          fi
-          echo "Release secret verified."
-
       - uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
         with:
           distribution: goreleaser
-          version: "~> v2"
+          version: v2.17.0
           args: release --clean
         env:
-          GITHUB_TOKEN: ${{ secrets.CI_GITHUB_TOKEN }}
-          JBCOM_PKGS_GITHUB_TOKEN: ${{ secrets.CI_GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ github.token }}
+      - name: Smoke GoReleaser archives, native packages, and installer
+        run: bash scripts/ci/smoke_goreleaser_artifacts.sh
+      - name: Retain generated CLI package manifests
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: generated-cli-package-manifests
+          path: |
+            dist/homebrew/Casks/radioactive-ralph.rb
+            dist/scoop/bucket/radioactive-ralph.json
+          if-no-files-found: error
 
   gui-bundles:
     name: GUI bundle (${{ matrix.os }})
-    needs: goreleaser
+    needs: [release-admission, goreleaser]
+    if: needs.release-admission.outputs.state == 'draft-unsealed'
     runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+      actions: read
     strategy:
       fail-fast: false
       matrix:
@@ -58,13 +180,17 @@ jobs:
           - os: macos-latest
             target: darwin
             arch: arm64
+            artifact: gui-darwin-arm64
           - os: macos-15-intel
             target: darwin
             arch: amd64
+            artifact: gui-darwin-amd64
           - os: ubuntu-latest
             target: linux
+            artifact: gui-linux-amd64
           - os: windows-latest
             target: windows
+            artifact: gui-windows-amd64
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -82,41 +208,23 @@ jobs:
             libgl1-mesa-dev xorg-dev libxkbcommon-dev \
             libwayland-dev wayland-protocols
       - name: Install the fyne packaging CLI
-        run: go install fyne.io/tools/cmd/fyne@latest
-      - name: Package the GUI app
+        run: go install fyne.io/tools/cmd/fyne@v1.7.2
+      - name: Build, package, and smoke exact GUI executable
         shell: bash
         timeout-minutes: 30
-        env:
-          CGO_ENABLED: "1"
         run: |
-          set -euo pipefail
-          VERSION="${GITHUB_REF_NAME#v}"
-          "$(go env GOPATH)/bin/fyne" package \
-            --target "${{ matrix.target }}" \
-            --tags gui \
-            --src ./cmd/radioactive_ralph \
-            --icon "$PWD/packaging/icons/radioactive-ralph.png" \
-            --name radioactive-ralph \
-            --app-id com.jonbogaty.radioactive-ralph \
-            --app-version "$VERSION"
-      # macOS: ad-hoc sign (free) — delivered via a Homebrew cask that strips
-      # quarantine on install, so Gatekeeper allows it without notarization.
-      - name: Ad-hoc sign the .app (macOS)
-        if: matrix.target == 'darwin'
-        run: codesign --force --deep --sign - radioactive-ralph.app
-      - name: Wrap .app into an arch-specific .dmg (macOS)
-        if: matrix.target == 'darwin'
+          bash scripts/ci/build_gui_package.sh \
+            "${GITHUB_REF_NAME#v}" \
+            "${{ matrix.target }}"
+      - name: Finalize and smoke macOS DMG or Linux AppImage
+        if: matrix.target != 'windows'
+        shell: bash
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
-          hdiutil create -volname radioactive-ralph -srcfolder radioactive-ralph.app \
-            -ov -format UDZO "radioactive-ralph_${VERSION}_darwin_${{ matrix.arch }}.dmg"
-      # Linux: repack the fyne tarball into an AppImage (unsigned by convention).
-      - name: Build AppImage (Linux)
-        if: matrix.target == 'linux'
-        run: |
-          set -euo pipefail
-          VERSION="${GITHUB_REF_NAME#v}"
-          bash packaging/linux/build-appimage.sh "$VERSION"
+          ARCH="${{ matrix.arch }}"
+          [[ -n "$ARCH" ]] || ARCH=x86_64
+          bash scripts/ci/finalize_gui_bundle.sh \
+            "$VERSION" "${{ matrix.target }}" "$ARCH"
       # Windows: Authenticode-sign the .exe via the free SignPath Foundation OSS
       # program WHEN enrolled (the SIGNPATH_* secrets are set). Absent the
       # secrets this step is skipped and the .exe ships unsigned — SmartScreen
@@ -157,56 +265,181 @@ jobs:
           github-artifact-id: ${{ steps.exe_artifact.outputs.artifact-id }}
           wait-for-completion: true
           output-artifact-directory: .
-      - name: Upload GUI bundles + checksums to the release
-        env:
-          GH_TOKEN: ${{ secrets.CI_GITHUB_TOKEN }}
+      - name: Smoke packaged .exe (Windows)
+        if: matrix.target == 'windows'
+        shell: bash
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          EXE="$(find . -maxdepth 1 -name '*.exe' | head -n 1)"
+          test -n "$EXE"
+          "$EXE" --version | grep -F "$VERSION"
+          go version -m "$EXE" | grep -F $'dep\tfyne.io/fyne/v2'
+      - name: Retain GUI bundle for the narrow signer/uploader
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ matrix.artifact }}
+          path: |
+            *.dmg
+            *.AppImage
+            *.exe
+          if-no-files-found: error
+          retention-days: 1
+      - name: Reject ambiguous GUI bundle output
         shell: bash
         run: |
           set -euo pipefail
           shopt -s nullglob
-          # Upload the deliverable GUI bundles only (the .app/.tar.xz are
-          # intermediate; the .dmg / .AppImage / .exe are what users install).
           assets=( *.dmg *.AppImage *.exe )
-          if [ ${#assets[@]} -eq 0 ]; then
-            # A bare warning would hide a real build failure. Every target is
-            # expected to produce at least one bundle, so treat "nothing" as an
-            # error unless the fyne build was legitimately skipped.
-            echo "::error::no GUI bundle produced for ${{ matrix.target }}"
+          if [ ${#assets[@]} -ne 1 ]; then
+            echo "::error::expected exactly one GUI bundle for ${{ matrix.target }}, found ${#assets[@]}"
             exit 1
           fi
-          # goreleaser's signed checksums.txt was generated before this job, so
-          # the GUI bundles can't join it. Publish a per-bundle .sha256 sidecar
-          # instead so each download is independently verifiable.
-          sha_tool="sha256sum"; command -v sha256sum >/dev/null || sha_tool="shasum -a 256"
-          checksums=()
-          for a in "${assets[@]}"; do
-            $sha_tool "$a" > "${a}.sha256"
-            checksums+=( "${a}.sha256" )
-          done
-          gh release upload "$GITHUB_REF_NAME" "${assets[@]}" "${checksums[@]}" --clobber
 
-  # Publish the Homebrew cask ONCE, after BOTH macOS legs have uploaded their
-  # arch-specific .dmg — the cask carries on_arm/on_intel URLs+shas so an Intel
-  # Mac and an Apple-Silicon Mac each download the matching build.
-  cask:
-    name: Homebrew cask (macOS)
+  sign-gui-checksums:
+    name: Sign GUI checksum manifest
     needs: gui-bundles
-    runs-on: macos-latest
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+    steps:
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v8.0.1
+        with:
+          pattern: gui-*
+          path: gui-assets
+          merge-multiple: true
+      - name: Download, hash, sign, and upload the exact GUI set
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME#v}"
+          cd gui-assets
+          expected=(
+            "radioactive-ralph_${VERSION}_darwin_amd64.dmg"
+            "radioactive-ralph_${VERSION}_darwin_arm64.dmg"
+            "radioactive-ralph_${VERSION}_linux_x86_64.AppImage"
+            "radioactive-ralph.exe"
+          )
+          actual="$(find . -maxdepth 1 -type f -exec basename {} \; | LC_ALL=C sort)"
+          wanted="$(printf '%s\n' "${expected[@]}" | LC_ALL=C sort)"
+          [[ "$actual" == "$wanted" ]]
+          sha256sum "${expected[@]}" | LC_ALL=C sort -k2 \
+            > gui-checksums.txt
+          cosign sign-blob \
+            --bundle gui-checksums.txt.sigstore.json \
+            gui-checksums.txt \
+            --yes
+          gh release upload "$GITHUB_REF_NAME" \
+            "${expected[@]}" \
+            gui-checksums.txt \
+            gui-checksums.txt.sigstore.json \
+            --clobber
+
+  package-rollback-provenance:
+    name: Sign original package rollback provenance
+    needs: [release-admission, goreleaser, sign-gui-checksums]
+    if: needs.release-admission.outputs.state == 'draft-unsealed'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          fetch-depth: 0
-      - name: Publish Homebrew cask
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+      - name: Capture once or verify original package bytes
         env:
-          GH_TOKEN: ${{ secrets.CI_GITHUB_TOKEN }}
+          PKGS_GH_TOKEN: ${{ secrets.PKGS_GITHUB_TOKEN }}
+          RELEASE_GH_TOKEN: ${{ github.token }}
         run: |
-          VERSION="${GITHUB_REF_NAME#v}"
-          bash packaging/macos/publish-cask.sh "$VERSION"
+          bash scripts/ci/prepare_package_rollback_provenance.sh \
+            "${GITHUB_REF_NAME#v}"
+
+  package-manifests-bundle:
+    name: Sign durable atomic package manifests
+    needs: [release-admission, goreleaser, sign-gui-checksums]
+    if: needs.release-admission.outputs.state == 'draft-unsealed'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+      actions: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v8.0.1
+        with:
+          name: generated-cli-package-manifests
+          path: dist
+      - name: Sign exact three-file package PR payload
+        env:
+          RELEASE_GH_TOKEN: ${{ github.token }}
+        run: |
+          bash scripts/ci/prepare_package_manifests_bundle.sh \
+            "${GITHUB_REF_NAME#v}"
+
+  release-seal:
+    name: Sign create-last immutable release seal
+    needs:
+      [release-admission, package-rollback-provenance, package-manifests-bundle]
+    if: needs.release-admission.outputs.state == 'draft-unsealed'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+      - name: Seal or verify every draft byte
+        env:
+          RELEASE_GH_TOKEN: ${{ github.token }}
+        run: |
+          bash scripts/ci/prepare_release_seal.sh \
+            "${GITHUB_REF_NAME#v}" "$GITHUB_SHA"
+
+  verify-sealed-release:
+    name: Verify sealed draft before package mutation
+    needs: [release-admission, release-seal]
+    if: >-
+      always() &&
+      (needs.release-admission.outputs.state == 'draft-sealed' ||
+       (needs.release-admission.outputs.state == 'draft-unsealed' &&
+        needs.release-seal.result == 'success'))
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+      - name: Verify exact sealed release bytes
+        env:
+          RELEASE_GH_TOKEN: ${{ github.token }}
+        run: bash scripts/ci/verify_release_assets.sh "${GITHUB_REF_NAME#v}"
+
+  package-manifests:
+    name: Publish atomic package manifest PR
+    needs: [release-admission, verify-sealed-release]
+    if: needs.verify-sealed-release.result == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+      - name: Publish generated Homebrew and Scoop manifests
+        env:
+          PKGS_GH_TOKEN: ${{ secrets.PKGS_GITHUB_TOKEN }}
+          RELEASE_GH_TOKEN: ${{ github.token }}
+          RESOLVE_PACKAGE_ATTEMPT_BRANCH: '1'
+        run: bash packaging/publish-cli-manifests.sh "${GITHUB_REF_NAME#v}"
 
   chocolatey:
-    name: GoReleaser (chocolatey publish)
-    needs: goreleaser
+    name: Optional Chocolatey publish after immutable release
+    needs: publish-release
     runs-on: windows-latest
+    permissions:
+      contents: read
     # GitHub does not allow `secrets.*` in jobs.<job_id>.if, so we gate
     # the optional publish path with a tiny first step before checkout.
     if: vars.ENABLE_CHOCOLATEY == 'true'
@@ -238,8 +471,594 @@ jobs:
         if: steps.prereq.outputs.should_publish == 'true'
         with:
           distribution: goreleaser
-          version: "~> v2"
+          version: v2.17.0
           args: release --clean --config .goreleaser.chocolatey.yaml
         env:
-          GITHUB_TOKEN: ${{ secrets.CI_GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ github.token }}
           CHOCOLATEY_API_KEY: ${{ secrets.CHOCOLATEY_API_KEY }}
+
+  verify-package-heads:
+    name: Verify exact package PR heads
+    needs: [release-admission, package-manifests, release-seal]
+    if: >-
+      always() &&
+      (needs.release-admission.outputs.state == 'draft-unsealed' ||
+       needs.release-admission.outputs.state == 'draft-sealed') &&
+      needs.package-manifests.result == 'success'
+    runs-on: ubuntu-latest
+    outputs:
+      package_head_oid: ${{ steps.package_heads.outputs.package_head_oid }}
+    permissions:
+      contents: read
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+      - name: Verify trusted exact PR heads without merging
+        id: package_heads
+        env:
+          PKGS_GH_TOKEN: ${{ secrets.PKGS_GITHUB_TOKEN }}
+          RELEASE_GH_TOKEN: ${{ github.token }}
+          PACKAGE_GATE_MODE: verify-heads
+          RESOLVE_PACKAGE_ATTEMPT_BRANCH: '1'
+        run: bash scripts/ci/wait_for_package_publication.sh "${GITHUB_REF_NAME#v}"
+
+  premerge-package-smoke:
+    name: Premerge package smoke (${{ matrix.channel }})
+    needs: verify-package-heads
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - channel: homebrew-exact-heads
+            os: macos-latest
+          - channel: scoop-exact-head
+            os: windows-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: matrix.channel == 'homebrew-exact-heads'
+        with:
+          persist-credentials: false
+      - name: Install exact Homebrew PR-head casks
+        if: matrix.channel == 'homebrew-exact-heads'
+        shell: bash
+        env:
+          PKGS_GH_TOKEN: ${{ secrets.PKGS_GITHUB_TOKEN }}
+          RELEASE_GH_TOKEN: ${{ github.token }}
+          PACKAGE_HEAD: ${{ needs.verify-package-heads.outputs.package_head_oid }}
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME#v}"
+          mkdir exact-casks premerge-assets
+          GH_TOKEN="$PKGS_GH_TOKEN" gh api -H "Accept: application/vnd.github.raw+json" \
+            "repos/jbcom/pkgs/contents/Casks/radioactive-ralph.rb?ref=$PACKAGE_HEAD" \
+            > exact-casks/radioactive-ralph.rb
+          GH_TOKEN="$PKGS_GH_TOKEN" gh api -H "Accept: application/vnd.github.raw+json" \
+            "repos/jbcom/pkgs/contents/Casks/radioactive-ralph-gui.rb?ref=$PACKAGE_HEAD" \
+            > exact-casks/radioactive-ralph-gui.rb
+          for asset in \
+            "radioactive_ralph_${VERSION}_darwin_arm64.tar.gz" \
+            "radioactive-ralph_${VERSION}_darwin_arm64.dmg"; do
+            GH_TOKEN="$RELEASE_GH_TOKEN" gh release download "$GITHUB_REF_NAME" \
+              --pattern "$asset" --dir premerge-assets
+            case "$asset" in
+              radioactive_ralph_*.tar.gz)
+                cask=exact-casks/radioactive-ralph.rb
+                ;;
+              radioactive-ralph_*.dmg)
+                cask=exact-casks/radioactive-ralph-gui.rb
+                ;;
+              *)
+                exit 1
+                ;;
+            esac
+            bash scripts/ci/rewrite_homebrew_cask_url.sh \
+              "$cask" "$VERSION" "$asset" "$PWD/premerge-assets/$asset"
+          done
+      - name: Install cached exact Homebrew PR-head casks without credentials
+        if: matrix.channel == 'homebrew-exact-heads'
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME#v}"
+          unset GH_TOKEN PKGS_GH_TOKEN RELEASE_GH_TOKEN
+          if git config --local --get-regexp '^http\..*\.extraheader$' \
+            >/dev/null 2>&1; then
+            echo "checkout credential remained before cask execution" >&2
+            exit 1
+          fi
+          HOMEBREW_NO_INSTALL_FROM_API=1 brew install --cask \
+            "$PWD/exact-casks/radioactive-ralph.rb" \
+            "$PWD/exact-casks/radioactive-ralph-gui.rb"
+          radioactive_ralph --version | grep -F "$VERSION"
+          GUI_BIN="$(find /Applications/radioactive-ralph.app/Contents/MacOS \
+            -type f -perm -u+x | head -n 1)"
+          "$GUI_BIN" --version | grep -F "$VERSION"
+      - name: Install pinned Scoop
+        if: matrix.channel == 'scoop-exact-head'
+        shell: pwsh
+        run: |
+          Invoke-WebRequest `
+            https://raw.githubusercontent.com/ScoopInstaller/Install/b0ee913725139b816f9178163af0aecdba07a7ed/install.ps1 `
+            -OutFile install-scoop.ps1
+          ./install-scoop.ps1 -RunAsAdmin
+      - name: Install exact Scoop PR-head manifest
+        if: matrix.channel == 'scoop-exact-head'
+        shell: pwsh
+        env:
+          PKGS_GH_TOKEN: ${{ secrets.PKGS_GITHUB_TOKEN }}
+          RELEASE_GH_TOKEN: ${{ github.token }}
+          PACKAGE_HEAD: ${{ needs.verify-package-heads.outputs.package_head_oid }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory exact-scoop | Out-Null
+          $env:GH_TOKEN = $env:PKGS_GH_TOKEN
+          gh api -H "Accept: application/vnd.github.raw+json" `
+            "repos/jbcom/pkgs/contents/bucket/radioactive-ralph.json?ref=$env:PACKAGE_HEAD" `
+            > exact-scoop/radioactive-ralph.json
+          if ($LASTEXITCODE -ne 0) {
+            throw "failed to fetch exact Scoop manifest at $env:PACKAGE_HEAD"
+          }
+          $version = $env:GITHUB_REF_NAME.Substring(1)
+          $asset = "radioactive_ralph_${version}_windows_amd64.zip"
+          $env:GH_TOKEN = $env:RELEASE_GH_TOKEN
+          gh release download $env:GITHUB_REF_NAME --pattern $asset --dir exact-scoop
+          if ($LASTEXITCODE -ne 0) {
+            throw "failed to cache exact draft asset $asset"
+          }
+
+          $manifestPath = "exact-scoop/radioactive-ralph.json"
+          $assetPath = "exact-scoop/$asset"
+          $manifest = Get-Content -Raw $manifestPath | ConvertFrom-Json
+          $expectedAssetUrl = "https://github.com/$env:GITHUB_REPOSITORY/releases/download/$env:GITHUB_REF_NAME/$asset"
+          $originalAssetUrl = $manifest.architecture.'64bit'.url
+          $originalAssetHash = $manifest.architecture.'64bit'.hash
+          if ($originalAssetUrl -ne $expectedAssetUrl) {
+            throw "Scoop manifest URL $originalAssetUrl does not name exact draft asset $expectedAssetUrl"
+          }
+          if ($originalAssetHash -notmatch '^[0-9a-fA-F]{64}$') {
+            throw "Scoop manifest hash is not a SHA-256 digest"
+          }
+          $cachedAssetHash = (Get-FileHash -Algorithm SHA256 $assetPath).Hash
+          if ($cachedAssetHash -ne $originalAssetHash) {
+            throw "cached draft asset hash does not match exact Scoop manifest"
+          }
+
+          $localAssetUrl = "http://127.0.0.1:8123/$asset"
+          $manifest.architecture.'64bit'.url = $localAssetUrl
+          $manifest | ConvertTo-Json -Depth 20 |
+            Set-Content -Path $manifestPath -Encoding utf8NoBOM
+          $rewrittenManifest = Get-Content -Raw $manifestPath | ConvertFrom-Json
+          if ($rewrittenManifest.architecture.'64bit'.url -ne $localAssetUrl -or
+              $rewrittenManifest.architecture.'64bit'.hash -ne $originalAssetHash) {
+            throw "local Scoop rewrite changed more than the exact draft asset URL"
+          }
+      - name: Install cached exact Scoop manifest without credentials
+        if: matrix.channel == 'scoop-exact-head'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $credentialNames = @('GH_TOKEN', 'PKGS_GH_TOKEN', 'RELEASE_GH_TOKEN')
+          foreach ($credentialName in $credentialNames) {
+            Remove-Item "Env:$credentialName" -ErrorAction SilentlyContinue
+          }
+          foreach ($credentialName in $credentialNames) {
+            if (Test-Path "Env:$credentialName") {
+              throw "$credentialName remained before credential-free Scoop execution"
+            }
+          }
+
+          $version = $env:GITHUB_REF_NAME.Substring(1)
+          $asset = "radioactive_ralph_${version}_windows_amd64.zip"
+          $assetPath = "$PWD/exact-scoop/$asset"
+          $assetUrl = "http://127.0.0.1:8123/$asset"
+          $serverStdout = "$env:RUNNER_TEMP/scoop-http.stdout.log"
+          $serverStderr = "$env:RUNNER_TEMP/scoop-http.stderr.log"
+          $server = $null
+          try {
+            $server = Start-Process -FilePath python -ArgumentList @(
+              '-m', 'http.server', '8123',
+              '--bind', '127.0.0.1',
+              '--directory', 'exact-scoop'
+            ) -RedirectStandardOutput $serverStdout `
+              -RedirectStandardError $serverStderr -PassThru
+
+            $ready = $false
+            $expectedLength = (Get-Item -LiteralPath $assetPath).Length
+            for ($attempt = 1; $attempt -le 20; $attempt++) {
+              if ($server.HasExited) {
+                break
+              }
+              try {
+                $response = Invoke-WebRequest -UseBasicParsing -Method Head `
+                  -TimeoutSec 1 -Uri $assetUrl
+                if ($response.StatusCode -eq 200 -and
+                    [int64]$response.Headers.'Content-Length' -eq $expectedLength) {
+                  $ready = $true
+                  break
+                }
+              } catch {
+                # The bounded poll below owns readiness; retry transient refusal.
+              }
+              Start-Sleep -Milliseconds 250
+            }
+            if (-not $ready) {
+              if (Test-Path $serverStdout) {
+                Get-Content $serverStdout | Write-Host
+              }
+              if (Test-Path $serverStderr) {
+                Get-Content $serverStderr | Write-Host
+              }
+              if ($server.HasExited) {
+                throw "cached asset server exited before readiness with code $($server.ExitCode)"
+              }
+              throw "cached asset server never served the exact asset after 20 bounded attempts"
+            }
+
+            foreach ($credentialName in $credentialNames) {
+              if (Test-Path "Env:$credentialName") {
+                throw "$credentialName appeared before credential-free Scoop execution"
+              }
+            }
+            scoop install "$PWD/exact-scoop/radioactive-ralph.json"
+            if ($LASTEXITCODE -ne 0) {
+              throw "Scoop failed to install the exact cached PR-head manifest"
+            }
+            $versionOutput = radioactive_ralph --version
+            if ($LASTEXITCODE -ne 0) {
+              throw "installed radioactive_ralph failed its version command"
+            }
+            if (-not ($versionOutput | Select-String -Quiet -SimpleMatch $version)) {
+              throw "installed radioactive_ralph version did not contain $version"
+            }
+          } finally {
+            if ($null -ne $server) {
+              try {
+                if (-not $server.HasExited) {
+                  Stop-Process -InputObject $server -Force `
+                    -ErrorAction SilentlyContinue
+                }
+                if (-not $server.WaitForExit(10000)) {
+                  throw "cached asset server did not stop within 10 seconds"
+                }
+              } finally {
+                $server.Dispose()
+              }
+            }
+          }
+
+  publish-release:
+    name: Commit packages and publish immutable stable release
+    needs:
+      [release-admission, verify-sealed-release, verify-package-heads, premerge-package-smoke]
+    runs-on: ubuntu-latest
+    outputs:
+      pkgs_main_oid: ${{ steps.transaction.outputs.pkgs_main_oid }}
+      package_release_merge_oid: ${{ steps.transaction.outputs.package_release_merge_oid }}
+    permissions:
+      contents: write
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+      - name: Merge exact smoked head and immediately publish once
+        id: transaction
+        env:
+          PKGS_GH_TOKEN: ${{ secrets.PKGS_GITHUB_TOKEN }}
+          RELEASE_GH_TOKEN: ${{ github.token }}
+          EXPECTED_PACKAGE_HEAD_OID: ${{ needs.verify-package-heads.outputs.package_head_oid }}
+          RESOLVE_PACKAGE_ATTEMPT_BRANCH: '1'
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME#v}"
+          provenance="$RUNNER_TEMP/package-rollback.tar.gz"
+          GH_TOKEN="$RELEASE_GH_TOKEN" gh release download "$GITHUB_REF_NAME" \
+            --pattern package-rollback.tar.gz --output "$provenance"
+          pkgs_main_oid=""
+          package_release_merge_oid=""
+          resolve_winning_merge() {
+            local resolve_output
+            resolve_output="$RUNNER_TEMP/package-merged-output"
+            : > "$resolve_output"
+            PACKAGE_GATE_MODE=resolve-merged GITHUB_OUTPUT="$resolve_output" \
+              bash scripts/ci/wait_for_package_publication.sh "$VERSION"
+            pkgs_main_oid="$(
+              sed -n 's/^pkgs_main_oid=//p' "$resolve_output" | tail -n 1
+            )"
+            package_release_merge_oid="$(
+              sed -n 's/^package_release_merge_oid=//p' "$resolve_output" |
+                tail -n 1
+            )"
+            [[ "$pkgs_main_oid" =~ ^[0-9a-f]{40,64}$ ]]
+            [[ "$package_release_merge_oid" =~ ^[0-9a-f]{40,64}$ ]]
+          }
+          compensate() {
+            status=$?
+            trap - EXIT
+            final_state="$(GH_TOKEN="$RELEASE_GH_TOKEN" gh api \
+              "repos/${GITHUB_REPOSITORY}/releases/tags/${GITHUB_REF_NAME}" \
+              2>/dev/null || true)"
+            if jq -e --arg tag "$GITHUB_REF_NAME" --arg target "$GITHUB_SHA" \
+              '.draft == false and .prerelease == false and
+               .immutable == true and .tag_name == $tag and
+               .target_commitish == $target' <<<"$final_state" >/dev/null 2>&1; then
+              latest_id="$(GH_TOKEN="$RELEASE_GH_TOKEN" gh api --jq '.id' \
+                "repos/${GITHUB_REPOSITORY}/releases/latest")" || exit 1
+              [[ "$latest_id" == "$(jq -r '.id' <<<"$final_state")" ]] || exit 1
+              resolve_winning_merge || exit 1
+              {
+                echo "pkgs_main_oid=$pkgs_main_oid"
+                echo "package_release_merge_oid=$package_release_merge_oid"
+              } >> "$GITHUB_OUTPUT"
+              echo "::warning::publication response was uncertain; stable immutable state was verified by fresh reads"
+              exit 0
+            fi
+            if ! jq -e --arg tag "$GITHUB_REF_NAME" --arg target "$GITHUB_SHA" \
+              '.draft == true and .prerelease == false and
+               .tag_name == $tag and .target_commitish == $target' \
+              <<<"$final_state" >/dev/null 2>&1; then
+              echo "::error::ambiguous publication state; quarantining without blind compensation"
+              exit 1
+            fi
+            if resolve_winning_merge; then
+              echo "::error::draft transaction failed after package merge; compensating protected main"
+              bash scripts/ci/rollback_package_manifests.sh \
+                "$VERSION" "$provenance" "$package_release_merge_oid" || status=1
+            else
+              echo "::warning::no unique current release-owned package merge was recoverable; quarantining"
+            fi
+            exit "$status"
+          }
+          trap compensate EXIT
+
+          GH_TOKEN="$RELEASE_GH_TOKEN" gh api \
+            -H "X-GitHub-Api-Version: 2026-03-10" \
+            "repos/${GITHUB_REPOSITORY}/immutable-releases" |
+            jq -e '.enabled == true' >/dev/null
+          current_manifest="$(GH_TOKEN="$RELEASE_GH_TOKEN" gh api \
+            -H "Accept: application/vnd.github.raw+json" \
+            "repos/${GITHUB_REPOSITORY}/contents/.release-please-manifest.json?ref=main")"
+          [[ "$(jq -er '."."' <<<"$current_manifest")" == "$VERSION" ]]
+          tag_sha="$(GH_TOKEN="$RELEASE_GH_TOKEN" gh api \
+            --jq '.object.sha' "repos/${GITHUB_REPOSITORY}/git/ref/tags/${GITHUB_REF_NAME}")"
+          [[ "$tag_sha" == "$GITHUB_SHA" ]]
+          bash scripts/ci/verify_release_assets.sh "$VERSION"
+          release="$(GH_TOKEN="$RELEASE_GH_TOKEN" gh api \
+            "repos/${GITHUB_REPOSITORY}/releases/tags/${GITHUB_REF_NAME}")"
+          release_id="$(jq -er '.id' <<<"$release")"
+          jq -e --arg tag "$GITHUB_REF_NAME" --arg target "$GITHUB_SHA" \
+            '.draft == true and .prerelease == false and
+             .tag_name == $tag and .target_commitish == $target' \
+            <<<"$release" >/dev/null
+
+          gate_output="$RUNNER_TEMP/package-gate-output"
+          GITHUB_OUTPUT="$gate_output" PACKAGE_GATE_MODE=merge \
+            bash scripts/ci/wait_for_package_publication.sh "$VERSION"
+          pkgs_main_oid="$(sed -n 's/^pkgs_main_oid=//p' "$gate_output" | tail -n 1)"
+          package_release_merge_oid="$(
+            sed -n 's/^package_release_merge_oid=//p' "$gate_output" |
+              tail -n 1
+          )"
+          [[ "$pkgs_main_oid" =~ ^[0-9a-f]{40,64}$ ]]
+          [[ "$package_release_merge_oid" =~ ^[0-9a-f]{40,64}$ ]]
+
+          # Complete all slow package and asset verification first. Then make
+          # the authority reads below the final operations before PATCH.
+          resolve_winning_merge
+          bash scripts/ci/verify_release_assets.sh "$VERSION"
+          EXPECTED_PACKAGE_RELEASE_MERGE_OID="$package_release_merge_oid" \
+            PACKAGE_GATE_MODE=recheck-current \
+            bash scripts/ci/wait_for_package_publication.sh "$VERSION"
+          GH_TOKEN="$RELEASE_GH_TOKEN" gh api \
+            -H "X-GitHub-Api-Version: 2026-03-10" \
+            "repos/${GITHUB_REPOSITORY}/immutable-releases" |
+            jq -e '.enabled == true' >/dev/null
+          current_manifest="$(GH_TOKEN="$RELEASE_GH_TOKEN" gh api \
+            -H "Accept: application/vnd.github.raw+json" \
+            "repos/${GITHUB_REPOSITORY}/contents/.release-please-manifest.json?ref=main")"
+          [[ "$(jq -er '."."' <<<"$current_manifest")" == "$VERSION" ]]
+          tag_sha="$(GH_TOKEN="$RELEASE_GH_TOKEN" gh api \
+            --jq '.object.sha' \
+            "repos/${GITHUB_REPOSITORY}/git/ref/tags/${GITHUB_REF_NAME}")"
+          [[ "$tag_sha" == "$GITHUB_SHA" ]]
+          release="$(GH_TOKEN="$RELEASE_GH_TOKEN" gh api \
+            "repos/${GITHUB_REPOSITORY}/releases/tags/${GITHUB_REF_NAME}")"
+          release_id="$(jq -er '.id' <<<"$release")"
+          jq -e --arg tag "$GITHUB_REF_NAME" --arg target "$GITHUB_SHA" \
+            '.draft == true and .prerelease == false and
+             .tag_name == $tag and .target_commitish == $target' \
+            <<<"$release" >/dev/null
+
+          response=""
+          if ! response="$(GH_TOKEN="$RELEASE_GH_TOKEN" gh api --method PATCH \
+            "repos/${GITHUB_REPOSITORY}/releases/${release_id}" \
+            -F draft=false -F prerelease=false -f make_latest=true)"; then
+            echo "::warning::publication PATCH transport failed; resolving fresh release state"
+          fi
+          final="$(GH_TOKEN="$RELEASE_GH_TOKEN" gh api \
+            "repos/${GITHUB_REPOSITORY}/releases/tags/${GITHUB_REF_NAME}")"
+          if ! jq -e --argjson id "$release_id" --arg tag "$GITHUB_REF_NAME" \
+            --arg target "$GITHUB_SHA" \
+            '.id == $id and .draft == false and .prerelease == false and
+             .immutable == true and .tag_name == $tag and
+             .target_commitish == $target' <<<"$response" >/dev/null 2>&1; then
+            echo "::warning::PATCH response was absent or non-canonical; fresh state is authoritative"
+          fi
+          latest="$(GH_TOKEN="$RELEASE_GH_TOKEN" gh api \
+            "repos/${GITHUB_REPOSITORY}/releases/latest")"
+          jq -e --argjson id "$release_id" --arg tag "$GITHUB_REF_NAME" \
+            --arg target "$GITHUB_SHA" \
+            '.id == $id and .immutable == true and .draft == false and
+             .prerelease == false and .tag_name == $tag and
+             .target_commitish == $target' <<<"$final" >/dev/null
+          jq -e --argjson id "$release_id" --arg tag "$GITHUB_REF_NAME" \
+            '.id == $id and .tag_name == $tag and .immutable == true' \
+            <<<"$latest" >/dev/null
+          {
+            echo "pkgs_main_oid=$pkgs_main_oid"
+            echo "package_release_merge_oid=$package_release_merge_oid"
+          } >> "$GITHUB_OUTPUT"
+          trap - EXIT
+
+  official-channel-smoke:
+    name: Official channel smoke (${{ matrix.channel }})
+    needs: publish-release
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - channel: homebrew-cli-gui-arm64
+            os: macos-latest
+          - channel: homebrew-cli-gui-amd64
+            os: macos-15-intel
+          - channel: scoop
+            os: windows-latest
+          - channel: linux-direct-amd64
+            os: ubuntu-latest
+          - channel: linux-direct-arm64
+            os: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: startsWith(matrix.channel, 'linux-direct')
+      - name: Smoke official Homebrew CLI and GUI casks
+        if: startsWith(matrix.channel, 'homebrew-cli-gui')
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME#v}"
+          brew tap jbcom/pkgs https://github.com/jbcom/pkgs
+          HOMEBREW_NO_INSTALL_FROM_API=1 brew install --cask \
+            radioactive-ralph radioactive-ralph-gui
+          radioactive_ralph --version | grep -F "$VERSION"
+          GUI_BIN="$(find /Applications/radioactive-ralph.app/Contents/MacOS \
+            -type f -perm -u+x | head -n 1)"
+          "$GUI_BIN" --version | grep -F "$VERSION"
+      - name: Install pinned Scoop
+        if: matrix.channel == 'scoop'
+        shell: pwsh
+        run: |
+          Invoke-WebRequest `
+            https://raw.githubusercontent.com/ScoopInstaller/Install/b0ee913725139b816f9178163af0aecdba07a7ed/install.ps1 `
+            -OutFile install-scoop.ps1
+          ./install-scoop.ps1 -RunAsAdmin
+      - name: Smoke official Scoop bucket
+        if: matrix.channel == 'scoop'
+        shell: pwsh
+        run: |
+          scoop bucket add jbcom https://github.com/jbcom/pkgs
+          scoop install radioactive-ralph
+          $version = $env:GITHUB_REF_NAME.Substring(1)
+          radioactive_ralph --version | Select-String -SimpleMatch $version
+      - name: Smoke curl, deb, rpm, and available AppImage release paths
+        if: startsWith(matrix.channel, 'linux-direct')
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME#v}"
+          BASE="https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}"
+          TMP="$(mktemp -d)"
+          sh docs/install.sh --version "$GITHUB_REF_NAME" --install-dir "$TMP/bin"
+          "$TMP/bin/radioactive_ralph" --version | grep -F "$VERSION"
+          if [[ "$(uname -m)" == "aarch64" ]]; then
+            ARCH=arm64
+          else
+            ARCH=amd64
+          fi
+          curl -fsSLo "$TMP/ralph.deb" \
+            "$BASE/radioactive-ralph_${VERSION}_linux_${ARCH}.deb"
+          sudo apt-get install -y "$TMP/ralph.deb"
+          radioactive_ralph --version | grep -F "$VERSION"
+          sudo dpkg -r radioactive-ralph
+          curl -fsSLo "$TMP/ralph.rpm" \
+            "$BASE/radioactive-ralph_${VERSION}_linux_${ARCH}.rpm"
+          sudo apt-get update
+          sudo apt-get install -y rpm
+          sudo rpm --install "$TMP/ralph.rpm"
+          radioactive_ralph --version | grep -F "$VERSION"
+          if [[ "$ARCH" == amd64 ]]; then
+            curl -fsSLo "$TMP/ralph.AppImage" \
+              "$BASE/radioactive-ralph_${VERSION}_linux_x86_64.AppImage"
+            chmod +x "$TMP/ralph.AppImage"
+            APPIMAGE_EXTRACT_AND_RUN=1 "$TMP/ralph.AppImage" --version |
+              grep -F "$VERSION"
+          fi
+
+  rollback-package-manifests:
+    name: Compensate terminal immutable public-channel failure
+    needs: [publish-release, official-channel-smoke]
+    if: always() && needs.publish-release.result == 'success' && needs.official-channel-smoke.result != 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Fetch signed rollback provenance
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download "$GITHUB_REF_NAME" \
+            --pattern package-rollback.tar.gz \
+            --output "$RUNNER_TEMP/package-rollback.tar.gz"
+      - name: Restore exact prior package manifests through protected main
+        env:
+          PKGS_GH_TOKEN: ${{ secrets.PKGS_GITHUB_TOKEN }}
+        run: |
+          bash scripts/ci/rollback_package_manifests.sh \
+            "${GITHUB_REF_NAME#v}" \
+            "$RUNNER_TEMP/package-rollback.tar.gz" \
+            "${{ needs.publish-release.outputs.package_release_merge_oid }}"
+          {
+            echo "## Immutable release v${GITHUB_REF_NAME#v} is terminal"
+            echo
+            echo "An unavoidable post-publication network/channel check failed."
+            echo "Package manifests were compensated. The immutable tag and release"
+            echo "must not be reused; issue a new patch release."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  published-rerun-audit:
+    name: Read-only immutable published rerun audit
+    needs: release-admission
+    if: needs.release-admission.outputs.state == 'published'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+      - name: Verify immutable bytes and historical package merge
+        env:
+          PKGS_GH_TOKEN: ${{ secrets.PKGS_GITHUB_TOKEN }}
+          RELEASE_GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME#v}"
+          bash scripts/ci/verify_release_assets.sh "$VERSION"
+          release="$(GH_TOKEN="$RELEASE_GH_TOKEN" gh api \
+            "repos/${GITHUB_REPOSITORY}/releases/tags/${GITHUB_REF_NAME}")"
+          release_id="$(jq -er '.id' <<<"$release")"
+          jq -e --arg tag "$GITHUB_REF_NAME" --arg target "$GITHUB_SHA" \
+            '.draft == false and .prerelease == false and .immutable == true and
+             .tag_name == $tag and .target_commitish == $target' \
+            <<<"$release" >/dev/null
+          PACKAGE_GATE_MODE=resolve-historical \
+            GITHUB_OUTPUT="$RUNNER_TEMP/historical-package-output" \
+            bash scripts/ci/wait_for_package_publication.sh "$VERSION"
+          current_manifest="$(GH_TOKEN="$RELEASE_GH_TOKEN" gh api \
+            -H "Accept: application/vnd.github.raw+json" \
+            "repos/${GITHUB_REPOSITORY}/contents/.release-please-manifest.json?ref=main")"
+          if [[ "$(jq -er '."."' <<<"$current_manifest")" == "$VERSION" ]]; then
+            latest_id="$(GH_TOKEN="$RELEASE_GH_TOKEN" gh api --jq '.id' \
+              "repos/${GITHUB_REPOSITORY}/releases/latest")"
+            [[ "$latest_id" == "$release_id" ]]
+          fi

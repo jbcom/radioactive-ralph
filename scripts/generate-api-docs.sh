@@ -11,13 +11,15 @@ OUT_DIR="$REPO_ROOT/docs/api"
 # Ensure gomarkdoc is available. Users get a clean install hint
 # rather than a cryptic command-not-found failure.
 if ! command -v gomarkdoc >/dev/null 2>&1; then
-  if [ -x "$HOME/go/bin/gomarkdoc" ]; then
-    export PATH="$HOME/go/bin:$PATH"
-  elif [ -x "$HOME/.asdf/installs/golang/1.26.2/bin/gomarkdoc" ]; then
-    export PATH="$HOME/.asdf/installs/golang/1.26.2/bin:$PATH"
+  go_bin="$(go env GOBIN)"
+  if [[ -z "$go_bin" ]]; then
+    go_bin="$(go env GOPATH)/bin"
+  fi
+  if [[ -x "$go_bin/gomarkdoc" ]]; then
+    export PATH="$go_bin:$PATH"
   else
     echo "gomarkdoc not found. Install with:" >&2
-    echo "  go install github.com/princjef/gomarkdoc/cmd/gomarkdoc@latest" >&2
+    echo "  go install github.com/princjef/gomarkdoc/cmd/gomarkdoc@v1.1.0" >&2
     exit 1
   fi
 fi
@@ -36,7 +38,7 @@ cd "$REPO_ROOT"
 package_dirs="$(go list -f '{{.Dir}}' ./cmd/... ./internal/...)"
 while IFS= read -r pkg_dir; do
   [[ -z "$pkg_dir" ]] && continue
-  rel_pkg="${pkg_dir#$REPO_ROOT/}"
+  rel_pkg="${pkg_dir#"$REPO_ROOT"/}"
   pkg="./$rel_pkg"
   # Build the GUI-tagged surface too: internal/gui's views/theme/app are behind
   # `//go:build gui`, so without the tag its API page shows only the Fyne-free
@@ -60,7 +62,7 @@ find "$OUT_DIR" -name "*.md" | while read -r file; do
   # Pull the package name from the first H1 (e.g., "# variant").
   pkg_name=$(awk '/^# /{print $2; exit}' "$file")
   # Derive the Go package path from the file location.
-  rel_path="${file#$OUT_DIR/}"
+  rel_path="${file#"$OUT_DIR"/}"
   go_path="${rel_path%.md}"
 
   # Prepend frontmatter unless already present.
@@ -124,4 +126,4 @@ cat >> "$OUT_DIR/index.md" <<'MDEOF'
 MDEOF
 
 count=$(find "$OUT_DIR" -name "*.md" | wc -l | tr -d ' ')
-echo "✓ Generated ${count} API reference page(s) in ${OUT_DIR#$REPO_ROOT/}"
+echo "✓ Generated ${count} API reference page(s) in ${OUT_DIR#"$REPO_ROOT"/}"

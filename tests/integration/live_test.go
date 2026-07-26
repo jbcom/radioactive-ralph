@@ -4,13 +4,59 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/jbcom/radioactive-ralph/internal/provider"
 	claudesession "github.com/jbcom/radioactive-ralph/internal/provider/claudesession"
 )
+
+func validateLiveCodexOK(output string) error {
+	var payload map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(output), &payload); err != nil {
+		return fmt.Errorf("decode JSON: %w", err)
+	}
+	okJSON, exists := payload["ok"]
+	if !exists || len(payload) != 1 {
+		return fmt.Errorf("object must contain exactly the ok property")
+	}
+	var ok bool
+	if err := json.Unmarshal(okJSON, &ok); err != nil {
+		return fmt.Errorf("decode ok boolean: %w", err)
+	}
+	if !ok {
+		return fmt.Errorf("ok must be true")
+	}
+	return nil
+}
+
+func TestLiveCodexOutputContract(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		output string
+		valid  bool
+	}{
+		{name: "exact", output: `{"ok":true}`, valid: true},
+		{name: "extra property", output: `{"ok":true,"unexpected":true}`},
+		{name: "missing property", output: `{}`},
+		{name: "false", output: `{"ok":false}`},
+		{name: "wrong type", output: `{"ok":"true"}`},
+		{name: "not object", output: `[{"ok":true}]`},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			err := validateLiveCodexOK(test.output)
+			if test.valid && err != nil {
+				t.Fatalf("validateLiveCodexOK(%s): %v", test.output, err)
+			}
+			if !test.valid && err == nil {
+				t.Fatalf("validateLiveCodexOK(%s) unexpectedly succeeded", test.output)
+			}
+		})
+	}
+}
 
 // TestLiveClaudeRoundTrip drives a real `claude -p` subprocess via the
 // session wrapper: sends a deterministic prompt, collects the
@@ -169,5 +215,47 @@ func TestLiveClaudeModelSanity(t *testing.T) {
 		// validity here is lenient — the test primarily verifies we
 		// received valid JSON from the CLI at all.
 		t.Logf("assistant payload not standalone valid JSON (expected; payload is content-blocks):\n%s", allMsgs.String())
+	}
+}
+
+// TestLiveCodexRunnerTurn exercises the same CodexRunner used by dispatched
+// work against the authenticated Codex CLI. It is deliberately gated so the
+// normal integration suite remains hermetic; provider-live.yml is the only
+// workflow that enables it after establishing an isolated Codex login.
+func TestLiveCodexRunnerTurn(t *testing.T) {
+	if os.Getenv("CODEX_AUTHENTICATED") != "1" {
+		t.Skip("CODEX_AUTHENTICATED != 1; skipping live codex runner turn")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+
+	const outputSchema = `{
+		"type": "object",
+		"properties": {
+			"ok": {"type": "boolean"}
+		},
+		"required": ["ok"],
+		"additionalProperties": false
+	}`
+	result, err := (provider.CodexRunner{}).Run(ctx, provider.Binding{
+		Name: "codex",
+		Config: provider.BindingConfig{
+			Type:   "codex",
+			Binary: "codex",
+		},
+	}, provider.Request{
+		WorkingDir:   t.TempDir(),
+		SystemPrompt: "Return only JSON that satisfies the supplied output schema.",
+		UserPrompt:   `Set "ok" to true.`,
+		OutputSchema: outputSchema,
+	})
+	if err != nil {
+		t.Fatalf("CodexRunner.Run: %v", err)
+	}
+
+	if err := validateLiveCodexOK(result.AssistantOutput); err != nil {
+		t.Fatalf("CodexRunner assistant output violates the required schema: %v\n%s",
+			err, result.AssistantOutput)
 	}
 }

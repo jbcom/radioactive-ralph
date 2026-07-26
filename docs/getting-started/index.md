@@ -1,6 +1,6 @@
 ---
 title: Getting started
-lastUpdated: 2026-07-16
+lastUpdated: 2026-07-25
 ---
 
 # Get started
@@ -9,11 +9,16 @@ lastUpdated: 2026-07-16
 
 | Platform | Command |
 |---|---|
-| macOS / Linux (Homebrew) | `brew tap jbcom/pkgs https://github.com/jbcom/pkgs && brew install radioactive-ralph` |
+| macOS (Homebrew cask) | `brew tap jbcom/pkgs https://github.com/jbcom/pkgs && brew install --cask radioactive-ralph` |
 | Windows Scoop | `scoop bucket add jbcom https://github.com/jbcom/pkgs && scoop install radioactive-ralph` |
+| Debian / Ubuntu | download the matching `.deb`, then `sudo apt install ./radioactive-ralph_<version>_linux_<arch>.deb` |
+| Fedora / RHEL | download the matching `.rpm`, then `sudo dnf install ./radioactive-ralph_<version>_linux_<arch>.rpm` |
 | macOS / Linux curl installer | <code>curl -sSL https://jonbogaty.com/radioactive-ralph/install.sh | sh</code> |
 
-The stable install surface is Homebrew, Scoop, and the curl installer.
+The stable CLI install surface is the Homebrew CLI cask, Scoop, direct
+`.deb`/`.rpm` packages, and the curl installer. The stable GUI paths are the
+Homebrew GUI cask and Linux AppImage. Direct `.dmg` and `.exe` downloads are
+best-effort alternatives.
 
 ## The two modes
 
@@ -103,8 +108,8 @@ radioactive_ralph gui
 The desktop app is a graphical peer to the terminal UI on the same supervisor —
 same macro→meso→micro drill, but it can also **drive**: approve a task awaiting
 approval, pause/resume/abandon a plan, kill a worker, and import a plan from a
-window. Install it with `brew install --cask radioactive-ralph` (macOS), the
-Linux `.AppImage`, or the Windows `.exe` from the
+window. Install it with `brew install --cask radioactive-ralph-gui` (macOS),
+the Linux `.AppImage`, or the Windows `.exe` from the
 [releases page](https://github.com/jbcom/radioactive-ralph/releases/latest);
 double-clicking the installed app opens the GUI directly. It opens even before a
 supervisor is running and lights up when one appears.

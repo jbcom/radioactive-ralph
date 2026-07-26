@@ -7,17 +7,9 @@ permissions:
   contents: read
 
 jobs:
-  live-providers:
-    name: live provider smoke
+  live-claude:
+    name: live Claude provider smoke
     runs-on: ubuntu-latest
-    env:
-      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-      GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
-      CLAUDE_AUTHENTICATED: ${{ secrets.ANTHROPIC_API_KEY != '' && '1' || '0' }}
-      CODEX_AUTHENTICATED: '0'
-      GEMINI_AUTHENTICATED: ${{ (secrets.GEMINI_API_KEY != '' || secrets.GOOGLE_API_KEY != '') && '1' || '0' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
@@ -27,30 +19,66 @@ jobs:
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: '24'
-      - name: Verify live provider secrets
+      - name: Require Claude credential
         env:
           HAS_ANTHROPIC: ${{ secrets.ANTHROPIC_API_KEY != '' && '1' || '0' }}
+        run: |
+          [[ "$HAS_ANTHROPIC" == "1" ]] || {
+            echo "::error::ANTHROPIC_API_KEY is required for the live Claude gate"
+            exit 1
+          }
+      - name: Install Claude Code CLI
+        run: npm install -g @anthropic-ai/claude-code@2.1.220
+      - name: Smoke live Claude provider
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          CLAUDE_AUTHENTICATED: '1'
+        run: go test ./tests/integration -run 'TestLiveClaudeRoundTrip|TestLiveClaudeModelSanity|TestLiveClaudeRunnerTurn' -v
+
+  live-codex:
+    name: live Codex provider smoke
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24'
+      - name: Require Codex credential
+        env:
           HAS_OPENAI: ${{ secrets.OPENAI_API_KEY != '' && '1' || '0' }}
         run: |
-          missing=0
-          if [[ "$HAS_ANTHROPIC" != "1" ]]; then
-            echo "::error::ANTHROPIC_API_KEY is required for the stable provider gate"
-            missing=1
-          fi
-          if [[ "$HAS_OPENAI" != "1" ]]; then
-            echo "::error::OPENAI_API_KEY is required for the stable provider gate"
-            missing=1
-          fi
-          exit "$missing"
-      - name: Install Claude Code CLI
-        run: npm install -g @anthropic-ai/claude-code@latest
+          [[ "$HAS_OPENAI" == "1" ]] || {
+            echo "::error::OPENAI_API_KEY is required for the live Codex gate"
+            exit 1
+          }
       - name: Install Codex CLI
-        run: npm install -g @openai/codex@latest
-      - name: Authenticate Codex CLI
-        if: env.OPENAI_API_KEY != ''
+        run: npm install -g @openai/codex@0.145.0
+      - name: Authenticate isolated Codex CLI
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          CODEX_HOME: ${{ runner.temp }}/codex-home
         run: |
+          mkdir -p "$CODEX_HOME"
           printenv OPENAI_API_KEY | codex login --with-api-key
           codex login status
-          echo "CODEX_AUTHENTICATED=1" >> "$GITHUB_ENV"
-      - name: Smoke live providers
-        run: go test ./tests/integration -run 'TestLiveClaudeRoundTrip|TestLiveClaudeModelSanity|TestLiveClaudeRunnerTurn|TestLiveCodexRunnerTurn' -v
+      - name: Smoke live Codex provider
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          CODEX_AUTHENTICATED: '1'
+          CODEX_HOME: ${{ runner.temp }}/codex-home
+        run: go test ./tests/integration -run '^TestLiveCodexRunnerTurn$' -count=1 -v
+      - name: Destroy isolated Codex credentials
+        if: always()
+        env:
+          CODEX_HOME: ${{ runner.temp }}/codex-home
+        run: |
+          test "$CODEX_HOME" = "$RUNNER_TEMP/codex-home"
+          codex logout || true
+          if [[ -d "$CODEX_HOME" ]]; then
+            find "$CODEX_HOME" -type f -delete
+            find "$CODEX_HOME" -depth -type d -empty -delete
+          fi

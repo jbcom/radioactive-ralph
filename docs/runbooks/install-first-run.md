@@ -8,14 +8,14 @@ This is the canonical first-time flow. Use the package-manager path
 that matches your platform, then drop into the common post-install
 section.
 
-## 1a. Homebrew (macOS, Linux, WSL2 + Linuxbrew)
+## 1a. Homebrew cask (macOS)
 
 ```sh
 # Explicit URL form — the repo is named `pkgs`, not `homebrew-pkgs`,
 # so the convention-shortcut `brew tap jbcom/pkgs` alone doesn't
 # resolve. Pass the URL and brew taps it correctly.
 brew tap jbcom/pkgs https://github.com/jbcom/pkgs
-brew install radioactive-ralph
+brew install --cask radioactive-ralph
 radioactive_ralph --version
 ```
 
@@ -36,6 +36,23 @@ radioactive_ralph --version
 
 The installer writes to `/usr/local/bin` if writable, else
 `~/.local/bin`. On the latter, make sure `~/.local/bin` is on `$PATH`.
+
+## 1d. Native Linux package
+
+Download the package matching the machine architecture from the latest release,
+then use the platform package manager so installation is tracked normally:
+
+```sh
+# Debian / Ubuntu
+sudo apt install ./radioactive-ralph_<version>_linux_<amd64-or-arm64>.deb
+
+# Fedora / RHEL
+sudo dnf install ./radioactive-ralph_<version>_linux_<amd64-or-arm64>.rpm
+```
+
+```sh
+radioactive_ralph --version
+```
 
 ## 2. Verify your environment
 

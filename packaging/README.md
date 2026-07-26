@@ -6,8 +6,8 @@ Native packaging assets and notes. See the design spec at
 ## Layout
 
 - `linux/radioactive-ralph.desktop` — the freedesktop launcher entry for the
-  GUI (`Exec=radioactive_ralph gui`). Shipped in the AppImage and the `.deb`/
-  `.rpm` GUI packages; validated in CI with `desktop-file-validate`.
+  GUI (`Exec=radioactive_ralph gui`). Shipped in the AppImage and validated in
+  CI with `desktop-file-validate`; `.deb`/`.rpm` packages remain CLI-only.
 
 ## What is built where
 
@@ -15,10 +15,12 @@ Native packaging assets and notes. See the design spec at
 |---|---|---|---|
 | `.tar.gz`/`.zip` (CLI) | goreleaser archives | ubuntu | cosign (checksums) |
 | `.deb`/`.rpm` (CLI) | goreleaser nfpms | ubuntu | cosign (checksums) |
-| Homebrew / Scoop / Chocolatey / winget (CLI) | goreleaser publishers | ubuntu / windows | — (manifest) |
-| AppImage + `.desktop` (GUI) | `fyne package` + `appimagetool` (pinned+SHA-verified) | ubuntu (`-tags gui`, CGO) | unsigned by convention; per-bundle `.sha256` sidecar |
-| `.app` Homebrew cask (GUI) | `fyne package` + `codesign -s -` | macos (`-tags gui`, CGO) | ad-hoc (free); cask `postflight` strips quarantine — no Apple account |
-| `.exe` (GUI) | `fyne package` | windows (`-tags gui`, CGO) | optional SignPath OSS signing when the `SIGNPATH_*` secret is set (else unsigned) |
+| Homebrew cask `radioactive-ralph` / Scoop (CLI) | goreleaser publishers | ubuntu | — (manifest) |
+| winget manifests (generated only; not staged or submitted) | goreleaser generation | ubuntu | — (manifest) |
+| Chocolatey package (optional, only after immutable GitHub publication and outside the stable install-surface gate) | goreleaser publisher | windows | — (manifest) |
+| AppImage + `.desktop` (GUI) | `fyne package` v1.7.2 + `appimagetool` (pinned+SHA-verified) | ubuntu (`-tags gui`, CGO) | unsigned by convention; covered by signed consolidated `gui-checksums.txt` |
+| `.app` Homebrew cask `radioactive-ralph-gui` (GUI) | `fyne package` v1.7.2 + `codesign -s -` | macos (`-tags gui`, CGO) | ad-hoc (free); cask `postflight` strips quarantine — no Apple account |
+| `.exe` (GUI) | `fyne package` v1.7.2 | windows (`-tags gui`, CGO) | optional SignPath OSS signing when the `SIGNPATH_*` secret is set (else unsigned) |
 
 (The `.deb`/`.rpm` rows above are CLI-only — there is no GUI deb/rpm build; the
 GUI Linux delivery is the AppImage.)
@@ -36,17 +38,23 @@ Open source does not pay for code signing. Neither Apple nor Microsoft charges
 for the path we use:
 
 - **macOS** — the `.app` is **ad-hoc signed** (`codesign --sign -`, free) and
-  shipped as a **Homebrew cask**. Homebrew strips `com.apple.quarantine` on
-  install, so Gatekeeper allows it without notarization. No Apple Developer
-  Program membership. The direct-download `.dmg` is best-effort (it will show a
-  Gatekeeper prompt); the cask is the blessed install.
+  shipped as a **Homebrew cask**. The custom GUI cask's `postflight` explicitly
+  strips `com.apple.quarantine` after install, so Gatekeeper allows it without
+  notarization; Homebrew does not do this by default. No Apple Developer
+  Program membership. The direct-download `.dmg` is best-effort (it will show
+  a Gatekeeper prompt); the cask is the blessed install.
 - **Windows** — Authenticode signing is free through the
   [SignPath Foundation](https://signpath.io/solutions/open-source-community) OSS
   program (radioactive-ralph is MIT-licensed + public → qualifies). The only
   user action is a **one-time signup** and adding a `SIGNPATH_*` repo secret —
-  not a purchase. Until the secret exists the MSI ships unsigned; the signing
+  not a purchase. Until the secret exists the `.exe` ships unsigned; the signing
   step is gated on `secrets.SIGNPATH_* != ''` (same pattern as the Chocolatey
   job), so it turns on automatically once the token is added.
 
-Everything else (deb/rpm/AppImage checksums, all CLI package managers) is
-already automatic via the existing cosign-keyless + token flow.
+The GoReleaser CLI archives and deb/rpm packages are covered by the keyless
+Sigstore signature on `checksums.txt`. All GUI bundles share one consolidated
+`gui-checksums.txt` and workflow-identity Sigstore bundle. Homebrew and Scoop manifests are
+schema- and byte-checked against those verified release assets. winget is only
+generated in `dist/`, and Chocolatey remains an optional publisher that runs
+only after immutable GitHub publication, outside the stable install-surface
+gate.

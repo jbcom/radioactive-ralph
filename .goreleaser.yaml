@@ -83,12 +83,10 @@ checksum:
 
 signs:
   - cmd: cosign
-    signature: "${artifact}.cosign.sig"
-    certificate: "${artifact}.cosign.pem"
+    signature: "${artifact}.sigstore.json"
     args:
       - sign-blob
-      - "--output-signature=${signature}"
-      - "--output-certificate=${certificate}"
+      - "--bundle=${signature}"
       - "${artifact}"
       - "--yes"
     artifacts: checksum
@@ -114,20 +112,19 @@ changelog:
 #
 # goreleaser v2.17 removed the `brews` (formula) generator in favour of
 # `homebrew_casks`. Modern Homebrew casks carry CLI binaries via the `binary`
-# stanza, so the CLI ships as a cask (`brew install --cask radioactive-ralph`)
-# — the same install namespace as the GUI cask published from the release
-# workflow, just a different artifact.
+# stanza, so the CLI ships as a binary cask
+# (`brew install --cask radioactive-ralph`). The desktop app uses the distinct
+# `radioactive-ralph-gui` cask token; sharing this token would make the two
+# publishers race to overwrite the same file in jbcom/pkgs.
 homebrew_casks:
   - name: radioactive-ralph
     ids: [default]
+    skip_upload: true
     repository:
       owner: jbcom
       name: pkgs
       branch: "chore/update-radioactive-ralph-{{ .Version }}"
       token: "{{ .Env.JBCOM_PKGS_GITHUB_TOKEN }}"
-      # jbcom/pkgs main is governed by the enterprise Main ruleset which requires
-      # pull_request for all pushes. GoReleaser opens a PR from the version-named
-      # branch; jbcom/pkgs' automerge workflow takes it from there.
       pull_request:
         enabled: true
         base:
@@ -156,6 +153,7 @@ homebrew_casks:
 scoops:
   - name: radioactive-ralph
     ids: [default]
+    skip_upload: true
     repository:
       owner: jbcom
       name: pkgs
@@ -177,14 +175,13 @@ scoops:
       - "Write-Host '  radioactive_ralph --init'"
       - "Write-Host 'See https://jonbogaty.com/radioactive-ralph/getting-started/ for the full setup flow.'"
 
-# winget manifests (Windows Package Manager). Staged into jbcom/pkgs under
-# winget/ via PR, the same publish flow brews/scoops use; from there the
-# manifest is submitted to microsoft/winget-pkgs. The published CLI archive is
-# CGO-off and unsigned — winget does not require Authenticode for a zip-delivered
-# tool, so this is credential-free (Scope A of the packaging spec).
+# winget manifests (Windows Package Manager) are generated under dist only.
+# Upload is deliberately disabled: there is no tested staging or submission
+# path, so winget is not part of the supported public install surface.
 winget:
   - name: radioactive-ralph
     ids: [default]
+    skip_upload: true
     publisher: jbcom
     publisher_url: https://github.com/jbcom
     package_identifier: jbcom.radioactive-ralph
@@ -218,27 +215,27 @@ release:
   github:
     owner: jbcom
     name: radioactive-ralph
-  draft: false
+  # Release Please creates the tagged draft; every release job adds its
+  # artifacts to that draft. release.yml publishes it only after the required
+  # CLI, GUI, and package-manager jobs have all succeeded.
+  draft: true
+  use_existing_draft: true
+  replace_existing_artifacts: true
   prerelease: auto
   name_template: "v{{ .Version }}"
   footer: |
     ## Install
 
-    Homebrew (macOS / Linux / Linuxbrew):
+    Homebrew cask (macOS):
     ```
     brew tap jbcom/pkgs https://github.com/jbcom/pkgs
-    brew install radioactive-ralph
+    brew install --cask radioactive-ralph
     ```
 
     Scoop (Windows):
     ```
     scoop bucket add jbcom https://github.com/jbcom/pkgs
     scoop install radioactive-ralph
-    ```
-
-    Chocolatey (Windows):
-    ```
-    choco install radioactive-ralph
     ```
 
     curl | sh:

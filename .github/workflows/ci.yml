@@ -28,7 +28,7 @@ jobs:
         with:
           node-version: '24'
       - name: Install Claude Code CLI
-        run: npm install -g @anthropic-ai/claude-code@latest
+        run: npm install -g @anthropic-ai/claude-code@2.1.220
       - name: go mod download
         run: go mod download
       - name: go test (Unix)
@@ -281,7 +281,12 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p "$HOME/src/reference-codebases"
-          git clone --depth 1 https://github.com/zpqrtbnk/test-repo "$HOME/src/reference-codebases/test-repo"
+          fixture="$HOME/src/reference-codebases/test-repo"
+          git init -q "$fixture"
+          git -C "$fixture" remote add origin https://github.com/zpqrtbnk/test-repo
+          git -C "$fixture" fetch --depth 1 origin \
+            4b6d6bcb4819be4fe209e807726e83be12da3190
+          git -C "$fixture" checkout -q --detach FETCH_HEAD
       - name: E2E (real binary, pty-driven, fake provider CLI — no RALPH_E2E_LIVE)
         run: go test ./tests/e2e/... -v -timeout 5m
 
@@ -414,7 +419,7 @@ jobs:
           go-version-file: go.mod
       - uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
         with:
-          version: latest
+          version: v2.12.2
 
   workflow-lint:
     name: Workflow lint
@@ -425,7 +430,7 @@ jobs:
         with:
           go-version-file: go.mod
       - name: Install actionlint
-        run: go install github.com/rhysd/actionlint/cmd/actionlint@latest
+        run: go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
       - name: Lint workflows
         run: actionlint
 
@@ -439,7 +444,7 @@ jobs:
           go-version-file: go.mod
       - name: govulncheck
         run: |
-          go install golang.org/x/vuln/cmd/govulncheck@latest
+          go install golang.org/x/vuln/cmd/govulncheck@v1.6.0
           govulncheck ./...
 
   docs:
@@ -454,11 +459,88 @@ jobs:
         with:
           python-version: '3.12'
       - name: Install gomarkdoc
-        run: go install github.com/princjef/gomarkdoc/cmd/gomarkdoc@latest
+        run: go install github.com/princjef/gomarkdoc/cmd/gomarkdoc@v1.1.0
       - name: Install tox
-        run: python -m pip install --upgrade pip tox
+        run: python -m pip install --disable-pip-version-check "tox==4.53.0"
       - name: Build docs
         run: tox -e docs
+
+  package-artifacts:
+    name: Package artifacts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
+        with:
+          distribution: goreleaser
+          version: v2.17.0
+          args: release --snapshot --clean --skip=publish,sign
+      - name: Smoke snapshot archives, native packages, and installer
+        run: bash scripts/ci/smoke_goreleaser_artifacts.sh
+
+  package-artifacts-arm64:
+    name: Package artifacts (arm64)
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
+        with:
+          distribution: goreleaser
+          version: v2.17.0
+          args: release --snapshot --clean --skip=publish,sign
+      - name: Smoke native arm64 archives, packages, and installer
+        run: bash scripts/ci/smoke_goreleaser_artifacts.sh
+
+  package-gui:
+    name: Package GUI (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: linux
+            arch: x86_64
+          - os: macos-latest
+            target: darwin
+            arch: arm64
+          - os: macos-15-intel
+            target: darwin
+            arch: amd64
+          - os: windows-latest
+            target: windows
+            arch: amd64
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: Install Linux GUI dev headers
+        if: matrix.target == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libgl1-mesa-dev xorg-dev libxkbcommon-dev \
+            libwayland-dev wayland-protocols
+      - name: Install pinned Fyne CLI
+        run: go install fyne.io/tools/cmd/fyne@v1.7.2
+      - name: Build and smoke exact native GUI package
+        shell: bash
+        run: |
+          VERSION="$(jq -er '."."' .release-please-manifest.json)"
+          bash scripts/ci/build_gui_package.sh "$VERSION" "${{ matrix.target }}"
+          bash scripts/ci/finalize_gui_bundle.sh \
+            "$VERSION" "${{ matrix.target }}" "${{ matrix.arch }}"
 
   packaging:
     name: Packaging lint
@@ -473,13 +555,52 @@ jobs:
       - uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
         with:
           distribution: goreleaser
-          version: "~> v2"
+          version: v2.17.0
           args: check
       - name: Install shellcheck + desktop-file-utils
         run: |
           sudo apt-get update
           sudo apt-get install -y shellcheck desktop-file-utils
       - name: Shellcheck packaging + install scripts
-        run: shellcheck packaging/linux/build-appimage.sh packaging/macos/publish-cask.sh docs/install.sh scripts/verify-docs-artifact.sh
+        run: |
+          shellcheck \
+            packaging/linux/build-appimage.sh \
+            packaging/publish-cli-manifests.sh \
+            packaging/macos/push-version-branch.sh \
+            docs/install.sh \
+            scripts/ci/test_install_signature_policy.sh \
+            scripts/verify-docs-artifact.sh \
+            scripts/ci/wait_for_package_publication.sh \
+            scripts/ci/test_wait_for_package_publication.sh \
+            scripts/ci/test_publish_cli_manifests.sh \
+            scripts/ci/build_gui_package.sh \
+            scripts/ci/finalize_gui_bundle.sh \
+            scripts/ci/smoke_goreleaser_artifacts.sh \
+            scripts/ci/test_smoke_goreleaser_artifacts.sh \
+            scripts/ci/rollback_package_manifests.sh \
+            scripts/ci/test_rollback_package_manifests.sh \
+            scripts/ci/rewrite_homebrew_cask_url.sh \
+            scripts/ci/test_rewrite_homebrew_cask_url.sh \
+            scripts/ci/verify_release_assets.sh \
+            scripts/ci/test_verify_release_assets.sh \
+            scripts/ci/prepare_package_rollback_provenance.sh \
+            scripts/ci/test_prepare_package_rollback_provenance.sh \
+            scripts/ci/prepare_package_manifests_bundle.sh \
+            scripts/ci/test_prepare_package_manifests_bundle.sh \
+            scripts/ci/prepare_release_seal.sh \
+            scripts/ci/test_push_version_branch.sh
+      - name: Test package publication gate
+        run: |
+          bash scripts/ci/test_wait_for_package_publication.sh
+          bash scripts/ci/test_publish_cli_manifests.sh
+          bash scripts/ci/test_prepare_package_manifests_bundle.sh
+          bash scripts/ci/test_verify_release_assets.sh
+          bash scripts/ci/test_rollback_package_manifests.sh
+          bash scripts/ci/test_rewrite_homebrew_cask_url.sh
+          bash scripts/ci/test_push_version_branch.sh
+          bash scripts/ci/test_smoke_goreleaser_artifacts.sh
+          bash scripts/ci/test_install_signature_policy.sh
+          bash scripts/ci/test_prepare_package_rollback_provenance.sh
+          python3 scripts/ci/test_premerge_scoop_server_contract.py
       - name: Validate the .desktop launcher
         run: desktop-file-validate packaging/linux/radioactive-ralph.desktop

@@ -70,12 +70,12 @@ chocolateys:
     package_source_url: https://github.com/jbcom/pkgs
     docs_url: https://github.com/jbcom/radioactive-ralph#readme
     bug_tracker_url: https://github.com/jbcom/radioactive-ralph/issues
-    summary: Binary-first repo runtime with many Ralph personalities
+    summary: Supervised-execution runtime for local AI-agent CLIs
     description: |
-      Radioactive Ralph is a binary-first repo runtime for AI-assisted
-      development. It keeps a durable SQLite plan DAG, runs a
-      repo-scoped service, and lets operators choose from ten built-in
-      Ralph personas.
+      Radioactive Ralph supervises local Claude, Codex, and OpenCode workers
+      against a durable SQLite plan DAG. One per-user supervisor coordinates
+      registered projects with explicit approvals, budgets, and operator
+      controls; there are no persona variants.
     tags: "ai runtime automation cli development"
     release_notes: "https://github.com/jbcom/radioactive-ralph/releases/tag/v{{ .Version }}"
     api_key: "{{ .Env.CHOCOLATEY_API_KEY }}"

@@ -4,6 +4,8 @@
 # Usage:
 #   curl -sSL https://jonbogaty.com/radioactive-ralph/install.sh | sh
 #   curl -sSL https://jonbogaty.com/radioactive-ralph/install.sh | sh -s -- --version v0.7.0
+#   curl -sSL https://jonbogaty.com/radioactive-ralph/install.sh |
+#     RADIOACTIVE_RALPH_REQUIRE_SIGNATURE=1 sh
 #
 # Downloads the appropriate GitHub release archive, verifies the
 # checksum, extracts radioactive_ralph into $INSTALL_DIR (default
@@ -16,10 +18,23 @@ REPO="jbcom/radioactive-ralph"
 BIN="radioactive_ralph"
 VERSION="latest"
 INSTALL_DIR=""
+# CI can point the installer at an authenticated/local mirror containing the
+# exact GitHub release directory shape. Normal users retain the fixed GitHub
+# origin.
+RELEASE_BASE_URL=${RADIOACTIVE_RALPH_RELEASE_BASE_URL:-"https://github.com/$REPO/releases/download"}
+REQUIRE_SIGNATURE=${RADIOACTIVE_RALPH_REQUIRE_SIGNATURE:-0}
+case "$REQUIRE_SIGNATURE" in
+  0|1) ;;
+  *)
+    echo "install.sh: RADIOACTIVE_RALPH_REQUIRE_SIGNATURE must be 0 or 1" >&2
+    exit 2 ;;
+esac
 
 usage() {
   cat <<'EOF'
 Usage: install.sh [--version VERSION] [--install-dir DIR]
+
+Set RADIOACTIVE_RALPH_REQUIRE_SIGNATURE=1 to require cosign verification.
 EOF
 }
 
@@ -54,7 +69,7 @@ uname_os() {
     darwin) echo darwin ;;
     linux)  echo linux ;;
     msys*|mingw*|cygwin*)
-      echo "install.sh: Windows detected; use Scoop or Chocolatey instead" >&2
+      echo "install.sh: Windows detected; use Scoop instead" >&2
       exit 1 ;;
     *)
       echo "install.sh: unsupported OS: $os" >&2; exit 1 ;;
@@ -125,8 +140,9 @@ TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
 
 ARCHIVE="${BIN}_${VERSION_NO_V}_${OS}_${ARCH}.tar.gz"
-URL="https://github.com/$REPO/releases/download/$VERSION/$ARCHIVE"
-CHECKSUMS_URL="https://github.com/$REPO/releases/download/$VERSION/checksums.txt"
+URL="$RELEASE_BASE_URL/$VERSION/$ARCHIVE"
+CHECKSUMS_URL="$RELEASE_BASE_URL/$VERSION/checksums.txt"
+SIGSTORE_URL="$RELEASE_BASE_URL/$VERSION/checksums.txt.sigstore.json"
 
 echo "Downloading $ARCHIVE..."
 curl -sSL -o "$TMP/$ARCHIVE" "$URL" || {
@@ -137,6 +153,28 @@ echo "Verifying checksum..."
 curl -sSL -o "$TMP/checksums.txt" "$CHECKSUMS_URL" || {
   echo "install.sh: checksum download failed: $CHECKSUMS_URL" >&2; exit 1
 }
+
+if command -v cosign >/dev/null 2>&1; then
+  echo "Verifying signed checksum manifest..."
+  curl -sSL -o "$TMP/checksums.txt.sigstore.json" "$SIGSTORE_URL" || {
+    echo "install.sh: Sigstore bundle download failed: $SIGSTORE_URL" >&2
+    exit 1
+  }
+  cosign verify-blob "$TMP/checksums.txt" \
+    --bundle "$TMP/checksums.txt.sigstore.json" \
+    --certificate-identity \
+      "https://github.com/$REPO/.github/workflows/release.yml@refs/tags/$VERSION" \
+    --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+    >/dev/null || {
+      echo "install.sh: signed checksum verification failed" >&2
+      exit 1
+    }
+elif [ "$REQUIRE_SIGNATURE" = "1" ]; then
+  echo "install.sh: cosign is required when RADIOACTIVE_RALPH_REQUIRE_SIGNATURE=1" >&2
+  exit 1
+else
+  echo "install.sh: cosign not found; falling back to the release's SHA-256 manifest" >&2
+fi
 
 ( cd "$TMP" && grep "  $ARCHIVE\$" checksums.txt | checksum_check ) || {
   echo "install.sh: checksum verification failed" >&2; exit 1

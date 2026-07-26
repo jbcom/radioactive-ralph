@@ -70,7 +70,7 @@ func newRootCmd(ctx context.Context) *cobra.Command {
 
 	root := &cobra.Command{
 		Use:     "radioactive_ralph",
-		Short:   "Repo-scoped runtime for AI-assisted software work",
+		Short:   "User-level supervised-execution runtime for local AI-agent CLIs",
 		Version: fmt.Sprintf("%s (%s, built %s)", Version, Commit, Date),
 		// SilenceUsage: operational errors (no supervisor running, project
 		// not initialized, etc.) are expected-path outcomes, not usage
