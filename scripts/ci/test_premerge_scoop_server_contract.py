@@ -33,6 +33,8 @@ require("$originalAssetUrl -ne $expectedAssetUrl")
 require("$cachedAssetHash -ne $originalAssetHash")
 require("$rewrittenManifest.architecture.'64bit'.hash -ne $originalAssetHash")
 require("$credentialNames = @('GH_TOKEN', 'PKGS_GH_TOKEN', 'RELEASE_GH_TOKEN')")
+require('throw "$credentialName remained before credential-free Scoop execution"')
+require('throw "$credentialName appeared before credential-free Scoop execution"')
 require("Start-Process -FilePath python")
 require("'--bind', '127.0.0.1'")
 require("$response = Invoke-WebRequest -UseBasicParsing -Method Head")
@@ -53,9 +55,11 @@ require_order(
 )
 require_order(
     "Remove-Item \"Env:$credentialName\"",
+    'throw "$credentialName remained before credential-free Scoop execution"',
     "Start-Process -FilePath python",
     "for ($attempt = 1; $attempt -le 20; $attempt++)",
     "if (-not $ready)",
+    'throw "$credentialName appeared before credential-free Scoop execution"',
     "scoop install",
     "} finally {",
     "Stop-Process -InputObject $server -Force",

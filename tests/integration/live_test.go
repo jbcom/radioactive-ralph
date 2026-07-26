@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"strings"
 	"testing"
@@ -12,6 +13,50 @@ import (
 	"github.com/jbcom/radioactive-ralph/internal/provider"
 	claudesession "github.com/jbcom/radioactive-ralph/internal/provider/claudesession"
 )
+
+func validateLiveCodexOK(output string) error {
+	var payload map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(output), &payload); err != nil {
+		return fmt.Errorf("decode JSON: %w", err)
+	}
+	okJSON, exists := payload["ok"]
+	if !exists || len(payload) != 1 {
+		return fmt.Errorf("object must contain exactly the ok property")
+	}
+	var ok bool
+	if err := json.Unmarshal(okJSON, &ok); err != nil {
+		return fmt.Errorf("decode ok boolean: %w", err)
+	}
+	if !ok {
+		return fmt.Errorf("ok must be true")
+	}
+	return nil
+}
+
+func TestLiveCodexOutputContract(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		output string
+		valid  bool
+	}{
+		{name: "exact", output: `{"ok":true}`, valid: true},
+		{name: "extra property", output: `{"ok":true,"unexpected":true}`},
+		{name: "missing property", output: `{}`},
+		{name: "false", output: `{"ok":false}`},
+		{name: "wrong type", output: `{"ok":"true"}`},
+		{name: "not object", output: `[{"ok":true}]`},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			err := validateLiveCodexOK(test.output)
+			if test.valid && err != nil {
+				t.Fatalf("validateLiveCodexOK(%s): %v", test.output, err)
+			}
+			if !test.valid && err == nil {
+				t.Fatalf("validateLiveCodexOK(%s) unexpectedly succeeded", test.output)
+			}
+		})
+	}
+}
 
 // TestLiveClaudeRoundTrip drives a real `claude -p` subprocess via the
 // session wrapper: sends a deterministic prompt, collects the
@@ -209,15 +254,8 @@ func TestLiveCodexRunnerTurn(t *testing.T) {
 		t.Fatalf("CodexRunner.Run: %v", err)
 	}
 
-	var payload struct {
-		OK bool `json:"ok"`
-	}
-	if err := json.Unmarshal([]byte(result.AssistantOutput), &payload); err != nil {
-		t.Fatalf("CodexRunner assistant output is not the required JSON: %v\n%s",
+	if err := validateLiveCodexOK(result.AssistantOutput); err != nil {
+		t.Fatalf("CodexRunner assistant output violates the required schema: %v\n%s",
 			err, result.AssistantOutput)
-	}
-	if !payload.OK {
-		t.Fatalf("CodexRunner assistant output = %s, want ok=true",
-			result.AssistantOutput)
 	}
 }
