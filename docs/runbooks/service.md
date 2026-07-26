@@ -82,8 +82,16 @@ root/current-user ownership, privileged `wheel`/`admin` group metadata, and
 trusted fixed ancestry are intact. These narrow exceptions permit Homebrew's
 normal group-writable bin directory without weakening unrelated inferred
 entries. This is required because launchd's default path omits Homebrew and
-`~/.local` agent CLIs. An explicit `--env PATH=...` is an operator-controlled
-override and is not filtered:
+`~/.local` agent CLIs. Architecture here means the physical host: an `amd64`
+Ralph process translated by Rosetta uses Apple's `sysctl.proc_translated`
+signal and selects `/opt/homebrew/bin`. If that signal cannot be read, Ralph
+keeps the process architecture and does not grant the Apple Silicon exception.
+The `/opt/homebrew/bin` leaf may be owned by root or the effective user, but
+must retain the trusted `admin` group and must not be world-writable. The
+dedicated service-manager smoke pins `macos-15` for ARM and
+`macos-15-intel` for Intel so a floating runner image cannot silently change
+this architecture contract. An explicit `--env PATH=...` is an
+operator-controlled override and is not filtered:
 
 ```sh
 radioactive_ralph service install \

@@ -2,7 +2,11 @@
 
 package main
 
-import "runtime"
+import (
+	"runtime"
+
+	"golang.org/x/sys/unix"
+)
 
 const (
 	darwinArmHomebrewBin   = "/opt/homebrew/bin"
@@ -17,10 +21,33 @@ func platformInferredServicePathAllowed(
 ) bool {
 	return darwinHomebrewPathAllowed(
 		candidate,
-		runtime.GOARCH,
+		currentDarwinHostArchitecture(),
 		effectiveUID,
 		readServicePathMetadata,
 	)
+}
+
+func currentDarwinHostArchitecture() string {
+	return darwinHostArchitecture(
+		runtime.GOARCH,
+		func() (uint32, error) {
+			return unix.SysctlUint32("sysctl.proc_translated")
+		},
+	)
+}
+
+func darwinHostArchitecture(
+	processArchitecture string,
+	processTranslated func() (uint32, error),
+) string {
+	if processArchitecture != "amd64" {
+		return processArchitecture
+	}
+	translated, err := processTranslated()
+	if err == nil && translated == 1 {
+		return "arm64"
+	}
+	return processArchitecture
 }
 
 func darwinHomebrewPathAllowed(
@@ -71,7 +98,7 @@ func darwinArmHomebrewPathAllowed(
 	return ok &&
 		bin.directory &&
 		!bin.symlink &&
-		bin.uid == effectiveUID &&
+		(bin.uid == 0 || bin.uid == effectiveUID) &&
 		bin.gid == darwinAdminGroup &&
 		bin.mode.Perm()&0o002 == 0
 }

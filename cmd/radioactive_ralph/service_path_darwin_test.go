@@ -4,10 +4,67 @@ package main
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
-	"runtime"
 	"testing"
 )
+
+func TestDarwinHostArchitecture(t *testing.T) {
+	errUnavailable := errors.New("sysctl unavailable")
+	tests := []struct {
+		name                string
+		processArchitecture string
+		translated          uint32
+		translatedErr       error
+		want                string
+		wantCalls           int
+	}{
+		{
+			name:                "native Apple Silicon",
+			processArchitecture: "arm64",
+			want:                "arm64",
+		},
+		{
+			name:                "Intel process translated on Apple Silicon",
+			processArchitecture: "amd64",
+			translated:          1,
+			want:                "arm64",
+			wantCalls:           1,
+		},
+		{
+			name:                "native Intel",
+			processArchitecture: "amd64",
+			want:                "amd64",
+			wantCalls:           1,
+		},
+		{
+			name:                "translation state unavailable",
+			processArchitecture: "amd64",
+			translatedErr:       errUnavailable,
+			want:                "amd64",
+			wantCalls:           1,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			calls := 0
+			got := darwinHostArchitecture(
+				tt.processArchitecture,
+				func() (uint32, error) {
+					calls++
+					return tt.translated, tt.translatedErr
+				},
+			)
+			if got != tt.want {
+				t.Fatalf("darwinHostArchitecture() = %q, want %q", got, tt.want)
+			}
+			if calls != tt.wantCalls {
+				t.Fatalf("translated lookup calls = %d, want %d", calls, tt.wantCalls)
+			}
+		})
+	}
+}
 
 func TestDarwinHomebrewPathAllowed(t *testing.T) {
 	const effectiveUID = 501
@@ -64,6 +121,19 @@ func TestDarwinHomebrewPathAllowed(t *testing.T) {
 			name:      "exact trusted Homebrew bin",
 			candidate: darwinArmHomebrewBin,
 			want:      true,
+		},
+		{
+			name:      "root-owned trusted Homebrew bin",
+			candidate: darwinArmHomebrewBin,
+			overrides: map[string]servicePathMetadata{
+				darwinArmHomebrewBin: {
+					mode:      0o775,
+					uid:       0,
+					gid:       darwinAdminGroup,
+					directory: true,
+				},
+			},
+			want: true,
 		},
 		{
 			name:      "different candidate cannot use exception",
@@ -332,7 +402,7 @@ func TestDarwinIntelHomebrewPathAllowed(t *testing.T) {
 
 func TestServiceExecutionPathIncludesTrustedDarwinHomebrewBin(t *testing.T) {
 	candidate := darwinArmHomebrewBin
-	if runtime.GOARCH == "amd64" {
+	if currentDarwinHostArchitecture() == "amd64" {
 		candidate = darwinIntelHomebrewBin
 	}
 	if !servicePathDirAllowed(candidate) {
@@ -349,7 +419,7 @@ func TestServiceExecutionPathIncludesTrustedDarwinHomebrewBin(t *testing.T) {
 
 func TestServiceInstallPersistsTrustedDarwinHomebrewBin(t *testing.T) {
 	candidate := darwinArmHomebrewBin
-	if runtime.GOARCH == "amd64" {
+	if currentDarwinHostArchitecture() == "amd64" {
 		candidate = darwinIntelHomebrewBin
 	}
 	if !servicePathDirAllowed(candidate) {
