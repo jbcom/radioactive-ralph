@@ -54,7 +54,7 @@ func humanizeUptime(d time.Duration) string {
 }
 
 // render swaps the center content to the view for the snapshot's drill level.
-// Called only inside fyne.Do (main thread).
+// Called only inside the UI paint dispatcher (main thread).
 func (u *ui) render(s snapshot) {
 	u.body.Objects = nil
 	u.firstFocusable = nil
@@ -114,7 +114,7 @@ func (u *ui) drillTo(plan, task string) {
 		u.refreshNow()
 		return
 	}
-	go u.refreshNow()
+	u.goAsync(u.refreshNow)
 }
 
 // drillBack navigates up one level (micro→meso→macro), the keyboard (Escape)
@@ -138,7 +138,7 @@ func (u *ui) drillBack() {
 		u.refreshNow()
 		return
 	}
-	go u.refreshNow()
+	u.goAsync(u.refreshNow)
 }
 
 // statusChip is a small coloured label rendering a status in its Ralph identity
@@ -298,7 +298,7 @@ func (u *ui) drive(label string, fn func() error) {
 		work() // tests: run inline so the recorded drive call is immediately visible
 		return
 	}
-	go work()
+	u.goAsync(work)
 }
 
 // confirmDrive gates a drive behind a modal yes/no confirmation — for the

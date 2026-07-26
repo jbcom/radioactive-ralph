@@ -7,12 +7,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/app"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/driver/desktop"
+	"fyne.io/fyne/v2/lang"
 	"fyne.io/fyne/v2/widget"
 	"github.com/jbcom/radioactive-ralph/internal/ipc"
 	"github.com/jbcom/radioactive-ralph/internal/orch"
@@ -31,6 +33,216 @@ type Opts struct {
 	// fyneApp overrides app.New() — the headless test driver passes test.NewApp()
 	// here so view/launch tests run with no display. Nil = real desktop app.
 	fyneApp fyne.App
+
+	// painted is a test-only completion signal for a fully-rendered frame.
+	painted chan<- struct{}
+
+	// paintPump, startPaintPump, runWindow, quitApp, showWindow, and localize are
+	// test-only seams for exercising the real-driver lifecycle without a native
+	// window.
+	paintPump      *paintPump
+	startPaintPump func(func()) func()
+	runWindow      func(fyne.Window)
+	quitApp        func()
+	showWindow     func()
+	localize       func(string) string
+	quitRequested  chan<- struct{}
+	openRequested  chan<- struct{}
+}
+
+// lifecycleGroup owns every asynchronous operation launched by a ui. Close
+// atomically stops new admission before cancellation and Wait, avoiding the
+// WaitGroup Add/Wait race while guaranteeing no refresh/drive goroutine can
+// escape Run.
+type lifecycleGroup struct {
+	mu      sync.Mutex
+	closed  bool
+	running sync.WaitGroup
+}
+
+func (g *lifecycleGroup) Go(fn func()) bool {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.closed {
+		return false
+	}
+	g.running.Add(1)
+	go func() {
+		defer g.running.Done()
+		fn()
+	}()
+	return true
+}
+
+func (g *lifecycleGroup) Close() {
+	g.mu.Lock()
+	g.closed = true
+	g.mu.Unlock()
+}
+
+func (g *lifecycleGroup) Wait() {
+	g.running.Wait()
+}
+
+// paintRequest is handed off by a background gather and consumed exclusively
+// by the live Fyne run loop through paintPump.Tick.
+type paintRequest struct {
+	paint func()
+	done  chan bool
+}
+
+// paintPump is the production UI-thread boundary. Background goroutines enqueue
+// completed snapshots and wait for their acknowledgement; they never call
+// fyne.Do or fyne.DoAndWait. A forever Fyne animation invokes Tick from the
+// driver's main loop. When a native/direct driver quit stops that loop, no
+// callback can fall through to Fyne's post-drain "execute inline" behavior:
+// ShowAndRun returns, uiCtx is cancelled, and blocked Dispatch calls exit.
+type paintPump struct {
+	queue   chan paintRequest
+	queued  chan<- struct{} // test-only observation hook
+	stopped atomic.Bool
+}
+
+func newPaintPump(queued chan<- struct{}) *paintPump {
+	return &paintPump{queue: make(chan paintRequest, 64), queued: queued}
+}
+
+func (p *paintPump) Dispatch(ctx context.Context, paint func()) bool {
+	if p.stopped.Load() {
+		return false
+	}
+	req := paintRequest{paint: paint, done: make(chan bool, 1)}
+	select {
+	case p.queue <- req:
+		if p.queued != nil {
+			select {
+			case p.queued <- struct{}{}:
+			default:
+			}
+		}
+	case <-ctx.Done():
+		return false
+	}
+
+	select {
+	case painted := <-req.done:
+		return painted
+	case <-ctx.Done():
+		return false
+	}
+}
+
+// Tick must only be called by Fyne's live run loop. It drains all snapshots
+// currently ready so bursts of lifecycle events coalesce into one display
+// frame instead of lagging behind the animation cadence.
+func (p *paintPump) Tick() {
+	for {
+		select {
+		case req := <-p.queue:
+			painted := false
+			if !p.stopped.Load() {
+				req.paint()
+				painted = true
+			}
+			req.done <- painted
+		default:
+			return
+		}
+	}
+}
+
+// Stop prevents all later ticks from executing callbacks and acknowledges work
+// already queued. Dispatch callers racing Stop are also released by uiCtx
+// cancellation in beginShutdown.
+func (p *paintPump) Stop() {
+	if p.stopped.Swap(true) {
+		return
+	}
+	for {
+		select {
+		case req := <-p.queue:
+			req.done <- false
+		default:
+			return
+		}
+	}
+}
+
+type uiRequest uint32
+
+const uiRequestNone uiRequest = 0
+
+const (
+	uiRequestOpen uiRequest = 1 << iota
+	uiRequestQuit
+	uiRequestQuitStarted
+	uiRequestReturned
+)
+
+const uiRequestTerminal = uiRequestQuitStarted | uiRequestReturned
+
+// uiRequests is the lock-free boundary between callbacks that may execute
+// after Fyne's native driver has drained and the still-live animation callback.
+// Publishers only set bits. claim atomically chooses one request for the UI
+// loop; quit wins whenever open and quit are in the same snapshot.
+type uiRequests struct {
+	state atomic.Uint32
+}
+
+func (r *uiRequests) publish(request uiRequest) bool {
+	for {
+		state := uiRequest(r.state.Load())
+		if state&uiRequestTerminal != 0 {
+			return false
+		}
+		if request == uiRequestOpen && state&uiRequestQuit != 0 {
+			return false
+		}
+		if state&request != 0 {
+			return false
+		}
+		if r.state.CompareAndSwap(uint32(state), uint32(state|request)) {
+			return true
+		}
+	}
+}
+
+func (r *uiRequests) claim() uiRequest {
+	for {
+		state := uiRequest(r.state.Load())
+		if state&uiRequestTerminal != 0 {
+			return uiRequestNone
+		}
+		if state&uiRequestQuit != 0 {
+			next := (state &^ (uiRequestOpen | uiRequestQuit)) | uiRequestQuitStarted
+			if r.state.CompareAndSwap(uint32(state), uint32(next)) {
+				return uiRequestQuit
+			}
+			continue
+		}
+		if state&uiRequestOpen != 0 {
+			if r.state.CompareAndSwap(uint32(state), uint32(state&^uiRequestOpen)) {
+				return uiRequestOpen
+			}
+			continue
+		}
+		return uiRequestNone
+	}
+}
+
+// retire atomically discards every unconsumed request when ShowAndRun returns.
+// Later systray callbacks are harmless no-ops even if Fyne invokes them inline
+// from its already-drained callback queue.
+func (r *uiRequests) retire() {
+	for {
+		state := uiRequest(r.state.Load())
+		if state&uiRequestTerminal != 0 {
+			return
+		}
+		if r.state.CompareAndSwap(uint32(state), uint32(uiRequestReturned)) {
+			return
+		}
+	}
 }
 
 // Run builds and runs the Ralph desktop client: a system-tray entry plus a main
@@ -42,20 +254,142 @@ func Run(ctx context.Context, o Opts) error {
 		return fmt.Errorf("gui: Controller required")
 	}
 
+	parentCtx := ctx
 	a := o.fyneApp
 	if a == nil {
 		a = app.NewWithID("com.jonbogaty.radioactive-ralph")
 	}
 	a.Settings().SetTheme(ralphTheme{})
 
-	ctx, cancel := context.WithCancel(ctx)
-	defer cancel()
+	// Keep parent cancellation out of uiCtx until the live UI loop consumes the
+	// request (or ShowAndRun returns naturally). This preserves the ordered
+	// shutdown boundary: close admission, stop/drain the paint pump, then cancel
+	// in-flight UI work. Values still flow through WithoutCancel.
+	uiCtx, cancelUI := context.WithCancel(context.WithoutCancel(parentCtx))
+	var background lifecycleGroup
+	var activePaintPump *paintPump
+	var shutdownOnce sync.Once
+	beginShutdown := func() {
+		shutdownOnce.Do(func() {
+			background.Close()
+			if activePaintPump != nil {
+				activePaintPump.Stop()
+			}
+			cancelUI()
+		})
+	}
+	defer func() {
+		// A late headless-test paint can otherwise overlap the next Fyne app's
+		// process-global text shaper. Stop new work, cancel in-flight I/O, and
+		// join every UI goroutine before returning so neither test nor production
+		// shutdown leaves a stale refresh touching a closed window.
+		beginShutdown()
+		background.Wait()
+	}()
 
 	w := a.NewWindow("radioactive-ralph")
 	w.Resize(fyne.NewSize(920, 640))
 
-	ui := newUI(ctx, o.Controller, o.ProjectID, w)
+	ui := newUI(uiCtx, o.Controller, o.ProjectID, w)
+	ui.startAsync = background.Go
+	ui.painted = o.painted
 	w.SetContent(ui.root)
+
+	// A supplied runWindow is the deterministic test seam for this real-driver
+	// path. Ordinary headless tests retain the simpler show-and-wait path below.
+	realDriverLifecycle := o.fyneApp == nil || o.runWindow != nil
+	var pump *paintPump
+	if realDriverLifecycle {
+		pump = o.paintPump
+		if pump == nil {
+			pump = newPaintPump(nil)
+		}
+		activePaintPump = pump
+		ui.paintDispatch = pump.Dispatch
+	}
+
+	quitApp := a.Quit
+	if o.quitApp != nil {
+		quitApp = o.quitApp
+	}
+	showWindow := w.Show
+	if o.showWindow != nil {
+		showWindow = o.showWindow
+	}
+	var requests uiRequests
+
+	// publishQuit is shared by caller cancellation and the tray. Both sources
+	// can run after Fyne's driver has drained, so this function only closes
+	// Ralph-owned background admission and atomically publishes a request.
+	publishQuit := func() {
+		if !requests.publish(uiRequestQuit) {
+			return
+		}
+		background.Close()
+		if o.quitRequested != nil {
+			select {
+			case o.quitRequested <- struct{}{}:
+			default:
+			}
+		}
+	}
+
+	// publishOpen is also safe after driver drain: it only sets a coalescing bit.
+	// If quit is already pending or shutdown has started, the open is rejected.
+	publishOpen := func() {
+		if !requests.publish(uiRequestOpen) {
+			return
+		}
+		if o.openRequested != nil {
+			select {
+			case o.openRequested <- struct{}{}:
+			default:
+			}
+		}
+	}
+
+	// consumeRequest is the sole App.Quit and Window.Show call site. claim is
+	// the linearization point: a quit present in the same atomic snapshot always
+	// discards open; a later quit is consumed by the post-paint check in this
+	// same frame.
+	consumeRequest := func() bool {
+		switch requests.claim() {
+		case uiRequestQuit:
+			beginShutdown()
+			ui.quiescePaint()
+			quitApp()
+			return true
+		case uiRequestOpen:
+			showWindow()
+		}
+		return false
+	}
+
+	// The animation callback is the only request consumer. Check on both sides
+	// of Tick so a request arriving during a paint is bounded to the same frame.
+	runLoopTick := func() {
+		if consumeRequest() {
+			return
+		}
+		pump.Tick()
+		consumeRequest()
+	}
+
+	if realDriverLifecycle {
+		var stopPaintPump func()
+		if o.startPaintPump != nil {
+			stopPaintPump = o.startPaintPump(runLoopTick)
+		} else {
+			animation := fyne.NewAnimation(time.Second, func(float32) { runLoopTick() })
+			animation.RepeatCount = fyne.AnimationRepeatForever
+			animation.Start()
+			stopPaintPump = animation.Stop
+		}
+		if stopPaintPump == nil {
+			stopPaintPump = func() {}
+		}
+		defer stopPaintPump()
+	}
 
 	// Keyboard navigation (a11y + parity with the TUI, which is fully keyboard-
 	// driven): Escape drills back one level (micro→meso→macro), the mouse-free
@@ -81,12 +415,21 @@ func Run(ctx context.Context, o Opts) error {
 	// System tray (where the desktop driver supports it): a compact way to
 	// raise the window and quit. Degrades to just the window otherwise.
 	if desk, ok := a.(desktop.App); ok {
+		localize := func(label string) string { return lang.L(label) }
+		if o.localize != nil {
+			localize = o.localize
+		}
+		quitItem := fyne.NewMenuItem(localize("Quit"), publishQuit)
+		// Fyne appends its own direct Driver.Quit item unless the supplied menu
+		// explicitly identifies a quit item. Comparing an English label is not
+		// sufficient under non-English locales.
+		quitItem.IsQuit = true
 		menu := fyne.NewMenu("radioactive-ralph",
-			fyne.NewMenuItem("Open Ralph", func() { w.Show() }),
+			fyne.NewMenuItem("Open Ralph", publishOpen),
 			// Once the window is hidden to the tray, the menu is the only GUI
 			// affordance left — it MUST offer a way to quit, or the app can only
 			// be killed from a terminal.
-			fyne.NewMenuItem("Quit", func() { a.Quit() }),
+			quitItem,
 		)
 		desk.SetSystemTrayMenu(menu)
 		// Closing the window hides to tray rather than quitting, so the ambient
@@ -96,17 +439,28 @@ func Run(ctx context.Context, o Opts) error {
 
 	// Drive the periodic refresh and the live event subscription on their own
 	// goroutines; both end when ctx is cancelled (window close / app stop).
-	go ui.runRefresh(ctx)
-	go ui.runAttach(ctx)
+	background.Go(func() { ui.runRefresh(uiCtx) })
+	background.Go(func() { ui.runAttach(uiCtx) })
 
-	// If the caller cancels ctx (signal, supervisor shutdown), tear the window
-	// down too — otherwise ShowAndRun would keep a stale, non-functional window
-	// on screen after the background goroutines have already exited.
-	if o.fyneApp == nil {
-		go func() {
-			<-ctx.Done()
-			fyne.Do(func() { a.Quit() })
-		}()
+	var showExited chan struct{}
+	if realDriverLifecycle {
+		showExited = make(chan struct{})
+		// App.Quit closes windows before destroying the driver. SetOnClosed is
+		// therefore the earliest common hook for tray Quit and app shutdown.
+		// Direct Driver.Quit paths (including Fyne's own signal catcher) do not
+		// close windows; paintPump makes those safe until ShowAndRun returns.
+		w.SetOnClosed(beginShutdown)
+		// Register the semantic pre-stop hook as well. Pinned Fyne v2.8 may drain
+		// this callback instead of executing it, so correctness does not depend
+		// on it; once Fyne runs OnStopped synchronously before driver drain, this
+		// stops the pump at the earliest lifecycle boundary.
+		a.Lifecycle().SetOnStopped(beginShutdown)
+
+		background.Go(func() {
+			waitForShowExitOrCancellation(parentCtx, showExited, func() {
+				publishQuit()
+			})
+		})
 	}
 
 	// First paint runs on its own goroutine, NOT inline: refreshNow does a
@@ -115,26 +469,58 @@ func Run(ctx context.Context, o Opts) error {
 	// slow or never answers. The window shows immediately (empty), then the
 	// snapshot fills it in — the same async path the ticker uses. In sync mode
 	// (tests) it stays inline so the first render is deterministic.
-	if o.fyneApp != nil && ui.syncRender {
+	if !realDriverLifecycle && ui.syncRender {
 		ui.refreshNow()
 	} else {
-		go ui.refreshNow()
+		background.Go(ui.refreshNow)
 	}
 
-	if o.fyneApp == nil {
-		w.ShowAndRun() // real app: blocks until quit; window close cancels ctx via defer
+	if realDriverLifecycle {
+		if o.runWindow != nil {
+			o.runWindow(w)
+		} else {
+			w.ShowAndRun()
+		}
+		requests.retire()
+		// Close admission synchronously at the lifecycle boundary; do not leave
+		// that transition to a deferred cleanup or watcher scheduling.
+		beginShutdown()
+		close(showExited)
 		return nil
 	}
 	// Test driver: show and block until the caller cancels ctx, so the refresh
 	// and attach goroutines are joined (they exit on ctx.Done) and Run's
 	// lifecycle matches the real ShowAndRun.
 	w.Show()
-	<-ctx.Done()
+	<-parentCtx.Done()
 	return nil
 }
 
+// waitForShowExitOrCancellation owns the real driver's shutdown race. Natural
+// exit always wins if showExited is already ready, including when cancellation
+// is also ready; the second check closes the race between the precheck and the
+// blocking select.
+func waitForShowExitOrCancellation(ctx context.Context, showExited <-chan struct{}, quit func()) {
+	select {
+	case <-showExited:
+		return
+	default:
+	}
+
+	select {
+	case <-showExited:
+	case <-ctx.Done():
+		select {
+		case <-showExited:
+			return
+		default:
+			quit()
+		}
+	}
+}
+
 // ui holds the window, the controller, and the mutable view state. All widget
-// mutation happens on Fyne's main thread via fyne.Do (see refreshNow).
+// mutation happens on Fyne's main thread via paintDispatch (see refreshNow).
 type ui struct {
 	ctx     context.Context
 	ctrl    Controller
@@ -160,8 +546,8 @@ type ui struct {
 	// just on navigation, so focusing unconditionally would yank focus back to the
 	// first control every refresh — stealing it from a keyboard operator mid-Tab.
 	// We only (re)initialize focus when this identity changes, i.e. on an actual
-	// drill in/out. Main-thread-only (render is always called under fyne.Do), so
-	// no lock is needed. Empty until the first render.
+	// drill in/out. Main-thread-only (render is always called by paintDispatch),
+	// so no lock is needed. Empty until the first render.
 	focusedView string
 
 	// mu guards the drill selection, which is written by tap handlers on the
@@ -202,6 +588,19 @@ type ui struct {
 	refreshSeq     uint64
 	lastPaintedSeq uint64
 
+	// paintMu serializes widget layout even when the injected headless driver
+	// executes paint callbacks inline on multiple caller goroutines. The real
+	// driver already serializes its UI loop, but the test driver does not, and
+	// Fyne's package-global HarfBuzz shaper reuses a mutable buffer. Gather
+	// remains concurrent; refreshSeq still drops stale frames after they enter.
+	paintMu sync.Mutex
+
+	// paintDispatch is completion-aware. Production points it at paintPump, whose
+	// Tick runs only inside the live Fyne event loop. Headless ui unit tests use
+	// dispatchThroughFyne; their test driver executes callbacks inline and paintMu
+	// serializes the package-global HarfBuzz shaper.
+	paintDispatch func(context.Context, func()) bool
+
 	// syncRender, when set (tests only), makes refreshNow/drive/drillTo run inline
 	// and synchronously (no goroutine, no fyne.Do queueing) so a test can tap a
 	// button and immediately assert the result. Production is always async.
@@ -213,6 +612,22 @@ type ui struct {
 	// still-running runAttach goroutine reading a shared global. Defaults to
 	// defaultAttachRetryDelay in newUI.
 	attachRetryDelay time.Duration
+
+	// startAsync admits every refresh/drive goroutine into Run's lifecycle
+	// group. Once shutdown closes admission, taps and late callbacks cannot
+	// launch work that would outlive the Fyne app.
+	startAsync func(func()) bool
+
+	// painted is a test-only signal sent after a frame has fully rendered.
+	painted chan<- struct{}
+
+	// paintHook is a test-only observer called on entry/exit of the serialized
+	// paint section. Production leaves it nil.
+	paintHook func(enter bool)
+
+	// paintAttemptHook is a test-only pre-lock barrier used to prove concurrent
+	// refreshes reached the paint section before paintMu serialized them.
+	paintAttemptHook func()
 }
 
 func newUI(ctx context.Context, c Controller, project string, w fyne.Window) *ui {
@@ -225,6 +640,7 @@ func newUI(ctx context.Context, c Controller, project string, w fyne.Window) *ui
 		body:             container.NewVBox(),
 		errBanner:        widget.NewLabel(""),
 		attachRetryDelay: defaultAttachRetryDelay,
+		paintDispatch:    dispatchThroughFyne,
 	}
 	u.errBanner.Hide()
 	u.scroll = container.NewVScroll(u.body)
@@ -314,10 +730,15 @@ func eventTriggersRefresh(raw json.RawMessage) bool {
 
 // refreshNow gathers a complete data snapshot for the current drill level OFF
 // the Fyne main thread (all the IPC/store reads happen here, on the refresh or
-// attach goroutine), then hands it to fyne.Do to render. Keeping every blocking
-// read off the UI thread means a slow or unavailable socket can never freeze the
-// window — the worst case is a stale view, not a hung one.
+// attach goroutine), then hands it to a completion-aware Fyne dispatcher to
+// render. Keeping every blocking read off the UI thread means a slow or
+// unavailable socket can never freeze the window — the worst case is a stale
+// view, not a hung one.
 func (u *ui) refreshNow() {
+	if u.ctx.Err() != nil {
+		return
+	}
+
 	// Snapshot the drill selection AND claim an ordering seq under the lock (the
 	// selection is written by tap handlers on the main thread; this is the one
 	// cross-thread read).
@@ -328,8 +749,24 @@ func (u *ui) refreshNow() {
 	u.mu.Unlock()
 
 	snap := u.gather(plan, task)
+	if u.ctx.Err() != nil {
+		return
+	}
 
 	paint := func() {
+		if u.paintAttemptHook != nil {
+			u.paintAttemptHook()
+		}
+		u.paintMu.Lock()
+		defer u.paintMu.Unlock()
+		if u.paintHook != nil {
+			u.paintHook(true)
+			defer u.paintHook(false)
+		}
+		if u.ctx.Err() != nil {
+			return
+		}
+
 		// Drop a stale paint: if a newer refresh already painted, this gather's
 		// data is out of date (possibly a drill level the user already left).
 		u.mu.Lock()
@@ -362,12 +799,53 @@ func (u *ui) refreshNow() {
 		if !importing {
 			u.render(snap)
 		}
+		if u.painted != nil {
+			select {
+			case u.painted <- struct{}{}:
+			default:
+			}
+		}
 	}
 	if u.syncRender {
 		paint() // tests: render inline so assertions see it immediately
 		return
 	}
-	fyne.Do(paint)
+	u.paintDispatch(u.ctx, paint)
+}
+
+// dispatchThroughFyne exists only for injected headless-app tests. Production
+// installs paintPump.Dispatch before launching background work, so a direct
+// driver stop can never execute Ralph widget mutation inline after drain.
+func dispatchThroughFyne(ctx context.Context, paint func()) bool {
+	acknowledged := make(chan struct{})
+	fyne.DoAndWait(func() {
+		defer close(acknowledged)
+		paint()
+	})
+	select {
+	case <-acknowledged:
+		return true
+	case <-ctx.Done():
+		return false
+	default:
+		return false
+	}
+}
+
+// quiescePaint waits for a paint that passed its cancellation check to finish.
+// Once the lifecycle group is closed and u.ctx is cancelled, later callbacks
+// may still be acknowledged by Fyne but will return before touching widgets.
+func (u *ui) quiescePaint() {
+	u.paintMu.Lock()
+	u.paintMu.Unlock()
+}
+
+func (u *ui) goAsync(fn func()) {
+	if u.startAsync != nil {
+		u.startAsync(fn)
+		return
+	}
+	go fn()
 }
 
 // snapshot is one fully-gathered view state: the status plus exactly the data
