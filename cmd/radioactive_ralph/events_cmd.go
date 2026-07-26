@@ -43,7 +43,8 @@ func newEventsCmd() *cobra.Command {
 	return cmd
 }
 
-// runEvents wires the real store+client seam, then delegates to runEventsWith.
+// runEvents resolves the current project, wires the safe supervisor client,
+// then delegates to runEventsWith.
 func runEvents(ctx context.Context, cmd *cobra.Command, backlog int, asJSON bool) error {
 	stateRoot, err := xdg.StateRoot()
 	if err != nil {
@@ -168,23 +169,24 @@ func (s *liveEventSource) Backlog(
 		// backlog. Zero would select the store default rather than "none".
 		eventLimit = 1
 	}
-	snapshot, err := client.ObserveSnapshot(ctx, ipc.ObserveSnapshotArgs{
+	query := ipc.ObserveSnapshotArgs{
 		ProjectID:  projectID,
 		PlanLimit:  1,
 		TaskLimit:  1,
 		EventLimit: eventLimit,
-	})
+	}
+	snapshot, err := client.ObserveSnapshot(ctx, query)
 	if err != nil {
 		return nil, 0, queryCommandError(err)
 	}
-	if snapshot == nil {
-		return nil, 0, fmt.Errorf("event backlog: supervisor returned no snapshot")
+	if err := observe.ValidateSnapshotResponse(snapshot, query); err != nil {
+		return nil, 0, fmt.Errorf("event backlog: %w", err)
 	}
 	recent := snapshot.RecentEvents.Items
 	if len(recent) == 0 {
-		return []ipc.AttachEvent{}, 0, nil
+		return []ipc.AttachEvent{}, snapshot.EventCursor, nil
 	}
-	cursor := recent[0].ID // snapshot events are newest-first
+	cursor := snapshot.EventCursor
 	if n == 0 {
 		return []ipc.AttachEvent{}, cursor, nil
 	}

@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -59,6 +60,12 @@ func (f *fakeObserveClient) Close() error { return nil }
 
 func querySnapshotFixture(activeWorkers int) *ipc.ObserveSnapshotReply {
 	workers := make([]observe.Worker, activeWorkers)
+	for i := range workers {
+		workers[i] = observe.Worker{
+			ID:     fmt.Sprintf("worker-%d", i),
+			Claims: []observe.WorkerClaim{},
+		}
+	}
 	return &ipc.ObserveSnapshotReply{
 		SchemaVersion: observe.SchemaVersion,
 		CapturedAt: time.Date(

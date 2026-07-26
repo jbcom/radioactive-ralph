@@ -133,8 +133,8 @@ func runStatusQueryWith(
 	if err != nil {
 		return queryCommandError(err)
 	}
-	if err := validateSnapshotReply(snapshot, query); err != nil {
-		return err
+	if err := observe.ValidateSnapshotResponse(snapshot, query); err != nil {
+		return fmt.Errorf("status: %w", err)
 	}
 	if asJSON {
 		if err := writeJSON(out, snapshot); err != nil {
@@ -210,63 +210,11 @@ func runMessagesQueryWith(
 	if err != nil {
 		return queryCommandError(err)
 	}
-	if err := validateMessageReply(page); err != nil {
-		return err
+	if err := observe.ValidateMessageResponse(page); err != nil {
+		return fmt.Errorf("messages: %w", err)
 	}
 	if err := writeJSON(out, page); err != nil {
 		return fmt.Errorf("messages: encode JSON: %w", err)
-	}
-	return nil
-}
-
-func validateSnapshotReply(
-	snapshot *ipc.ObserveSnapshotReply,
-	query ipc.ObserveSnapshotArgs,
-) error {
-	if snapshot == nil {
-		return fmt.Errorf("status: supervisor returned no snapshot")
-	}
-	if snapshot.SchemaVersion != observe.SchemaVersion {
-		return fmt.Errorf(
-			"status: unsupported observation schema %d (client supports %d)",
-			snapshot.SchemaVersion,
-			observe.SchemaVersion,
-		)
-	}
-	if snapshot.Project.ID != query.ProjectID {
-		return fmt.Errorf(
-			"status: supervisor returned project %q for requested project %q",
-			snapshot.Project.ID,
-			query.ProjectID,
-		)
-	}
-	if snapshot.Summary.ActiveWorkerCount != len(snapshot.Workers) {
-		return fmt.Errorf(
-			"status: inconsistent active-worker count %d for %d worker records",
-			snapshot.Summary.ActiveWorkerCount,
-			len(snapshot.Workers),
-		)
-	}
-	if snapshot.Summary.ZeroActiveWorkers !=
-		(snapshot.Summary.ActiveWorkerCount == 0) {
-		return fmt.Errorf(
-			"status: inconsistent zero-worker assertion for count %d",
-			snapshot.Summary.ActiveWorkerCount,
-		)
-	}
-	return nil
-}
-
-func validateMessageReply(page *ipc.ObserveMessagesReply) error {
-	if page == nil {
-		return fmt.Errorf("messages: supervisor returned no page")
-	}
-	if page.SchemaVersion != observe.SchemaVersion {
-		return fmt.Errorf(
-			"messages: unsupported observation schema %d (client supports %d)",
-			page.SchemaVersion,
-			observe.SchemaVersion,
-		)
 	}
 	return nil
 }

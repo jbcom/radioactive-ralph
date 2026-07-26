@@ -9,8 +9,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/exp/teatest"
 	"github.com/jbcom/radioactive-ralph/internal/ipc"
-	"github.com/jbcom/radioactive-ralph/internal/orch"
-	"github.com/jbcom/radioactive-ralph/internal/store"
+	"github.com/jbcom/radioactive-ralph/internal/observe"
 )
 
 // TestE2E_DrillNavigation is the Layer-1 E2E harness (Phase 8): it drives
@@ -36,21 +35,21 @@ func TestE2E_DrillNavigation(t *testing.T) {
 			ReadyTasks:    1,
 			RunningTasks:  1,
 		},
-		plans: []store.Plan{
-			{ID: "plan-1", Title: "Ship the widget", Status: store.PlanStatusActive},
-			{ID: "plan-2", Title: "Retire the gadget", Status: store.PlanStatusPaused},
+		plans: []observe.Plan{
+			{ID: "plan-1", Title: "Ship the widget", Status: "active"},
+			{ID: "plan-2", Title: "Retire the gadget", Status: "paused"},
 		},
-		progress: map[string]orch.Progress{
+		progress: map[string]progress{
 			"plan-1": {Done: 1, Total: 3},
 			"plan-2": {Done: 0, Total: 2},
 		},
-		tasksByPlan: map[string][]store.Task{
+		tasksByPlan: map[string][]observe.Task{
 			"plan-1": {
-				{ID: "task-a", PlanID: "plan-1", Description: "wire up the frobnicator", Status: store.TaskStatusRunning},
-				{ID: "task-b", PlanID: "plan-1", Description: "polish the gizmo", Status: store.TaskStatusPending},
+				{ID: "task-a", PlanID: "plan-1", Status: "running"},
+				{ID: "task-b", PlanID: "plan-1", Status: "pending"},
 			},
 		},
-		taskEvents: map[string][]store.Event{
+		taskEvents: map[string][]observe.Event{
 			"plan-1/task-a": {
 				{ID: 1, Kind: "task.claimed", OccurredAt: time.Now()},
 				{ID: 2, Kind: "task.progress", OccurredAt: time.Now()},
@@ -76,24 +75,23 @@ func TestE2E_DrillNavigation(t *testing.T) {
 	// --- meso: the selected plan's title and its tasks must render. ---
 	teatest.WaitFor(t, tm.Output(), func(b []byte) bool {
 		return bytes.Contains(b, []byte("Ship the widget")) &&
-			bytes.Contains(b, []byte("wire up the frobnicator")) &&
-			bytes.Contains(b, []byte("polish the gizmo"))
+			bytes.Contains(b, []byte("task-a")) &&
+			bytes.Contains(b, []byte("task-b"))
 	}, teatest.WithDuration(5*time.Second), teatest.WithCheckInterval(20*time.Millisecond))
 
 	// Drill in: meso -> micro (task-a is the cursor's first row).
 	tm.Send(tea.KeyMsg{Type: tea.KeyEnter})
 
-	// --- micro: the selected task's id/description and its event tail. ---
+	// --- micro: the selected safe task id and its event tail. ---
 	teatest.WaitFor(t, tm.Output(), func(b []byte) bool {
 		return bytes.Contains(b, []byte("task-a")) &&
-			bytes.Contains(b, []byte("wire up the frobnicator")) &&
 			bytes.Contains(b, []byte("task.claimed"))
 	}, teatest.WithDuration(5*time.Second), teatest.WithCheckInterval(20*time.Millisecond))
 
 	// Drill out: micro -> meso. The meso view (task list) must reappear.
 	tm.Send(tea.KeyMsg{Type: tea.KeyEsc})
 	teatest.WaitFor(t, tm.Output(), func(b []byte) bool {
-		return bytes.Contains(b, []byte("wire up the frobnicator")) &&
+		return bytes.Contains(b, []byte("task-a")) &&
 			bytes.Contains(b, []byte("back to plans"))
 	}, teatest.WithDuration(5*time.Second), teatest.WithCheckInterval(20*time.Millisecond))
 
@@ -117,17 +115,17 @@ func TestE2E_DrillNavigation(t *testing.T) {
 // Layer 1 must show that arrow keys change what gets drilled into.
 func TestE2E_DownArrowSelectsSecondPlan(t *testing.T) {
 	fake := &fakeDataSource{
-		plans: []store.Plan{
-			{ID: "plan-1", Title: "Ship the widget", Status: store.PlanStatusActive},
-			{ID: "plan-2", Title: "Retire the gadget", Status: store.PlanStatusPaused},
+		plans: []observe.Plan{
+			{ID: "plan-1", Title: "Ship the widget", Status: "active"},
+			{ID: "plan-2", Title: "Retire the gadget", Status: "paused"},
 		},
-		progress: map[string]orch.Progress{
+		progress: map[string]progress{
 			"plan-1": {Done: 1, Total: 3},
 			"plan-2": {Done: 0, Total: 2},
 		},
-		tasksByPlan: map[string][]store.Task{
+		tasksByPlan: map[string][]observe.Task{
 			"plan-2": {
-				{ID: "task-z", PlanID: "plan-2", Description: "decommission the gadget", Status: store.TaskStatusPending},
+				{ID: "task-z", PlanID: "plan-2", Status: "pending"},
 			},
 		},
 	}
@@ -148,7 +146,7 @@ func TestE2E_DownArrowSelectsSecondPlan(t *testing.T) {
 
 	teatest.WaitFor(t, tm.Output(), func(b []byte) bool {
 		return bytes.Contains(b, []byte("Retire the gadget")) &&
-			bytes.Contains(b, []byte("decommission the gadget"))
+			bytes.Contains(b, []byte("task-z"))
 	}, teatest.WithDuration(5*time.Second), teatest.WithCheckInterval(20*time.Millisecond))
 
 	tm.Send(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("q")})

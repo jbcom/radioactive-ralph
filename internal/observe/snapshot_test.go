@@ -67,6 +67,8 @@ func operatorSnapshotFixture() *store.OperatorSnapshot {
 				Slug:      "ship-it",
 				Title:     "Ship It",
 				Status:    store.PlanStatusActive,
+				TaskDone:  1,
+				TaskTotal: 2,
 				CreatedAt: captured.Add(-time.Hour),
 				UpdatedAt: updated,
 			}},
@@ -104,6 +106,7 @@ func operatorSnapshotFixture() *store.OperatorSnapshot {
 				{PlanID: "plan-1", TaskID: "task-2", Status: store.TaskStatusRunning},
 			},
 		}},
+		EventCursor: 9,
 		RecentEvents: store.OperatorEventPage{
 			Items: []store.OperatorEvent{
 				{
@@ -165,7 +168,8 @@ func TestServiceSnapshotProjectsOneSafeConsistentRead(t *testing.T) {
 	}
 	if got.SchemaVersion != SchemaVersion ||
 		got.CapturedAt != reader.snapshot.CapturedAt ||
-		got.Project.ID != "project-1" {
+		got.Project.ID != "project-1" ||
+		got.EventCursor != 9 {
 		t.Fatalf("snapshot envelope = %+v", got)
 	}
 	if got.Summary.PlanTotal != 3 || got.Summary.TaskTotal != 6 ||
@@ -183,6 +187,19 @@ func TestServiceSnapshotProjectsOneSafeConsistentRead(t *testing.T) {
 			got.Plans,
 			got.Tasks,
 			got.RecentEvents,
+		)
+	}
+	if got.Plans.Items[0].TaskDone != 1 ||
+		got.Plans.Items[0].TaskTotal != 2 ||
+		got.Plans.Items[0].Status != string(store.PlanStatusActive) {
+		t.Fatalf("safe plan progress/status = %+v", got.Plans.Items[0])
+	}
+	if got.Tasks.Items[0].Status != string(store.TaskStatusRunning) ||
+		got.Workers[0].Claims[0].Status != string(store.TaskStatusRunning) {
+		t.Fatalf(
+			"transport-neutral statuses = task %q claim %q",
+			got.Tasks.Items[0].Status,
+			got.Workers[0].Claims[0].Status,
 		)
 	}
 
@@ -219,6 +236,224 @@ func TestServiceSnapshotProjectsOneSafeConsistentRead(t *testing.T) {
 	}
 	if got.RecentEvents.Items[1].Failure != nil {
 		t.Fatalf("non-failure event received failure summary: %+v", got.RecentEvents.Items[1])
+	}
+}
+
+func TestServiceSnapshotForwardsDrillDownScope(t *testing.T) {
+	raw := operatorSnapshotFixture()
+	raw.Plans.HasMore = false
+	raw.Plans.NextAfterID = ""
+	raw.Tasks.HasMore = false
+	raw.Tasks.NextAfter = nil
+	raw.RecentEvents.HasMore = false
+	raw.RecentEvents.NextBeforeID = 0
+	reader := &fakeReader{snapshot: raw}
+	service, err := New(reader)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	query := SnapshotQuery{
+		ProjectID:  "project-1",
+		PlanID:     "plan-1",
+		TaskID:     "task-1",
+		PlanLimit:  1,
+		TaskLimit:  1,
+		EventLimit: 20,
+	}
+	got, err := service.Snapshot(context.Background(), query)
+	if err != nil {
+		t.Fatalf("Snapshot: %v", err)
+	}
+	if reader.snapshotQ.PlanID != query.PlanID ||
+		reader.snapshotQ.TaskID != query.TaskID {
+		t.Fatalf("store scope = %+v, want plan-1/task-1", reader.snapshotQ)
+	}
+	if err := ValidateSnapshotResponse(got, query); err != nil {
+		t.Fatalf("ValidateSnapshotResponse: %v", err)
+	}
+}
+
+func TestValidateSnapshotResponseFailsClosed(t *testing.T) {
+	valid := func() *Snapshot {
+		return &Snapshot{
+			SchemaVersion: SchemaVersion,
+			Project:       Project{ID: "project-1"},
+			Summary: Summary{
+				ActiveWorkerCount: 0,
+				ZeroActiveWorkers: true,
+			},
+			Plans: PlanPage{Items: []Plan{{
+				ID: "plan-1", TaskDone: 1, TaskTotal: 2,
+			}}},
+			Tasks: TaskPage{Items: []Task{{
+				PlanID: "plan-1", ID: "task-1",
+			}}},
+			Workers:     []Worker{},
+			EventCursor: 9,
+			RecentEvents: EventPage{Items: []Event{{
+				ID: 9, PlanID: "plan-1", TaskID: "task-1",
+			}}},
+		}
+	}
+	query := SnapshotQuery{
+		ProjectID: "project-1",
+		PlanID:    "plan-1",
+		TaskID:    "task-1",
+	}
+	tests := []struct {
+		name   string
+		mutate func(*Snapshot)
+		want   error
+	}{
+		{
+			name: "schema",
+			mutate: func(snapshot *Snapshot) {
+				snapshot.SchemaVersion++
+			},
+			want: ErrIncompatibleSchema,
+		},
+		{
+			name: "project",
+			mutate: func(snapshot *Snapshot) {
+				snapshot.Project.ID = "other"
+			},
+			want: ErrInvalidResponse,
+		},
+		{
+			name: "nil collection",
+			mutate: func(snapshot *Snapshot) {
+				snapshot.Tasks.Items = nil
+			},
+			want: ErrInvalidResponse,
+		},
+		{
+			name: "worker count",
+			mutate: func(snapshot *Snapshot) {
+				snapshot.Summary.ActiveWorkerCount = 1
+			},
+			want: ErrInvalidResponse,
+		},
+		{
+			name: "progress",
+			mutate: func(snapshot *Snapshot) {
+				snapshot.Plans.Items[0].TaskDone = 3
+			},
+			want: ErrInvalidResponse,
+		},
+		{
+			name: "task scope",
+			mutate: func(snapshot *Snapshot) {
+				snapshot.Tasks.Items[0].ID = "other"
+			},
+			want: ErrInvalidResponse,
+		},
+		{
+			name: "event cursor",
+			mutate: func(snapshot *Snapshot) {
+				snapshot.EventCursor = 8
+			},
+			want: ErrInvalidResponse,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			snapshot := valid()
+			test.mutate(snapshot)
+			if err := ValidateSnapshotResponse(snapshot, query); !errors.Is(err, test.want) {
+				t.Fatalf("ValidateSnapshotResponse error = %v, want %v", err, test.want)
+			}
+		})
+	}
+	if err := ValidateSnapshotResponse(valid(), query); err != nil {
+		t.Fatalf("valid snapshot rejected: %v", err)
+	}
+}
+
+func TestValidateMessageResponseFailsClosed(t *testing.T) {
+	valid := func() *MessagePage {
+		return &MessagePage{
+			SchemaVersion: SchemaVersion,
+			Items: []MessageMetadata{
+				{
+					ID:              1,
+					PlanID:          "plan-1",
+					TaskID:          "task-1",
+					CanonicalTaskID: "plan-1:task-1",
+					ContextID:       "plan-1",
+					Role:            sdka2a.MessageRoleUser,
+				},
+				{
+					ID:              2,
+					PlanID:          "plan-1",
+					TaskID:          "task-1",
+					CanonicalTaskID: "plan-1:task-1",
+					ContextID:       "plan-1",
+					Role:            sdka2a.MessageRoleAgent,
+				},
+			},
+			HasMore:     true,
+			NextAfterID: 2,
+		}
+	}
+	tests := []struct {
+		name   string
+		mutate func(*MessagePage)
+		want   error
+	}{
+		{
+			name: "schema",
+			mutate: func(page *MessagePage) {
+				page.SchemaVersion++
+			},
+			want: ErrIncompatibleSchema,
+		},
+		{
+			name: "nil collection",
+			mutate: func(page *MessagePage) {
+				page.Items = nil
+			},
+			want: ErrInvalidResponse,
+		},
+		{
+			name: "cursor",
+			mutate: func(page *MessagePage) {
+				page.NextAfterID = 0
+			},
+			want: ErrInvalidResponse,
+		},
+		{
+			name: "identity",
+			mutate: func(page *MessagePage) {
+				page.Items[0].CanonicalTaskID = "other"
+			},
+			want: ErrInvalidResponse,
+		},
+		{
+			name: "role",
+			mutate: func(page *MessagePage) {
+				page.Items[0].Role = sdka2a.MessageRole("ROLE_FUTURE")
+			},
+			want: ErrInvalidResponse,
+		},
+		{
+			name: "order",
+			mutate: func(page *MessagePage) {
+				page.Items[1].ID = 1
+			},
+			want: ErrInvalidResponse,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			page := valid()
+			test.mutate(page)
+			if err := ValidateMessageResponse(page); !errors.Is(err, test.want) {
+				t.Fatalf("ValidateMessageResponse error = %v, want %v", err, test.want)
+			}
+		})
+	}
+	if err := ValidateMessageResponse(valid()); err != nil {
+		t.Fatalf("valid message page rejected: %v", err)
 	}
 }
 

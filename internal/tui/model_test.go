@@ -9,27 +9,26 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/jbcom/radioactive-ralph/internal/ipc"
-	"github.com/jbcom/radioactive-ralph/internal/orch"
-	"github.com/jbcom/radioactive-ralph/internal/store"
+	"github.com/jbcom/radioactive-ralph/internal/observe"
 )
 
 func testFake() *fakeDataSource {
 	return &fakeDataSource{
-		plans: []store.Plan{
-			{ID: "plan-1", Title: "First plan", Status: store.PlanStatusActive},
-			{ID: "plan-2", Title: "Second plan", Status: store.PlanStatusPaused},
+		plans: []observe.Plan{
+			{ID: "plan-1", Title: "First plan", Status: "active"},
+			{ID: "plan-2", Title: "Second plan", Status: "paused"},
 		},
-		progress: map[string]orch.Progress{
+		progress: map[string]progress{
 			"plan-1": {Done: 1, Total: 2},
 			"plan-2": {Done: 0, Total: 3},
 		},
-		tasksByPlan: map[string][]store.Task{
+		tasksByPlan: map[string][]observe.Task{
 			"plan-1": {
-				{ID: "task-a", PlanID: "plan-1", Description: "do a thing", Status: store.TaskStatusRunning},
-				{ID: "task-b", PlanID: "plan-1", Description: "do another thing", Status: store.TaskStatusPending},
+				{ID: "task-a", PlanID: "plan-1", Status: "running"},
+				{ID: "task-b", PlanID: "plan-1", Status: "pending"},
 			},
 		},
-		taskEvents: map[string][]store.Event{
+		taskEvents: map[string][]observe.Event{
 			"plan-1/task-a": {
 				{ID: 1, Kind: "task.claimed", OccurredAt: time.Now()},
 			},
@@ -179,16 +178,19 @@ func TestModel_ReconnectResumesFromLastEventID(t *testing.T) {
 
 // TestModel_ReconnectPreservesInitialCursorWithNoFrames is the codex P1
 // regression: if the FIRST subscription ends before yielding any frame, the
-// reconnect must still resume from the seeded max (not re-seed to a NEWER max
-// and skip the gap). The model seeds lastEventID from MaxEventID up front, so it
-// owns the cursor even when no frame ever arrived.
+// reconnect must still resume from the seeded cursor (not re-seed to a NEWER
+// cursor and skip the gap). The model seeds lastEventID from the safe snapshot
+// up front, so it owns the cursor even when no frame ever arrived.
 func TestModel_ReconnectPreservesInitialCursorWithNoFrames(t *testing.T) {
 	f := testFake()
 	f.maxEventID = 100 // the project already has events up to id 100
 	m := newTestModel(t, f)
 
 	// First fetch starts the subscription; it seeds from the current max (100).
-	updated, _ := m.Update(fetchedMsg{snap: snapshot{plans: f.plans}})
+	updated, _ := m.Update(fetchedMsg{snap: snapshot{
+		plans:       f.plans,
+		eventCursor: 100,
+	}})
 	m = updated.(Model)
 	epoch1 := m.attachEpoch
 	waitAttachCount(t, f, 1)
@@ -200,13 +202,17 @@ func TestModel_ReconnectPreservesInitialCursorWithNoFrames(t *testing.T) {
 	}
 	m.attachCancel()
 
-	// The stream ends WITHOUT any frame processed. Meanwhile the project advanced
-	// (a new max would be 150) — but the reconnect must resume from the SEEDED
-	// 100, not a fresh max, so events 101..150 stream rather than being skipped.
+	// The stream ends WITHOUT any frame processed. Meanwhile the project
+	// advanced (a new cursor would be 150) — but the reconnect must resume from
+	// the SEEDED 100, not a fresh cursor, so events 101..150 stream rather than
+	// being skipped.
 	f.maxEventID = 150
 	updated, _ = m.Update(attachEndedMsg{epoch: epoch1})
 	m = updated.(Model)
-	updated, _ = m.Update(fetchedMsg{snap: snapshot{plans: f.plans}})
+	updated, _ = m.Update(fetchedMsg{snap: snapshot{
+		plans:       f.plans,
+		eventCursor: 150,
+	}})
 	m = updated.(Model)
 	waitAttachCount(t, f, 2)
 	if f.afterIDAt(1) != 100 {
@@ -227,7 +233,7 @@ func TestModel_DrillInMicroDoesNotRestartAttach(t *testing.T) {
 	// Simulate the already-running session subscription.
 	cancelled := false
 	m.attachCancel = func() { cancelled = true }
-	m.attachFrames = make(chan json.RawMessage)
+	m.attachFrames = make(chan ipc.AttachEvent)
 	m.snap.live = []liveLogLine{{text: "stale"}}
 
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
@@ -254,7 +260,7 @@ func TestModel_DrillOutMicroKeepsAttach(t *testing.T) {
 	m.selectedTask = f.tasksByPlan["plan-1"][0]
 	cancelled := false
 	m.attachCancel = func() { cancelled = true }
-	m.attachFrames = make(chan json.RawMessage)
+	m.attachFrames = make(chan ipc.AttachEvent)
 
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
 	m = updated.(Model)
@@ -385,7 +391,7 @@ func TestModel_LiveFrameFiltersToSelectedTask(t *testing.T) {
 	f := testFake()
 	m := newTestModel(t, f)
 	m.lvl = levelMicro
-	m.selectedTask = store.Task{ID: "task-a"}
+	m.selectedTask = observe.Task{ID: "task-a"}
 
 	// A frame for a DIFFERENT task must not pollute the selected task's tail.
 	updated, _ := m.Update(liveFrameMsg{raw: []byte(`{"kind":"task.claimed","task_id":"task-b"}`)})
@@ -412,18 +418,18 @@ func TestModel_LiveFrameFiltersToSelectedTask(t *testing.T) {
 func TestModel_LiveFrameAppliesTaskStatusDelta(t *testing.T) {
 	f := testFake()
 	m := newTestModel(t, f)
-	m.snap.tasks = []store.Task{
-		{ID: "task-a", Status: store.TaskStatusRunning},
-		{ID: "task-b", Status: store.TaskStatusReady},
+	m.snap.tasks = []observe.Task{
+		{ID: "task-a", Status: "running"},
+		{ID: "task-b", Status: "ready"},
 	}
 
 	// A task.done for task-a flips its status immediately, without a poll.
 	updated, _ := m.Update(liveFrameMsg{raw: []byte(`{"kind":"task.done","task_id":"task-a"}`)})
 	m = updated.(Model)
-	if m.snap.tasks[0].Status != store.TaskStatusDone {
+	if m.snap.tasks[0].Status != "done" {
 		t.Errorf("task-a status = %q, want done (live delta)", m.snap.tasks[0].Status)
 	}
-	if m.snap.tasks[1].Status != store.TaskStatusReady {
+	if m.snap.tasks[1].Status != "ready" {
 		t.Errorf("task-b status = %q, want ready (untouched)", m.snap.tasks[1].Status)
 	}
 }
@@ -431,15 +437,15 @@ func TestModel_LiveFrameAppliesTaskStatusDelta(t *testing.T) {
 func TestModel_LiveFrameAppliesBlockedDelta(t *testing.T) {
 	f := testFake()
 	m := newTestModel(t, f)
-	m.snap.tasks = []store.Task{{ID: "task-a", Status: store.TaskStatusRunning}}
+	m.snap.tasks = []observe.Task{{ID: "task-a", Status: "running"}}
 
 	// The store emits task.blocked / task.context_requested on running→blocked;
 	// both must flip the visible status to blocked immediately.
 	for _, kind := range []string{"task.blocked", "task.context_requested"} {
-		m.snap.tasks[0].Status = store.TaskStatusRunning
+		m.snap.tasks[0].Status = "running"
 		updated, _ := m.Update(liveFrameMsg{raw: []byte(`{"kind":"` + kind + `","task_id":"task-a"}`)})
 		m = updated.(Model)
-		if m.snap.tasks[0].Status != store.TaskStatusBlocked {
+		if m.snap.tasks[0].Status != "blocked" {
 			t.Errorf("%s: task-a status = %q, want blocked (live delta)", kind, m.snap.tasks[0].Status)
 		}
 	}
@@ -451,8 +457,8 @@ func TestModel_LiveFrameAppliesBlockedDelta(t *testing.T) {
 func TestModel_LiveFrameBumpsMacroProgress(t *testing.T) {
 	f := testFake()
 	m := newTestModel(t, f)
-	m.snap.progress = map[string]orch.Progress{"plan-1": {Done: 1, Total: 3}}
-	m.snap.tasks = []store.Task{{ID: "task-a", Status: store.TaskStatusRunning}}
+	m.snap.progress = map[string]progress{"plan-1": {Done: 1, Total: 3}}
+	m.snap.tasks = []observe.Task{{ID: "task-a", Status: "running"}}
 
 	// A task.done for task-a in plan-1 bumps Done 1→2, live.
 	updated, _ := m.Update(liveFrameMsg{raw: []byte(`{"id":5,"kind":"task.done","task_id":"task-a","plan_id":"plan-1"}`)})
@@ -486,7 +492,7 @@ func TestModel_LiveProgressDedupsCompletionAliases(t *testing.T) {
 	f := testFake()
 	m := newTestModel(t, f)
 	m.lvl = levelMacro // snap.tasks empty — the per-task status check can't dedup
-	m.snap.progress = map[string]orch.Progress{"plan-1": {Done: 0, Total: 3}}
+	m.snap.progress = map[string]progress{"plan-1": {Done: 0, Total: 3}}
 
 	for _, kind := range []string{"worker.completed", "worker.verified_done"} {
 		updated, _ := m.Update(liveFrameMsg{raw: []byte(`{"kind":"` + kind + `","task_id":"task-a","plan_id":"plan-1"}`)})
@@ -503,7 +509,7 @@ func TestModel_LiveProgressSurvivesInFlightPoll(t *testing.T) {
 	f := testFake()
 	m := newTestModel(t, f)
 	m.lvl = levelMacro
-	m.snap.progress = map[string]orch.Progress{"plan-1": {Done: 1, Total: 3}}
+	m.snap.progress = map[string]progress{"plan-1": {Done: 1, Total: 3}}
 
 	// A live completion bumps Done 1→2.
 	updated, _ := m.Update(liveFrameMsg{raw: []byte(`{"kind":"task.done","task_id":"task-a","plan_id":"plan-1"}`)})
@@ -516,7 +522,7 @@ func TestModel_LiveProgressSurvivesInFlightPoll(t *testing.T) {
 	// The counter must NOT regress to 1 — the max is kept.
 	updated, _ = m.Update(fetchedMsg{snap: snapshot{
 		plans:    f.plans,
-		progress: map[string]orch.Progress{"plan-1": {Done: 1, Total: 3}},
+		progress: map[string]progress{"plan-1": {Done: 1, Total: 3}},
 	}})
 	m = updated.(Model)
 	if got := m.snap.progress["plan-1"].Done; got != 2 {
@@ -534,7 +540,7 @@ func TestModel_LiveProgressSurvivesInFlightPoll(t *testing.T) {
 func TestModel_LiveFrameProgressNoopForUnknownPlan(t *testing.T) {
 	f := testFake()
 	m := newTestModel(t, f)
-	m.snap.progress = map[string]orch.Progress{"plan-1": {Done: 0, Total: 2}}
+	m.snap.progress = map[string]progress{"plan-1": {Done: 0, Total: 2}}
 
 	updated, _ := m.Update(liveFrameMsg{raw: []byte(`{"id":9,"kind":"task.done","task_id":"t","plan_id":"plan-unknown"}`)})
 	m = updated.(Model)
@@ -593,7 +599,7 @@ func TestModel_PollDoesNotDropLiveEvent(t *testing.T) {
 	// wholesale replace would drop id=9.
 	updated, _ = m.Update(fetchedMsg{snap: snapshot{
 		plans:     f.plans,
-		planEvent: []store.Event{{ID: 8, Kind: "task.claimed"}},
+		planEvent: []observe.Event{{ID: 8, Kind: "task.claimed"}},
 	}})
 	m = updated.(Model)
 
@@ -617,7 +623,7 @@ func TestModel_PollDoesNotDropLiveEvent(t *testing.T) {
 // TestPrependEvent_IDLessFramesNotDeduped: two distinct frames with no id
 // (mapping to ID 0) must BOTH appear — deduping on 0 would drop all but one.
 func TestPrependEvent_IDLessFramesNotDeduped(t *testing.T) {
-	var tail []store.Event
+	var tail []observe.Event
 	tail = prependEvent(tail, ipc.AttachEvent{Kind: "service.started"})
 	tail = prependEvent(tail, ipc.AttachEvent{Kind: "tick"})
 	if len(tail) != 2 {
@@ -663,14 +669,20 @@ func TestAttachPresentationIgnoresLegacyContentFields(t *testing.T) {
 	}
 
 	row := prependEvent(nil, ev)[0]
-	if row.Actor != "" || row.PayloadJSON != "" {
-		t.Fatalf("prependEvent retained legacy content: %+v", row)
+	encoded, err := json.Marshal(row)
+	if err != nil {
+		t.Fatalf("marshal safe row: %v", err)
+	}
+	if strings.Contains(string(encoded), "secret") ||
+		strings.Contains(string(encoded), `"actor"`) ||
+		strings.Contains(string(encoded), `"payload"`) {
+		t.Fatalf("prependEvent retained legacy content: %s", encoded)
 	}
 }
 
 func TestMergeEventTail_IDLessRowsNotDeduped(t *testing.T) {
-	live := []store.Event{{ID: 0, Kind: "a"}, {ID: 0, Kind: "b"}}
-	poll := []store.Event{{ID: 3, Kind: "c"}}
+	live := []observe.Event{{ID: 0, Kind: "a"}, {ID: 0, Kind: "b"}}
+	poll := []observe.Event{{ID: 3, Kind: "c"}}
 	got := mergeEventTail(live, poll)
 	if len(got) != 3 {
 		t.Errorf("id-less rows deduped in merge: got %d, want 3 (%+v)", len(got), got)
@@ -678,8 +690,8 @@ func TestMergeEventTail_IDLessRowsNotDeduped(t *testing.T) {
 }
 
 func TestMergeEventTail(t *testing.T) {
-	live := []store.Event{{ID: 9}, {ID: 7}} // newest-first
-	poll := []store.Event{{ID: 8}, {ID: 7}, {ID: 6}}
+	live := []observe.Event{{ID: 9}, {ID: 7}} // newest-first
+	poll := []observe.Event{{ID: 8}, {ID: 7}, {ID: 6}}
 	got := mergeEventTail(live, poll)
 	wantIDs := []int64{9, 8, 7, 6}
 	if len(got) != len(wantIDs) {
@@ -695,11 +707,11 @@ func TestMergeEventTail(t *testing.T) {
 func TestModel_LiveFrameUnknownKindIsSnapshotNoop(t *testing.T) {
 	f := testFake()
 	m := newTestModel(t, f)
-	m.snap.tasks = []store.Task{{ID: "task-a", Status: store.TaskStatusRunning}}
+	m.snap.tasks = []observe.Task{{ID: "task-a", Status: "running"}}
 
 	updated, _ := m.Update(liveFrameMsg{raw: []byte(`{"kind":"task.progress","task_id":"task-a"}`)})
 	m = updated.(Model)
-	if m.snap.tasks[0].Status != store.TaskStatusRunning {
+	if m.snap.tasks[0].Status != "running" {
 		t.Errorf("unknown kind mutated task status to %q, want running unchanged", m.snap.tasks[0].Status)
 	}
 }
@@ -735,8 +747,8 @@ func TestStartAttach_StreamsFramesThenEnds(t *testing.T) {
 	defer stop()
 
 	var got []string
-	for raw := range frames {
-		got = append(got, string(raw))
+	for event := range frames {
+		got = append(got, event.Kind)
 	}
 	if len(got) != 2 {
 		t.Fatalf("expected 2 frames, got %d: %v", len(got), got)
@@ -752,11 +764,12 @@ func TestMacroHeaderShowsSupervisorLiveness(t *testing.T) {
 	m := newTestModel(t, f)
 	m.snap.plans = f.plans
 	m.snap.progress = f.progress
-	m.snap.status = ipc.StatusReply{Uptime: 2 * time.Hour, ActiveWorkers: 1}
+	m.snap.capturedAt = time.Now()
+	m.snap.summary.ActiveWorkerCount = 1
 
 	view := m.View()
-	if !strings.Contains(view, "connected") || !strings.Contains(view, "up 2h0m") {
-		t.Errorf("macro header missing the connected/uptime liveness line:\n%s", view)
+	if !strings.Contains(view, "connected") || !strings.Contains(view, "observed") {
+		t.Errorf("macro header missing the connected/observation line:\n%s", view)
 	}
 
 	// When the last refresh failed (supervisor unreachable mid-session), the
@@ -767,7 +780,7 @@ func TestMacroHeaderShowsSupervisorLiveness(t *testing.T) {
 	if !strings.Contains(dview, "disconnected") {
 		t.Errorf("macro header should show 'disconnected' after a failed refresh:\n%s", dview)
 	}
-	if strings.Contains(dview, "up 2h0m") {
+	if strings.Contains(dview, "observed") {
 		t.Error("macro header should not show a frozen uptime when disconnected")
 	}
 }
@@ -817,8 +830,7 @@ func TestModel_CursorClampedWhenListShrinks(t *testing.T) {
 
 	// A refresh returns only ONE plan now (the second was removed).
 	shrunk := snapshot{
-		status: ipc.StatusReply{},
-		plans:  []store.Plan{{ID: "plan-1", Title: "First plan", Status: store.PlanStatusActive}},
+		plans: []observe.Plan{{ID: "plan-1", Title: "First plan", Status: "active"}},
 	}
 	updated, _ := m.Update(fetchedMsg{snap: shrunk})
 	m = updated.(Model)
@@ -843,19 +855,18 @@ func TestModel_CursorClampedWhenListShrinks(t *testing.T) {
 func TestModel_CursorPreservesIdentityWhenRowRemovedAhead(t *testing.T) {
 	f := testFake()
 	m := newTestModel(t, f)
-	m.snap.plans = []store.Plan{
-		{ID: "A", Title: "Alpha", Status: store.PlanStatusActive},
-		{ID: "B", Title: "Bravo", Status: store.PlanStatusActive},
-		{ID: "C", Title: "Charlie", Status: store.PlanStatusActive},
+	m.snap.plans = []observe.Plan{
+		{ID: "A", Title: "Alpha", Status: "active"},
+		{ID: "B", Title: "Bravo", Status: "active"},
+		{ID: "C", Title: "Charlie", Status: "active"},
 	}
 	m.cursor = 1 // B selected
 
 	// Refresh removes A (the row ahead of the cursor): [B, C].
 	updated, _ := m.Update(fetchedMsg{snap: snapshot{
-		status: ipc.StatusReply{},
-		plans: []store.Plan{
-			{ID: "B", Title: "Bravo", Status: store.PlanStatusActive},
-			{ID: "C", Title: "Charlie", Status: store.PlanStatusActive},
+		plans: []observe.Plan{
+			{ID: "B", Title: "Bravo", Status: "active"},
+			{ID: "C", Title: "Charlie", Status: "active"},
 		},
 	}})
 	m = updated.(Model)
@@ -935,7 +946,7 @@ func TestModel_RefreshTickSkipsFetchWhileInFlight(t *testing.T) {
 	}
 
 	// The gather returns: fetching clears, so the next tick can fetch again.
-	updated, _ = m.Update(fetchedMsg{snap: snapshot{status: ipc.StatusReply{}}})
+	updated, _ = m.Update(fetchedMsg{snap: snapshot{}})
 	m = updated.(Model)
 	if m.fetching {
 		t.Fatal("fetchedMsg must clear fetching")

@@ -3,14 +3,19 @@ package tui
 import (
 	"context"
 	"encoding/json"
-	"maps"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/jbcom/radioactive-ralph/internal/ipc"
-	"github.com/jbcom/radioactive-ralph/internal/orch"
-	"github.com/jbcom/radioactive-ralph/internal/store"
+	"github.com/jbcom/radioactive-ralph/internal/observe"
 )
+
+const (
+	refreshInterval = time.Second
+	fetchTimeout    = 5 * time.Second
+)
+
+type refreshMsg time.Time
 
 // level is the current drill-down depth (spec §7: macro -> meso -> micro).
 type level int
@@ -28,15 +33,25 @@ const (
 // changes level/cursor or it doesn't, and the snapshot is always a
 // straight read from DataSource.
 type snapshot struct {
-	status ipc.StatusReply
+	capturedAt time.Time
+	summary    observe.Summary
 
-	plans     []store.Plan
-	progress  map[string]orch.Progress // planID -> progress
-	planEvent []store.Event            // recent project-wide events (macro view)
+	plans        []observe.Plan
+	plansHasMore bool
+	progress     map[string]progress
+	planEvent    []observe.Event
 
-	tasks     []store.Task  // meso: tasks for the selected plan
-	taskEvent []store.Event // micro: recent events for the selected task
-	live      []liveLogLine // micro: frames observed via Attach, newest last
+	tasks         []observe.Task
+	tasksHasMore  bool
+	taskEvent     []observe.Event
+	eventsHasMore bool
+	eventCursor   int64
+	live          []liveLogLine
+}
+
+type progress struct {
+	Done  int
+	Total int
 }
 
 // liveLogLine is one line rendered in the micro view's scrolling tail. It
@@ -68,8 +83,8 @@ type Model struct {
 
 	// selectedPlan/selectedTask carry the drill-in choice down to meso/
 	// micro so a refresh at those levels knows what to re-fetch.
-	selectedPlan store.Plan
-	selectedTask store.Task
+	selectedPlan observe.Plan
+	selectedTask observe.Task
 
 	viewport viewportState // micro: scroll offset into the log tail
 
@@ -88,7 +103,7 @@ type Model struct {
 	// Bubble Tea models a stream as a command that must be re-armed each
 	// delivery. Without re-arming, the stream stopped after one frame and the
 	// forwarder goroutine leaked (blocked writing to a channel no one read).
-	attachFrames chan json.RawMessage
+	attachFrames chan ipc.AttachEvent
 	attachDone   chan error
 	// attachEpoch increments on every new subscription; a liveFrameMsg
 	// carrying a stale epoch (from a subscription the user already drilled out
@@ -96,13 +111,15 @@ type Model struct {
 	attachEpoch uint64
 
 	// lastEventID is the model-owned resume cursor: the highest event id known
-	// to have been seen. It is seeded once to the current max before the first
-	// attach (attachSeeded), then advanced as live frames arrive. ensureAttach
+	// to have been seen. It is seeded once from the safe snapshot's project-wide
+	// cursor before the first attach (attachSeeded), then advanced as live frames
+	// arrive. ensureAttach
 	// always passes it to the subscription, so a reconnect resumes from it and
 	// gap events aren't missed — even if the first subscription ended before
 	// yielding a frame (the model, not the datasource, owns the cursor).
 	lastEventID int64
-	// attachSeeded is set once lastEventID has been seeded from MaxEventID, so
+	// attachSeeded is set once lastEventID has been seeded from the snapshot's
+	// project-wide event cursor, so
 	// the seed happens exactly once (the first ensureAttach), not on every
 	// reconnect (which must keep the advanced cursor, not reset it).
 	attachSeeded bool
@@ -113,7 +130,7 @@ type Model struct {
 	// from VerifyAndComplete), and at macro level snap.tasks is empty so the
 	// per-task wasDone check can't dedup them — this set does, keyed by task-id
 	// regardless of drill level. Cleared on each fetchedMsg (the poll's
-	// PlanProgress is fresh truth and already counts every persisted done).
+	// safe plan progress is fresh truth and already counts every persisted done).
 	liveDoneTasks map[string]bool
 
 	// fetching is true while a refresh gather is in flight. The 1s refresh
@@ -140,7 +157,7 @@ func NewModel(ctx context.Context, source DataSource, projectID string) Model {
 		source:    source,
 		projectID: projectID,
 		snap: snapshot{
-			progress: map[string]orch.Progress{},
+			progress: map[string]progress{},
 		},
 	}
 }
@@ -177,7 +194,8 @@ type fetchedMsg struct {
 // prior subscription (e.g. after a reconnect bumped the epoch) is ignored
 // instead of re-arming the current one's channels.
 type liveFrameMsg struct {
-	raw   json.RawMessage
+	event ipc.AttachEvent
+	raw   json.RawMessage // test/rolling decode seam; production sets event
 	epoch uint64
 }
 
@@ -202,19 +220,11 @@ func (m *Model) ensureAttach() tea.Cmd {
 	if m.attachFrames != nil {
 		return nil
 	}
-	// Seed the model-owned cursor ONCE, before the very first attach, to the
-	// current max — so the model (not the datasource) owns the cursor end-to-end.
-	// Without this, the first subscription's internal "seed from max" would be
-	// forgotten if it ended before yielding a frame, and a reconnect would
-	// re-seed to a NEWER max, skipping the gap. A read error is non-fatal (fall
-	// back to 0). This runs on the Update goroutine, but it's a single indexed
-	// MAX query — bounded and fast; a short timeout caps the worst case.
+	// Seed the model-owned cursor ONCE from the same safe supervisor snapshot
+	// that produced the initial visible state. There is no separate raw-store
+	// read and no error-to-zero fallback.
 	if !m.attachSeeded {
-		ctx, cancel := context.WithTimeout(m.ctx, fetchTimeout)
-		if maxID, err := m.source.MaxEventID(ctx); err == nil {
-			m.lastEventID = maxID
-		}
-		cancel()
+		m.lastEventID = m.snap.eventCursor
 		m.attachSeeded = true
 	}
 	// Always resume from the model's cursor: on the first attach it's the seeded
@@ -257,50 +267,62 @@ func (m Model) fetchCmd() tea.Cmd {
 		ctx, cancel := context.WithTimeout(ctx, fetchTimeout)
 		defer cancel()
 
-		status, err := source.Status(ctx)
-		if err != nil {
-			return fetchedMsg{err: err}
+		query := observe.SnapshotQuery{
+			ProjectID:  projectID,
+			PlanLimit:  observe.MaxPageLimit,
+			TaskLimit:  1,
+			EventLimit: 1,
 		}
-
-		snap := snapshot{status: status, progress: map[string]orch.Progress{}}
-		maps.Copy(snap.progress, prevProgress)
 
 		switch lvl {
 		case levelMacro:
-			plans, err := source.ListPlans(ctx, projectID)
-			if err != nil {
-				return fetchedMsg{err: err}
-			}
-			snap.plans = plans
-			for _, p := range plans {
-				if prog, err := source.PlanProgress(ctx, p.ID); err == nil {
-					snap.progress[p.ID] = prog
-				}
-			}
-			events, err := source.ListProjectEvents(ctx, projectID, 10)
-			if err != nil {
-				return fetchedMsg{err: err}
-			}
-			snap.planEvent = events
+			query.EventLimit = 10
 
 		case levelMeso:
-			tasks, err := source.ListTasks(ctx, selectedPlan.ID)
-			if err != nil {
-				return fetchedMsg{err: err}
-			}
-			snap.tasks = tasks
-			if prog, err := source.PlanProgress(ctx, selectedPlan.ID); err == nil {
-				snap.progress[selectedPlan.ID] = prog
-			}
+			query.PlanID = selectedPlan.ID
+			query.PlanLimit = 1
+			query.TaskLimit = observe.MaxPageLimit
 
 		case levelMicro:
-			events, err := source.ListTaskEvents(ctx, selectedPlan.ID, selectedTask.ID, 50)
-			if err != nil {
-				return fetchedMsg{err: err}
-			}
-			snap.taskEvent = events
+			query.PlanID = selectedPlan.ID
+			query.TaskID = selectedTask.ID
+			query.PlanLimit = 1
+			query.TaskLimit = 1
+			query.EventLimit = 50
 		}
 
+		reply, err := source.Snapshot(ctx, query)
+		if err != nil {
+			return fetchedMsg{err: err}
+		}
+		snap := snapshot{
+			capturedAt:  reply.CapturedAt,
+			summary:     reply.Summary,
+			eventCursor: reply.EventCursor,
+			progress:    make(map[string]progress, len(prevProgress)+len(reply.Plans.Items)),
+		}
+		for id, value := range prevProgress {
+			snap.progress[id] = value
+		}
+		for _, plan := range reply.Plans.Items {
+			snap.progress[plan.ID] = progress{
+				Done:  plan.TaskDone,
+				Total: plan.TaskTotal,
+			}
+		}
+		switch lvl {
+		case levelMacro:
+			snap.plans = reply.Plans.Items
+			snap.plansHasMore = reply.Plans.HasMore
+			snap.planEvent = reply.RecentEvents.Items
+			snap.eventsHasMore = reply.RecentEvents.HasMore
+		case levelMeso:
+			snap.tasks = reply.Tasks.Items
+			snap.tasksHasMore = reply.Tasks.HasMore
+		case levelMicro:
+			snap.taskEvent = reply.RecentEvents.Items
+			snap.eventsHasMore = reply.RecentEvents.HasMore
+		}
 		return fetchedMsg{snap: snap}
 	}
 }
@@ -310,14 +332,19 @@ func (m Model) fetchCmd() tea.Cmd {
 // feeds frames back as liveFrameMsg; Update re-issues attachCmd after each
 // frame is delivered so the subscription keeps flowing (Bubble Tea's
 // convention for representing a channel/stream as commands).
-func attachCmd(ctx context.Context, frames chan json.RawMessage, done chan error, epoch uint64) tea.Cmd {
+func attachCmd(
+	ctx context.Context,
+	frames chan ipc.AttachEvent,
+	done chan error,
+	epoch uint64,
+) tea.Cmd {
 	return func() tea.Msg {
 		select {
-		case raw, ok := <-frames:
+		case event, ok := <-frames:
 			if !ok {
 				return attachEndedMsg{err: <-done, epoch: epoch}
 			}
-			return liveFrameMsg{raw: raw, epoch: epoch}
+			return liveFrameMsg{event: event, epoch: epoch}
 		case <-ctx.Done():
 			return attachEndedMsg{err: ctx.Err(), epoch: epoch}
 		}
@@ -327,17 +354,26 @@ func attachCmd(ctx context.Context, frames chan json.RawMessage, done chan error
 // startAttach launches source.Attach on a background goroutine that
 // forwards frames onto a channel, and returns the channels plus a cancel
 // func the model uses to stop it. afterID is the resume cursor: >0 resumes
-// from a known id (a reconnect passes the last id it processed), <=0 seeds from
-// the current max (initial attach). This keeps the actual blocking Attach call
-// off Bubble Tea's Update goroutine.
-func startAttach(parent context.Context, source DataSource, afterID int64) (frames chan json.RawMessage, done chan error, cancel context.CancelFunc) {
+// from a known id (a reconnect passes the last id it processed), while zero
+// starts from the beginning. The model normally supplies the safe snapshot's
+// project-wide cursor for the initial attach. This keeps the actual blocking
+// Attach call off Bubble Tea's Update goroutine.
+func startAttach(
+	parent context.Context,
+	source DataSource,
+	afterID int64,
+) (
+	frames chan ipc.AttachEvent,
+	done chan error,
+	cancel context.CancelFunc,
+) {
 	ctx, cancel := context.WithCancel(parent)
-	frames = make(chan json.RawMessage, 32)
+	frames = make(chan ipc.AttachEvent, 32)
 	done = make(chan error, 1)
 	go func() {
-		err := source.Attach(ctx, afterID, func(raw json.RawMessage) error {
+		err := source.Attach(ctx, afterID, func(event ipc.AttachEvent) error {
 			select {
-			case frames <- raw:
+			case frames <- event:
 			case <-ctx.Done():
 			}
 			return nil
@@ -371,73 +407,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(m.startFetch(), tickCmd())
 
 	case fetchedMsg:
-		m.fetching = false
-		if msg.err != nil {
-			m.err = msg.err
-			return m, nil
-		}
-		m.err = nil
-		// Capture the identity of the currently-selected row BEFORE the merge
-		// replaces the list, so we can re-find it afterwards (a refresh that
-		// removes/reorders rows must keep the SAME entity selected, not just an
-		// in-bounds index — see reconcileCursor).
-		selectedID := m.selectedRowID()
-		// Merge rather than replace: a fetch for one level should not
-		// clobber fields owned by another level (e.g. a macro refresh
-		// while the operator is mid-drill should not blank meso/micro
-		// data — but in practice fetchCmd only runs for the CURRENT
-		// level, so this mostly just carries status/progress forward).
-		m.snap.status = msg.snap.status
-		if msg.snap.plans != nil {
-			m.snap.plans = msg.snap.plans
-		}
-		if msg.snap.progress != nil {
-			// Reconcile progress toward the poll WITHOUT regressing a live bump a
-			// poll snapshot may predate: if this gather read PlanProgress just
-			// before a task completed, a live frame already advanced Done, and a
-			// wholesale replace with the older poll value would visibly revert it
-			// until the next poll. Done is monotonic within a plan run, so take
-			// the max per plan. Then clear the live-done dedup set — the poll is
-			// the fresh baseline and already counts every persisted completion.
-			for id, pollProg := range msg.snap.progress {
-				if cur, ok := m.snap.progress[id]; ok && cur.Done > pollProg.Done {
-					pollProg.Done = cur.Done
-				}
-				msg.snap.progress[id] = pollProg
-			}
-			m.snap.progress = msg.snap.progress
-			m.liveDoneTasks = nil
-		}
-		if msg.snap.planEvent != nil {
-			// MERGE the poll's events with the live-built tail rather than
-			// replacing it. A wholesale replace would drop a live event whose DB
-			// commit landed AFTER this poll's read began: that event was prepended
-			// live but isn't in the poll snapshot, so an assign would permanently
-			// lose it (it's a one-shot stream frame, never re-delivered). The
-			// merge keeps both, deduped by id, so the poll reconciles WITHOUT
-			// regressing the live tail.
-			m.snap.planEvent = mergeEventTail(m.snap.planEvent, msg.snap.planEvent)
-		}
-		if msg.snap.tasks != nil {
-			m.snap.tasks = msg.snap.tasks
-		}
-		if msg.snap.taskEvent != nil {
-			m.snap.taskEvent = msg.snap.taskEvent
-		}
-		// Re-point the cursor at the SAME entity it was on before the refresh
-		// (by ID), falling back to a clamp if that entity is gone. Without this,
-		// a refresh that removes/reorders a row ahead of the cursor would leave
-		// the (still in-bounds) index selecting a DIFFERENT entity than the
-		// operator saw — so drilling in would open the wrong plan/task.
-		m.reconcileCursor(selectedID)
-		// Start the session-long live subscription now that the first gather has
-		// landed (idempotent: only the first call starts it). This makes the
-		// macro/meso event + state panes push-live, with this poll as the
-		// reconcile net.
-		if cmd := m.ensureAttach(); cmd != nil {
-			return m, cmd
-		}
-		return m, nil
+		return m.handleFetched(msg)
 
 	case liveFrameMsg:
 		// Drop a late frame from a subscription the user already drilled out
@@ -457,10 +427,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 
-		ev, ok := decodeEvent(msg.raw)
-		if !ok {
-			// Undecodable frame: nothing to act on, but keep the stream alive.
-			return rearm()
+		ev := msg.event
+		if ev.Kind == "" && len(msg.raw) > 0 {
+			var ok bool
+			ev, ok = decodeEvent(msg.raw)
+			if !ok {
+				return rearm()
+			}
 		}
 
 		// Advance the resume cursor: on a later reconnect, ensureAttach resumes
@@ -515,6 +488,82 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.attachFrames = nil
 		m.attachDone = nil
 		return m, nil
+	}
+	return m, nil
+}
+
+func (m Model) handleFetched(msg fetchedMsg) (tea.Model, tea.Cmd) {
+	m.fetching = false
+	if msg.err != nil {
+		m.err = msg.err
+		return m, nil
+	}
+	m.err = nil
+	// Capture the identity of the currently-selected row BEFORE the merge
+	// replaces the list, so we can re-find it afterwards (a refresh that
+	// removes/reorders rows must keep the SAME entity selected, not just an
+	// in-bounds index — see reconcileCursor).
+	selectedID := m.selectedRowID()
+	// Merge rather than replace: a fetch for one level should not
+	// clobber fields owned by another level (e.g. a macro refresh
+	// while the operator is mid-drill should not blank meso/micro
+	// data — but in practice fetchCmd only runs for the CURRENT
+	// level, so this mostly just carries status/progress forward).
+	m.snap.capturedAt = msg.snap.capturedAt
+	m.snap.summary = msg.snap.summary
+	m.snap.eventCursor = msg.snap.eventCursor
+	if msg.snap.plans != nil {
+		m.snap.plans = msg.snap.plans
+		m.snap.plansHasMore = msg.snap.plansHasMore
+	}
+	if msg.snap.progress != nil {
+		// Reconcile progress toward the poll WITHOUT regressing a live bump a
+		// poll snapshot may predate: if this gather read plan progress just
+		// before a task completed, a live frame already advanced Done, and a
+		// wholesale replace with the older poll value would visibly revert it
+		// until the next poll. Done is monotonic within a plan run, so take
+		// the max per plan. Then clear the live-done dedup set — the poll is
+		// the fresh baseline and already counts every persisted completion.
+		for id, pollProg := range msg.snap.progress {
+			if cur, ok := m.snap.progress[id]; ok && cur.Done > pollProg.Done {
+				pollProg.Done = cur.Done
+			}
+			msg.snap.progress[id] = pollProg
+		}
+		m.snap.progress = msg.snap.progress
+		m.liveDoneTasks = nil
+	}
+	if msg.snap.planEvent != nil {
+		// MERGE the poll's events with the live-built tail rather than
+		// replacing it. A wholesale replace would drop a live event whose DB
+		// commit landed AFTER this poll's read began: that event was prepended
+		// live but isn't in the poll snapshot, so an assign would permanently
+		// lose it (it's a one-shot stream frame, never re-delivered). The
+		// merge keeps both, deduped by id, so the poll reconciles WITHOUT
+		// regressing the live tail.
+		m.snap.planEvent = mergeEventTail(m.snap.planEvent, msg.snap.planEvent)
+		m.snap.eventsHasMore = msg.snap.eventsHasMore
+	}
+	if msg.snap.tasks != nil {
+		m.snap.tasks = msg.snap.tasks
+		m.snap.tasksHasMore = msg.snap.tasksHasMore
+	}
+	if msg.snap.taskEvent != nil {
+		m.snap.taskEvent = msg.snap.taskEvent
+		m.snap.eventsHasMore = msg.snap.eventsHasMore
+	}
+	// Re-point the cursor at the SAME entity it was on before the refresh
+	// (by ID), falling back to a clamp if that entity is gone. Without this,
+	// a refresh that removes/reorders a row ahead of the cursor would leave
+	// the (still in-bounds) index selecting a DIFFERENT entity than the
+	// operator saw — so drilling in would open the wrong plan/task.
+	m.reconcileCursor(selectedID)
+	// Start the session-long live subscription now that the first gather has
+	// landed (idempotent: only the first call starts it). This makes the
+	// macro/meso event + state panes push-live, with this poll as the
+	// reconcile net.
+	if cmd := m.ensureAttach(); cmd != nil {
+		return m, cmd
 	}
 	return m, nil
 }
@@ -720,15 +769,12 @@ func (m Model) View() string {
 	}
 }
 
-// decodeEvent parses one Attach frame into the typed ipc.AttachEvent. ok is
-// false for a frame that can't be decoded or carries no kind — the caller drops
-// it (there is nothing to render or apply).
 func decodeEvent(raw json.RawMessage) (ipc.AttachEvent, bool) {
-	var ev ipc.AttachEvent
-	if err := json.Unmarshal(raw, &ev); err != nil || ev.Kind == "" {
+	var event ipc.AttachEvent
+	if err := json.Unmarshal(raw, &event); err != nil || event.Kind == "" {
 		return ipc.AttachEvent{}, false
 	}
-	return ev, true
+	return event, true
 }
 
 // renderEvent formats one live event for the micro-view tail.
@@ -748,38 +794,35 @@ func renderEvent(ev ipc.AttachEvent) string {
 // the periodic poll re-reads the real status every tick and reconciles, so this
 // only needs to cover the common lifecycle transitions to make the view feel
 // live — an unmapped kind simply waits for the next poll.
-func taskDeltaStatus(kind string) store.TaskStatus {
+func taskDeltaStatus(kind string) string {
 	switch kind {
 	case "task.claimed":
-		return store.TaskStatusRunning
+		return "running"
 	case "task.done", "worker.completed", "worker.verified_done":
-		return store.TaskStatusDone
+		return "done"
 	case "task.failed", "task.failed_terminal", "worker.verification_failed":
-		return store.TaskStatusFailed
+		return "failed"
 	case "task.released":
-		return store.TaskStatusReady
+		return "ready"
 	case "task.blocked", "task.context_requested":
 		// The store emits these on the running→blocked transition (a worker
 		// stalled or requested context). Reflect it immediately — a blocked
 		// worker waiting on input is exactly the state an operator watching the
 		// live view most needs to see promptly, not a poll interval later.
-		return store.TaskStatusBlocked
+		return "blocked"
 	default:
 		return ""
 	}
 }
 
-// macroEventCap bounds the macro-view live event tail. Matches the poll's fetch
-// limit (ListProjectEvents(..., 10)) so the live tail and a poll refill hold the
-// same number of rows.
+// macroEventCap bounds the macro-view live event tail.
 const macroEventCap = 10
 
 // prependEvent adds a live event to the newest-first macro event tail, deduped
 // by id (a poll landing just after a live prepend re-includes the same row;
 // dropping the duplicate keeps the pane from showing it twice) and capped at
-// macroEventCap. It maps the wire AttachEvent back to a store.Event so the macro
-// renderer (which reads []store.Event) is unchanged.
-func prependEvent(tail []store.Event, ev ipc.AttachEvent) []store.Event {
+// macroEventCap.
+func prependEvent(tail []observe.Event, ev ipc.AttachEvent) []observe.Event {
 	// Dedup by id — but ONLY for real (nonzero) ids. A store event always has a
 	// nonzero autoincrement id; id==0 means a malformed/id-less frame, and every
 	// such frame is distinct, so deduping them (they'd all collide on 0) would
@@ -795,11 +838,11 @@ func prependEvent(tail []store.Event, ev ipc.AttachEvent) []store.Event {
 	if at.IsZero() {
 		at = time.Now()
 	}
-	row := store.Event{
+	row := observe.Event{
 		ID: ev.ID, PlanID: ev.PlanID, TaskID: ev.TaskID,
-		Kind: ev.Kind, Stream: ev.Stream, OccurredAt: at,
+		Kind: ev.Kind, Stream: ev.Stream, OccurredAt: at, Failure: ev.Failure,
 	}
-	tail = append([]store.Event{row}, tail...)
+	tail = append([]observe.Event{row}, tail...)
 	if len(tail) > macroEventCap {
 		tail = tail[:macroEventCap]
 	}
@@ -813,12 +856,12 @@ func prependEvent(tail []store.Event, ev ipc.AttachEvent) []store.Event {
 // read predates — the union keeps that event; the cap trims the oldest. A live
 // event still absent from the DB (impossible in practice — events are persisted
 // before they stream) would simply age out as newer rows arrive.
-func mergeEventTail(live, poll []store.Event) []store.Event {
+func mergeEventTail(live, poll []observe.Event) []observe.Event {
 	seen := make(map[int64]bool, len(live)+len(poll))
 	// take reports whether to keep this row, recording real ids as seen. id==0
 	// (a malformed/id-less frame) is never deduped — each is distinct, so
 	// collapsing them on 0 would wrongly drop all but one.
-	take := func(ev store.Event) bool {
+	take := func(ev observe.Event) bool {
 		if ev.ID == 0 {
 			return true
 		}
@@ -828,11 +871,11 @@ func mergeEventTail(live, poll []store.Event) []store.Event {
 		seen[ev.ID] = true
 		return true
 	}
-	merged := make([]store.Event, 0, len(live)+len(poll))
+	merged := make([]observe.Event, 0, len(live)+len(poll))
 	// Merge two newest-first lists by descending id, skipping duplicates.
 	i, j := 0, 0
 	for i < len(live) && j < len(poll) {
-		var pick store.Event
+		var pick observe.Event
 		if live[i].ID >= poll[j].ID {
 			pick = live[i]
 			i++
@@ -889,7 +932,7 @@ func applyEvent(snap snapshot, ev ipc.AttachEvent) snapshot {
 // task at most once. Cleared on the next poll, which reconciles the exact count.
 // A no-op for a non-done kind, an absent task/plan id, or an unknown plan.
 func (m *Model) bumpLiveProgress(ev ipc.AttachEvent) {
-	if taskDeltaStatus(ev.Kind) != store.TaskStatusDone || ev.TaskID == "" || ev.PlanID == "" {
+	if taskDeltaStatus(ev.Kind) != "done" || ev.TaskID == "" || ev.PlanID == "" {
 		return
 	}
 	if m.liveDoneTasks[ev.TaskID] {

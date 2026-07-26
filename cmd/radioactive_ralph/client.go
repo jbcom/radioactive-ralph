@@ -90,13 +90,7 @@ func runClientMode(ctx context.Context, cmd *cobra.Command) error {
 	}
 	_ = client.Close()
 
-	st, err := store.Open(ctx, store.Options{DSN: store.DSN(storeDBPath(stateRoot))})
-	if err != nil {
-		return fmt.Errorf("open store: %w", err)
-	}
-	defer func() { _ = st.Close() }()
-
-	source := tui.NewLiveDataSource(stateRoot, st, projectID)
+	source := tui.NewLiveDataSource(stateRoot, projectID)
 	return tui.Run(ctx, source, tui.Options{ProjectID: projectID})
 }
 

@@ -26,6 +26,11 @@ const (
 	// MetadataKey namespaces Ralph-specific fields inside an official A2A
 	// Task's extension metadata.
 	MetadataKey = "https://jonbogaty.com/radioactive-ralph/a2a/v1"
+
+	// MaxPageLimit is the public plan/task page bound.
+	MaxPageLimit = store.MaxOperatorPageLimit
+	// MaxEventLimit is the public event page bound.
+	MaxEventLimit = store.MaxOperatorEventLimit
 )
 
 // Projection sentinels let IPC and CLI adapters preserve fail-closed behavior
@@ -33,10 +38,281 @@ const (
 var (
 	ErrReaderRequired        = errors.New("observe: reader required")
 	ErrInvalidReadModel      = errors.New("observe: invalid store read model")
+	ErrInvalidResponse       = errors.New("observe: invalid response")
+	ErrIncompatibleSchema    = errors.New("observe: incompatible schema")
 	ErrUnknownTaskStatus     = errors.New("observe: unknown Ralph task status")
 	ErrUnknownMessageRole    = errors.New("observe: unknown A2A message role")
 	ErrProjectionLimitBreach = errors.New("observe: store response exceeds projection bounds")
 )
+
+// ValidateSnapshotResponse verifies the decoded wire response before an
+// operator client renders or makes automation decisions from it.
+func ValidateSnapshotResponse(snapshot *Snapshot, q SnapshotQuery) error {
+	if snapshot == nil {
+		return fmt.Errorf("%w: nil snapshot", ErrInvalidResponse)
+	}
+	if snapshot.SchemaVersion != SchemaVersion {
+		return fmt.Errorf(
+			"%w: snapshot schema %d (client supports %d)",
+			ErrIncompatibleSchema,
+			snapshot.SchemaVersion,
+			SchemaVersion,
+		)
+	}
+	if err := validateSnapshotQueryAndProject(snapshot, q); err != nil {
+		return err
+	}
+	if err := validateSnapshotPages(snapshot, q); err != nil {
+		return err
+	}
+	if err := validateSnapshotSummary(snapshot); err != nil {
+		return err
+	}
+	if err := validateSnapshotPlans(snapshot.Plans.Items, q); err != nil {
+		return err
+	}
+	if err := validateSnapshotTasks(snapshot.Tasks.Items, q); err != nil {
+		return err
+	}
+	return validateSnapshotEvents(
+		snapshot.RecentEvents.Items,
+		snapshot.EventCursor,
+		q,
+	)
+}
+
+func validateSnapshotQueryAndProject(
+	snapshot *Snapshot,
+	q SnapshotQuery,
+) error {
+	if q.ProjectID == "" ||
+		(q.TaskID != "" && q.PlanID == "") ||
+		(q.PlanID != "" && q.PlanAfterID != "") ||
+		(q.TaskID != "" &&
+			(q.TaskAfter.PlanID != "" || q.TaskAfter.TaskID != "")) {
+		return fmt.Errorf("%w: invalid query scope", ErrInvalidResponse)
+	}
+	if snapshot.Project.ID == "" || snapshot.Project.ID != q.ProjectID {
+		return fmt.Errorf(
+			"%w: project mismatch (got %q, want %q)",
+			ErrInvalidResponse,
+			snapshot.Project.ID,
+			q.ProjectID,
+		)
+	}
+	return nil
+}
+
+func validateSnapshotPages(snapshot *Snapshot, q SnapshotQuery) error {
+	if snapshot.Plans.Items == nil ||
+		snapshot.Tasks.Items == nil ||
+		snapshot.Workers == nil ||
+		snapshot.RecentEvents.Items == nil {
+		return fmt.Errorf("%w: nil collection", ErrInvalidResponse)
+	}
+	if len(snapshot.Plans.Items) > MaxPageLimit ||
+		len(snapshot.Tasks.Items) > MaxPageLimit ||
+		len(snapshot.RecentEvents.Items) > MaxEventLimit {
+		return fmt.Errorf("%w: response exceeds client bounds", ErrInvalidResponse)
+	}
+	if snapshot.Plans.HasMore != (snapshot.Plans.NextAfterID != "") {
+		return fmt.Errorf("%w: invalid plan page cursor", ErrInvalidResponse)
+	}
+	if snapshot.Tasks.HasMore != (snapshot.Tasks.NextAfter != nil) ||
+		(snapshot.Tasks.NextAfter != nil &&
+			(snapshot.Tasks.NextAfter.PlanID == "" ||
+				snapshot.Tasks.NextAfter.TaskID == "")) {
+		return fmt.Errorf("%w: invalid task page cursor", ErrInvalidResponse)
+	}
+	if snapshot.RecentEvents.HasMore !=
+		(snapshot.RecentEvents.NextBeforeID > 0) {
+		return fmt.Errorf("%w: invalid event page cursor", ErrInvalidResponse)
+	}
+	if q.PlanID != "" && snapshot.Plans.HasMore {
+		return fmt.Errorf("%w: exact plan scope is truncated", ErrInvalidResponse)
+	}
+	if q.TaskID != "" && snapshot.Tasks.HasMore {
+		return fmt.Errorf("%w: exact task scope is truncated", ErrInvalidResponse)
+	}
+	return nil
+}
+
+func validateSnapshotSummary(snapshot *Snapshot) error {
+	if snapshot.Summary.ActiveWorkerCount != len(snapshot.Workers) {
+		return fmt.Errorf(
+			"%w: active worker count %d differs from rows %d",
+			ErrInvalidResponse,
+			snapshot.Summary.ActiveWorkerCount,
+			len(snapshot.Workers),
+		)
+	}
+	if len(snapshot.Workers) > store.MaxOperatorActiveWorkers {
+		return fmt.Errorf("%w: too many active workers", ErrInvalidResponse)
+	}
+	claimCount := 0
+	for _, worker := range snapshot.Workers {
+		if worker.ID == "" || worker.Claims == nil {
+			return fmt.Errorf(
+				"%w: invalid worker identity or claims",
+				ErrInvalidResponse,
+			)
+		}
+		for _, claim := range worker.Claims {
+			if claim.PlanID == "" || claim.TaskID == "" {
+				return fmt.Errorf("%w: invalid worker claim", ErrInvalidResponse)
+			}
+			claimCount++
+			if claimCount > store.MaxOperatorActiveClaims {
+				return fmt.Errorf("%w: too many worker claims", ErrInvalidResponse)
+			}
+		}
+	}
+	if snapshot.Summary.ZeroActiveWorkers !=
+		(snapshot.Summary.ActiveWorkerCount == 0) {
+		return fmt.Errorf(
+			"%w: inconsistent zero-worker assertion",
+			ErrInvalidResponse,
+		)
+	}
+	if snapshot.EventCursor < 0 {
+		return fmt.Errorf("%w: negative event cursor", ErrInvalidResponse)
+	}
+	return nil
+}
+
+func validateSnapshotPlans(plans []Plan, q SnapshotQuery) error {
+	for _, plan := range plans {
+		if plan.ID == "" ||
+			plan.TaskDone < 0 ||
+			plan.TaskTotal < 0 ||
+			plan.TaskDone > plan.TaskTotal {
+			return fmt.Errorf(
+				"%w: invalid progress for plan %q",
+				ErrInvalidResponse,
+				plan.ID,
+			)
+		}
+		if q.PlanID != "" && plan.ID != q.PlanID {
+			return fmt.Errorf(
+				"%w: plan %q outside scope %q",
+				ErrInvalidResponse,
+				plan.ID,
+				q.PlanID,
+			)
+		}
+	}
+	return nil
+}
+
+func validateSnapshotTasks(tasks []Task, q SnapshotQuery) error {
+	for _, task := range tasks {
+		if task.PlanID == "" || task.ID == "" {
+			return fmt.Errorf("%w: task has empty identity", ErrInvalidResponse)
+		}
+		if q.PlanID != "" && task.PlanID != q.PlanID {
+			return fmt.Errorf(
+				"%w: task %q outside plan scope %q",
+				ErrInvalidResponse,
+				task.ID,
+				q.PlanID,
+			)
+		}
+		if q.TaskID != "" && task.ID != q.TaskID {
+			return fmt.Errorf(
+				"%w: task %q outside task scope %q",
+				ErrInvalidResponse,
+				task.ID,
+				q.TaskID,
+			)
+		}
+	}
+	return nil
+}
+
+func validateSnapshotEvents(
+	events []Event,
+	eventCursor int64,
+	q SnapshotQuery,
+) error {
+	for index, event := range events {
+		if event.ID <= 0 || event.ID > eventCursor {
+			return fmt.Errorf(
+				"%w: event %d exceeds cursor %d",
+				ErrInvalidResponse,
+				event.ID,
+				eventCursor,
+			)
+		}
+		if q.PlanID != "" && event.PlanID != q.PlanID {
+			return fmt.Errorf(
+				"%w: event %d outside plan scope %q",
+				ErrInvalidResponse,
+				event.ID,
+				q.PlanID,
+			)
+		}
+		if q.TaskID != "" && event.TaskID != q.TaskID {
+			return fmt.Errorf(
+				"%w: event %d outside task scope %q",
+				ErrInvalidResponse,
+				event.ID,
+				q.TaskID,
+			)
+		}
+		if index > 0 &&
+			events[index-1].ID <= event.ID {
+			return fmt.Errorf(
+				"%w: events are not newest-first",
+				ErrInvalidResponse,
+			)
+		}
+	}
+	return nil
+}
+
+// ValidateMessageResponse rejects absent or schema-incompatible message pages
+// before a client prints them.
+func ValidateMessageResponse(page *MessagePage) error {
+	if page == nil {
+		return fmt.Errorf("%w: nil message page", ErrInvalidResponse)
+	}
+	if page.SchemaVersion != SchemaVersion {
+		return fmt.Errorf(
+			"%w: message schema %d (client supports %d)",
+			ErrIncompatibleSchema,
+			page.SchemaVersion,
+			SchemaVersion,
+		)
+	}
+	if page.Items == nil {
+		return fmt.Errorf("%w: nil message collection", ErrInvalidResponse)
+	}
+	if len(page.Items) > store.MaxOperatorMessageLimit {
+		return fmt.Errorf("%w: too many messages", ErrInvalidResponse)
+	}
+	if page.HasMore != (page.NextAfterID > 0) {
+		return fmt.Errorf("%w: invalid message page cursor", ErrInvalidResponse)
+	}
+	for index, item := range page.Items {
+		if item.ID <= 0 ||
+			item.PlanID == "" ||
+			item.TaskID == "" ||
+			item.CanonicalTaskID != canonicalTaskID(item.PlanID, item.TaskID) ||
+			item.ContextID != item.PlanID {
+			return fmt.Errorf("%w: invalid message identity", ErrInvalidResponse)
+		}
+		if _, err := messageRole(string(item.Role)); err != nil {
+			return fmt.Errorf("%w: invalid message role", ErrInvalidResponse)
+		}
+		if index > 0 && page.Items[index-1].ID >= item.ID {
+			return fmt.Errorf(
+				"%w: messages are not oldest-first",
+				ErrInvalidResponse,
+			)
+		}
+	}
+	return nil
+}
 
 // Reader is the complete durable query boundary needed by the observation
 // service. *store.Store implements it. Keeping this interface read-only makes
@@ -73,6 +349,8 @@ func New(reader Reader) (*Service, error) {
 // passed directly into the next request.
 type SnapshotQuery struct {
 	ProjectID     string     `json:"project_id"`
+	PlanID        string     `json:"plan_id,omitempty"`
+	TaskID        string     `json:"task_id,omitempty"`
 	PlanLimit     int        `json:"plan_limit,omitempty"`
 	PlanAfterID   string     `json:"plan_after_id,omitempty"`
 	TaskLimit     int        `json:"task_limit,omitempty"`
@@ -97,6 +375,7 @@ type Snapshot struct {
 	Plans         PlanPage  `json:"plans"`
 	Tasks         TaskPage  `json:"tasks"`
 	Workers       []Worker  `json:"workers"`
+	EventCursor   int64     `json:"event_cursor"`
 	RecentEvents  EventPage `json:"recent_events"`
 }
 
@@ -130,12 +409,14 @@ type StatusCount struct {
 
 // Plan is the safe plan projection. Source markdown and tags are absent.
 type Plan struct {
-	ID        string           `json:"id"`
-	Slug      string           `json:"slug"`
-	Title     string           `json:"title"`
-	Status    store.PlanStatus `json:"status"`
-	CreatedAt time.Time        `json:"created_at"`
-	UpdatedAt time.Time        `json:"updated_at"`
+	ID        string    `json:"id"`
+	Slug      string    `json:"slug"`
+	Title     string    `json:"title"`
+	Status    string    `json:"status"`
+	TaskDone  int       `json:"task_done"`
+	TaskTotal int       `json:"task_total"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 // PlanPage is one deterministic plan page.
@@ -149,19 +430,19 @@ type PlanPage struct {
 // projection. Description, acceptance commands, raw messages, and artifacts
 // are intentionally absent.
 type Task struct {
-	PlanID            string           `json:"plan_id"`
-	ID                string           `json:"id"`
-	CanonicalID       string           `json:"canonical_id"`
-	Status            store.TaskStatus `json:"status"`
-	ParallelGroup     *int64           `json:"parallel_group,omitempty"`
-	SequenceOrdinal   *int64           `json:"sequence_ordinal,omitempty"`
-	RetryCount        int              `json:"retry_count"`
-	ReclaimCount      int              `json:"reclaim_count"`
-	ParentTaskID      string           `json:"parent_task_id,omitempty"`
-	ClaimedByWorkerID string           `json:"claimed_by_worker_id,omitempty"`
-	CreatedAt         time.Time        `json:"created_at"`
-	UpdatedAt         time.Time        `json:"updated_at"`
-	A2ATask           *sdka2a.Task     `json:"a2a_task"`
+	PlanID            string       `json:"plan_id"`
+	ID                string       `json:"id"`
+	CanonicalID       string       `json:"canonical_id"`
+	Status            string       `json:"status"`
+	ParallelGroup     *int64       `json:"parallel_group,omitempty"`
+	SequenceOrdinal   *int64       `json:"sequence_ordinal,omitempty"`
+	RetryCount        int          `json:"retry_count"`
+	ReclaimCount      int          `json:"reclaim_count"`
+	ParentTaskID      string       `json:"parent_task_id,omitempty"`
+	ClaimedByWorkerID string       `json:"claimed_by_worker_id,omitempty"`
+	CreatedAt         time.Time    `json:"created_at"`
+	UpdatedAt         time.Time    `json:"updated_at"`
+	A2ATask           *sdka2a.Task `json:"a2a_task"`
 }
 
 // TaskPage is one deterministic composite-key task page.
@@ -187,9 +468,9 @@ type Worker struct {
 
 // WorkerClaim is one project task held by a worker.
 type WorkerClaim struct {
-	PlanID string           `json:"plan_id"`
-	TaskID string           `json:"task_id"`
-	Status store.TaskStatus `json:"status"`
+	PlanID string `json:"plan_id"`
+	TaskID string `json:"task_id"`
+	Status string `json:"status"`
 }
 
 // FailureCategory is a fixed, non-secret operator taxonomy derived only from
@@ -275,6 +556,8 @@ func (s *Service) Snapshot(
 	}
 	raw, err := s.reader.ReadOperatorSnapshot(ctx, store.OperatorSnapshotQuery{
 		ProjectID:     q.ProjectID,
+		PlanID:        q.PlanID,
+		TaskID:        q.TaskID,
 		PlanLimit:     q.PlanLimit,
 		PlanAfterID:   q.PlanAfterID,
 		TaskLimit:     q.TaskLimit,
@@ -304,6 +587,7 @@ func (s *Service) Snapshot(
 		},
 		Plans:        plansFromStore(raw.Plans),
 		Workers:      workersFromStore(raw.Workers),
+		EventCursor:  raw.EventCursor,
 		RecentEvents: eventsFromStore(raw.RecentEvents),
 	}
 	out.Summary.PlanTotal = totalCount(out.Summary.PlanStatusCounts)
@@ -540,7 +824,9 @@ func plansFromStore(page store.OperatorPlanPage) PlanPage {
 			ID:        item.ID,
 			Slug:      item.Slug,
 			Title:     item.Title,
-			Status:    item.Status,
+			Status:    string(item.Status),
+			TaskDone:  item.TaskDone,
+			TaskTotal: item.TaskTotal,
 			CreatedAt: item.CreatedAt,
 			UpdatedAt: item.UpdatedAt,
 		})
@@ -603,7 +889,7 @@ func taskFromStore(item store.OperatorTask) (Task, error) {
 		PlanID:            item.PlanID,
 		ID:                item.ID,
 		CanonicalID:       canonicalID,
-		Status:            item.Status,
+		Status:            string(item.Status),
 		ParallelGroup:     item.ParallelGroup,
 		SequenceOrdinal:   item.SequenceOrdinal,
 		RetryCount:        item.RetryCount,
@@ -624,7 +910,7 @@ func workersFromStore(items []store.OperatorWorker) []Worker {
 			claims = append(claims, WorkerClaim{
 				PlanID: claim.PlanID,
 				TaskID: claim.TaskID,
-				Status: claim.Status,
+				Status: string(claim.Status),
 			})
 		}
 		out = append(out, Worker{

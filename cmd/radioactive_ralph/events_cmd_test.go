@@ -148,6 +148,7 @@ func TestLiveEventSourceBacklogCursorFromSameSnapshot(t *testing.T) {
 		HasMore:      true,
 		NextBeforeID: 2,
 	}
+	client.snapshot.EventCursor = 3
 	src := &liveEventSource{
 		dial: func() (eventClient, error) { return client, nil },
 	}
@@ -178,6 +179,7 @@ func TestLiveEventSourceZeroBacklogSeedsFromSafeSnapshot(t *testing.T) {
 	client.snapshot.RecentEvents = observe.EventPage{
 		Items: []observe.Event{{ID: 42, Kind: "latest"}},
 	}
+	client.snapshot.EventCursor = 42
 	src := &liveEventSource{
 		dial: func() (eventClient, error) { return client, nil },
 	}

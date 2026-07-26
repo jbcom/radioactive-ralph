@@ -328,26 +328,196 @@ func TestReadOperatorSnapshotPaginatesDeterministically(t *testing.T) {
 	}
 }
 
+func TestReadOperatorSnapshotScopesDrillDownAndKeepsProjectEventCursor(t *testing.T) {
+	ctx := context.Background()
+	s := openTestStore(t)
+	projectID := mustCreateProject(t, s, "operator-drill-down")
+	scopedPlan := mustCreatePlan(t, s, projectID, "scoped-plan")
+	otherPlan := mustCreatePlan(t, s, projectID, "other-plan")
+	mustCreateOperatorTask(t, s, scopedPlan, "done-task")
+	mustCreateOperatorTask(t, s, scopedPlan, "skipped-task")
+	mustCreateOperatorTask(t, s, scopedPlan, "selected-task")
+	mustCreateOperatorTask(t, s, otherPlan, "other-task")
+	if _, err := s.DB().ExecContext(ctx, `
+		UPDATE tasks
+		SET status = CASE id
+		  WHEN 'done-task' THEN ?
+		  WHEN 'skipped-task' THEN ?
+		END
+		WHERE plan_id = ? AND id IN ('done-task', 'skipped-task')
+	`, string(TaskStatusDone), string(TaskStatusSkipped), scopedPlan); err != nil {
+		t.Fatalf("mark tasks terminal-satisfied: %v", err)
+	}
+
+	selectedEvent := mustEmitOperatorEvent(
+		t,
+		s,
+		projectID,
+		scopedPlan,
+		"selected-task",
+		"task.progress",
+		`{"private":"selected payload"}`,
+	)
+	newestProjectEvent := mustEmitOperatorEvent(
+		t,
+		s,
+		projectID,
+		otherPlan,
+		"other-task",
+		"task.progress",
+		`{"private":"other payload"}`,
+	)
+
+	got, err := s.ReadOperatorSnapshot(ctx, OperatorSnapshotQuery{
+		ProjectID:  projectID,
+		PlanID:     scopedPlan,
+		TaskID:     "selected-task",
+		PlanLimit:  1,
+		TaskLimit:  1,
+		EventLimit: 10,
+	})
+	if err != nil {
+		t.Fatalf("ReadOperatorSnapshot: %v", err)
+	}
+	if len(got.Plans.Items) != 1 ||
+		got.Plans.Items[0].ID != scopedPlan ||
+		got.Plans.Items[0].TaskDone != 2 ||
+		got.Plans.Items[0].TaskTotal != 3 {
+		t.Fatalf("scoped plan/progress = %+v, want 2/3", got.Plans.Items)
+	}
+	if got.Plans.HasMore {
+		t.Fatalf("exact plan scope unexpectedly has more rows: %+v", got.Plans)
+	}
+	if len(got.Tasks.Items) != 1 ||
+		got.Tasks.Items[0].PlanID != scopedPlan ||
+		got.Tasks.Items[0].ID != "selected-task" {
+		t.Fatalf("scoped tasks = %+v", got.Tasks.Items)
+	}
+	if got.Tasks.HasMore {
+		t.Fatalf("exact task scope unexpectedly has more rows: %+v", got.Tasks)
+	}
+	if len(got.RecentEvents.Items) != 1 ||
+		got.RecentEvents.Items[0].ID != selectedEvent {
+		t.Fatalf("scoped events = %+v, want event %d", got.RecentEvents.Items, selectedEvent)
+	}
+	// The attach cursor deliberately remains project-wide even when the visible
+	// event page is task-scoped. A client can attach after this cursor without
+	// replaying a newer event that was outside its current drill-down.
+	if got.EventCursor != newestProjectEvent {
+		t.Fatalf("event cursor = %d, want project max %d", got.EventCursor, newestProjectEvent)
+	}
+}
+
+func TestReadOperatorSnapshotRejectsInvalidDrillDownScopes(t *testing.T) {
+	ctx := context.Background()
+	s := openTestStore(t)
+	projectID := mustCreateProject(t, s, "operator-invalid-scope")
+	planID := mustCreatePlan(t, s, projectID, "scope-plan")
+	mustCreateOperatorTask(t, s, planID, "scope-task")
+	otherProject := mustCreateProject(t, s, "operator-other-scope")
+	otherPlan := mustCreatePlan(t, s, otherProject, "other-plan")
+	mustCreateOperatorTask(t, s, otherPlan, "other-task")
+
+	tests := []struct {
+		name  string
+		query OperatorSnapshotQuery
+		want  error
+	}{
+		{
+			name:  "task without plan",
+			query: OperatorSnapshotQuery{ProjectID: projectID, TaskID: "scope-task"},
+			want:  ErrOperatorInvalidQuery,
+		},
+		{
+			name: "exact plan with plan cursor",
+			query: OperatorSnapshotQuery{
+				ProjectID:   projectID,
+				PlanID:      planID,
+				PlanAfterID: planID,
+			},
+			want: ErrOperatorInvalidQuery,
+		},
+		{
+			name: "exact task with task cursor",
+			query: OperatorSnapshotQuery{
+				ProjectID: projectID,
+				PlanID:    planID,
+				TaskID:    "scope-task",
+				TaskAfter: OperatorTaskCursor{PlanID: planID, TaskID: "scope-task"},
+			},
+			want: ErrOperatorInvalidQuery,
+		},
+		{
+			name: "foreign plan scope",
+			query: OperatorSnapshotQuery{
+				ProjectID: projectID,
+				PlanID:    otherPlan,
+			},
+			want: ErrOperatorPlanNotFound,
+		},
+		{
+			name: "unknown task scope",
+			query: OperatorSnapshotQuery{
+				ProjectID: projectID,
+				PlanID:    planID,
+				TaskID:    "missing-task",
+			},
+			want: ErrOperatorTaskNotFound,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got, err := s.ReadOperatorSnapshot(ctx, test.query)
+			if got != nil || !errors.Is(err, test.want) {
+				t.Fatalf("result = (%+v, %v), want nil %v", got, err, test.want)
+			}
+		})
+	}
+}
+
 func TestReadOperatorSnapshotUsesOneConsistentReadTransaction(t *testing.T) {
 	ctx := context.Background()
 	s := openTestStore(t)
 	projectID := mustCreateProject(t, s, "operator-consistency")
 	planID := mustCreatePlan(t, s, projectID, "consistent-plan")
+	initialEventID := mustEmitOperatorEvent(
+		t,
+		s,
+		projectID,
+		planID,
+		"",
+		"before",
+		`{}`,
+	)
 	if _, err := s.DB().ExecContext(ctx, `UPDATE plans SET title = 'before' WHERE id = ?`, planID); err != nil {
 		t.Fatalf("seed plan title: %v", err)
 	}
 
+	var concurrentEventID int64
 	got, err := s.readOperatorSnapshot(
 		ctx,
 		OperatorSnapshotQuery{ProjectID: projectID},
 		&operatorSnapshotHooks{
 			afterProjectRead: func() error {
-				_, updateErr := s.DB().ExecContext(
+				if _, updateErr := s.DB().ExecContext(
 					ctx,
 					`UPDATE plans SET title = 'after' WHERE id = ?`,
 					planID,
-				)
-				return updateErr
+				); updateErr != nil {
+					return updateErr
+				}
+				if emitErr := s.Emit(ctx, EmitOpts{
+					ProjectID: projectID,
+					PlanID:    planID,
+					Kind:      "after",
+					Stream:    "test",
+				}); emitErr != nil {
+					return emitErr
+				}
+				return s.DB().QueryRowContext(
+					ctx,
+					`SELECT MAX(id) FROM events`,
+				).Scan(&concurrentEventID)
 			},
 		},
 	)
@@ -357,12 +527,40 @@ func TestReadOperatorSnapshotUsesOneConsistentReadTransaction(t *testing.T) {
 	if len(got.Plans.Items) != 1 || got.Plans.Items[0].Title != "before" {
 		t.Fatalf("snapshot plans = %+v, want pre-write title from one read snapshot", got.Plans.Items)
 	}
+	if got.EventCursor != initialEventID ||
+		len(got.RecentEvents.Items) != 1 ||
+		got.RecentEvents.Items[0].ID != initialEventID {
+		t.Fatalf(
+			"snapshot cursor/events = (%d, %+v), want pre-write event %d",
+			got.EventCursor,
+			got.RecentEvents.Items,
+			initialEventID,
+		)
+	}
+	if concurrentEventID <= initialEventID {
+		t.Fatalf(
+			"concurrent event id = %d, want newer than %d",
+			concurrentEventID,
+			initialEventID,
+		)
+	}
 	after, err := s.GetPlan(ctx, planID)
 	if err != nil {
 		t.Fatalf("GetPlan after concurrent write: %v", err)
 	}
 	if after.Title != "after" {
 		t.Fatalf("committed plan title = %q, want after", after.Title)
+	}
+	latestEventID, err := s.MaxEventID(ctx, projectID)
+	if err != nil {
+		t.Fatalf("MaxEventID after concurrent write: %v", err)
+	}
+	if latestEventID != concurrentEventID {
+		t.Fatalf(
+			"committed event cursor = %d, want %d",
+			latestEventID,
+			concurrentEventID,
+		)
 	}
 }
 

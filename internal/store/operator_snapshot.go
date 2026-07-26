@@ -42,6 +42,8 @@ var (
 // any page is read.
 type OperatorSnapshotQuery struct {
 	ProjectID     string             `json:"project_id"`
+	PlanID        string             `json:"plan_id"`
+	TaskID        string             `json:"task_id"`
 	PlanLimit     int                `json:"plan_limit"`
 	PlanAfterID   string             `json:"plan_after_id"`
 	TaskLimit     int                `json:"task_limit"`
@@ -70,6 +72,7 @@ type OperatorSnapshot struct {
 	Tasks             OperatorTaskPage      `json:"tasks"`
 	ActiveWorkerCount int                   `json:"active_worker_count"`
 	Workers           []OperatorWorker      `json:"workers"`
+	EventCursor       int64                 `json:"event_cursor"`
 	RecentEvents      OperatorEventPage     `json:"recent_events"`
 }
 
@@ -96,6 +99,8 @@ type OperatorPlan struct {
 	Slug      string     `json:"slug"`
 	Title     string     `json:"title"`
 	Status    PlanStatus `json:"status"`
+	TaskDone  int        `json:"task_done"`
+	TaskTotal int        `json:"task_total"`
 	CreatedAt time.Time  `json:"created_at"`
 	UpdatedAt time.Time  `json:"updated_at"`
 }
@@ -219,7 +224,7 @@ func (s *Store) readOperatorSnapshot(
 			return nil, fmt.Errorf("store: operator snapshot test hook: %w", err)
 		}
 	}
-	if err := validateOperatorSnapshotCursors(ctx, tx, q); err != nil {
+	if err := validateOperatorSnapshotScopeAndCursors(ctx, tx, q); err != nil {
 		return nil, err
 	}
 
@@ -231,11 +236,26 @@ func (s *Store) readOperatorSnapshot(
 	if err != nil {
 		return nil, err
 	}
-	plans, err := readOperatorPlans(ctx, tx, q.ProjectID, q.PlanAfterID, planLimit)
+	plans, err := readOperatorPlans(
+		ctx,
+		tx,
+		q.ProjectID,
+		q.PlanID,
+		q.PlanAfterID,
+		planLimit,
+	)
 	if err != nil {
 		return nil, err
 	}
-	tasks, err := readOperatorTasks(ctx, tx, q.ProjectID, q.TaskAfter, taskLimit)
+	tasks, err := readOperatorTasks(
+		ctx,
+		tx,
+		q.ProjectID,
+		q.PlanID,
+		q.TaskID,
+		q.TaskAfter,
+		taskLimit,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -243,7 +263,19 @@ func (s *Store) readOperatorSnapshot(
 	if err != nil {
 		return nil, err
 	}
-	events, err := readOperatorEvents(ctx, tx, q.ProjectID, q.EventBeforeID, eventLimit)
+	eventCursor, err := readOperatorEventCursor(ctx, tx, q.ProjectID)
+	if err != nil {
+		return nil, err
+	}
+	events, err := readOperatorEvents(
+		ctx,
+		tx,
+		q.ProjectID,
+		q.PlanID,
+		q.TaskID,
+		q.EventBeforeID,
+		eventLimit,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -257,6 +289,7 @@ func (s *Store) readOperatorSnapshot(
 		Tasks:             tasks,
 		ActiveWorkerCount: len(workers),
 		Workers:           workers,
+		EventCursor:       eventCursor,
 		RecentEvents:      events,
 	}
 	if err := tx.Commit(); err != nil {
@@ -272,10 +305,36 @@ func validateOperatorSnapshotQuery(q OperatorSnapshotQuery) (planLimit, taskLimi
 	if q.EventBeforeID < 0 {
 		return 0, 0, 0, fmt.Errorf("%w: event_before_id must be non-negative", ErrOperatorInvalidQuery)
 	}
+	if q.TaskID != "" && q.PlanID == "" {
+		return 0, 0, 0, fmt.Errorf(
+			"%w: task_id requires plan_id",
+			ErrOperatorInvalidQuery,
+		)
+	}
+	if q.PlanID != "" && q.PlanAfterID != "" {
+		return 0, 0, 0, fmt.Errorf(
+			"%w: plan_after_id cannot be combined with plan_id",
+			ErrOperatorInvalidQuery,
+		)
+	}
 	if (q.TaskAfter.PlanID == "") != (q.TaskAfter.TaskID == "") {
 		return 0, 0, 0, fmt.Errorf(
 			"%w: task_after requires both plan_id and task_id",
 			ErrOperatorInvalidQuery,
+		)
+	}
+	if q.TaskID != "" && q.TaskAfter.PlanID != "" {
+		return 0, 0, 0, fmt.Errorf(
+			"%w: task_after cannot be combined with task_id",
+			ErrOperatorInvalidQuery,
+		)
+	}
+	if q.PlanID != "" &&
+		q.TaskAfter.PlanID != "" &&
+		q.TaskAfter.PlanID != q.PlanID {
+		return 0, 0, 0, fmt.Errorf(
+			"%w: task cursor is outside plan scope",
+			ErrOperatorInvalidCursor,
 		)
 	}
 	planLimit, err = normalizeOperatorLimit(
@@ -362,7 +421,35 @@ func readOperatorProject(ctx context.Context, tx *sql.Tx, projectID string) (Ope
 	return project, nil
 }
 
-func validateOperatorSnapshotCursors(ctx context.Context, tx *sql.Tx, q OperatorSnapshotQuery) error {
+func validateOperatorSnapshotScopeAndCursors(
+	ctx context.Context,
+	tx *sql.Tx,
+	q OperatorSnapshotQuery,
+) error {
+	if q.PlanID != "" {
+		var exists int
+		err := tx.QueryRowContext(ctx, `
+			SELECT 1 FROM plans WHERE project_id = ? AND id = ?
+		`, q.ProjectID, q.PlanID).Scan(&exists)
+		if errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("%w: %s", ErrOperatorPlanNotFound, q.PlanID)
+		}
+		if err != nil {
+			return fmt.Errorf("store: validate operator plan scope: %w", err)
+		}
+	}
+	if q.TaskID != "" {
+		var exists int
+		err := tx.QueryRowContext(ctx, `
+			SELECT 1 FROM tasks WHERE plan_id = ? AND id = ?
+		`, q.PlanID, q.TaskID).Scan(&exists)
+		if errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("%w: %s/%s", ErrOperatorTaskNotFound, q.PlanID, q.TaskID)
+		}
+		if err != nil {
+			return fmt.Errorf("store: validate operator task scope: %w", err)
+		}
+	}
 	if q.PlanAfterID != "" {
 		var exists int
 		err := tx.QueryRowContext(ctx, `
@@ -395,10 +482,17 @@ func validateOperatorSnapshotCursors(ctx context.Context, tx *sql.Tx, q Operator
 		err := tx.QueryRowContext(ctx, `
 			SELECT 1
 			FROM events
-			WHERE id = ? AND `+eventProjectScope,
+			WHERE id = ? AND `+eventProjectScope+`
+			  AND (? = '' OR plan_id = ?)
+			  AND (? = '' OR task_id = ?)
+			`,
 			q.EventBeforeID,
 			q.ProjectID,
 			q.ProjectID,
+			q.PlanID,
+			q.PlanID,
+			q.TaskID,
+			q.TaskID,
 		).Scan(&exists)
 		if errors.Is(err, sql.ErrNoRows) {
 			return fmt.Errorf("%w: event cursor", ErrOperatorInvalidCursor)
@@ -475,16 +569,28 @@ func scanOperatorStatusCounts(rows *sql.Rows, kind string) ([]OperatorStatusCoun
 func readOperatorPlans(
 	ctx context.Context,
 	tx *sql.Tx,
-	projectID, afterID string,
+	projectID, planID, afterID string,
 	limit int,
 ) (OperatorPlanPage, error) {
 	rows, err := tx.QueryContext(ctx, `
-		SELECT id, slug, title, status, created_at, updated_at
-		FROM plans
-		WHERE project_id = ? AND (? = '' OR id > ?)
-		ORDER BY id
+		SELECT p.id, p.slug, p.title, p.status,
+		       SUM(
+		         CASE
+		           WHEN t.status IN ('done', 'skipped', 'decomposed') THEN 1
+		           ELSE 0
+		         END
+		       ),
+		       COUNT(t.id),
+		       p.created_at, p.updated_at
+		FROM plans p
+		LEFT JOIN tasks t ON t.plan_id = p.id
+		WHERE p.project_id = ?
+		  AND (? = '' OR p.id = ?)
+		  AND (? = '' OR p.id > ?)
+		GROUP BY p.id, p.slug, p.title, p.status, p.created_at, p.updated_at
+		ORDER BY p.id
 		LIMIT ?
-	`, projectID, afterID, afterID, limit+1)
+	`, projectID, planID, planID, afterID, afterID, limit+1)
 	if err != nil {
 		return OperatorPlanPage{}, fmt.Errorf("store: read operator plans: %w", err)
 	}
@@ -499,6 +605,8 @@ func readOperatorPlans(
 			&plan.Slug,
 			&plan.Title,
 			&plan.Status,
+			&plan.TaskDone,
+			&plan.TaskTotal,
 			&createdRaw,
 			&updatedRaw,
 		); err != nil {
@@ -530,7 +638,7 @@ func readOperatorPlans(
 func readOperatorTasks(
 	ctx context.Context,
 	tx *sql.Tx,
-	projectID string,
+	projectID, planID, taskID string,
 	after OperatorTaskCursor,
 	limit int,
 ) (OperatorTaskPage, error) {
@@ -541,6 +649,8 @@ func readOperatorTasks(
 		FROM tasks t
 		JOIN plans p ON p.id = t.plan_id
 		WHERE p.project_id = ?
+		  AND (? = '' OR t.plan_id = ?)
+		  AND (? = '' OR t.id = ?)
 		  AND (
 		    ? = ''
 		    OR t.plan_id > ?
@@ -550,6 +660,10 @@ func readOperatorTasks(
 		LIMIT ?
 	`,
 		projectID,
+		planID,
+		planID,
+		taskID,
+		taskID,
 		after.PlanID,
 		after.PlanID,
 		after.PlanID,
@@ -732,7 +846,7 @@ func readOperatorWorkers(
 func readOperatorEvents(
 	ctx context.Context,
 	tx *sql.Tx,
-	projectID string,
+	projectID, planID, taskID string,
 	beforeID int64,
 	limit int,
 ) (OperatorEventPage, error) {
@@ -749,10 +863,23 @@ func readOperatorEvents(
 		    AND e.plan_id IN (SELECT id FROM plans WHERE project_id = ?)
 		  )
 		)
+		  AND (? = '' OR e.plan_id = ?)
+		  AND (? = '' OR e.task_id = ?)
 		  AND (? = 0 OR e.id < ?)
 		ORDER BY e.id DESC
 		LIMIT ?
-	`, projectID, projectID, projectID, beforeID, beforeID, limit+1)
+	`,
+		projectID,
+		projectID,
+		projectID,
+		planID,
+		planID,
+		taskID,
+		taskID,
+		beforeID,
+		beforeID,
+		limit+1,
+	)
 	if err != nil {
 		return OperatorEventPage{}, fmt.Errorf("store: read operator events: %w", err)
 	}
@@ -789,6 +916,25 @@ func readOperatorEvents(
 		page.NextBeforeID = page.Items[len(page.Items)-1].ID
 	}
 	return page, nil
+}
+
+func readOperatorEventCursor(
+	ctx context.Context,
+	tx *sql.Tx,
+	projectID string,
+) (int64, error) {
+	var cursor int64
+	err := tx.QueryRowContext(ctx, `
+		SELECT COALESCE(MAX(id), 0)
+		FROM events
+		WHERE `+eventProjectScope,
+		projectID,
+		projectID,
+	).Scan(&cursor)
+	if err != nil {
+		return 0, fmt.Errorf("store: read operator event cursor: %w", err)
+	}
+	return cursor, nil
 }
 
 func parseOperatorTimestamp(field, raw string) (time.Time, error) {

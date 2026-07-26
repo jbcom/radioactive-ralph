@@ -149,8 +149,8 @@ type EnqueueReply struct {
 // client names it, as the drive commands do. AfterID is the client-owned resume
 // cursor: the stream carries every event with id strictly greater than AfterID.
 // AfterID=0 means "from the beginning" — the CLIENT, not the server, picks the
-// live-tail cursor by first reading MaxEventID (or the backlog's max id) and
-// passing it here. A reconnecting client passes the highest id it has processed,
+// live-tail cursor from the safe snapshot's project-wide EventCursor and passes
+// it here. A reconnecting client passes the highest id it has processed,
 // resuming with no gap and no duplicate.
 type AttachArgs struct {
 	ProjectID string `json:"project_id"`
