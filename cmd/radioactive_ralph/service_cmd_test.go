@@ -25,7 +25,7 @@ func TestServiceInstallUninstallStatusRoundTrip(t *testing.T) {
 	t.Setenv("HOME", home)
 	startCalls := stubSupervisorServiceStart(t)
 
-	statusCmd := newRootCmd(context.Background())
+	statusCmd := newTestRootCmd(context.Background())
 	var statusOut strings.Builder
 	statusCmd.SetOut(&statusOut)
 	statusCmd.SetArgs([]string{"service", "status"})
@@ -33,7 +33,7 @@ func TestServiceInstallUninstallStatusRoundTrip(t *testing.T) {
 		t.Fatalf("service status (before install): %v", err)
 	}
 
-	installCmd := newRootCmd(context.Background())
+	installCmd := newTestRootCmd(context.Background())
 	installCmd.SetArgs([]string{"service", "install", "--bin", "/usr/local/bin/radioactive_ralph"})
 	if err := installCmd.Execute(); err != nil {
 		t.Fatalf("service install: %v", err)
@@ -63,7 +63,7 @@ func TestServiceInstallUninstallStatusRoundTrip(t *testing.T) {
 	}
 	assertInstalledUnitContains(t, home, "PATH")
 
-	uninstallCmd := newRootCmd(context.Background())
+	uninstallCmd := newTestRootCmd(context.Background())
 	uninstallCmd.SetArgs([]string{"service", "uninstall"})
 	if err := uninstallCmd.Execute(); err != nil {
 		t.Fatalf("service uninstall: %v", err)
@@ -78,7 +78,7 @@ func TestServiceInstallDefaultsBinToOwnExecutable(t *testing.T) {
 	t.Setenv("HOME", home)
 	stubSupervisorServiceStart(t)
 
-	cmd := newRootCmd(context.Background())
+	cmd := newTestRootCmd(context.Background())
 	cmd.SetArgs([]string{"service", "install"})
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("service install (no --bin): %v", err)
@@ -108,7 +108,7 @@ func TestServiceInstallDefaultsBinToOwnExecutable(t *testing.T) {
 	}
 
 	// Clean up so other tests sharing the module cache aren't affected.
-	cleanupCmd := newRootCmd(context.Background())
+	cleanupCmd := newTestRootCmd(context.Background())
 	cleanupCmd.SetArgs([]string{"service", "uninstall"})
 	_ = cleanupCmd.Execute()
 }
@@ -125,7 +125,7 @@ func TestServiceInstallWithEnv(t *testing.T) {
 	t.Setenv("HOME", home)
 	stubSupervisorServiceStart(t)
 
-	cmd := newRootCmd(context.Background())
+	cmd := newTestRootCmd(context.Background())
 	cmd.SetArgs([]string{
 		"service", "install",
 		"--bin", "/usr/local/bin/radioactive_ralph",
@@ -136,7 +136,7 @@ func TestServiceInstallWithEnv(t *testing.T) {
 		t.Fatalf("service install --env: %v", err)
 	}
 	t.Cleanup(func() {
-		cleanupCmd := newRootCmd(context.Background())
+		cleanupCmd := newTestRootCmd(context.Background())
 		cleanupCmd.SetArgs([]string{"service", "uninstall"})
 		_ = cleanupCmd.Execute()
 	})
@@ -168,7 +168,7 @@ func TestServiceInstallHonorsExplicitPath(t *testing.T) {
 	t.Setenv("HOME", home)
 	stubSupervisorServiceStart(t)
 
-	cmd := newRootCmd(context.Background())
+	cmd := newTestRootCmd(context.Background())
 	cmd.SetArgs([]string{
 		"service", "install",
 		"--bin", "/usr/local/bin/radioactive_ralph",
@@ -249,7 +249,7 @@ func TestServiceInstallRejectsMalformedEnv(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 
-	cmd := newRootCmd(context.Background())
+	cmd := newTestRootCmd(context.Background())
 	cmd.SetArgs([]string{"service", "install", "--bin", "/bin/radioactive_ralph", "--env", "NOEQUALSSIGN"})
 	if err := cmd.Execute(); err == nil {
 		t.Fatal("expected an error for a malformed --env value")
@@ -261,7 +261,7 @@ func TestServiceInstallRejectsInvalidMaxParallelBeforeWritingOrStarting(t *testi
 	t.Setenv("HOME", home)
 	startCalls := stubSupervisorServiceStart(t)
 
-	cmd := newRootCmd(context.Background())
+	cmd := newTestRootCmd(context.Background())
 	cmd.SetArgs([]string{
 		"service", "install",
 		"--bin", "/usr/local/bin/radioactive_ralph",
@@ -292,7 +292,7 @@ func TestServiceInstallDoesNotClaimStartedBeforeEndpointIsReady(t *testing.T) {
 	startCalls := stubSupervisorServiceStart(t)
 	waitSupervisorServiceReady = func(context.Context, string, time.Duration) bool { return false }
 
-	cmd := newRootCmd(context.Background())
+	cmd := newTestRootCmd(context.Background())
 	cmd.SetArgs([]string{"service", "install", "--bin", "/usr/local/bin/radioactive_ralph"})
 	err := cmd.Execute()
 	if err == nil || !strings.Contains(err.Error(), "did not become ready") {

@@ -48,13 +48,19 @@ func run() int {
 	ctx, cancel := signalContext()
 	defer cancel()
 
-	root := newRootCmd(ctx)
+	root := newRootCmd(ctx, maybeLaunchDesktopGUI)
 	if err := root.Execute(); err != nil {
 		fmt.Fprintf(os.Stderr, "radioactive_ralph: %v\n", err)
 		return 1
 	}
 	return 0
 }
+
+// desktopLaunchFunc is the optional root-command dispatch performed before the
+// ordinary client path. Production passes maybeLaunchDesktopGUI. Tests pass an
+// explicit no-op unless desktop dispatch is the behavior under test, so a
+// non-TTY test process cannot accidentally enter a native GUI run loop.
+type desktopLaunchFunc func(context.Context, *cobra.Command) (handled bool, err error)
 
 // rootFlags collects the root-level flags that decide which of the two
 // modes (§4) this invocation runs in.
@@ -65,7 +71,7 @@ type rootFlags struct {
 	logFormat     string
 }
 
-func newRootCmd(ctx context.Context) *cobra.Command {
+func newRootCmd(ctx context.Context, launchDesktop desktopLaunchFunc) *cobra.Command {
 	var flags rootFlags
 
 	root := &cobra.Command{
@@ -81,7 +87,7 @@ func newRootCmd(ctx context.Context) *cobra.Command {
 		// stderr during Execute() would duplicate every error message.
 		SilenceErrors: true,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return dispatchRoot(cmd.Context(), cmd, flags)
+			return dispatchRoot(cmd.Context(), cmd, flags, launchDesktop)
 		},
 	}
 	root.SetContext(ctx)
@@ -114,7 +120,12 @@ func newRootCmd(ctx context.Context) *cobra.Command {
 // --init is a client-side action (it always resolves against the current
 // directory), so it composes with the plain-client path rather than being
 // a third mode.
-func dispatchRoot(ctx context.Context, cmd *cobra.Command, flags rootFlags) error {
+func dispatchRoot(
+	ctx context.Context,
+	cmd *cobra.Command,
+	flags rootFlags,
+	launchDesktop desktopLaunchFunc,
+) error {
 	if flags.supervisor {
 		return runSupervisorMode(ctx, flags.logFormat)
 	}
@@ -126,7 +137,7 @@ func dispatchRoot(ctx context.Context, cmd *cobra.Command, flags rootFlags) erro
 	// would have no interactive terminal to draw into. Only the GUI-tagged build
 	// can do this; the default build's hook always returns (false, nil) so a
 	// bare terminal launch still goes to the client path below.
-	if handled, err := maybeLaunchDesktopGUI(ctx, cmd); handled {
+	if handled, err := launchDesktop(ctx, cmd); handled {
 		return err
 	}
 	return runClientMode(ctx, cmd)

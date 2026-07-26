@@ -211,7 +211,7 @@ func TestLiveEventSourceBacklogEmptyTailsFromZero(t *testing.T) {
 }
 
 func TestEventsCmd_Registered(t *testing.T) {
-	root := newRootCmd(context.Background())
+	root := newTestRootCmd(context.Background())
 	var found *cobra.Command
 	for _, c := range root.Commands() {
 		if c.Name() == "events" {

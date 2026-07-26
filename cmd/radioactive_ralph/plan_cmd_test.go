@@ -37,7 +37,7 @@ func TestPlanImportCreatesActivePlan(t *testing.T) {
 		t.Fatalf("write plan: %v", err)
 	}
 
-	cmd := newRootCmd(context.Background())
+	cmd := newTestRootCmd(context.Background())
 	cmd.SetArgs([]string{"plan", "import", planPath})
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("plan import: %v", err)
@@ -83,7 +83,7 @@ func TestPlanImportEmptyFileRejected(t *testing.T) {
 		t.Fatalf("write plan: %v", err)
 	}
 
-	cmd := newRootCmd(context.Background())
+	cmd := newTestRootCmd(context.Background())
 	cmd.SetArgs([]string{"plan", "import", planPath})
 	if err := cmd.Execute(); err == nil {
 		t.Fatal("plan import of an empty file: want error, got nil")
@@ -102,7 +102,7 @@ func TestPlanImportRejectsAmbiguousGrammarBeforeCreatingProjectOrPlan(t *testing
 		t.Fatalf("write plan: %v", err)
 	}
 
-	cmd := newRootCmd(context.Background())
+	cmd := newTestRootCmd(context.Background())
 	cmd.SetArgs([]string{"plan", "import", planPath})
 	err := cmd.Execute()
 	if err == nil || !strings.Contains(err.Error(), "paragraph before its list") {
@@ -140,12 +140,12 @@ func TestPlanImportDuplicateSlugRejected(t *testing.T) {
 		t.Fatalf("write plan: %v", err)
 	}
 
-	first := newRootCmd(context.Background())
+	first := newTestRootCmd(context.Background())
 	first.SetArgs([]string{"plan", "import", planPath})
 	if err := first.Execute(); err != nil {
 		t.Fatalf("first import: %v", err)
 	}
-	second := newRootCmd(context.Background())
+	second := newTestRootCmd(context.Background())
 	second.SetArgs([]string{"plan", "import", planPath})
 	if err := second.Execute(); err == nil {
 		t.Fatal("second import with the same slug: want error, got nil")
@@ -188,7 +188,7 @@ func TestPlanImportUsesSupervisorWhenReachable(t *testing.T) {
 		t.Fatalf("write plan: %v", err)
 	}
 
-	cmd := newRootCmd(context.Background())
+	cmd := newTestRootCmd(context.Background())
 	cmd.SetArgs([]string{"plan", "import", planPath})
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("plan import: %v", err)
