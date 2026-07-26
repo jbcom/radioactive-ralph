@@ -1,246 +1,224 @@
 ---
 title: Release checklist
-lastUpdated: 2026-07-16
+lastUpdated: 2026-07-25
 ---
 
-# Release Checklist
+# Release checklist
 
-Execute top-to-bottom. Every step has a concrete verification — no
-"looks good" signoffs.
+Execute top-to-bottom. A stable release is one immutable transaction, not a
+draft-to-prerelease promotion.
 
-## 1. Pre-tag verification
+## 1. Pre-tag controls
 
-- [ ] `main` is green — all required CI checks passing on the latest
-      commit
-- [ ] `git status` on a clean checkout is empty
-- [ ] `go test ./...` passes locally
-- [ ] `go vet ./...` is clean
-- [ ] `golangci-lint run` is clean
-- [ ] `bash scripts/validate-docs.sh` passes
-- [ ] `python3 -m tox -e docs` builds the Sphinx site cleanly, without
-      unexpected warnings
-- [ ] No `CHANGELOG.md` entries for the upcoming version left as `[TBD]`
-- [ ] No open `P0` issues in the milestone
+- [ ] `main` is clean and `go test ./...`, `go vet ./...`,
+      `golangci-lint run`, `bash scripts/validate-docs.sh`, and
+      `python3 -m tox -e docs` pass.
+- [ ] `RELEASE_PLEASE_GITHUB_TOKEN` is provisioned only for Release Please in
+      this repository.
+- [ ] `PKGS_GITHUB_TOKEN` can read, create PRs in, and squash-merge checked
+      heads in `jbcom/pkgs`; it is not used for this repository's releases.
+- [ ] Repository immutable releases are enabled.
+- [ ] `radioactive-ralph` main protection is strict, applies to administrators,
+      requires PRs, linear history, conversation resolution, and all 25
+      GitHub-Actions-app-ID-`15368` contexts:
+      `Test (ubuntu-latest)`, `Test (macos-latest)`,
+      `Test (windows-latest)`, `E2E (CI-feasible)`,
+      `GUI (ubuntu-latest)`, `GUI (macos-latest)`,
+      `Build (linux/amd64)`, `Build (linux/arm64)`,
+      `Build (darwin/amd64)`, `Build (darwin/arm64)`,
+      `Build (windows/amd64)`, `Build (windows/arm64)`, `Lint`,
+      `Workflow lint`, `Vulnerability scan`, `Docs`, `Packaging lint`,
+      `Package artifacts`, `Package artifacts (arm64)`,
+      `Package GUI (ubuntu-latest)`,
+      `Package GUI (macos-latest)`, `Package GUI (macos-15-intel)`,
+      `Package GUI (windows-latest)`, `Analyze (actions)`, and
+      `Analyze (javascript-typescript)`.
+- [ ] `jbcom/pkgs` main requires protected `validate` and `build-site` checks
+      from GitHub Actions app ID `15368`.
 
-## 2. GoReleaser dry-run
-
-Run a local snapshot and inspect every artifact before tagging.
+## 2. Snapshot proof
 
 ```sh
 goreleaser release --snapshot --clean --skip=sign,publish
 ```
 
-Expected outputs under `dist/`:
-
-- [ ] `radioactive_ralph_<ver>_darwin_amd64.tar.gz`
-- [ ] `radioactive_ralph_<ver>_darwin_arm64.tar.gz`
-- [ ] `radioactive_ralph_<ver>_linux_amd64.tar.gz`
-- [ ] `radioactive_ralph_<ver>_linux_arm64.tar.gz`
-- [ ] `radioactive_ralph_<ver>_windows_amd64.zip`
-- [ ] `checksums.txt` with SHA-256 for each archive
-- [ ] `homebrew/Formula/radioactive-ralph.rb` (class `RadioactiveRalph`)
-- [ ] `scoop/bucket/radioactive-ralph.json`
-
-Smoke the macOS-arm64 binary locally:
+The snapshot build itself is portable. The native archive/deb/rpm/installer
+smoke is Linux-only and must run on both Ubuntu x86_64 and Ubuntu arm64:
 
 ```sh
-./dist/radioactive_ralph_darwin_arm64_v8.0/radioactive_ralph --version
-./dist/radioactive_ralph_darwin_arm64_v8.0/radioactive_ralph --help
+bash scripts/ci/smoke_goreleaser_artifacts.sh
 ```
 
-- [ ] `--version` prints `<ver> (<commit>, built <iso-timestamp>)`
-- [ ] `--help` lists the root flags (`--supervisor`, `--init`,
-      `--config-file`/`-C`, `--user-config-file`,
-      `--project-config-file`, `--log-format`) and the `doctor` and
-      `service` subcommands
+On macOS or Windows the smoke helper fails immediately with a clear platform
+error; use the two native `Package artifacts` CI jobs for that proof.
 
-## 3. Docs ↔ artifacts parity
+- [ ] Five CLI archives, amd64/arm64 `.deb` and `.rpm`, `checksums.txt`,
+      Homebrew CLI cask, and Scoop manifest are exact.
+- [ ] The four native `Package GUI` contexts produce and execute both macOS
+      DMGs, the Linux AppImage, and Windows EXE.
+- [ ] Actual amd64 and arm64 deb/rpm clean-install and execution proof exists.
+- [ ] `radioactive_ralph --version` and `--help` match the intended version and
+      CLI surface.
 
-Every documented install command must match a real artifact. This is
-what `docs/getting-started/index.md` and the root `README.md` promise;
-confirm each one.
+## 3. Stable install surface
 
-- [ ] `brew tap jbcom/pkgs https://github.com/jbcom/pkgs && brew install radioactive-ralph` —
-      verified against `dist/homebrew/Formula/radioactive-ralph.rb`
-      (formula class `RadioactiveRalph`, install name
-      `radioactive-ralph`, binary installed as `radioactive_ralph`).
-      The explicit URL form is required because the repo is
-      named `pkgs`, not `homebrew-pkgs`.
-- [ ] `scoop bucket add jbcom https://github.com/jbcom/pkgs && scoop install radioactive-ralph` —
-      verified against `dist/scoop/bucket/radioactive-ralph.json`
-- [ ] `curl -sSL https://jonbogaty.com/radioactive-ralph/install.sh | sh` —
-      verified against `docs/install.sh`: `BIN` matches binary
-      name, `ARCHIVE` template matches GoReleaser naming
-- [ ] Public install docs expose only the stable install surface:
-      Homebrew, Scoop, and the curl installer.
+- [ ] Homebrew CLI:
+      `brew tap jbcom/pkgs https://github.com/jbcom/pkgs &&
+      brew install --cask radioactive-ralph`.
+- [ ] Homebrew GUI on both Apple Silicon and Intel:
+      `brew install --cask radioactive-ralph-gui`.
+- [ ] Scoop:
+      `scoop bucket add jbcom https://github.com/jbcom/pkgs &&
+      scoop install radioactive-ralph`.
+- [ ] Debian/Ubuntu:
+      `sudo apt install ./radioactive-ralph_<version>_linux_<arch>.deb`.
+- [ ] Fedora/RHEL:
+      `sudo dnf install ./radioactive-ralph_<version>_linux_<arch>.rpm`.
+- [ ] The curl installer and AppImage match their signed release manifests.
+- [ ] winget remains generated-only. Chocolatey remains optional and can run
+      only after the immutable GitHub release has published successfully; it
+      is not part of the stable gate.
 
-## 4. Tag + push
+## 4. Release Please handoff
 
-```sh
-git tag v<MAJ>.<MIN>.<PATCH>
-git push origin v<MAJ>.<MIN>.<PATCH>
-```
+Do not create or move a release tag manually.
 
-- [ ] Tag pushed to origin
-- [ ] `Release` workflow triggered on the tag
-- [ ] Optional Chocolatey job is either disabled or recorded separately
-      from the stable install-surface gate
+- [ ] Ruleset **Release tags are admin-created** (ID `19751997`) is active,
+      targets `tag`, includes `refs/tags/v*`, has the creation rule, and grants
+      only `OrganizationAdmin` an `always` bypass.
+- [ ] Ruleset **Release tags cannot move or be deleted** (ID `19752322`) is
+      active, targets `tag`, includes `refs/tags/v*`, has update and deletion
+      rules (the update and deletion rules), and has no bypass actors.
+- [ ] Merging the Release Please PR creates the forced stable tag and one
+      non-prerelease draft.
+- [ ] `release-admission` binds tag, event SHA, draft target, manifest version,
+      `origin/main`, the dedicated package secret, and the live immutable-release
+      repository setting before any publisher runs.
+- [ ] A public prerelease is rejected. There is no public staging state.
 
-## 5. Post-tag hosted verification
+## 5. Draft rendezvous and seal
 
-The hosted release workflow runs `goreleaser release --clean` on
-ubuntu-latest and (conditionally) `goreleaser release --clean
---config .goreleaser.chocolatey.yaml` on windows-latest.
+All prepublication verification uses authenticated draft downloads. Package
+install steps receive no GitHub token: a preceding fetch step caches the exact
+PR-head manifests and draft assets, then credentials are unset before Homebrew
+or Scoop executes package content.
 
-- [ ] ubuntu-latest release job green
-- [ ] GitHub release created with all 5 archives + `checksums.txt`
-      attached
-- [ ] Homebrew formula landed at
-      <https://github.com/jbcom/pkgs/blob/main/Formula/radioactive-ralph.rb>
-- [ ] Scoop manifest landed at
-      <https://github.com/jbcom/pkgs/blob/main/bucket/radioactive-ralph.json>
-- [ ] If `vars.ENABLE_CHOCOLATEY=true` and `secrets.CHOCOLATEY_API_KEY`
-      set: nupkg published to <https://community.chocolatey.org/packages/radioactive-ralph>
+- [ ] GoReleaser uploads nine CLI/native-package deliverables plus the signed
+      consolidated `checksums.txt`.
+- [ ] Four GUI jobs upload four deliverables; one signer uploads the consolidated
+      `gui-checksums.txt` and its Sigstore bundle.
+- [ ] `package-rollback.tar.gz` contains the exact original three package files,
+      their hashes, and original package-main OID; its workflow-identity
+      signature verifies. A rerun reuses it and never resets “prior” to a bad
+      already-merged main.
+- [ ] `package-manifests.tar.gz` and its workflow-identity signature preserve
+      the exact generated CLI cask, derived GUI cask, and generated Scoop bytes.
+      Initial publication and sealed reruns both consume this archive; neither
+      reconstructs an approximation from transient Actions artifacts.
+- [ ] `release-seal.json` is created last and signs source/tag/tool pins plus the
+      name, size, and SHA-256 of every other immutable asset.
+- [ ] The exact immutable asset set is 23 assets: 13 deliverables, two checksum
+      manifests and bundles, rollback provenance and bundle, exact package
+      manifests and bundle, and release seal and bundle. The seal inventories
+      all 21 assets that precede it.
+- [ ] Admission distinguishes `draft-unsealed` from `draft-sealed`. A sealed
+      rerun skips every clobbering build/uploader, verifies the seal signature
+      and every byte before package mutation, then resumes from durable GitHub
+      state. Partial or inconsistent seal state is quarantined.
+- [ ] Verify each signature with:
 
-## 5a. Manual workflow dispatches (PRD § 4.2 native-host validation)
+  ```sh
+  cosign verify-blob <manifest> \
+    --bundle <manifest>.sigstore.json \
+    --certificate-identity "https://github.com/jbcom/radioactive-ralph/.github/workflows/release.yml@refs/tags/v<MAJ>.<MIN>.<PATCH>" \
+    --certificate-oidc-issuer "https://token.actions.githubusercontent.com"
+  ```
 
-Two workflow-dispatch jobs must be run manually — they require live
-secrets and real host runners that we don't want firing on every
-commit. Run both before calling a release validated.
+- [ ] The atomic package PR changes exactly
+      `Casks/radioactive-ralph.rb`,
+      `Casks/radioactive-ralph-gui.rb`, and
+      `bucket/radioactive-ralph.json`.
+- [ ] The package gate binds same-repository ownership, `main` base, exact
+      changed files, exact release URLs/hashes, exact checked head, and required
+      workflow/app provenance.
+- [ ] Authenticated cached Homebrew and Scoop premerge smokes pass without any
+      package-write credential in the install/execution step.
 
-### Service managers — launchd / systemd-user / SCM
+## 6. Final transaction
 
-```sh
-gh workflow run service-managers.yml --ref v<MAJ>.<MIN>.<PATCH>
-```
+The final transaction orders its state changes and authority reads exactly:
 
-- [ ] macOS launchd job green (registers + starts + stops a plist
-      under `~/Library/LaunchAgents/`)
-- [ ] Linux systemd-user job green (registers + starts + stops a
-      unit under `~/.config/systemd/user/`)
-- [ ] Windows SCM job green (registers + starts + stops an SCM
-      service, elevated)
+1. squash-merge only the checked atomic package PR head;
+2. identify the unique winning package merge and complete the slow exact
+   23-asset verification;
+3. after that slow verifier, run a lightweight current package recheck that
+   requires all three target paths' latest commit to still equal the proven
+   winning merge OID and current `main` bytes to equal the small signed
+   `package-manifests.tar.gz` payload;
+4. immediately after the lightweight package recheck, freshly require the live
+   immutable-release setting, source `main` version, tag SHA, and exact draft
+   target/state, then PATCH once with `draft=false`, `prerelease=false`, and
+   `make_latest=true`;
+5. treat the fresh post-PATCH release read as authoritative when the PATCH
+   response is absent or uncertain, accepting only the exact immutable stable
+   state and otherwise compensating an exact draft or quarantining ambiguity;
+   and require `/releases/latest` to identify that release.
 
-Scripts at `scripts/ci/smoke_{launchd,systemd_user}.sh` and
-`scripts/ci/smoke_windows_scm.ps1`. These are the same shell loops an
-operator would run by hand, so a green job here matches real-host
-behavior.
+- [ ] No public prerelease existed.
+- [ ] The current package-main OID and the actual winning release squash-merge
+      OID are recorded separately. Official rollback consumes the winning merge
+      OID; its first parent is authoritative for the actual package state
+      immediately before that merge. Signed seal-time provenance is only an
+      integrity cross-check and never overrides ancestry.
+- [ ] The release is stable, immutable, and Latest.
+- [ ] A published rerun is read-only: it verifies the seal, immutable assets,
+      and historical atomic merge. The selected attempt must have a valid
+      `mergedAt` strictly before the immutable release `published_at`; equality
+      is rejected because GitHub timestamps are second-granular. It requires
+      Latest only while this is still the highest intended version.
 
-### Live provider smoke
+## 7. Public observational smokes
 
-Requires both shipped-provider secrets at repo level:
-`ANTHROPIC_API_KEY` and `OPENAI_API_KEY`. For Codex, the workflow
-converts `OPENAI_API_KEY` into a headless `codex login` before
-enabling the live smoke.
+GitHub cannot prove anonymous final release URLs before publication, and a
+cross-repository PR merge plus GitHub release publish cannot be one database
+transaction. That public-network window is unavoidable and explicit.
 
-(Gemini was removed as a shipped provider on 2026-06-18 after the
-Gemini CLI's auth endpoint was deprecated, so there is no Gemini
-smoke step anymore.)
+- [ ] Official Homebrew CLI/GUI installs and executions pass on Apple Silicon
+      and Intel.
+- [ ] Official Scoop install and execution pass.
+- [ ] Anonymous curl, amd64/arm64 deb, amd64/arm64 rpm, and amd64 AppImage
+      checks pass.
+- [ ] Provider-live uses Claude Code `2.1.220` and Codex `0.145.0` in separate
+      jobs; provider secrets exist only on their own live invocation/auth steps,
+      and Codex uses then destroys a temporary `CODEX_HOME`.
+- [ ] launchd, systemd-user, and Windows SCM manual host smokes pass.
 
-```sh
-gh workflow run provider-live.yml --ref v<MAJ>.<MIN>.<PATCH>
-```
+## 8. Compensation and terminal versions
 
-- [ ] Claude round-trip + model-sanity + runner-turn tests pass
-- [ ] Codex runner-turn passes; the headless `codex login` preflight
-      must succeed
+Before publication, any failure after package merge runs protected rollback.
+Rollback derives the prior state from the unique winning exact package PR's
+squash-merge first parent; signed seal-time provenance is only a cross-check.
+It retries safely if strict package `main` advances for unrelated work. After
+compensation, a rerun uses a deterministic new attempt branch built from the
+sealed bytes and current package main.
 
-Provider skips are acceptable for local development, but not for the
-stable-release gate.
+After publication, assets and tag are immutable. If an official public-channel
+smoke fails, protected rollback removes the broken package-manager pointers and
+the version is **terminal**. Record the failure prominently and issue a new
+patch immediately. Never claim that a same-tag rerun repairs the public release.
 
-## 6. Install-path smoke
+Do not move/delete the tag, mutate assets, turn the release into a prerelease,
+or use Contents API `DELETE` calls for package rollback.
 
-Perform at least two of the following from a clean shell / machine.
+## 9. Invariants
 
-### Homebrew (macOS / Linux)
-
-```sh
-brew untap jbcom/pkgs 2>/dev/null
-brew tap jbcom/pkgs https://github.com/jbcom/pkgs
-brew install radioactive-ralph
-radioactive_ralph --version
-```
-
-- [ ] Install succeeds
-- [ ] Version reported matches the tag
-- [ ] `brew info radioactive-ralph` shows the caveat text with the
-      post-install instructions
-
-### curl installer (macOS / Linux)
-
-```sh
-mkdir -p ~/tmp/install-smoke && cd ~/tmp/install-smoke
-curl -sSL https://jonbogaty.com/radioactive-ralph/install.sh | sh -s -- --install-dir "$PWD"
-./radioactive_ralph --version
-```
-
-- [ ] Installer downloads correct archive
-- [ ] Checksum verification passes
-- [ ] Binary works
-
-### Scoop (Windows)
-
-```powershell
-scoop bucket add jbcom https://github.com/jbcom/pkgs
-scoop install radioactive-ralph
-radioactive_ralph --version
-```
-
-- [ ] Install succeeds
-- [ ] post_install echo lines are visible
-- [ ] Version reported matches the tag
-
-## 7. Post-install operator-flow smoke
-
-Against the freshly-installed binary in a clean tmp directory:
-
-```sh
-mkdir -p ~/tmp/ralph-smoke && cd ~/tmp/ralph-smoke && git init -q
-radioactive_ralph doctor
-radioactive_ralph --supervisor &
-sleep 2
-radioactive_ralph --init
-radioactive_ralph 2>&1 | cat   # non-tty: prints one status line
-kill %1
-```
-
-- [ ] `doctor` reports OK on git, provider CLI, service-manager
-- [ ] `--supervisor` spins up without IPC errors (Unix socket or
-      Windows named pipe, as platform dictates)
-- [ ] `--init` registers the directory as a known project in the
-      user-level database
-- [ ] the plain client reports the supervisor is up
-- [ ] the supervisor shuts down cleanly on SIGTERM/SIGINT
-
-## 8. Release notes
-
-- [ ] `CHANGELOG.md` has a section for the new version
-- [ ] GitHub release body includes the changelog section verbatim
-- [ ] Release marked `Latest`
-
-## 9. Rollback plan (if step 6 or 7 fails)
-
-If a post-tag smoke fails and the bug is in the release artifact:
-
-1. Mark the GitHub release as a **pre-release** to hide it from
-   consumers that follow "latest"
-2. Revert the Homebrew formula:
-   ```sh
-   gh api -X DELETE repos/jbcom/pkgs/contents/Formula/radioactive-ralph.rb \
-     -f message="rollback v<ver>" -f sha=<prev-sha>
-   ```
-3. Revert the Scoop manifest the same way
-4. Open a follow-up patch release; do NOT delete the tag (keeps the
-   git history honest)
-
-Do NOT `git tag -d` a pushed tag. If the tag itself needs to move,
-open a new patch release and deprecate the bad one in the release
-notes.
-
-## 10. Tooling warning
-
-- The `brews:` block in `.goreleaser.yaml` is deprecated in GoReleaser
-  v2 in favor of `homebrew_casks`. `goreleaser check` must still pass
-  and the generated formula must still match the documented Homebrew
-  install path. If the installed GoReleaser version stops accepting
-  `brews:`, migrate before tagging.
+- Release Please remains manifest-mode, force-tagged, and draft.
+- The only public transition is draft to immutable stable/latest.
+- `checksums.txt`, `gui-checksums.txt`, rollback provenance, and the release
+  seal remain consolidated workflow-identity-signed artifacts.
+- Package creation is one atomic PR; package merge is not release publication.
+- Current-repository operations use the built-in token. Cross-repository package
+  operations use only `PKGS_GITHUB_TOKEN`. Release Please uses only
+  `RELEASE_PLEASE_GITHUB_TOKEN`.
+- Fyne stays pinned at `v1.7.2`, GoReleaser at `v2.17.0`, Claude Code at
+  `2.1.220`, and Codex at `0.145.0`.

@@ -27,6 +27,14 @@ func chdir(t *testing.T, dir string) {
 	t.Cleanup(func() { _ = os.Chdir(orig) })
 }
 
+func TestRootHelpDescribesUserLevelSupervisor(t *testing.T) {
+	cmd := newRootCmd(context.Background())
+	const want = "User-level supervised-execution runtime for local AI-agent CLIs"
+	if cmd.Short != want {
+		t.Fatalf("root short help = %q, want %q", cmd.Short, want)
+	}
+}
+
 func TestInitMode_CreatesProject(t *testing.T) {
 	stateDir := t.TempDir()
 	t.Setenv("RALPH_STATE_DIR", stateDir)

@@ -1,7 +1,7 @@
 # Native Installers & Packaging — Design
 
 **Date:** 2026-07-17
-**Status:** design (autonomous authoring under the desktop-app mandate).
+**Status:** implemented contract (reconciled 2026-07-25).
 **Revision (2026-07-17):** the earlier "Scope B is blocked on paid Apple/MS
 credentials" framing was WRONG. OSS projects sign for free: macOS ships as a
 **Homebrew cask** (ad-hoc-signed `.app`, quarantine stripped on install — no
@@ -20,12 +20,14 @@ set of native package formats each ecosystem expects, verifiable by signature.
 ## What already exists (baseline on main)
 
 - `.goreleaser.yaml`: CGO-off CLI binaries for 6 GOOS/GOARCH, `.tar.gz`/`.zip`
-  archives, `checksums.txt` **cosign-signed** (keyless), Homebrew + Scoop
-  manifests published to `jbcom/pkgs` via PR.
+  archives, `checksums.txt` **cosign-signed** (keyless), and generated
+  Homebrew, Scoop, and winget manifests. Only the Homebrew and Scoop manifests
+  are published to `jbcom/pkgs` via checked PRs; winget remains generated-only.
 - `.goreleaser.chocolatey.yaml`: Chocolatey publish from a Windows runner.
 - `docs/install.sh`: curl-pipe installer — resolves latest, downloads the
   arch archive, verifies its SHA-256 against `checksums.txt`, extracts the CLI.
-- `release.yml`: one ubuntu goreleaser job + one windows chocolatey job.
+- `release.yml`: one Ubuntu GoReleaser build plus an optional Windows
+  Chocolatey publisher that runs only after immutable GitHub publication.
 - Icon source: `assets/brand/ralph-mascot.png`.
 
 ## The central design fork: how to build the GUI-enabled binaries
@@ -48,7 +50,7 @@ stack**. That is the whole difficulty of this item. Three options considered:
    packaging authority (it already is), and add GUI-app bundling per-OS on
    native runners using each platform's idiomatic tool:
    - macOS: `fyne package` on a macos runner → `.app`, wrapped to `.dmg`.
-   - Windows: `fyne package` on a windows runner → `.exe`; MSI via `wix`.
+   - Windows: `fyne package` on a windows runner → `.exe`.
    - Linux: `fyne package` → tarball, repacked as AppImage; ship `.desktop`.
 
    Rationale: no cross-CGO, each OS uses its native toolchain, goreleaser stays
@@ -65,17 +67,19 @@ These need **no new credentials** (reuse the existing cosign keyless + tokens):
 1. **goreleaser `nfpms`** → `.deb` + `.rpm` for the CLI, for linux amd64/arm64.
    Straight goreleaser config addition; artifacts cosign-signed like the
    archives. Includes a `radioactive_ralph` bin in `/usr/bin`.
-2. **winget manifest** → goreleaser's `winget` publisher, PR'd to a fork of
-   `microsoft/winget-pkgs` (or staged in `jbcom/pkgs` for manual submission).
-   Uses the existing `JBCOM_PKGS_GITHUB_TOKEN`.
+2. **winget manifest generation** → GoReleaser writes the manifest under
+   `dist/` for inspection. Upload, staging, and submission are disabled until
+   there is a real consumer-tested publication path; winget is not part of the
+   supported install surface.
 3. **Linux `.desktop` + AppImage** for the GUI. The `.desktop` file
    (`radioactive-ralph.desktop`, Exec=`radioactive_ralph gui`, the mascot icon)
    is committed; the AppImage is built on the ubuntu GUI runner from the
    `-tags gui` binary via `appimagetool`. **AppImages are unsigned by
    convention** (verified by the release checksum instead), so no cert needed.
-4. **install.sh audit** — confirm it verifies against the cosign-signed
-   `checksums.txt` end-to-end, and extend it to optionally verify the cosign
-   signature+certificate (not just the SHA) when `cosign` is present. Document
+4. **install.sh audit** — verify the archive against `checksums.txt`, and when
+   `cosign` is present verify that manifest's Sigstore bundle against the exact
+   tagged release-workflow identity and GitHub Actions issuer first. Without
+   `cosign`, print an explicit SHA-only fallback notice. Document
    the GUI install path (the app bundles are not curl-pipe installable; point at
    the native installers).
 
@@ -86,22 +90,24 @@ of this needs a paid Apple/Microsoft account:
 
 1. **macOS `.app` via a Homebrew cask.** `fyne package` on a macos runner
    produces `radioactive-ralph.app`, ad-hoc-signed (`codesign -s -`, free). It
-   is delivered as a **Homebrew cask** (a `casks/` entry in `jbcom/pkgs`, beside
-   the existing formula): `brew install --cask radioactive-ralph`. Homebrew
-   strips the `com.apple.quarantine` xattr on install, so Gatekeeper does not
-   block it despite the absence of notarization — the standard OSS-app path. A
-   `.dmg` is also produced as a release asset for direct download (that path
-   shows a Gatekeeper prompt; the cask is the recommended install).
-2. **Windows `.exe`/MSI.** `fyne package` + `wix` on a windows runner. Signed
-   with the **SignPath Foundation** OSS certificate (next section) so SmartScreen
-   is clean.
+   is delivered as the distinct **`radioactive-ralph-gui` Homebrew cask** in
+   `jbcom/pkgs`, beside the `radioactive-ralph` CLI cask:
+   `brew install --cask radioactive-ralph-gui`. Its `postflight` explicitly
+   strips the `com.apple.quarantine` xattr, so Gatekeeper does not block it
+   despite the absence of notarization — the standard OSS-app path. A `.dmg`
+   is also produced as a release asset for direct download (that path shows a
+   Gatekeeper prompt; the cask is the recommended install).
+2. **Windows `.exe`.** `fyne package` on a windows runner. Sign with the
+   **SignPath Foundation** OSS certificate when enrollment credentials exist;
+   otherwise publish it unsigned as a best-effort direct download that may
+   trigger SmartScreen. No MSI/WiX artifact is implemented.
 3. **Linux AppImage** (from Scope A) is the GUI delivery; AppImages are unsigned
    by convention and verified by the release checksum.
 
-The signing steps are guarded on the corresponding secret being present (the
-same `secrets.X != ''` gate release.yml uses for `CHOCOLATEY_API_KEY`), so the
-pipeline builds bundles unsigned until signing is wired, then signs
-automatically once the secret lands.
+The Windows signing step is guarded on the corresponding secret being present,
+so the pipeline builds the `.exe` unsigned until signing is wired, then signs
+automatically once the secret lands. The AppImage is unsigned by convention;
+all receive one consolidated workflow-identity-signed GUI checksum manifest.
 
 ## Signing — the OSS way (free, no purchase)
 
@@ -127,8 +133,10 @@ gated on the secret, so it turns on the moment the token is added.
 ## Testing / verification
 
 - `goreleaser release --snapshot --clean` locally produces the CLI archives +
-  the new `.deb`/`.rpm` without publishing — assert the nfpm artifacts exist and
-  install cleanly in a throwaway container (`dpkg -i` / `rpm -i` → `radioactive_ralph --version`).
+  the new `.deb`/`.rpm` without publishing. Native install proof runs through
+  `scripts/ci/smoke_goreleaser_artifacts.sh` on Ubuntu x86_64 and arm64 (the
+  helper intentionally rejects non-Linux hosts), using `dpkg`/`rpm` and
+  `radioactive_ralph --version`.
 - The `-tags gui` binary + AppImage build on the ubuntu GUI runner; smoke-run
   `--version` (the GUI itself needs a display, but `--version` proves the bundle
   links).
@@ -147,13 +155,14 @@ Nothing here requires paying Apple or Microsoft:
 
 - **macOS** ships as a **Homebrew cask** (ad-hoc-signed `.app`, quarantine
   stripped on install) — no Apple Developer account.
-- **Windows** signs via the **free SignPath Foundation OSS program** — no
-  purchased cert. The only user action is a one-time signup + adding a
-  `SIGNPATH_*` repo secret; the pipeline signs automatically once it exists and
-  ships unsigned until then.
-- **Linux** (deb/rpm/AppImage) and all the CLI package managers are fully
-  automatic via the existing cosign-keyless + token flow.
+- **Windows** can sign via the **free SignPath Foundation OSS program** — no
+  purchased cert. Until the one-time enrollment and `SIGNPATH_*` secret exist,
+  the best-effort direct `.exe` remains unsigned.
+- **Linux** CLI deb/rpm artifacts are covered by the keyless-signed GoReleaser
+  checksum manifest. The AppImage is unsigned and has its own signed checksum
+  manifest. Homebrew and Scoop are the supported published CLI managers; winget
+  is generated-only and Chocolatey is optional only after immutable GitHub
+  publication.
 
-So the whole packaging item can be built and shipped autonomously; the SignPath
-enrollment is the single optional signup that upgrades Windows from
-"SmartScreen-warns" to "clean", and can be added any time.
+The supported stable paths can be built and verified autonomously. SignPath
+enrollment is an optional upgrade for the best-effort Windows direct download.

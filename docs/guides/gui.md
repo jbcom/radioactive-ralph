@@ -24,7 +24,7 @@ when you run `gui` there.
 
 | Platform | Install |
 |---|---|
-| macOS | `brew install --cask radioactive-ralph` (opens cleanly — no Gatekeeper prompt) |
+| macOS | `brew install --cask radioactive-ralph-gui` (opens cleanly — no Gatekeeper prompt) |
 | Linux | the `.AppImage` from the [latest release](https://github.com/jbcom/radioactive-ralph/releases/latest) — `chmod +x`, run |
 | macOS (direct) / Windows | the `.dmg` / `.exe` from the latest release |
 

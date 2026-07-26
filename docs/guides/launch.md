@@ -25,7 +25,7 @@ Everything needed before the LinkedIn / Hacker News drop. This is the
 - [x] Root README stabilized for GitHub + package-manager install guidance
 - [x] Docs realigned to the supervisor + dumb-client architecture
 - [x] Docs publishing split from release automation
-- [ ] `brew install radioactive-ralph` tested from a clean machine
+- [ ] `brew install --cask radioactive-ralph` tested from a clean machine
 
 ### Demo verification
 - [ ] `radioactive_ralph --supervisor` (or `service install`) launches the supervisor cleanly

@@ -77,12 +77,15 @@ teardown, async launch, local-time, and rune-safe truncation. Merged PR #89
 
 Ships radioactive-ralph as real installable software everywhere, CLI and GUI,
 signed the OSS way (no paid Apple/Microsoft credentials). CLI: goreleaser nfpms
-(`.deb`/`.rpm`), a winget publisher, and the Homebrew formula migrated to
-`homebrew_casks` (goreleaser v2.17 removed `brews`). GUI: a per-OS `gui-bundles`
+(`.deb`/`.rpm`), winget manifest generation only (not staging or public
+submission), and the CLI shipped as the
+`radioactive-ralph` Homebrew cask (goreleaser v2.17 removed `brews`). GUI: a
+per-OS `gui-bundles`
 release matrix runs `fyne package --tags gui` (CGO) on native runners —
 macOS ad-hoc-`codesign`s the `.app`, wraps a `.dmg`, and publishes a Homebrew
-cask whose `postflight` strips the quarantine attribute (so the ad-hoc-signed
-app opens without a Gatekeeper prompt, no Apple Developer account); Linux repacks
+cask named `radioactive-ralph-gui` whose `postflight` strips the quarantine
+attribute (so the ad-hoc-signed app opens without a Gatekeeper prompt, no Apple
+Developer account); Linux repacks
 fyne's tarball into an AppImage (appimagetool pinned + SHA-verified) with the
 committed `.desktop`; Windows produces the `.exe` with an optional secret-gated
 SignPath Foundation Authenticode stage (free OSS signing when enrolled). A
@@ -90,7 +93,7 @@ double-clicked bundle (no controlling TTY) launches the GUI via a build-tagged
 hook rather than the bare TUI. A `packaging` CI job (goreleaser check +
 shellcheck + `desktop-file-validate`) gates it all on every PR. Four bot-review
 rounds hardened the scripts (token out of clone URLs, cleanup traps, rerun-safe
-cask push, per-bundle checksums) and fixed two P1s the review caught: the
+atomic package push, consolidated GUI checksums) and fixed two P1s the review caught: the
 double-click-opens-TUI bug and the wrong quarantine assumption. Merged PR #92
 (a1df782). The one optional follow-up is the user's free SignPath enrollment,
 which flips the Windows `.exe` from unsigned to signed with no code change.
