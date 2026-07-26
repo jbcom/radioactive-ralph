@@ -51,7 +51,7 @@ func runSupervisorMode(ctx context.Context, logFormat string) error {
 	}
 	logger := rlog.New(mode, os.Stderr)
 
-	maxParallel, err := supervisorMaxParallel(os.Getenv)
+	maxParallel, err := supervisorMaxParallel(os.LookupEnv)
 	if err != nil {
 		return err
 	}
@@ -85,14 +85,16 @@ func runSupervisorMode(ctx context.Context, logFormat string) error {
 }
 
 // supervisorMaxParallel converts the launchd/systemd-friendly environment
-// setting into the orchestrator's process-wide worker limit. Unset preserves
-// the existing unbounded default. A present value must be positive so a typo
-// cannot silently disable the bound.
-func supervisorMaxParallel(getenv func(string) string) (int, error) {
-	raw := strings.TrimSpace(getenv(maxParallelEnv))
-	if raw == "" {
+// setting into the orchestrator's process-wide emergency worker ceiling.
+// Unset preserves the legacy unbounded default; neither mode is adaptive or a
+// recommended optimum. A present value must be positive so a typo cannot
+// silently disable the bound.
+func supervisorMaxParallel(lookupEnv func(string) (string, bool)) (int, error) {
+	value, configured := lookupEnv(maxParallelEnv)
+	if !configured {
 		return 0, nil
 	}
+	raw := strings.TrimSpace(value)
 	n, err := strconv.Atoi(raw)
 	if err != nil || n <= 0 || n > maxParallelLimit {
 		return 0, fmt.Errorf("%s must be an integer from 1 through %d, got %q", maxParallelEnv, maxParallelLimit, raw)

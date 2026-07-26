@@ -549,6 +549,18 @@ func TestHeaderText_ConnectedAndWaiting(t *testing.T) {
 	}
 }
 
+func TestWindowsNoSupervisorHintDoesNotOfferSCMInstall(t *testing.T) {
+	hint := noSupervisorHintFor("windows")
+	for _, clause := range []string{"radioactive_ralph --supervisor", "provider PTYs", "WSL2", "systemd --user"} {
+		if !strings.Contains(hint, clause) {
+			t.Fatalf("Windows no-supervisor hint %q missing %q", hint, clause)
+		}
+	}
+	if strings.Contains(hint, "service install") {
+		t.Fatalf("Windows no-supervisor hint offers disabled SCM install: %q", hint)
+	}
+}
+
 func TestHumanizeUptime(t *testing.T) {
 	cases := map[time.Duration]string{
 		45 * time.Second: "45s",

@@ -1,8 +1,9 @@
-// Package onboard implements the guided first-run wizard: when a user runs
-// the client cold on an interactive terminal and no supervisor is reachable,
-// it OFFERS (with explicit consent) to install and start the background
-// service, falling back to a foreground supervisor or the plain
-// print-the-commands path. See
+// Package onboard implements the guided first-run wizard. On platforms with a
+// supported durable-service backend, a cold interactive client OFFERS (with
+// explicit consent) to install and start the background service, falling back
+// to a foreground supervisor or the plain print-the-commands path. On a
+// service-disabled platform, the wizard explains that boundary, skips the
+// install prompt, and routes directly to the foreground/manual choices. See
 // docs/superpowers/specs/2026-07-17-guided-first-run-onboarding-design.md.
 //
 // The wizard is pure orchestration: every side effect (prompting, installing
@@ -35,10 +36,12 @@ const (
 // Plan is the "what will be created" summary shown before any outward-facing
 // action, so the user consents to concrete paths, not a vague promise.
 type Plan struct {
-	StateDir        string
-	DBPath          string
-	ServiceUnit     string
-	ServiceUnitPath string
+	StateDir             string
+	DBPath               string
+	ServiceUnit          string
+	ServiceUnitPath      string
+	ServiceDisabled      bool
+	ServiceDisabledGuide string
 }
 
 // Prompter asks the user a yes/no question. Confirm returns (true, nil) for
@@ -85,7 +88,17 @@ func Run(d Deps) (Outcome, error) {
 	if d.Plan.ServiceUnit != "" {
 		_, _ = fmt.Fprintf(d.Out, "  • service:    %s (%s)\n", d.Plan.ServiceUnit, d.Plan.ServiceUnitPath)
 	}
+	if d.Plan.ServiceDisabledGuide != "" {
+		_, _ = fmt.Fprintf(d.Out, "  • service:    %s\n", d.Plan.ServiceDisabledGuide)
+	}
 	_, _ = fmt.Fprintln(d.Out)
+
+	// Some platforms support Ralph's foreground control plane but cannot
+	// safely host the durable service. Do not offer an install action that the
+	// platform contract requires to fail closed.
+	if d.Plan.ServiceDisabled {
+		return offerForeground(d)
+	}
 
 	// defaultYes=false: installing a persistent background service is an
 	// outward-facing action, so per the spec's non-negotiable consent rule

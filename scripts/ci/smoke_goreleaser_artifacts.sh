@@ -10,7 +10,15 @@ if [[ "$HOST_OS" != "Linux" ]]; then
 fi
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+# shellcheck source=scripts/ci/package_guidance_contract.sh
+source "$ROOT/scripts/ci/package_guidance_contract.sh"
 VERSION="$(jq -er '.version' "$ROOT/dist/metadata.json")"
+SCOOP_MANIFEST="$ROOT/dist/scoop/bucket/radioactive-ralph.json"
+if ! ralph_validate_scoop_manifest_contract_file "$SCOOP_MANIFEST"; then
+  echo "artifact smoke: Scoop manifest violates the native Windows support contract" >&2
+  exit 1
+fi
+ralph_validate_goreleaser_release_footer "$ROOT/.goreleaser.yaml"
 SMOKE="$(mktemp -d)"
 trap '[[ -n "${SERVER_PID:-}" ]] && kill "$SERVER_PID" 2>/dev/null || true; rm -rf "$SMOKE"' EXIT
 case "$(uname -m)" in

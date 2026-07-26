@@ -191,7 +191,11 @@ transaction. That public-network window is unavoidable and explicit.
 - [ ] Provider-live uses Claude Code `2.1.220` and Codex `0.145.0` in separate
       jobs; provider secrets exist only on their own live invocation/auth steps,
       and Codex uses then destroys a temporary `CODEX_HOME`.
-- [ ] launchd, systemd-user, and Windows SCM manual host smokes pass.
+- [ ] launchd and systemd-user manual host smokes pass; native Windows
+      foreground supervisor/client proof and `ErrPTYUnsupported` worker refusal
+      pass, and SCM install/start is rejected without leaving a registration,
+      config, or process. Until a real WSL2 workflow exists, a manual WSL2 host
+      proof owns the Linux-build provider turn and `systemd --user` lifecycle.
 
 ## 8. Compensation and terminal versions
 

@@ -1,5 +1,13 @@
 # Terminal-Multiplexing Substrate Recommendation for radioactive-ralph
 
+> **Native Windows override (2026-07-26):** This historical evaluation's
+> native ConPTY conclusion is superseded by the
+> [Windows SCM safety contract](./2026-07-26-windows-scm-safety-disable-design.md).
+> In the implemented dependency line, `creack/pty` returns
+> `ErrPTYUnsupported` on native Windows, so provider workers are unavailable
+> there. Native Windows supports only the foreground supervisor/client control
+> plane; use the Linux build inside WSL2 for provider-backed execution.
+
 ## Decision: (D) Hybrid — Ralph owns ptys via `creack/pty`; Bubble Tea renders; tmux is not used at all (not even as an optional durability layer)
 
 This is not "D-lite" — it's D with the tmux escape hatch declined. Ralph builds its own minimal durable-supervisor process, gets both control invariant and durability natively, and never negotiates pty ownership with an external daemon.

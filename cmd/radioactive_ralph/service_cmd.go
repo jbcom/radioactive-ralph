@@ -19,11 +19,16 @@ var waitSupervisorServiceReady = waitSupervisorReachable
 
 // newServiceCmd wires internal/service's per-user auto-restart definition
 // as `radioactive_ralph service install|uninstall|status`. Installing
-// registers the platform-native service host (launchd/systemd/Windows SCM)
+// registers the supported platform-native service host (launchd/systemd)
 // to run `radioactive_ralph --supervisor` as a long-lived, auto-restarting
 // background process, so the supervisor survives logout/reboot/crash
-// without an operator remembering to relaunch it by hand.
+// without an operator remembering to relaunch it by hand. Native Windows SCM
+// install/start is fail-closed; status/uninstall remain for remediation.
 func newServiceCmd() *cobra.Command {
+	return newServiceCmdForPlatform(runtime.GOOS)
+}
+
+func newServiceCmdForPlatform(goos string) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:          "service",
 		Short:        "Manage the per-user supervisor auto-restart service definition",
@@ -32,7 +37,41 @@ func newServiceCmd() *cobra.Command {
 	cmd.AddCommand(newServiceInstallCmd())
 	cmd.AddCommand(newServiceUninstallCmd())
 	cmd.AddCommand(newServiceStatusCmd())
+	applyServiceHelpForPlatform(cmd, goos)
 	return cmd
+}
+
+func applyServiceHelpForPlatform(cmd *cobra.Command, goos string) {
+	if goos != "windows" {
+		return
+	}
+
+	cmd.Short = "Inspect or remove legacy Windows SCM state; install/start is unsupported"
+	cmd.Long = "Native Windows SCM install/start is unsupported. Run `radioactive_ralph --supervisor` as a foreground control plane and `radioactive_ralph` as its client. The status and uninstall commands exist only to inspect and remove legacy SCM registrations. Use WSL2 for the functional per-user service and provider-backed execution path."
+
+	help := map[string]struct {
+		short string
+		long  string
+	}{
+		"install": {
+			short: "Unsupported on native Windows; use the foreground control plane or WSL2",
+			long:  "Native Windows SCM install/start is unsupported. Run `radioactive_ralph --supervisor` in a foreground terminal and `radioactive_ralph` as its client. Use WSL2 for the functional Linux per-user service and provider-backed execution path.",
+		},
+		"uninstall": {
+			short: "Stop and remove a legacy native Windows SCM registration",
+			long:  "Native Windows uninstall is a remediation command: it stops and removes a legacy SCM registration. It does not enable a supported native service path. Use WSL2 for the functional per-user service and provider-backed execution path.",
+		},
+		"status": {
+			short: "Inspect a legacy native Windows SCM registration for remediation",
+			long:  "Native Windows status reports legacy SCM registration state for remediation. Native SCM install/start remains unsupported; run the control plane in the foreground or use WSL2 for the functional per-user service and provider-backed execution path.",
+		},
+	}
+	for _, child := range cmd.Commands() {
+		if guidance, ok := help[child.Name()]; ok {
+			child.Short = guidance.short
+			child.Long = guidance.long
+		}
+	}
 }
 
 func newServiceInstallCmd() *cobra.Command {
@@ -56,12 +95,17 @@ func newServiceInstallCmd() *cobra.Command {
 				return err
 			}
 			if _, configured := extraEnv[maxParallelEnv]; configured {
-				if _, err := supervisorMaxParallel(func(key string) string { return extraEnv[key] }); err != nil {
+				if _, err := supervisorMaxParallel(func(key string) (string, bool) {
+					value, ok := extraEnv[key]
+					return value, ok
+				}); err != nil {
 					return fmt.Errorf("validate service environment: %w", err)
 				}
 			}
 			if _, explicitlySet := extraEnv["PATH"]; !explicitlySet {
-				extraEnv["PATH"] = serviceExecutionPath(bin, os.Getenv("PATH"))
+				if inferredPath := serviceExecutionPath(bin, os.Getenv("PATH")); inferredPath != "" {
+					extraEnv["PATH"] = inferredPath
+				}
 			}
 			opts := service.InstallOptions{RalphBin: bin, ExtraEnv: extraEnv}
 			path, err := service.Install(opts)
@@ -94,27 +138,30 @@ func newServiceInstallCmd() *cobra.Command {
 // operator's current PATH into the user service. launchd starts agents with
 // only /usr/bin:/bin:/usr/sbin:/sbin, which cannot find Homebrew or ~/.local
 // provider CLIs; systemd user-manager PATHs have the same shell-vs-service
-// drift. The Ralph binary's directory is always first. Duplicate, relative,
-// nonexistent, non-directory, and group/other-writable entries are removed;
-// an operator who intentionally needs a different trust policy can pass an
-// explicit --env PATH=... value.
+// drift. The Ralph binary's directory is considered first. Duplicate,
+// relative, missing, and non-directory entries are removed. Unix additionally
+// rejects paths with symlinked or ownership/mode-untrusted components. Native
+// Windows SCM installation is disabled, so no installer PATH is inferred.
 func serviceExecutionPath(ralphBin, current string) string {
-	candidates := []string{filepath.Dir(ralphBin)}
-	candidates = append(candidates, filepath.SplitList(current)...)
-	switch runtime.GOOS {
-	case "windows":
-		// Preserve the inherited absolute Windows paths above; there is no
-		// portable synthetic SystemRoot path to add without expanding env.
-	default:
-		candidates = append(candidates,
-			"/opt/homebrew/bin",
-			"/usr/local/bin",
-			"/usr/bin",
-			"/bin",
-			"/usr/sbin",
-			"/sbin",
-		)
+	if runtime.GOOS == "windows" {
+		// Keep this helper reductive even though service.Install rejects the
+		// operation: no caller may convert the installer's PATH into dormant
+		// SCM configuration.
+		return ""
 	}
+
+	currentEntries := filepath.SplitList(current)
+	candidates := make([]string, 0, 1+len(currentEntries)+6)
+	candidates = append(candidates, filepath.Dir(ralphBin))
+	candidates = append(candidates, currentEntries...)
+	candidates = append(candidates,
+		"/opt/homebrew/bin",
+		"/usr/local/bin",
+		"/usr/bin",
+		"/bin",
+		"/usr/sbin",
+		"/sbin",
+	)
 
 	seen := make(map[string]struct{}, len(candidates))
 	paths := make([]string, 0, len(candidates))
@@ -133,17 +180,6 @@ func serviceExecutionPath(ralphBin, current string) string {
 		paths = append(paths, clean)
 	}
 	return strings.Join(paths, string(os.PathListSeparator))
-}
-
-func servicePathDirAllowed(candidate string) bool {
-	info, err := os.Stat(candidate)
-	if err != nil || !info.IsDir() {
-		return false
-	}
-	if runtime.GOOS == "windows" {
-		return true
-	}
-	return info.Mode().Perm()&0o022 == 0
 }
 
 // parseEnvPairs parses repeated --env KEY=VALUE flag values into a map.

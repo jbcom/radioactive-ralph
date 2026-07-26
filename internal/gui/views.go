@@ -4,6 +4,7 @@ package gui
 
 import (
 	"fmt"
+	"runtime"
 	"time"
 
 	"fyne.io/fyne/v2"
@@ -32,7 +33,7 @@ import (
 // the operator trying to reconcile them with the visible per-project rows.
 func headerText(st ipc.StatusReply, statusErr error) string {
 	if statusErr != nil {
-		return "waiting for supervisor…  (start one with:  radioactive_ralph service install)"
+		return "waiting for supervisor…  (" + noSupervisorHintFor(runtime.GOOS) + ")"
 	}
 	return fmt.Sprintf(
 		"connected · up %s   ·   all projects: plans %d active   workers %d   running %d   ready %d   approval %d   blocked %d   failed %d",
@@ -40,6 +41,14 @@ func headerText(st ipc.StatusReply, statusErr error) string {
 		st.ActivePlans, st.ActiveWorkers, st.RunningTasks, st.ReadyTasks,
 		st.ApprovalTasks, st.BlockedTasks, st.FailedTasks,
 	)
+}
+
+func noSupervisorHintFor(goos string) string {
+	if goos == "windows" {
+		return "start the native control plane with: radioactive_ralph --supervisor; " +
+			"provider PTYs require WSL2 with systemd --user"
+	}
+	return "start one with:  radioactive_ralph service install"
 }
 
 // humanizeUptime renders a supervisor uptime compactly (e.g. "3h12m", "45s").

@@ -7,6 +7,15 @@ branch (`feat/supervisor-architecture`) with one comprehensive directive set,
 because the coordination protocol, database location, and config model are
 interdependent and cannot be split without designing the seams twice.
 
+> **Native Windows override (2026-07-26):** The
+> [Windows SCM safety contract](./2026-07-26-windows-scm-safety-disable-design.md)
+> supersedes only this historical design's native Windows ConPTY and Windows
+> service claims. Native Windows now supports the foreground
+> supervisor/client control plane only: worker ptys return
+> `ErrPTYUnsupported`, and SCM install/start is disabled. The Linux build in
+> WSL2 with `systemd --user` is the functional Windows provider route. The
+> remaining architecture stays authoritative.
+
 Rationale for every decision below is in `.agent-state/decisions.ndjson`.
 
 **Tech stack** (no binary-size constraint; heavier deps are fine): Go 1.26;

@@ -28,7 +28,9 @@ Everything needed before the LinkedIn / Hacker News drop. This is the
 - [ ] `brew install --cask radioactive-ralph` tested from a clean machine
 
 ### Demo verification
-- [ ] `radioactive_ralph --supervisor` (or `service install`) launches the supervisor cleanly
+- [ ] On macOS/Linux, `radioactive_ralph service install` launches the user-service supervisor cleanly with its configured service environment
+- [ ] On native Windows, `$env:RALPH_MAX_PARALLEL = "N"; radioactive_ralph --supervisor` launches the foreground control plane; `radioactive_ralph` connects as its client, and no SCM install/start path is claimed
+- [ ] In WSL2, the Linux `systemd --user` service launches provider-backed execution cleanly
 - [ ] `radioactive_ralph --init` registers a fresh project in the user-level database
 - [ ] `radioactive_ralph` (client) renders the read-only TUI against a live supervisor
 - [ ] `radioactive_ralph doctor` behaves cleanly on empty state

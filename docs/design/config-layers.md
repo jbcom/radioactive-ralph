@@ -73,25 +73,45 @@ or a round-robin pool:
 providers = ["claude", "codex", "opencode"]
 ```
 
-The plural form is not a persona list. It is an execution policy: every
-ready plan step receives its own Ralph worker and successive workers are
-distributed across the named provider capability records. Ralph
-therefore suppresses `NativeFanout` for pooled bindings; a 16-step
-unordered group remains 16 visible, independently supervised workers
-instead of collapsing into one opaque provider invocation. The plural
-key wins when both forms are present. Empty, non-string, or duplicate
-pool entries fail loudly.
+The plural form is not a persona list. It is an execution policy: each
+dispatched plan step receives its own Ralph worker and successive workers are
+distributed across the named provider capability records. Ralph therefore
+suppresses `NativeFanout` for pooled bindings; an unordered group remains a
+set of visible, independently supervised tasks instead of collapsing into one
+opaque provider invocation. The plural key wins when both forms are present.
+Empty, non-string, or duplicate pool entries fail loudly.
 
 Process-wide concurrency is a supervisor resource limit, not project
-identity, and is configured on the service environment:
+identity. Set it on the environment of the supervisor process, using the
+platform-specific form below.
+
+On macOS and Linux, install or update the user service with the environment
+attached:
 
 ```sh
-radioactive_ralph service install --env RALPH_MAX_PARALLEL=16
+# Replace N with an operator-chosen positive-integer emergency ceiling.
+radioactive_ralph service install --env RALPH_MAX_PARALLEL=N
 ```
 
-`RALPH_MAX_PARALLEL` must be an integer from `1` through `256`. Invalid
-values are rejected before the installed service is rewritten or restarted.
-When unset, the historical unbounded behavior remains in effect.
+On native Windows, SCM install/start is disabled. The supported native process
+is a control plane running in a foreground PowerShell terminal:
+
+```powershell
+$env:RALPH_MAX_PARALLEL = "N"
+radioactive_ralph --supervisor
+```
+
+Keep that terminal open and run `radioactive_ralph` as the client from another
+terminal. Native Windows provider PTYs are unsupported, so use WSL2 for
+provider-backed execution. Inside WSL2, use the Linux service command above;
+the WSL2 `systemd --user` service is the functional unattended route.
+
+When configured, `RALPH_MAX_PARALLEL` must be a non-empty integer from `1`
+through `256`. Invalid or explicitly blank values are rejected before the
+installed service is rewritten or restarted.
+That range is validation, not an operating recommendation. When unset, v0.22
+preserves the historical unbounded behavior for compatibility; unbounded is
+neither adaptive nor recommended as an optimum.
 
 ## Project identity
 

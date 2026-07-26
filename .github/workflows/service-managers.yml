@@ -8,8 +8,16 @@ permissions:
 
 jobs:
   launchd:
-    name: launchd smoke
-    runs-on: macos-latest
+    name: launchd smoke (${{ matrix.arch }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-15
+            arch: arm64
+          - os: macos-15-intel
+            arch: amd64
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
@@ -21,7 +29,7 @@ jobs:
           mkdir -p .tmp
           go build -o .tmp/radioactive_ralph ./cmd/radioactive_ralph
       - name: launchd smoke
-        run: bash scripts/ci/smoke_launchd.sh "$PWD/.tmp/radioactive_ralph"
+        run: bash scripts/ci/smoke_launchd.sh "$PWD/.tmp/radioactive_ralph" "${{ matrix.arch }}"
 
   systemd-user:
     name: systemd-user smoke
@@ -40,8 +48,9 @@ jobs:
         run: bash scripts/ci/smoke_systemd_user.sh "$PWD/.tmp/radioactive_ralph"
 
   windows-scm:
-    name: windows scm smoke
+    name: windows scm fail-closed safety smoke
     runs-on: windows-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
@@ -53,6 +62,6 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force -Path .tmp | Out-Null
           go build -o .\.tmp\radioactive_ralph.exe ./cmd/radioactive_ralph
-      - name: windows scm smoke
+      - name: windows scm fail-closed safety smoke
         shell: pwsh
         run: .\scripts\ci\smoke_windows_scm.ps1 -Bin "$PWD\.tmp\radioactive_ralph.exe"

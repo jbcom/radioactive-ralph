@@ -63,7 +63,7 @@ func runClientMode(ctx context.Context, cmd *cobra.Command) error {
 		// the wizard is skipped: keep the exact print-commands-and-exit-nonzero
 		// behavior the tests assert.
 		if !onboardingInteractive() {
-			fmt.Fprintln(os.Stderr, noSupervisorMessage)
+			fmt.Fprintln(os.Stderr, noSupervisorMessage())
 			return errNoSupervisorListening
 		}
 		// Interactive: OFFER to set one up (guided, consent-gated).

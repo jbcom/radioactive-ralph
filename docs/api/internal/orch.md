@@ -260,7 +260,7 @@ WithDecisionLogRoot overrides the XDG\-ish root directory used for per\-worker d
 func WithMaxParallel(n int) Option
 ```
 
-WithMaxParallel bounds how many steps DispatchNext will dispatch in one call for a parallel group. Zero/negative means unbounded \(bounded only by the number of ready steps\).
+WithMaxParallel bounds total in\-flight worker turns across every plan and DispatchNext call owned by this Orchestrator. Zero/negative means unbounded. This is a process\-local emergency ceiling, not adaptive admission policy.
 
 <a name="WithRunnerFactory"></a>
 ### func [WithRunnerFactory](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/orch/orchestrator.go#L240>)

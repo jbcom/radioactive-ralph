@@ -1,6 +1,6 @@
 ---
 title: CLAUDE.md — radioactive-ralph
-lastUpdated: 2026-07-16
+lastUpdated: 2026-07-26
 ---
 
 # radioactive-ralph — Claude entry point
@@ -17,7 +17,10 @@ keep this file to Claude-specific pillars and links.
   SQLite DB / clean repos, no variants, markdown plans, local-only providers,
   testing + PR workflow). Canonical.
 - **[Architecture spec](docs/superpowers/specs/2026-07-16-supervisor-architecture-design.md)**
-  — the authoritative design. Read before non-trivial work.
+  — the core authoritative design. Its native Windows pty and service clauses
+  are superseded by the
+  **[Windows SCM safety contract](docs/superpowers/specs/2026-07-26-windows-scm-safety-disable-design.md)**.
+  Read both before non-trivial Windows work.
 - **[Implementation plan](docs/superpowers/plans/2026-07-16-supervisor-architecture.md)**
   — the phased rewrite plan.
 - **`.agent-state/decisions.ndjson`** — the append-only decision trail with the

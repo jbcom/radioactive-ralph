@@ -13,7 +13,8 @@
 //
 //   - macOS     → launchd user agent
 //   - Linux/WSL → systemd user unit
-//   - Windows   → native Service Control Manager entry
+//   - Windows   → foreground control plane only; native SCM install/start is
+//     intentionally disabled until it can preserve Ralph's per-user authority
 //
 // Service-context detection is used to distinguish durable service
 // launches from operator-attached foreground invocations.
@@ -54,8 +55,9 @@ const (
 	BackendLaunchd Backend = "launchd"
 	// BackendSystemdUser is Linux/WSL systemd user unit.
 	BackendSystemdUser Backend = "systemd-user"
-	// BackendWindowsSCM is a native Windows service managed by the Service
-	// Control Manager.
+	// BackendWindowsSCM identifies a legacy native Windows Service Control
+	// Manager registration. Install and Start reject this backend; Inspect,
+	// Stop, and Uninstall retain remediation access to older registrations.
 	BackendWindowsSCM Backend = "windows-scm"
 	// BackendUnsupported is returned for platforms we don't manage.
 	BackendUnsupported Backend = "unsupported"
@@ -135,21 +137,111 @@ var ErrMissingRalphBin = errors.New("service: RalphBin required")
 // reconciled predictably.
 var ErrInvalidRalphBin = errors.New("service: RalphBin must be an absolute path")
 
+// ErrWindowsSCMDisabled is the stable sentinel wrapped by
+// WindowsSCMDisabledError. Native Windows can run the foreground control
+// plane, but the legacy LocalSystem SCM design cannot safely represent Ralph's
+// per-user state, credentials, repositories, and control-pipe authority.
+var ErrWindowsSCMDisabled = errors.New("service: native Windows SCM is disabled")
+
+// ErrWindowsSCMDeletionPending is the stable sentinel wrapped by
+// WindowsSCMDeletionPendingError. A service marked for deletion is not proven
+// absent: SCM can retain both its registration and process until it stops and
+// every open handle closes.
+var ErrWindowsSCMDeletionPending = errors.New("service: native Windows SCM service deletion is pending")
+
+// WindowsSCMOperation identifies the rejected mutating SCM operation.
+type WindowsSCMOperation string
+
+const (
+	// WindowsSCMOperationInstall is service registration/configuration.
+	WindowsSCMOperationInstall WindowsSCMOperation = "installation"
+	// WindowsSCMOperationStart is starting a prior registration.
+	WindowsSCMOperationStart WindowsSCMOperation = "start"
+	// WindowsSCMOperationExecute is an SCM-hosted legacy process invocation.
+	WindowsSCMOperationExecute WindowsSCMOperation = "execution"
+)
+
+// WindowsSCMDisabledError is returned whenever code tries to install, start,
+// or execute the disabled native Windows SCM integration. Callers may use
+// errors.As for the operation and errors.Is(err, ErrWindowsSCMDisabled) for
+// the stable category.
+type WindowsSCMDisabledError struct {
+	Operation WindowsSCMOperation
+}
+
+func (e *WindowsSCMDisabledError) Error() string {
+	operation := e.Operation
+	if operation == "" {
+		operation = "operation"
+	}
+	return fmt.Sprintf(
+		"service: native Windows SCM service %s is disabled; run radioactive_ralph --supervisor "+
+			"in the foreground for the native control plane, or use WSL2 with systemd --user "+
+			"for durable provider-backed execution",
+		operation,
+	)
+}
+
+// Unwrap makes the typed error compatible with errors.Is.
+func (e *WindowsSCMDisabledError) Unwrap() error {
+	return ErrWindowsSCMDisabled
+}
+
+// NewWindowsSCMDisabledError constructs the exported typed rejection used by
+// the service package and the process-entry guard.
+func NewWindowsSCMDisabledError(operation WindowsSCMOperation) error {
+	return &WindowsSCMDisabledError{Operation: operation}
+}
+
+// WindowsSCMDeletionPendingError reports that a legacy Ralph SCM registration
+// is marked for deletion but cannot yet be proven stopped and absent. Callers
+// may use errors.Is(err, ErrWindowsSCMDeletionPending) for the stable category.
+type WindowsSCMDeletionPendingError struct {
+	ServiceName string
+	Operation   string
+}
+
+func (e *WindowsSCMDeletionPendingError) Error() string {
+	serviceName := e.ServiceName
+	if serviceName == "" {
+		serviceName = UnitName(BackendWindowsSCM)
+	}
+	operation := e.Operation
+	if operation == "" {
+		operation = "remediation"
+	}
+	return fmt.Sprintf(
+		"service: native Windows SCM service %q is marked for deletion during %s; "+
+			"its process and registration may still exist; wait for SCM deletion to finish "+
+			"or reboot Windows, then retry the remediation command",
+		serviceName,
+		operation,
+	)
+}
+
+// Unwrap makes the typed error compatible with errors.Is.
+func (e *WindowsSCMDeletionPendingError) Unwrap() error {
+	return ErrWindowsSCMDeletionPending
+}
+
 // Install writes or registers the platform service definition that runs
 // `radioactive_ralph --supervisor` as a per-user auto-restarting background
-// process. On launchd/systemd this means writing the unit file; on Windows
-// it also registers the SCM entry.
+// process. On launchd/systemd this means writing the unit file. Native Windows
+// SCM installation is intentionally rejected before any filesystem or SCM
+// mutation.
 func Install(opts InstallOptions) (path string, err error) {
-	if opts.RalphBin == "" {
-		return "", ErrMissingRalphBin
-	}
-
 	backend := opts.Backend
 	if backend == "" {
 		backend = DetectBackend()
 	}
+	if backend == BackendWindowsSCM {
+		return "", NewWindowsSCMDisabledError(WindowsSCMOperationInstall)
+	}
 	if backend == BackendUnsupported {
 		return "", fmt.Errorf("%w: %s", ErrUnsupportedBackend, runtime.GOOS)
+	}
+	if opts.RalphBin == "" {
+		return "", ErrMissingRalphBin
 	}
 	if !isAbsoluteServicePath(backend, opts.RalphBin) || strings.ContainsRune(opts.RalphBin, '\x00') {
 		return "", fmt.Errorf("%w: %q", ErrInvalidRalphBin, opts.RalphBin)
@@ -197,8 +289,6 @@ func Install(opts InstallOptions) (path string, err error) {
 		content = renderLaunchd(opts, home)
 	case BackendSystemdUser:
 		content = renderSystemdUser(opts)
-	case BackendWindowsSCM:
-		return installWindowsService(opts, path)
 	default:
 		return "", fmt.Errorf("%w: %s", ErrUnsupportedBackend, backend)
 	}
@@ -212,19 +302,12 @@ func Install(opts InstallOptions) (path string, err error) {
 // isAbsoluteServicePath validates the executable using the target service
 // manager's path grammar, not the host that happens to render or test the
 // definition. Backend overrides are intentionally supported for cross-platform
-// artifact tests, so filepath.IsAbs alone would reject a valid POSIX launchd or
-// systemd path on Windows (and a valid drive-qualified SCM path on Unix).
+// launchd/systemd artifact tests, so filepath.IsAbs alone would reject a valid
+// POSIX path on Windows.
 func isAbsoluteServicePath(backend Backend, value string) bool {
 	switch backend {
 	case BackendLaunchd, BackendSystemdUser:
 		return strings.HasPrefix(value, "/")
-	case BackendWindowsSCM:
-		if len(value) >= 3 &&
-			((value[0] >= 'a' && value[0] <= 'z') || (value[0] >= 'A' && value[0] <= 'Z')) &&
-			value[1] == ':' && (value[2] == '\\' || value[2] == '/') {
-			return true
-		}
-		return strings.HasPrefix(value, `\\`)
 	default:
 		return false
 	}
@@ -283,13 +366,15 @@ func Uninstall(opts InstallOptions) error {
 // actually comes up. Install only WRITES the unit definition; on launchd and
 // systemd the unit must additionally be loaded/started (a launchd unit with
 // RunAtLoad still needs `launchctl bootstrap`; systemd needs `systemctl
-// --user start`). Windows SCM's install already starts it, so Start is a
-// no-op there. Returns nil when the start command succeeds or the platform
-// needs no separate start.
+// --user start`). Native Windows SCM start is intentionally rejected before
+// any filesystem, SCM, or process access.
 func Start(opts InstallOptions) error {
 	backend := opts.Backend
 	if backend == "" {
 		backend = DetectBackend()
+	}
+	if backend == BackendWindowsSCM {
+		return NewWindowsSCMDisabledError(WindowsSCMOperationStart)
 	}
 	home := opts.HomeDir
 	if home == "" {
@@ -333,8 +418,6 @@ func Start(opts InstallOptions) error {
 			return fmt.Errorf("service: systemctl restart: %w\n%s", err, out)
 		}
 		return nil
-	case BackendWindowsSCM:
-		return startWindowsService(opts)
 	default:
 		return fmt.Errorf("%w: %s", ErrUnsupportedBackend, backend)
 	}
@@ -418,10 +501,12 @@ func IsServiceContext() bool {
 }
 
 // Status reports whether the per-user supervisor service definition is
-// installed. This only inspects the service definition on disk (unit
-// file present/absent); it says nothing about whether the supervisor
-// process is currently running — callers wanting liveness should combine
-// this with supervisor.Find against the XDG state root.
+// installed. launchd/systemd inspect the unit definition on disk. Native
+// Windows asks SCM directly so a registration left by an earlier development
+// build remains discoverable even when its legacy JSON config is absent.
+// It says nothing about whether the supervisor process is currently running —
+// callers wanting liveness should combine this with supervisor.Find against
+// the XDG state root.
 type Status struct {
 	Backend   Backend
 	Installed bool
@@ -437,6 +522,9 @@ func Inspect(opts InstallOptions) (Status, error) {
 	}
 	if backend == BackendUnsupported {
 		return Status{Backend: backend}, fmt.Errorf("%w: %s", ErrUnsupportedBackend, runtime.GOOS)
+	}
+	if backend == BackendWindowsSCM {
+		return inspectWindowsService(opts)
 	}
 	home := opts.HomeDir
 	if home == "" {

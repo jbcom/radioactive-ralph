@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -181,7 +182,10 @@ func TestServiceInstallHonorsExplicitPath(t *testing.T) {
 }
 
 func TestServiceExecutionPathIsAbsoluteDeduplicatedAndIncludesBinaryDir(t *testing.T) {
-	root := t.TempDir()
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows SCM deliberately does not infer the installing user's PATH")
+	}
+	root := trustedServicePathTestRoot(t)
 	ralphDir := filepath.Join(root, "ralph-bin")
 	toolsDir := filepath.Join(root, "tools-bin")
 	for _, dir := range []string{ralphDir, toolsDir} {
@@ -213,9 +217,9 @@ func TestServiceExecutionPathIsAbsoluteDeduplicatedAndIncludesBinaryDir(t *testi
 
 func TestServiceExecutionPathRejectsUntrustedOrMissingDirectories(t *testing.T) {
 	if runtime.GOOS == "windows" {
-		t.Skip("Windows ACL trust is not represented by Unix permission bits")
+		t.Skip("Windows SCM deliberately does not infer the installing user's PATH")
 	}
-	root := t.TempDir()
+	root := trustedServicePathTestRoot(t)
 	ralphDir := filepath.Join(root, "ralph-bin")
 	trustedDir := filepath.Join(root, "trusted-bin")
 	worldWritableDir := filepath.Join(root, "world-writable-bin")
@@ -242,6 +246,72 @@ func TestServiceExecutionPathRejectsUntrustedOrMissingDirectories(t *testing.T) 
 	}
 }
 
+func TestServiceExecutionPathRejectsSymlinkedDirectory(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows SCM deliberately does not infer the installing user's PATH")
+	}
+	root := trustedServicePathTestRoot(t)
+	ralphDir := filepath.Join(root, "ralph-bin")
+	trustedDir := filepath.Join(root, "trusted-bin")
+	symlinkDir := filepath.Join(root, "symlink-bin")
+	for _, dir := range []string{ralphDir, trustedDir} {
+		if err := os.Mkdir(dir, 0o700); err != nil {
+			t.Fatalf("mkdir %s: %v", dir, err)
+		}
+	}
+	if err := os.Symlink(trustedDir, symlinkDir); err != nil {
+		t.Fatalf("symlink %s: %v", symlinkDir, err)
+	}
+
+	got := filepath.SplitList(serviceExecutionPath(
+		filepath.Join(ralphDir, "radioactive_ralph"),
+		symlinkDir,
+	))
+	for _, entry := range got {
+		if entry == symlinkDir {
+			t.Fatalf("service PATH retained symlinked directory: %v", got)
+		}
+	}
+}
+
+func trustedServicePathTestRoot(t *testing.T) string {
+	t.Helper()
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Fatalf("resolve user home: %v", err)
+	}
+	root, err := os.MkdirTemp(home, ".ralph-service-path-test-")
+	if err != nil {
+		t.Fatalf("create trusted service PATH fixture under %s: %v", home, err)
+	}
+	t.Cleanup(func() {
+		if err := os.RemoveAll(root); err != nil {
+			t.Errorf("remove trusted service PATH fixture %s: %v", root, err)
+		}
+	})
+	return root
+}
+
+func TestServiceExecutionPathDoesNotInferWindowsInstallerPath(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("Windows SCM identity-boundary behavior")
+	}
+	root := t.TempDir()
+	ralphDir := filepath.Join(root, "ralph-bin")
+	toolsDir := filepath.Join(root, "tools-bin")
+	for _, dir := range []string{ralphDir, toolsDir} {
+		if err := os.Mkdir(dir, 0o700); err != nil {
+			t.Fatalf("mkdir %s: %v", dir, err)
+		}
+	}
+	if got := serviceExecutionPath(
+		filepath.Join(ralphDir, "radioactive_ralph.exe"),
+		toolsDir,
+	); got != "" {
+		t.Fatalf("serviceExecutionPath() = %q, want no installer PATH for LocalSystem", got)
+	}
+}
+
 func TestServiceInstallRejectsMalformedEnv(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("service install on windows requires SCM access")
@@ -257,29 +327,33 @@ func TestServiceInstallRejectsMalformedEnv(t *testing.T) {
 }
 
 func TestServiceInstallRejectsInvalidMaxParallelBeforeWritingOrStarting(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	startCalls := stubSupervisorServiceStart(t)
+	for _, value := range []string{"not-a-number", "", " \t "} {
+		t.Run(fmt.Sprintf("value_%q", value), func(t *testing.T) {
+			home := t.TempDir()
+			t.Setenv("HOME", home)
+			startCalls := stubSupervisorServiceStart(t)
 
-	cmd := newTestRootCmd(context.Background())
-	cmd.SetArgs([]string{
-		"service", "install",
-		"--bin", "/usr/local/bin/radioactive_ralph",
-		"--env", maxParallelEnv + "=not-a-number",
-	})
-	err := cmd.Execute()
-	if err == nil || !strings.Contains(err.Error(), maxParallelEnv+" must be an integer from 1 through") {
-		t.Fatalf("service install invalid %s error = %v", maxParallelEnv, err)
-	}
-	if *startCalls != 0 {
-		t.Fatalf("service start calls = %d, want zero after preflight failure", *startCalls)
-	}
-	status, statusErr := service.Inspect(service.InstallOptions{HomeDir: home})
-	if statusErr != nil {
-		t.Fatalf("service Inspect: %v", statusErr)
-	}
-	if status.Installed {
-		t.Fatalf("invalid service environment wrote %s before validation", status.UnitPath)
+			cmd := newTestRootCmd(context.Background())
+			cmd.SetArgs([]string{
+				"service", "install",
+				"--bin", "/usr/local/bin/radioactive_ralph",
+				"--env", maxParallelEnv + "=" + value,
+			})
+			err := cmd.Execute()
+			if err == nil || !strings.Contains(err.Error(), maxParallelEnv+" must be an integer from 1 through") {
+				t.Fatalf("service install invalid %s error = %v", maxParallelEnv, err)
+			}
+			if *startCalls != 0 {
+				t.Fatalf("service start calls = %d, want zero after preflight failure", *startCalls)
+			}
+			status, statusErr := service.Inspect(service.InstallOptions{HomeDir: home})
+			if statusErr != nil {
+				t.Fatalf("service Inspect: %v", statusErr)
+			}
+			if status.Installed {
+				t.Fatalf("invalid service environment wrote %s before validation", status.UnitPath)
+			}
+		})
 	}
 }
 

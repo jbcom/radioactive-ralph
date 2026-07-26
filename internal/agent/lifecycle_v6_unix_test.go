@@ -152,12 +152,12 @@ func TestSetpgrpDescendantCleanupIsSafeAndBounded(t *testing.T) {
 			Command: "python3",
 			Args: []string{"-c", `
 import os, subprocess, sys, time
-p = subprocess.Popen(
+subprocess.Popen(
     [sys.executable, "-c",
-     "import signal,time; signal.signal(signal.SIGHUP, signal.SIG_IGN); time.sleep(300)"],
+     "import os,signal,time; signal.signal(signal.SIGHUP, signal.SIG_IGN); "
+     "print(os.getpid(), flush=True); time.sleep(300)"],
     preexec_fn=os.setpgrp,
 )
-print(p.pid, flush=True)
 time.sleep(300)
 `},
 		})
@@ -288,12 +288,12 @@ func TestSetsidDescendantIsExplicitSessionBoundaryAndCannotWedgeWait(t *testing.
 			Command: "python3",
 			Args: []string{"-c", `
 import os, subprocess, sys, time
-p = subprocess.Popen(
+subprocess.Popen(
     [sys.executable, "-c",
-     "import signal,time; signal.signal(signal.SIGHUP, signal.SIG_IGN); time.sleep(300)"],
+     "import os,signal,time; signal.signal(signal.SIGHUP, signal.SIG_IGN); "
+     "print(os.getpid(), flush=True); time.sleep(300)"],
     preexec_fn=os.setsid,
 )
-print(p.pid, flush=True)
 time.sleep(300)
 `},
 		})

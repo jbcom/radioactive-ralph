@@ -1,6 +1,6 @@
 ---
 title: State
-lastUpdated: 2026-07-16
+lastUpdated: 2026-07-26
 ---
 
 # State
@@ -33,8 +33,11 @@ This page tracks what the runtime actually does today.
   (`internal/provider`), plus a declarative config-only binding path for
   compatible CLI framings
 - agent detection/classification (`internal/agentdetect`)
-- native service-manager integration for launchd, systemd-user, and
-  Windows SCM (`internal/service`)
+- native service-manager integration for launchd and systemd-user
+  (`internal/service`); native Windows supports a limited foreground
+  supervisor/client control plane but provider workers return
+  `ErrPTYUnsupported`, with SCM status/uninstall retained only to remove prior
+  development registrations
 - the read-only Bubble Tea TUI with macro/meso/micro drill-down
   (`internal/tui`)
 - repo-root Sphinx docs and a generated Go API reference under
@@ -63,7 +66,10 @@ live documentation.
 ## Remaining work
 
 - richer TUI navigation and filtering ergonomics
-- broader native-host smoke testing, especially on real Windows machines
+- an identity-bound per-user Windows service design satisfying the accepted
+  SID, filesystem ACL, pipe authorization, provider/repository access, and
+  clean native lifecycle gate, plus a real native pty provider turn; native SCM
+  install/start remains disabled until then
 - continued usage-frame parsing for `codex`/`opencode` so spend
   accounting covers every provider, not just `claude`
 

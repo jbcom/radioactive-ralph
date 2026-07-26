@@ -74,22 +74,27 @@ func TestRunSupervisorModeJSONLogFormat(t *testing.T) {
 
 func TestSupervisorMaxParallel(t *testing.T) {
 	tests := []struct {
-		name    string
-		value   string
-		want    int
-		wantErr bool
+		name       string
+		value      string
+		configured bool
+		want       int
+		wantErr    bool
 	}{
-		{name: "unset preserves unbounded default", value: "", want: 0},
-		{name: "sixteen", value: "16", want: 16},
-		{name: "trimmed", value: " 8 ", want: 8},
-		{name: "zero rejected", value: "0", wantErr: true},
-		{name: "negative rejected", value: "-2", wantErr: true},
-		{name: "nonnumeric rejected", value: "many", wantErr: true},
-		{name: "process storm rejected", value: "257", wantErr: true},
+		{name: "unset preserves unbounded default"},
+		{name: "explicit empty rejected", configured: true, wantErr: true},
+		{name: "explicit whitespace rejected", value: " \t ", configured: true, wantErr: true},
+		{name: "valid emergency ceiling", value: "7", configured: true, want: 7},
+		{name: "trimmed", value: " 8 ", configured: true, want: 8},
+		{name: "zero rejected", value: "0", configured: true, wantErr: true},
+		{name: "negative rejected", value: "-2", configured: true, wantErr: true},
+		{name: "nonnumeric rejected", value: "many", configured: true, wantErr: true},
+		{name: "process storm rejected", value: "257", configured: true, wantErr: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := supervisorMaxParallel(func(string) string { return tt.value })
+			got, err := supervisorMaxParallel(func(string) (string, bool) {
+				return tt.value, tt.configured
+			})
 			if (err != nil) != tt.wantErr {
 				t.Fatalf("supervisorMaxParallel error = %v, wantErr %v", err, tt.wantErr)
 			}

@@ -13,7 +13,8 @@ description: How --supervisor and the dumb client fit together.
 radioactive_ralph --supervisor
 ```
 
-The supervisor is the one long-lived process on a machine. It owns:
+The supervisor is the one process that owns the control plane on a machine. It
+owns:
 
 - every agent's pty (`creack/pty`) — direct process control, no
   multiplexer in the loop
@@ -23,8 +24,19 @@ The supervisor is the one long-lived process on a machine. It owns:
   registered project
 
 Working directory is irrelevant to the supervisor; it operates at the
-user/XDG level. Install it as an OS service for daily use — see the
-[service runbook](../runbooks/service.md).
+user/XDG level. On macOS, Linux, and WSL2, install it as a per-user OS service
+for daily use — see the [service runbook](../runbooks/service.md).
+
+Native Windows supports only a foreground supervisor/client control plane:
+
+```powershell
+radioactive_ralph --supervisor
+# In another terminal:
+radioactive_ralph
+```
+
+Native Windows SCM install/start and provider PTY workers are unsupported.
+Use WSL2 and its Linux `systemd --user` service for provider-backed execution.
 
 ## The client
 

@@ -16,6 +16,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"runtime"
 	"sync"
 	"time"
 )
@@ -175,8 +176,22 @@ func (r Report) WriteText(w io.Writer) {
 	}
 	_, _ = fmt.Fprintf(w, "\n%d OK, %d WARN, %d FAIL\n", r.OKCount, r.WarnCount, r.FailCount)
 	if r.Passed() {
-		_, _ = fmt.Fprintln(w, "Ralph's ready to run here.")
+		_, _ = fmt.Fprintln(w, successFooterForPlatform(runtime.GOOS))
 	} else {
-		_, _ = fmt.Fprintln(w, "Resolve the FAIL items above, then start the supervisor with `radioactive_ralph service install`.")
+		_, _ = fmt.Fprintln(w, failureFooterForPlatform(runtime.GOOS))
 	}
+}
+
+func successFooterForPlatform(goos string) string {
+	if goos == "windows" {
+		return "Native Windows is ready only for the foreground control plane (`radioactive_ralph --supervisor` plus the `radioactive_ralph` client); use WSL2 for provider-backed execution."
+	}
+	return "Ralph's ready to run here."
+}
+
+func failureFooterForPlatform(goos string) string {
+	if goos == "windows" {
+		return "Resolve the FAIL items above. On native Windows, run the control plane in a foreground terminal with `radioactive_ralph --supervisor`, then use `radioactive_ralph` as the client; use WSL2 for provider-backed execution."
+	}
+	return "Resolve the FAIL items above, then start the supervisor with `radioactive_ralph service install`."
 }

@@ -70,8 +70,15 @@ func TestRunAllGreen(t *testing.T) {
 	if !r.Passed() {
 		t.Errorf("expected pass, got %d failures", r.FailCount)
 	}
-	if r.WarnCount != 0 {
-		t.Errorf("expected 0 warnings, got %d: %+v", r.WarnCount, r.Checks)
+	wantWarnings := 0
+	if runtime.GOOS == "windows" {
+		// Native Windows intentionally reports the foreground-only/WSL2
+		// service-platform boundary as a warning even when every dependency,
+		// credential, and state check is green.
+		wantWarnings = 1
+	}
+	if r.WarnCount != wantWarnings {
+		t.Errorf("expected %d warnings, got %d: %+v", wantWarnings, r.WarnCount, r.Checks)
 	}
 }
 
@@ -366,8 +373,8 @@ func TestRunIncludesServicePlatformCheck(t *testing.T) {
 	for _, c := range r.Checks {
 		if c.Name == "service platform" {
 			found = true
-			if runtime.GOOS == "windows" && c.Severity != OK {
-				t.Errorf("expected Windows service-platform OK, got %+v", c)
+			if runtime.GOOS == "windows" && c.Severity != WARN {
+				t.Errorf("expected Windows service-platform WARN, got %+v", c)
 			}
 			if runtime.GOOS != "windows" && c.Severity != OK {
 				t.Errorf("expected non-Windows service-platform OK, got %+v", c)
@@ -376,6 +383,25 @@ func TestRunIncludesServicePlatformCheck(t *testing.T) {
 	}
 	if !found {
 		t.Fatal("missing service platform check")
+	}
+}
+
+func TestWindowsServicePlatformGuidanceIsHonest(t *testing.T) {
+	check := checkServicePlatformFor("windows")
+	if check.Severity != WARN {
+		t.Fatalf("Windows service-platform severity = %s, want WARN", check.Severity)
+	}
+	joined := check.Detail + "\n" + check.Remediate
+	for _, clause := range []string{
+		"SCM install/start",
+		"provider PTYs are unsupported",
+		"radioactive_ralph --supervisor",
+		"WSL2",
+		"systemd --user",
+	} {
+		if !strings.Contains(joined, clause) {
+			t.Fatalf("Windows service-platform guidance %q missing %q", joined, clause)
+		}
 	}
 }
 
@@ -450,8 +476,8 @@ func TestWriteTextReport(t *testing.T) {
 	if !strings.Contains(out, "WARN") || !strings.Contains(out, "install gh") {
 		t.Errorf("report missing WARN + remediation: %s", out)
 	}
-	if !strings.Contains(out, "Ralph's ready to run here.") {
-		t.Errorf("expected success tagline (no FAILs): %s", out)
+	if !strings.Contains(out, successFooterForPlatform(runtime.GOOS)) {
+		t.Errorf("expected platform-specific success tagline (no FAILs): %s", out)
 	}
 }
 
@@ -467,6 +493,59 @@ func TestWriteTextFailsTagline(t *testing.T) {
 	out := buf.String()
 	if !strings.Contains(out, "Resolve the FAIL items") {
 		t.Errorf("expected failure tagline: %s", out)
+	}
+}
+
+func TestFailureFooterIsPlatformSpecific(t *testing.T) {
+	windows := failureFooterForPlatform("windows")
+	for _, clause := range []string{
+		"native Windows",
+		"radioactive_ralph --supervisor",
+		"radioactive_ralph` as the client",
+		"WSL2",
+		"provider-backed execution",
+	} {
+		if !strings.Contains(windows, clause) {
+			t.Errorf("Windows failure footer %q missing %q", windows, clause)
+		}
+	}
+	if strings.Contains(windows, "service install") {
+		t.Errorf("Windows failure footer must not recommend unsupported service installation: %q", windows)
+	}
+
+	for _, goos := range []string{"darwin", "linux"} {
+		footer := failureFooterForPlatform(goos)
+		if !strings.Contains(footer, "radioactive_ralph service install") {
+			t.Errorf("%s failure footer should recommend the supported service install path: %q", goos, footer)
+		}
+	}
+}
+
+func TestSuccessFooterIsPlatformSpecific(t *testing.T) {
+	windows := successFooterForPlatform("windows")
+	for _, clause := range []string{
+		"Native Windows",
+		"only",
+		"foreground control plane",
+		"radioactive_ralph --supervisor",
+		"radioactive_ralph` client",
+		"WSL2",
+		"provider-backed execution",
+	} {
+		if !strings.Contains(windows, clause) {
+			t.Errorf("Windows success footer %q missing %q", windows, clause)
+		}
+	}
+	for _, forbidden := range []string{"service install", "Ralph's ready to run here."} {
+		if strings.Contains(windows, forbidden) {
+			t.Errorf("Windows success footer overstates native support with %q: %q", forbidden, windows)
+		}
+	}
+
+	for _, goos := range []string{"darwin", "linux"} {
+		if got := successFooterForPlatform(goos); got != "Ralph's ready to run here." {
+			t.Errorf("%s success footer = %q, want ordinary supported-platform readiness", goos, got)
+		}
 	}
 }
 

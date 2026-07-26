@@ -257,6 +257,10 @@ func TestPackagePublicationRequiresExactMergedMainVersions(t *testing.T) {
 	requireContains(t, script, `.mergeCommit.oid == $merge`, scriptPath)
 	requireContains(t, script, `test("^[1-9][0-9]*$")`, scriptPath)
 	requireContains(t, script, `.published_at | strings`, scriptPath)
+	requireContains(t, script, `.body | strings`, scriptPath)
+	requireContains(t, script,
+		`ralph_validate_release_body_footer <<<"$release_body"`,
+		scriptPath)
 	requireContains(t, script, `.mergedAt | strings`, scriptPath)
 	requireContains(t, script, `merged_epoch >= published_epoch`, scriptPath)
 	requireContains(t, script, `merged_epoch == latest_epoch`, scriptPath)
@@ -303,6 +307,10 @@ func TestPackagePublicationRequiresExactMergedMainVersions(t *testing.T) {
 		"FAKE_GUI_HOOK",
 		"FAKE_SCOOP_PRE_INSTALL",
 		"FAKE_SCOOP_INSTALLER",
+		"FAKE_UNSAFE_SCOOP_GUIDANCE",
+		"FAKE_UNSAFE_SCOOP_SC_START",
+		"FAKE_UNSAFE_SCOOP_START_SERVICE",
+		"FAKE_UNSAFE_SCOOP_NATIVE_PROVIDERS",
 		"FAKE_ALREADY_MERGED",
 		"FAKE_INTERVENING_MAIN",
 		"FAKE_SPLIT_PATH_OWNER",
@@ -310,6 +318,7 @@ func TestPackagePublicationRequiresExactMergedMainVersions(t *testing.T) {
 		"FAKE_SAME_PREFIX_UNSEALED",
 		"FAKE_MULTIPLE_ATTEMPTS",
 		"FAKE_MULTIPLE_EXACT_ATTEMPTS",
+		"FAKE_UNSAFE_RELEASE_FOOTER",
 		"FAKE_POST_PUBLIC_ATTEMPT",
 		"FAKE_SINGLE_AT_PUBLICATION",
 		"FAKE_EQUAL_MERGED_AT",
@@ -396,6 +405,16 @@ func TestReleaseToolingIsPinnedAndPermissionsAreLeastPrivilege(t *testing.T) {
 	requireContains(t, ci, "actionlint@v1.7.12", ciPath)
 	requireContains(t, ci, "govulncheck@v1.6.0", ciPath)
 	requireContains(t, ci, "4b6d6bcb4819be4fe209e807726e83be12da3190", ciPath)
+	packagingJob := requireWorkflowJob(t, ci, "packaging", ciPath)
+	requireContains(t, packagingJob, "Validate primary GoReleaser config", ciPath)
+	requireContains(t, packagingJob, "args: check\n", ciPath)
+	requireContains(t, packagingJob, "Validate Chocolatey GoReleaser config", ciPath)
+	requireContains(t, packagingJob,
+		"args: check --config .goreleaser.chocolatey.yaml",
+		ciPath)
+	if got := strings.Count(packagingJob, "goreleaser/goreleaser-action@"); got != 2 {
+		t.Errorf("%s packaging GoReleaser check count = %d, want 2", ciPath, got)
+	}
 
 	const providerPath = ".github/workflows/provider-live.yml"
 	provider := readRepositoryFile(t, providerPath)
@@ -542,6 +561,63 @@ func TestStableInstallDocsDoNotAdvertiseUnpublishedManagers(t *testing.T) {
 			requireNotContains(t, content, unsupported, path)
 		}
 	}
+}
+
+func TestWindowsPackageGuidanceUsesOneExactFailClosedContract(t *testing.T) {
+	const helperPath = "scripts/ci/package_guidance_contract.sh"
+	helper := readRepositoryFile(t, helperPath)
+	for _, clause := range []string{
+		"radioactive_ralph --supervisor",
+		"Native Windows SCM install/start and provider-backed workers are disabled.",
+		"Linux build inside WSL2",
+		"RALPH_NATIVE_WINDOWS_PACKAGE_SHORT_DESCRIPTION_CONTRACT",
+		"RALPH_NATIVE_WINDOWS_PACKAGE_LONG_DESCRIPTION_CONTRACT",
+		"RALPH_GORELEASER_FOOTER_CONTRACT",
+		".description == $description",
+		".post_install == $post_install",
+		"ralph_validate_winget_config_contract",
+		"ralph_validate_chocolatey_config_contract",
+	} {
+		requireContains(t, helper, clause, helperPath)
+	}
+
+	for _, path := range []string{
+		"scripts/ci/smoke_goreleaser_artifacts.sh",
+		"scripts/ci/wait_for_package_publication.sh",
+	} {
+		content := readRepositoryFile(t, path)
+		requireContains(t, content, "package_guidance_contract.sh", path)
+		requireContains(t, content, "ralph_validate_scoop_manifest_contract", path)
+		requireNotContains(t, content, `contains("service install")`, path)
+	}
+
+	const behaviorPath = "scripts/ci/test_package_guidance_contract.sh"
+	behavior := readRepositoryFile(t, behaviorPath)
+	for _, adversary := range []string{
+		"sc.exe start radioactive_ralph-supervisor",
+		"Start-Service radioactive_ralph-supervisor",
+		"Native Windows provider workers are supported.",
+		"Supervised-execution runtime for local AI-agent CLIs",
+		"Native Windows SCM install/start and provider-backed workers are supported.",
+		"ralph_validate_winget_config_contract",
+		"ralph_validate_chocolatey_config_contract",
+		"ralph_validate_goreleaser_release_footer",
+	} {
+		requireContains(t, behavior, adversary, behaviorPath)
+	}
+
+	const publicationPath = "scripts/ci/wait_for_package_publication.sh"
+	publication := readRepositoryFile(t, publicationPath)
+	requireContains(t, publication, `.body | strings`, publicationPath)
+	requireContains(t, publication,
+		`ralph_validate_release_body_footer <<<"$release_body"`,
+		publicationPath)
+
+	const chocolateyPath = ".goreleaser.chocolatey.yaml"
+	chocolatey := readRepositoryFile(t, chocolateyPath)
+	requireContains(t, chocolatey,
+		`url_template: "https://github.com/jbcom/radioactive-ralph/releases/download/{{ .Tag }}/{{ .ArtifactName }}"`,
+		chocolateyPath)
 }
 
 func TestPackagingDocsMatchImplementedGUIDelivery(t *testing.T) {

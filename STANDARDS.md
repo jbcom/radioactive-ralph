@@ -43,14 +43,19 @@ docs: add architecture diagram
 
 ## Product Contract
 
-- `radioactive_ralph --supervisor` is the durable supervisor: it owns
-  every agent's pty, the discovery socket, the reaper, and the one
-  user-level database
+- `radioactive_ralph --supervisor` owns every agent's pty, the discovery
+  socket, the reaper, and the one user-level database. On macOS, Linux,
+  and WSL2 it can run durably under the supported per-user service. Native
+  Windows supports only the foreground control plane; provider PTY workers
+  are unsupported there, so provider-backed execution belongs in WSL2
 - Plain `radioactive_ralph` is a dumb, read-only client that refuses to
   run without a live supervisor
 - `radioactive_ralph --init` registers a project by accumulated
   fingerprints, never by committed repo state
-- `radioactive_ralph service {install,uninstall,status}` manages the
-  supervisor as a per-user OS service
+- On macOS, Linux, and WSL2,
+  `radioactive_ralph service {install,uninstall,status}` manages the
+  supervisor as a per-user OS service. Native Windows SCM install/start is
+  disabled; `status` and `uninstall` exist only to inspect and remove legacy
+  SCM registrations
 - Providers are bindings, not the identity of the product
 - There are no variants/personas — one mutating Ralph, driven by the plan

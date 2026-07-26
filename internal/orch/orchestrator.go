@@ -271,9 +271,9 @@ func WithBaseContext(ctx context.Context) Option {
 	}
 }
 
-// WithMaxParallel bounds how many steps DispatchNext will dispatch in one
-// call for a parallel group. Zero/negative means unbounded (bounded only
-// by the number of ready steps).
+// WithMaxParallel bounds total in-flight worker turns across every plan and
+// DispatchNext call owned by this Orchestrator. Zero/negative means unbounded.
+// This is a process-local emergency ceiling, not adaptive admission policy.
 func WithMaxParallel(n int) Option {
 	return func(o *Orchestrator) { o.maxParallel = n }
 }

@@ -22,9 +22,10 @@ Work is driven by a simple markdown plan, decomposed with pure heuristics (no
 LLM), and a step is only "done" once the runtime **verifies** it — never
 because an agent said so.
 
-> **Rewrite in progress.** The project is being rebuilt to this supervisor
-> architecture. The authoritative design is
-> [docs/superpowers/specs/2026-07-16-supervisor-architecture-design.md](./docs/superpowers/specs/2026-07-16-supervisor-architecture-design.md);
+> The authoritative core design is
+> [docs/superpowers/specs/2026-07-16-supervisor-architecture-design.md](./docs/superpowers/specs/2026-07-16-supervisor-architecture-design.md).
+> Its historical native Windows PTY and service clauses are superseded by the
+> [Windows SCM safety contract](./docs/superpowers/specs/2026-07-26-windows-scm-safety-disable-design.md);
 > the decision trail is `.agent-state/decisions.ndjson`.
 
 ## What it is
@@ -53,8 +54,9 @@ because an agent said so.
   vocabulary comes from the official [`a2aproject/a2a-go`](https://github.com/a2aproject/a2a-go).
 - **Observable multi-provider teams.** Project config can declare
   `providers = ["claude", "codex", "opencode"]`; Ralph assigns one supervised
-  worker per ready step across the pool. Set the process-wide ceiling with
-  `service install --env RALPH_MAX_PARALLEL=16`.
+  worker per dispatched step across the pool. `RALPH_MAX_PARALLEL` is an
+  operator-selected process-wide emergency ceiling, not an optimal or
+  recommended team size.
 
 ## Install
 
@@ -91,8 +93,8 @@ credentials are configured.
 ```bash
 # 1. Start the supervisor (owns everything; user/XDG-level, directory-independent)
 radioactive_ralph --supervisor
-# Or install + start it with an explicit worker ceiling:
-radioactive_ralph service install --env RALPH_MAX_PARALLEL=16
+# On macOS/Linux, install + start it as the user service:
+radioactive_ralph service install
 
 # 2. In a project directory, initialize it (registers the project in the user DB)
 radioactive_ralph --init
@@ -110,6 +112,12 @@ radioactive_ralph gui
 
 The client refuses to run unless a supervisor is reachable, and tells you how to
 start one. Nothing is written into your repository.
+
+> **Windows:** v0.22 disables native SCM install/start. Native foreground
+> `--supervisor` is a limited supervisor/client control plane only because
+> provider workers return `ErrPTYUnsupported`. Use WSL2 for functional
+> provider-backed execution. `service status`/`uninstall` exist only to remove
+> a prior development SCM registration.
 
 > The `gui` subcommand only opens a window in a **GUI-enabled build** — the
 > desktop-app installs (Homebrew cask, AppImage, `.dmg`/`.exe`). The CLI-only

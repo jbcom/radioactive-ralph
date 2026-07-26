@@ -14,7 +14,7 @@ func TestPipeSecurityDescriptorForCurrentUser(t *testing.T) {
 
 func TestPipeSecurityDescriptorForLocalSystem(t *testing.T) {
 	got := pipeSecurityDescriptorForSID("S-1-5-18", true)
-	want := "D:P(A;;GA;;;SY)(A;;GA;;;BA)(A;;GRGW;;;IU)"
+	want := "D:P(A;;GA;;;SY)(A;;GA;;;BA)"
 	if got != want {
 		t.Fatalf("descriptor = %q, want %q", got, want)
 	}

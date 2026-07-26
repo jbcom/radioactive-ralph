@@ -19,7 +19,7 @@ Platform dispatch:
 
 - macOS → launchd user agent
 - Linux/WSL → systemd user unit
-- Windows → native Service Control Manager entry
+- Windows → foreground control plane only; native SCM install/start is intentionally disabled until it can preserve Ralph's per\-user authority
 
 Service\-context detection is used to distinguish durable service launches from operator\-attached foreground invocations.
 
@@ -28,24 +28,24 @@ Service\-context detection is used to distinguish durable service launches from 
 - [Variables](<#variables>)
 - [func Install\(opts InstallOptions\) \(path string, err error\)](<#Install>)
 - [func IsServiceContext\(\) bool](<#IsServiceContext>)
-- [func MarshalWindowsServiceConfig\(opts InstallOptions\) \(\[\]byte, error\)](<#MarshalWindowsServiceConfig>)
+- [func NewWindowsSCMDisabledError\(operation WindowsSCMOperation\) error](<#NewWindowsSCMDisabledError>)
 - [func Start\(opts InstallOptions\) error](<#Start>)
 - [func Stop\(opts InstallOptions\) error](<#Stop>)
 - [func Uninstall\(opts InstallOptions\) error](<#Uninstall>)
 - [func UnitName\(b Backend\) string](<#UnitName>)
 - [func UnitPath\(b Backend, home string\) string](<#UnitPath>)
-- [func WindowsServiceArgs\(\) \[\]string](<#WindowsServiceArgs>)
-- [func WindowsServiceArgsForConfig\(configPath string\) \[\]string](<#WindowsServiceArgsForConfig>)
-- [func WindowsServiceConfigPath\(args \[\]string\) \(string, error\)](<#WindowsServiceConfigPath>)
 - [type Backend](<#Backend>)
   - [func DetectBackend\(\) Backend](<#DetectBackend>)
 - [type InstallOptions](<#InstallOptions>)
 - [type Status](<#Status>)
   - [func Inspect\(opts InstallOptions\) \(Status, error\)](<#Inspect>)
-- [type WindowsServiceConfig](<#WindowsServiceConfig>)
-  - [func BuildWindowsServiceConfig\(opts InstallOptions\) WindowsServiceConfig](<#BuildWindowsServiceConfig>)
-  - [func LoadWindowsServiceConfig\(path string\) \(WindowsServiceConfig, error\)](<#LoadWindowsServiceConfig>)
-  - [func ParseWindowsServiceConfig\(raw \[\]byte\) \(WindowsServiceConfig, error\)](<#ParseWindowsServiceConfig>)
+- [type WindowsSCMDeletionPendingError](<#WindowsSCMDeletionPendingError>)
+  - [func \(e \*WindowsSCMDeletionPendingError\) Error\(\) string](<#WindowsSCMDeletionPendingError.Error>)
+  - [func \(e \*WindowsSCMDeletionPendingError\) Unwrap\(\) error](<#WindowsSCMDeletionPendingError.Unwrap>)
+- [type WindowsSCMDisabledError](<#WindowsSCMDisabledError>)
+  - [func \(e \*WindowsSCMDisabledError\) Error\(\) string](<#WindowsSCMDisabledError.Error>)
+  - [func \(e \*WindowsSCMDisabledError\) Unwrap\(\) error](<#WindowsSCMDisabledError.Unwrap>)
+- [type WindowsSCMOperation](<#WindowsSCMOperation>)
 
 
 ## Variables
@@ -68,17 +68,29 @@ var ErrMissingRalphBin = errors.New("service: RalphBin required")
 var ErrUnsupportedBackend = errors.New("service: unsupported platform")
 ```
 
+<a name="ErrWindowsSCMDeletionPending"></a>ErrWindowsSCMDeletionPending is the stable sentinel wrapped by WindowsSCMDeletionPendingError. A service marked for deletion is not proven absent: SCM can retain both its registration and process until it stops and every open handle closes.
+
+```go
+var ErrWindowsSCMDeletionPending = errors.New("service: native Windows SCM service deletion is pending")
+```
+
+<a name="ErrWindowsSCMDisabled"></a>ErrWindowsSCMDisabled is the stable sentinel wrapped by WindowsSCMDisabledError. Native Windows can run the foreground control plane, but the legacy LocalSystem SCM design cannot safely represent Ralph's per\-user state, credentials, repositories, and control\-pipe authority.
+
+```go
+var ErrWindowsSCMDisabled = errors.New("service: native Windows SCM is disabled")
+```
+
 <a name="Install"></a>
-## func [Install](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/service/service.go#L142>)
+## func [Install](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/service/service.go#L232>)
 
 ```go
 func Install(opts InstallOptions) (path string, err error)
 ```
 
-Install writes or registers the platform service definition that runs \`radioactive\_ralph \-\-supervisor\` as a per\-user auto\-restarting background process. On launchd/systemd this means writing the unit file; on Windows it also registers the SCM entry.
+Install writes or registers the platform service definition that runs \`radioactive\_ralph \-\-supervisor\` as a per\-user auto\-restarting background process. On launchd/systemd this means writing the unit file. Native Windows SCM installation is intentionally rejected before any filesystem or SCM mutation.
 
 <a name="IsServiceContext"></a>
-## func [IsServiceContext](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/service/service.go#L405>)
+## func [IsServiceContext](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/service/service.go#L488>)
 
 ```go
 func IsServiceContext() bool
@@ -86,26 +98,26 @@ func IsServiceContext() bool
 
 IsServiceContext reports whether the current process looks like it's running under the durable per\-user service host rather than an operator\-attached foreground invocation.
 
-<a name="MarshalWindowsServiceConfig"></a>
-## func [MarshalWindowsServiceConfig](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/service/windows_config.go#L33>)
+<a name="NewWindowsSCMDisabledError"></a>
+## func [NewWindowsSCMDisabledError](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/service/service.go#L192>)
 
 ```go
-func MarshalWindowsServiceConfig(opts InstallOptions) ([]byte, error)
+func NewWindowsSCMDisabledError(operation WindowsSCMOperation) error
 ```
 
-MarshalWindowsServiceConfig renders the Windows service config in the exact JSON form written to disk for the native service host.
+NewWindowsSCMDisabledError constructs the exported typed rejection used by the service package and the process\-entry guard.
 
 <a name="Start"></a>
-## func [Start](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/service/service.go#L289>)
+## func [Start](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/service/service.go#L371>)
 
 ```go
 func Start(opts InstallOptions) error
 ```
 
-Start loads/starts the installed per\-user supervisor service so its process actually comes up. Install only WRITES the unit definition; on launchd and systemd the unit must additionally be loaded/started \(a launchd unit with RunAtLoad still needs \`launchctl bootstrap\`; systemd needs \`systemctl \-\-user start\`\). Windows SCM's install already starts it, so Start is a no\-op there. Returns nil when the start command succeeds or the platform needs no separate start.
+Start loads/starts the installed per\-user supervisor service so its process actually comes up. Install only WRITES the unit definition; on launchd and systemd the unit must additionally be loaded/started \(a launchd unit with RunAtLoad still needs \`launchctl bootstrap\`; systemd needs \`systemctl \-\-user start\`\). Native Windows SCM start is intentionally rejected before any filesystem, SCM, or process access.
 
 <a name="Stop"></a>
-## func [Stop](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/service/service.go#L347>)
+## func [Stop](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/service/service.go#L430>)
 
 ```go
 func Stop(opts InstallOptions) error
@@ -114,7 +126,7 @@ func Stop(opts InstallOptions) error
 Stop unloads/stops the installed service without removing its definition. It is idempotent when the service is not loaded. The operator\-facing \`service uninstall\` command calls Stop before Uninstall so KeepAlive or enabled services cannot survive after their definition is deleted.
 
 <a name="Uninstall"></a>
-## func [Uninstall](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/service/service.go#L251>)
+## func [Uninstall](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/service/service.go#L334>)
 
 ```go
 func Uninstall(opts InstallOptions) error
@@ -123,7 +135,7 @@ func Uninstall(opts InstallOptions) error
 Uninstall removes the platform service definition. It does not stop a running service; callers performing the operator\-facing uninstall lifecycle must call Stop first. Keeping definition removal separate makes render/install tests independent of a live service manager while the CLI composes the complete stop\-then\-remove operation.
 
 <a name="UnitName"></a>
-## func [UnitName](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/service/service.go#L71>)
+## func [UnitName](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/service/service.go#L73>)
 
 ```go
 func UnitName(b Backend) string
@@ -138,7 +150,7 @@ windows-scm: "radioactive_ralph-supervisor"
 ```
 
 <a name="UnitPath"></a>
-## func [UnitPath](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/service/service.go#L96>)
+## func [UnitPath](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/service/service.go#L98>)
 
 ```go
 func UnitPath(b Backend, home string) string
@@ -146,35 +158,8 @@ func UnitPath(b Backend, home string) string
 
 UnitPath returns the on\-disk path where the unit file will be written. Callers pass the operator's home dir \(tests inject a tmpdir\).
 
-<a name="WindowsServiceArgs"></a>
-## func [WindowsServiceArgs](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/service/windows_config.go#L70>)
-
-```go
-func WindowsServiceArgs() []string
-```
-
-WindowsServiceArgs returns the radioactive\_ralph argv used by the native Windows SCM service entry when no persisted environment is required. It is retained as the minimal supervisor invocation contract used by callers and tests outside the SCM installer.
-
-<a name="WindowsServiceArgsForConfig"></a>
-## func [WindowsServiceArgsForConfig](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/service/windows_config.go#L76>)
-
-```go
-func WindowsServiceArgsForConfig(configPath string) []string
-```
-
-WindowsServiceArgsForConfig returns the complete SCM argv. The config path is carried explicitly instead of inferred from the service account's home.
-
-<a name="WindowsServiceConfigPath"></a>
-## func [WindowsServiceConfigPath](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/service/windows_config.go#L84>)
-
-```go
-func WindowsServiceConfigPath(args []string) (string, error)
-```
-
-WindowsServiceConfigPath extracts the private config path from an SCM invocation. It accepts both the two\-argument and \-\-flag=value spellings so diagnostics remain predictable if an administrator inspects or edits the service definition.
-
 <a name="Backend"></a>
-## type [Backend](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/service/service.go#L50>)
+## type [Backend](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/service/service.go#L51>)
 
 Backend identifies which platform mechanism is in use.
 
@@ -190,8 +175,9 @@ const (
     BackendLaunchd Backend = "launchd"
     // BackendSystemdUser is Linux/WSL systemd user unit.
     BackendSystemdUser Backend = "systemd-user"
-    // BackendWindowsSCM is a native Windows service managed by the Service
-    // Control Manager.
+    // BackendWindowsSCM identifies a legacy native Windows Service Control
+    // Manager registration. Install and Start reject this backend; Inspect,
+    // Stop, and Uninstall retain remediation access to older registrations.
     BackendWindowsSCM Backend = "windows-scm"
     // BackendUnsupported is returned for platforms we don't manage.
     BackendUnsupported Backend = "unsupported"
@@ -199,7 +185,7 @@ const (
 ```
 
 <a name="DetectBackend"></a>
-### func [DetectBackend](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/service/service.go#L81>)
+### func [DetectBackend](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/service/service.go#L83>)
 
 ```go
 func DetectBackend() Backend
@@ -208,7 +194,7 @@ func DetectBackend() Backend
 DetectBackend returns the appropriate backend for the current OS.
 
 <a name="InstallOptions"></a>
-## type [InstallOptions](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/service/service.go#L111-L122>)
+## type [InstallOptions](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/service/service.go#L113-L124>)
 
 InstallOptions configures an install.
 
@@ -228,9 +214,9 @@ type InstallOptions struct {
 ```
 
 <a name="Status"></a>
-## type [Status](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/service/service.go#L425-L429>)
+## type [Status](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/service/service.go#L510-L514>)
 
-Status reports whether the per\-user supervisor service definition is installed. This only inspects the service definition on disk \(unit file present/absent\); it says nothing about whether the supervisor process is currently running — callers wanting liveness should combine this with supervisor.Find against the XDG state root.
+Status reports whether the per\-user supervisor service definition is installed. launchd/systemd inspect the unit definition on disk. Native Windows asks SCM directly so a registration left by an earlier development build remains discoverable even when its legacy JSON config is absent. It says nothing about whether the supervisor process is currently running — callers wanting liveness should combine this with supervisor.Find against the XDG state root.
 
 ```go
 type Status struct {
@@ -241,7 +227,7 @@ type Status struct {
 ```
 
 <a name="Inspect"></a>
-### func [Inspect](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/service/service.go#L433>)
+### func [Inspect](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/service/service.go#L518>)
 
 ```go
 func Inspect(opts InstallOptions) (Status, error)
@@ -249,42 +235,85 @@ func Inspect(opts InstallOptions) (Status, error)
 
 Inspect reports the current install status of the per\-user supervisor service definition for the detected \(or overridden\) backend.
 
-<a name="WindowsServiceConfig"></a>
-## type [WindowsServiceConfig](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/service/windows_config.go#L14-L16>)
+<a name="WindowsSCMDeletionPendingError"></a>
+## type [WindowsSCMDeletionPendingError](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/service/service.go#L199-L202>)
 
-WindowsServiceConfig is the persisted config payload used by the native Windows service host for the per\-user supervisor service.
+WindowsSCMDeletionPendingError reports that a legacy Ralph SCM registration is marked for deletion but cannot yet be proven stopped and absent. Callers may use errors.Is\(err, ErrWindowsSCMDeletionPending\) for the stable category.
 
 ```go
-type WindowsServiceConfig struct {
-    ExtraEnv map[string]string `json:"extra_env,omitempty"`
+type WindowsSCMDeletionPendingError struct {
+    ServiceName string
+    Operation   string
 }
 ```
 
-<a name="BuildWindowsServiceConfig"></a>
-### func [BuildWindowsServiceConfig](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/service/windows_config.go#L20>)
+<a name="WindowsSCMDeletionPendingError.Error"></a>
+### func \(\*WindowsSCMDeletionPendingError\) [Error](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/service/service.go#L204>)
 
 ```go
-func BuildWindowsServiceConfig(opts InstallOptions) WindowsServiceConfig
+func (e *WindowsSCMDeletionPendingError) Error() string
 ```
 
-BuildWindowsServiceConfig produces the persisted config payload for the supervisor service instance.
 
-<a name="LoadWindowsServiceConfig"></a>
-### func [LoadWindowsServiceConfig](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/service/windows_config.go#L55>)
+
+<a name="WindowsSCMDeletionPendingError.Unwrap"></a>
+### func \(\*WindowsSCMDeletionPendingError\) [Unwrap](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/service/service.go#L223>)
 
 ```go
-func LoadWindowsServiceConfig(path string) (WindowsServiceConfig, error)
+func (e *WindowsSCMDeletionPendingError) Unwrap() error
 ```
 
-LoadWindowsServiceConfig reads the private config file named on the SCM command line. The explicit path matters because an SCM service commonly runs under a different account than the operator who installed it, so recomputing the operator's LocalAppData directory inside the service would load the wrong file.
+Unwrap makes the typed error compatible with errors.Is.
 
-<a name="ParseWindowsServiceConfig"></a>
-### func [ParseWindowsServiceConfig](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/service/windows_config.go#L42>)
+<a name="WindowsSCMDisabledError"></a>
+## type [WindowsSCMDisabledError](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/service/service.go#L168-L170>)
+
+WindowsSCMDisabledError is returned whenever code tries to install, start, or execute the disabled native Windows SCM integration. Callers may use errors.As for the operation and errors.Is\(err, ErrWindowsSCMDisabled\) for the stable category.
 
 ```go
-func ParseWindowsServiceConfig(raw []byte) (WindowsServiceConfig, error)
+type WindowsSCMDisabledError struct {
+    Operation WindowsSCMOperation
+}
 ```
 
-ParseWindowsServiceConfig parses the persisted Windows service config JSON.
+<a name="WindowsSCMDisabledError.Error"></a>
+### func \(\*WindowsSCMDisabledError\) [Error](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/service/service.go#L172>)
+
+```go
+func (e *WindowsSCMDisabledError) Error() string
+```
+
+
+
+<a name="WindowsSCMDisabledError.Unwrap"></a>
+### func \(\*WindowsSCMDisabledError\) [Unwrap](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/service/service.go#L186>)
+
+```go
+func (e *WindowsSCMDisabledError) Unwrap() error
+```
+
+Unwrap makes the typed error compatible with errors.Is.
+
+<a name="WindowsSCMOperation"></a>
+## type [WindowsSCMOperation](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/service/service.go#L153>)
+
+WindowsSCMOperation identifies the rejected mutating SCM operation.
+
+```go
+type WindowsSCMOperation string
+```
+
+<a name="WindowsSCMOperationInstall"></a>
+
+```go
+const (
+    // WindowsSCMOperationInstall is service registration/configuration.
+    WindowsSCMOperationInstall WindowsSCMOperation = "installation"
+    // WindowsSCMOperationStart is starting a prior registration.
+    WindowsSCMOperationStart WindowsSCMOperation = "start"
+    // WindowsSCMOperationExecute is an SCM-hosted legacy process invocation.
+    WindowsSCMOperationExecute WindowsSCMOperation = "execution"
+)
+```
 
 Generated by [gomarkdoc](<https://github.com/princjef/gomarkdoc>)

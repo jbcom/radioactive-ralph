@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"golang.org/x/sys/windows"
@@ -14,186 +16,119 @@ import (
 )
 
 const (
-	windowsServiceWaitTimeout  = 30 * time.Second
-	windowsServicePollInterval = 250 * time.Millisecond
+	windowsServiceWaitTimeout    = 30 * time.Second
+	windowsServicePollInterval   = 250 * time.Millisecond
+	windowsServiceDeleteAttempts = int(windowsServiceWaitTimeout/windowsServicePollInterval) + 1
+
+	windowsServiceInspectAccess         = windows.SERVICE_QUERY_CONFIG
+	windowsServiceDeletionInspectAccess = windows.SERVICE_QUERY_STATUS
+	windowsServiceStopAccess            = windows.SERVICE_QUERY_CONFIG | windows.SERVICE_QUERY_STATUS | windows.SERVICE_STOP
+	windowsServiceUninstallAccess       = windows.SERVICE_QUERY_CONFIG | windows.SERVICE_QUERY_STATUS | windows.SERVICE_STOP | windows.DELETE
+
+	windowsServiceHistoricalDisplayName = "radioactive_ralph supervisor"
+	windowsServiceHistoricalDescription = "Durable radioactive_ralph supervisor"
+)
+
+var errWindowsSCMLegacyOwnershipUnverified = errors.New(
+	"service: native Windows SCM registration is not a recognized legacy radioactive_ralph definition",
 )
 
 // windowsSCM and windowsServiceHandle keep the lifecycle testable without
 // requiring an elevated test process or mutating the host's real SCM.
 type windowsSCM interface {
-	OpenService(name string) (windowsServiceHandle, error)
-	CreateService(name, exepath string, config mgr.Config, args ...string) (windowsServiceHandle, error)
+	OpenService(name string, access uint32) (windowsServiceHandle, error)
 	Disconnect() error
 }
 
 type windowsServiceHandle interface {
 	Close() error
 	Config() (mgr.Config, error)
-	UpdateConfig(mgr.Config) error
 	Query() (svc.Status, error)
-	Start(args ...string) error
 	Control(svc.Cmd) (svc.Status, error)
 	Delete() error
 }
 
 type nativeWindowsSCM struct {
-	manager *mgr.Mgr
+	handle windows.Handle
 }
 
+var openWindowsSCManager = windows.OpenSCManager
+var openWindowsService = windows.OpenService
+var closeWindowsServiceHandle = windows.CloseServiceHandle
+var windowsServiceDeletionAttempts = windowsServiceDeleteAttempts
+var windowsServiceDeletionSleep = time.Sleep
+
 var connectWindowsSCM = func() (windowsSCM, error) {
-	manager, err := mgr.Connect()
+	handle, err := openWindowsSCManager(nil, nil, windows.SC_MANAGER_CONNECT)
 	if err != nil {
 		return nil, err
 	}
-	return &nativeWindowsSCM{manager: manager}, nil
+	return &nativeWindowsSCM{handle: handle}, nil
 }
 
-func (m *nativeWindowsSCM) OpenService(name string) (windowsServiceHandle, error) {
-	return m.manager.OpenService(name)
-}
-
-func (m *nativeWindowsSCM) CreateService(
-	name,
-	exepath string,
-	config mgr.Config,
-	args ...string,
-) (windowsServiceHandle, error) {
-	return m.manager.CreateService(name, exepath, config, args...)
+func (m *nativeWindowsSCM) OpenService(name string, access uint32) (windowsServiceHandle, error) {
+	namePointer, err := windows.UTF16PtrFromString(name)
+	if err != nil {
+		return nil, err
+	}
+	handle, err := openWindowsService(m.handle, namePointer, access)
+	if err != nil {
+		return nil, err
+	}
+	return &mgr.Service{Name: name, Handle: handle}, nil
 }
 
 func (m *nativeWindowsSCM) Disconnect() error {
-	return m.manager.Disconnect()
+	return closeWindowsServiceHandle(m.handle)
 }
 
-func installWindowsService(opts InstallOptions, path string) (string, error) {
-	raw, err := MarshalWindowsServiceConfig(opts)
-	if err != nil {
-		return "", fmt.Errorf("service: marshal windows config: %w", err)
+// inspectWindowsService asks SCM directly rather than trusting the legacy JSON
+// config file. This is remediation-only: it lets status find registrations
+// created by an earlier development build without loading or starting them.
+func inspectWindowsService(opts InstallOptions) (Status, error) {
+	status := Status{
+		Backend:  BackendWindowsSCM,
+		UnitPath: UnitName(BackendWindowsSCM),
 	}
-
+	expectedConfigPath, err := expectedLegacyWindowsServiceConfigPath(opts)
+	if err != nil {
+		return status, err
+	}
 	manager, err := connectWindowsSCM()
 	if err != nil {
-		return "", fmt.Errorf("service: connect SCM: %w", err)
+		return status, fmt.Errorf("service: connect SCM: %w", err)
 	}
 	defer func() { _ = manager.Disconnect() }()
 
-	s, created, err := reconcileWindowsServiceDefinition(manager, opts, path)
-	if err != nil {
-		return "", err
-	}
-	defer func() { _ = s.Close() }()
-
-	// Persist the environment only after the SCM definition has reconciled,
-	// but before starting it. The explicit config path in BinaryPathName lets
-	// the service load the installing user's values even when SCM launches the
-	// process under a different account.
-	if err := os.WriteFile(path, raw, 0o600); err != nil {
-		if created {
-			_ = s.Delete()
-		}
-		return "", fmt.Errorf("service: write %s: %w", path, err)
-	}
-	if err := startWindowsServiceHandle(s); err != nil {
-		return "", fmt.Errorf("service: start %s: %w", UnitName(BackendWindowsSCM), err)
-	}
-	return path, nil
-}
-
-func reconcileWindowsServiceDefinition(
-	manager windowsSCM,
-	opts InstallOptions,
-	configPath string,
-) (windowsServiceHandle, bool, error) {
 	name := UnitName(BackendWindowsSCM)
-	s, err := manager.OpenService(name)
+	s, err := manager.OpenService(name, windowsServiceInspectAccess)
 	switch {
 	case err == nil:
-		if err := ensureWindowsServiceStopped(s); err != nil {
+		if verifyErr := verifyLegacyWindowsServiceOwnership(s, expectedConfigPath); verifyErr != nil {
+			status.Installed = true
 			_ = s.Close()
-			return nil, false, fmt.Errorf("service: stop existing %s: %w", name, err)
+			return status, fmt.Errorf("service: verify %s during inspection: %w", name, verifyErr)
 		}
-		config, err := s.Config()
-		if err != nil {
-			_ = s.Close()
-			return nil, false, fmt.Errorf("service: read %s config: %w", name, err)
+		if closeErr := s.Close(); closeErr != nil {
+			return status, fmt.Errorf("service: close %s after inspect: %w", name, closeErr)
 		}
-		config.BinaryPathName = windows.ComposeCommandLine(
-			append([]string{opts.RalphBin}, WindowsServiceArgsForConfig(configPath)...),
-		)
-		config.DisplayName = "radioactive_ralph supervisor"
-		config.Description = "Durable radioactive_ralph supervisor"
-		config.StartType = mgr.StartAutomatic
-		if err := s.UpdateConfig(config); err != nil {
-			_ = s.Close()
-			return nil, false, fmt.Errorf("service: update %s: %w", name, err)
-		}
-		return s, false, nil
+		status.Installed = true
+		return status, nil
 	case errors.Is(err, windows.ERROR_SERVICE_DOES_NOT_EXIST):
-		config := mgr.Config{
-			DisplayName: "radioactive_ralph supervisor",
-			Description: "Durable radioactive_ralph supervisor",
-			StartType:   mgr.StartAutomatic,
-		}
-		s, err := manager.CreateService(
-			name,
-			opts.RalphBin,
-			config,
-			WindowsServiceArgsForConfig(configPath)...,
-		)
-		if err != nil {
-			return nil, false, fmt.Errorf("service: create %s: %w", name, err)
-		}
-		return s, true, nil
+		return status, nil
+	case errors.Is(err, windows.ERROR_SERVICE_MARKED_FOR_DELETE):
+		status.Installed = true
+		return status, newWindowsSCMDeletionPendingError(name, "inspection")
 	default:
-		return nil, false, fmt.Errorf("service: open %s: %w", name, err)
+		return status, fmt.Errorf("service: open %s: %w", name, err)
 	}
 }
 
-// startWindowsService is available to service.Start so a stopped but already
-// installed Windows service can be brought back without reinstalling it.
-func startWindowsService(_ InstallOptions) error {
-	manager, err := connectWindowsSCM()
+func stopWindowsService(opts InstallOptions) error {
+	expectedConfigPath, err := expectedLegacyWindowsServiceConfigPath(opts)
 	if err != nil {
-		return fmt.Errorf("service: connect SCM: %w", err)
-	}
-	defer func() { _ = manager.Disconnect() }()
-
-	name := UnitName(BackendWindowsSCM)
-	s, err := manager.OpenService(name)
-	if err != nil {
-		return fmt.Errorf("service: open %s: %w", name, err)
-	}
-	defer func() { _ = s.Close() }()
-	if err := startWindowsServiceHandle(s); err != nil {
-		return fmt.Errorf("service: start %s: %w", name, err)
-	}
-	return nil
-}
-
-func startWindowsServiceHandle(s windowsServiceHandle) error {
-	status, err := s.Query()
-	if err != nil {
-		return fmt.Errorf("query before start: %w", err)
-	}
-	switch status.State {
-	case svc.Running:
-		return nil
-	case svc.StartPending:
-		return waitWindowsServiceState(s, svc.Running)
-	case svc.Stopped:
-		// Ready to start below.
-	default:
-		if err := ensureWindowsServiceStopped(s); err != nil {
-			return err
-		}
-	}
-	if err := s.Start(); err != nil && !errors.Is(err, windows.ERROR_SERVICE_ALREADY_RUNNING) {
 		return err
 	}
-	return waitWindowsServiceState(s, svc.Running)
-}
-
-func stopWindowsService(_ InstallOptions) error {
 	manager, err := connectWindowsSCM()
 	if err != nil {
 		return fmt.Errorf("service: connect SCM: %w", err)
@@ -201,47 +136,98 @@ func stopWindowsService(_ InstallOptions) error {
 	defer func() { _ = manager.Disconnect() }()
 
 	name := UnitName(BackendWindowsSCM)
-	s, err := manager.OpenService(name)
-	if errors.Is(err, windows.ERROR_SERVICE_DOES_NOT_EXIST) ||
-		errors.Is(err, windows.ERROR_SERVICE_MARKED_FOR_DELETE) {
+	s, err := manager.OpenService(name, windowsServiceStopAccess)
+	if errors.Is(err, windows.ERROR_SERVICE_DOES_NOT_EXIST) {
 		return nil
+	}
+	if errors.Is(err, windows.ERROR_SERVICE_MARKED_FOR_DELETE) {
+		return newWindowsSCMDeletionPendingError(name, "stop")
 	}
 	if err != nil {
 		return fmt.Errorf("service: open %s: %w", name, err)
 	}
 	defer func() { _ = s.Close() }()
-	if err := ensureWindowsServiceStopped(s); err != nil {
+	if err := verifyLegacyWindowsServiceOwnership(s, expectedConfigPath); err != nil {
+		return fmt.Errorf("service: verify %s before stop: %w", name, err)
+	}
+	if err := ensureWindowsServiceStopped(s, expectedConfigPath); err != nil {
 		return fmt.Errorf("service: stop %s: %w", name, err)
 	}
 	return nil
 }
 
-func uninstallWindowsService(_ InstallOptions, path string) error {
+func uninstallWindowsService(opts InstallOptions, path string) error {
+	expectedConfigPath, err := expectedLegacyWindowsServiceConfigPath(opts)
+	if err != nil {
+		return err
+	}
+	if !strings.EqualFold(filepath.Clean(path), filepath.Clean(expectedConfigPath)) {
+		return fmt.Errorf(
+			"service: refuse native Windows uninstall with non-canonical config path %q; want %q",
+			path,
+			expectedConfigPath,
+		)
+	}
 	manager, err := connectWindowsSCM()
 	if err != nil {
 		return fmt.Errorf("service: connect SCM: %w", err)
 	}
-	defer func() { _ = manager.Disconnect() }()
+	managerConnected := true
+	defer func() {
+		if managerConnected {
+			_ = manager.Disconnect()
+		}
+	}()
 
 	name := UnitName(BackendWindowsSCM)
-	s, err := manager.OpenService(name)
+	s, err := manager.OpenService(name, windowsServiceUninstallAccess)
 	switch {
-	case errors.Is(err, windows.ERROR_SERVICE_DOES_NOT_EXIST),
-		errors.Is(err, windows.ERROR_SERVICE_MARKED_FOR_DELETE):
+	case errors.Is(err, windows.ERROR_SERVICE_DOES_NOT_EXIST):
 		// Already absent is the successful idempotent state.
+	case errors.Is(err, windows.ERROR_SERVICE_MARKED_FOR_DELETE):
+		return newWindowsSCMDeletionPendingError(name, "uninstall")
 	case err != nil:
 		return fmt.Errorf("service: open %s: %w", name, err)
 	default:
-		if err := ensureWindowsServiceStopped(s); err != nil {
-			_ = s.Close()
+		serviceOpen := true
+		defer func() {
+			if serviceOpen {
+				_ = s.Close()
+			}
+		}()
+		if err := verifyLegacyWindowsServiceOwnership(s, expectedConfigPath); err != nil {
+			return fmt.Errorf("service: verify %s before uninstall: %w", name, err)
+		}
+		if err := ensureWindowsServiceStopped(s, expectedConfigPath); err != nil {
 			return fmt.Errorf("service: stop %s before delete: %w", name, err)
 		}
-		if err := s.Delete(); err != nil && !errors.Is(err, windows.ERROR_SERVICE_MARKED_FOR_DELETE) {
-			_ = s.Close()
+		// Stop can run arbitrary service code and creates a time window in
+		// which another administrator could replace ImagePath. Re-query the
+		// live SCM definition immediately before Delete; the stable service
+		// name alone never authorizes removal.
+		if err := verifyLegacyWindowsServiceOwnership(s, expectedConfigPath); err != nil {
+			return fmt.Errorf("service: re-verify %s immediately before delete: %w", name, err)
+		}
+		if err := s.Delete(); err != nil {
+			if errors.Is(err, windows.ERROR_SERVICE_MARKED_FOR_DELETE) {
+				return newWindowsSCMDeletionPendingError(name, "uninstall")
+			}
 			return fmt.Errorf("service: delete %s: %w", name, err)
 		}
+		serviceOpen = false
 		if err := s.Close(); err != nil {
 			return fmt.Errorf("service: close %s after delete: %w", name, err)
+		}
+		managerConnected = false
+		if err := manager.Disconnect(); err != nil {
+			return fmt.Errorf("service: disconnect SCM after deleting %s: %w", name, err)
+		}
+		if err := waitWindowsServiceDeleted(
+			name,
+			windowsServiceDeletionAttempts,
+			windowsServiceDeletionSleep,
+		); err != nil {
+			return err
 		}
 	}
 	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
@@ -250,7 +236,155 @@ func uninstallWindowsService(_ InstallOptions, path string) error {
 	return nil
 }
 
-func ensureWindowsServiceStopped(s windowsServiceHandle) error {
+func waitWindowsServiceDeleted(
+	name string,
+	attempts int,
+	sleep func(time.Duration),
+) error {
+	if attempts < 1 {
+		attempts = 1
+	}
+	if sleep == nil {
+		sleep = time.Sleep
+	}
+
+	for attempt := 1; attempt <= attempts; attempt++ {
+		manager, err := connectWindowsSCM()
+		if err != nil {
+			return fmt.Errorf("service: connect SCM while verifying deletion of %s: %w", name, err)
+		}
+		s, openErr := manager.OpenService(name, windowsServiceDeletionInspectAccess)
+		if openErr == nil {
+			closeErr := s.Close()
+			disconnectErr := manager.Disconnect()
+			if closeErr != nil {
+				return fmt.Errorf("service: close %s while verifying deletion: %w", name, closeErr)
+			}
+			if disconnectErr != nil {
+				return fmt.Errorf("service: disconnect SCM while verifying deletion of %s: %w", name, disconnectErr)
+			}
+			if attempt == attempts {
+				return newWindowsSCMDeletionPendingError(name, "uninstall")
+			}
+			sleep(windowsServicePollInterval)
+			continue
+		}
+		if disconnectErr := manager.Disconnect(); disconnectErr != nil {
+			return fmt.Errorf("service: disconnect SCM while verifying deletion of %s: %w", name, disconnectErr)
+		}
+		switch {
+		case errors.Is(openErr, windows.ERROR_SERVICE_DOES_NOT_EXIST):
+			return nil
+		case errors.Is(openErr, windows.ERROR_SERVICE_MARKED_FOR_DELETE):
+			if attempt == attempts {
+				return newWindowsSCMDeletionPendingError(name, "uninstall")
+			}
+			sleep(windowsServicePollInterval)
+		default:
+			return fmt.Errorf("service: open %s while verifying deletion: %w", name, openErr)
+		}
+	}
+	return newWindowsSCMDeletionPendingError(name, "uninstall")
+}
+
+// verifyLegacyWindowsServiceOwnership proves that the stable service name
+// still refers to the exact command shape emitted by Ralph's retired native
+// SCM installer before Stop or Delete can mutate it. The legacy installer
+// composed:
+//
+//	<absolute radioactive_ralph[.exe]> --supervisor --windows-service-config <home>\AppData\Local\radioactive-ralph\services\radioactive_ralph-supervisor.json
+//
+// The resolved home may vary, but the config argument must equal UnitPath for
+// that exact home. The own-process type, historical display metadata,
+// executable basename, exact marker argv, and canonical config path are the
+// additive provenance contract. Unknown same-name registrations fail closed
+// and retain both SCM state and the historical config file.
+func verifyLegacyWindowsServiceOwnership(
+	s windowsServiceHandle,
+	expectedConfigPath string,
+) error {
+	config, err := s.Config()
+	if err != nil {
+		return fmt.Errorf("query SCM configuration: %w", err)
+	}
+	if config.ServiceType != windows.SERVICE_WIN32_OWN_PROCESS ||
+		config.DisplayName != windowsServiceHistoricalDisplayName ||
+		config.Description != windowsServiceHistoricalDescription {
+		return fmt.Errorf(
+			"%w: service type/display name/description do not match the historical definition",
+			errWindowsSCMLegacyOwnershipUnverified,
+		)
+	}
+	argv, err := windows.DecomposeCommandLine(config.BinaryPathName)
+	if err != nil {
+		return fmt.Errorf("%w: cannot parse ImagePath: %v", errWindowsSCMLegacyOwnershipUnverified, err)
+	}
+	if len(argv) != 4 {
+		return fmt.Errorf(
+			"%w: want executable plus 3 legacy arguments, got %d command elements",
+			errWindowsSCMLegacyOwnershipUnverified,
+			len(argv),
+		)
+	}
+
+	executable := argv[0]
+	executableBase := filepath.Base(executable)
+	if !filepath.IsAbs(executable) ||
+		(!strings.EqualFold(executableBase, "radioactive_ralph.exe") &&
+			!strings.EqualFold(executableBase, "radioactive_ralph")) {
+		return fmt.Errorf(
+			"%w: executable must be an absolute radioactive_ralph(.exe) path",
+			errWindowsSCMLegacyOwnershipUnverified,
+		)
+	}
+	if argv[1] != "--supervisor" || argv[2] != "--windows-service-config" {
+		return fmt.Errorf(
+			"%w: missing exact --supervisor --windows-service-config markers",
+			errWindowsSCMLegacyOwnershipUnverified,
+		)
+	}
+	configPath := argv[3]
+	if !filepath.IsAbs(configPath) ||
+		!strings.EqualFold(filepath.Clean(configPath), filepath.Clean(expectedConfigPath)) {
+		return fmt.Errorf(
+			"%w: legacy config path must equal canonical UnitPath %q",
+			errWindowsSCMLegacyOwnershipUnverified,
+			expectedConfigPath,
+		)
+	}
+	return nil
+}
+
+func expectedLegacyWindowsServiceConfigPath(opts InstallOptions) (string, error) {
+	home := opts.HomeDir
+	if home == "" {
+		resolved, err := os.UserHomeDir()
+		if err != nil {
+			return "", fmt.Errorf("service: user home for legacy Windows SCM ownership: %w", err)
+		}
+		home = resolved
+	}
+	expected := filepath.Clean(UnitPath(BackendWindowsSCM, home))
+	if !filepath.IsAbs(expected) {
+		return "", fmt.Errorf(
+			"service: legacy Windows SCM ownership requires an absolute home path, got %q",
+			home,
+		)
+	}
+	return expected, nil
+}
+
+func newWindowsSCMDeletionPendingError(name, operation string) error {
+	return &WindowsSCMDeletionPendingError{
+		ServiceName: name,
+		Operation:   operation,
+	}
+}
+
+func ensureWindowsServiceStopped(
+	s windowsServiceHandle,
+	expectedConfigPath string,
+) error {
 	deadline := time.Now().Add(windowsServiceWaitTimeout)
 	for {
 		status, err := s.Query()
@@ -266,6 +400,12 @@ func ensureWindowsServiceStopped(s windowsServiceHandle) error {
 			// SCM rejects controls while another transition is pending; wait
 			// until the service reaches a controllable state.
 		default:
+			// A pending transition may have given another administrator time
+			// to replace ImagePath. Never rely on the earlier ownership query
+			// when crossing the mutating ControlService boundary.
+			if err := verifyLegacyWindowsServiceOwnership(s, expectedConfigPath); err != nil {
+				return fmt.Errorf("re-verify immediately before stop control: %w", err)
+			}
 			if _, err := s.Control(svc.Stop); err != nil {
 				if errors.Is(err, windows.ERROR_SERVICE_NOT_ACTIVE) {
 					return nil
@@ -277,25 +417,6 @@ func ensureWindowsServiceStopped(s windowsServiceHandle) error {
 		}
 		if !time.Now().Before(deadline) {
 			return fmt.Errorf("timeout waiting for Stopped (last state %d)", status.State)
-		}
-		time.Sleep(windowsServicePollInterval)
-	}
-}
-
-func waitWindowsServiceState(s windowsServiceHandle, target svc.State) error {
-	deadline := time.Now().Add(windowsServiceWaitTimeout)
-	var last svc.State
-	for {
-		status, err := s.Query()
-		if err != nil {
-			return fmt.Errorf("query while waiting for state %d: %w", target, err)
-		}
-		last = status.State
-		if last == target {
-			return nil
-		}
-		if !time.Now().Before(deadline) {
-			return fmt.Errorf("timeout waiting for state %d (last state %d)", target, last)
 		}
 		time.Sleep(windowsServicePollInterval)
 	}

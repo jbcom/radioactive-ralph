@@ -15,15 +15,20 @@ Native packaging assets and notes. See the design spec at
 |---|---|---|---|
 | `.tar.gz`/`.zip` (CLI) | goreleaser archives | ubuntu | cosign (checksums) |
 | `.deb`/`.rpm` (CLI) | goreleaser nfpms | ubuntu | cosign (checksums) |
-| Homebrew cask `radioactive-ralph` / Scoop (CLI) | goreleaser publishers | ubuntu | — (manifest) |
-| winget manifests (generated only; not staged or submitted) | goreleaser generation | ubuntu | — (manifest) |
-| Chocolatey package (optional, only after immutable GitHub publication and outside the stable install-surface gate) | goreleaser publisher | windows | — (manifest) |
+| Homebrew cask `radioactive-ralph` / Scoop (CLI; native Windows is foreground supervisor/client control plane only) | goreleaser publishers | ubuntu | — (manifest) |
+| winget manifests (generated only; not staged or submitted; native Windows is foreground supervisor/client control plane only) | goreleaser generation | ubuntu | — (manifest) |
+| Chocolatey package (optional, only after immutable GitHub publication and outside the stable install-surface gate; native Windows is foreground supervisor/client control plane only) | goreleaser publisher | windows | — (manifest) |
 | AppImage + `.desktop` (GUI) | `fyne package` v1.7.2 + `appimagetool` (pinned+SHA-verified) | ubuntu (`-tags gui`, CGO) | unsigned by convention; covered by signed consolidated `gui-checksums.txt` |
 | `.app` Homebrew cask `radioactive-ralph-gui` (GUI) | `fyne package` v1.7.2 + `codesign -s -` | macos (`-tags gui`, CGO) | ad-hoc (free); cask `postflight` strips quarantine — no Apple account |
 | `.exe` (GUI) | `fyne package` v1.7.2 | windows (`-tags gui`, CGO) | optional SignPath OSS signing when the `SIGNPATH_*` secret is set (else unsigned) |
 
 (The `.deb`/`.rpm` rows above are CLI-only — there is no GUI deb/rpm build; the
 GUI Linux delivery is the AppImage.)
+
+Native Windows packages expose only the foreground supervisor/client control
+plane. SCM install/start and provider-backed workers are disabled; functional
+provider execution on a Windows machine uses the Linux build inside WSL2 with
+`systemd --user`.
 
 ## Icon
 
