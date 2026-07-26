@@ -17,7 +17,9 @@ jobs:
       state: ${{ steps.release_state.outputs.state }}
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      # GitHub hides draft releases from tokens without repository push access.
+      # This job only reads release state; tests reject mutating release commands.
+      contents: write
     steps:
       # Each non-built-in credential has a fixed call-site purpose:
       # PKGS_GITHUB_TOKEN mutates jbcom/pkgs; the Doppler-synced
@@ -51,6 +53,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       # The repository's active tag ruleset makes v* tags admin-created and
       # immutable. Still prove the event is the checked-out tag commit on main
@@ -86,6 +89,7 @@ jobs:
       # `force-tag-creation` creates the tag before Release Please creates its
       # draft. The tag event can therefore start this workflow first; wait for
       # the handoff instead of racing GoReleaser into creating a second draft.
+      # This is the only step that receives the write-capable built-in token.
       - name: Require exact Release Please release state
         id: release_state
         env:

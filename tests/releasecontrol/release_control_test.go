@@ -192,7 +192,18 @@ func TestStableAdmissionPrecedesAllPublishers(t *testing.T) {
 
 	admission := requireWorkflowJob(t, workflow, "release-admission", path)
 	requireContains(t, admission, `^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$`, path)
-	requireContains(t, admission, "contents: read", path)
+	requireContains(t, admission, "contents: write", path)
+	requireContains(t, admission, "persist-credentials: false", path)
+	for _, mutation := range []string{
+		"gh release create",
+		"gh release delete",
+		"gh release edit",
+		"gh release upload",
+		"gh api --method",
+		"gh api -X",
+	} {
+		requireNotContains(t, admission, mutation, path)
+	}
 	requireContains(t, admission, "fetch-depth: 0", path)
 	requireContains(t, admission, `+refs/heads/main:refs/remotes/origin/main`, path)
 	requireContains(t, admission, `git rev-parse "${GITHUB_REF_NAME}^{commit}"`, path)
@@ -201,6 +212,12 @@ func TestStableAdmissionPrecedesAllPublishers(t *testing.T) {
 	requireContains(t, admission, `jq -er '."."' .release-please-manifest.json`, path)
 	requireContains(t, admission, `"v${manifest_version}" != "$GITHUB_REF_NAME"`, path)
 	requireContains(t, admission, "--json isDraft,isPrerelease,tagName,targetCommitish", path)
+	if got := strings.Count(admission, "GH_TOKEN: ${{ github.token }}"); got != 1 {
+		t.Errorf("%s built-in token mapping count = %d, want 1", path, got)
+	}
+	requireContains(t, admission,
+		"- name: Require exact Release Please release state\n        id: release_state\n        env:\n          GH_TOKEN: ${{ github.token }}",
+		path)
 	requireContains(t, admission, `"$tag_name" != "$GITHUB_REF_NAME" || "$target_commitish" != "$TAG_COMMIT"`, path)
 	requireContains(t, admission, `"$is_draft" == "true" && "$is_prerelease" == "false"`, path)
 	requireContains(t, admission, "public prerelease or ambiguous release state is invalid", path)
