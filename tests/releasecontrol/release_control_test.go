@@ -448,6 +448,26 @@ func TestCLIAndGUICasksHaveDistinctTokensAndFiles(t *testing.T) {
 	requireContains(t, pushHelper, `git push "$lease" "$REMOTE" "HEAD:${REF}"`, pushHelperPath)
 }
 
+func TestPremergeHomebrewSmokeRewritesExactInterpolatedURLs(t *testing.T) {
+	const workflowPath = ".github/workflows/release.yml"
+	workflow := readRepositoryFile(t, workflowPath)
+	job := requireWorkflowJob(t, workflow, "premerge-package-smoke", workflowPath)
+	requireContains(t, job, "scripts/ci/rewrite_homebrew_cask_url.sh", workflowPath)
+	requireContains(t, job, `"radioactive_ralph_${VERSION}_darwin_arm64.tar.gz"`, workflowPath)
+	requireContains(t, job, `"radioactive-ralph_${VERSION}_darwin_arm64.dmg"`, workflowPath)
+	requireContains(t, job, "persist-credentials: false", workflowPath)
+	requireContains(t, job, "unset GH_TOKEN PKGS_GH_TOKEN RELEASE_GH_TOKEN", workflowPath)
+	requireContains(t, job, `git config --local --get-regexp '^http\..*\.extraheader$'`, workflowPath)
+
+	const helperPath = "scripts/ci/rewrite_homebrew_cask_url.sh"
+	helper := readRepositoryFile(t, helperPath)
+	requireContains(t, helper, `version_template='#{version}'`, helperPath)
+	requireContains(t, helper, `releases/download/v${VERSION}/${template_asset}`, helperPath)
+	requireContains(t, helper, `releases/download/v${version_template}/${template_asset}`, helperPath)
+	requireContains(t, helper, `if (count != 1)`, helperPath)
+	requireContains(t, helper, `replacement="file://${CACHED_PATH}\""`, helperPath)
+}
+
 func TestReleaseHelpersRequireNamedTokenAuthorities(t *testing.T) {
 	for _, path := range []string{
 		"packaging/publish-cli-manifests.sh",

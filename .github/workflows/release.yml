@@ -520,6 +520,10 @@ jobs:
           - channel: scoop-exact-head
             os: windows-latest
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: matrix.channel == 'homebrew-exact-heads'
+        with:
+          persist-credentials: false
       - name: Install exact Homebrew PR-head casks
         if: matrix.channel == 'homebrew-exact-heads'
         shell: bash
@@ -542,9 +546,19 @@ jobs:
             "radioactive-ralph_${VERSION}_darwin_arm64.dmg"; do
             GH_TOKEN="$RELEASE_GH_TOKEN" gh release download "$GITHUB_REF_NAME" \
               --pattern "$asset" --dir premerge-assets
-            sed -i '' \
-              "s#https://github.com/jbcom/radioactive-ralph/releases/download/[^\\\"]*/$asset#file://$PWD/premerge-assets/$asset#" \
-              exact-casks/*.rb
+            case "$asset" in
+              radioactive_ralph_*.tar.gz)
+                cask=exact-casks/radioactive-ralph.rb
+                ;;
+              radioactive-ralph_*.dmg)
+                cask=exact-casks/radioactive-ralph-gui.rb
+                ;;
+              *)
+                exit 1
+                ;;
+            esac
+            bash scripts/ci/rewrite_homebrew_cask_url.sh \
+              "$cask" "$VERSION" "$asset" "$PWD/premerge-assets/$asset"
           done
       - name: Install cached exact Homebrew PR-head casks without credentials
         if: matrix.channel == 'homebrew-exact-heads'
@@ -553,6 +567,11 @@ jobs:
           set -euo pipefail
           VERSION="${GITHUB_REF_NAME#v}"
           unset GH_TOKEN PKGS_GH_TOKEN RELEASE_GH_TOKEN
+          if git config --local --get-regexp '^http\..*\.extraheader$' \
+            >/dev/null 2>&1; then
+            echo "checkout credential remained before cask execution" >&2
+            exit 1
+          fi
           HOMEBREW_NO_INSTALL_FROM_API=1 brew install --cask \
             "$PWD/exact-casks/radioactive-ralph.rb" \
             "$PWD/exact-casks/radioactive-ralph-gui.rb"

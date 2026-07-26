@@ -578,6 +578,8 @@ jobs:
             scripts/ci/test_smoke_goreleaser_artifacts.sh \
             scripts/ci/rollback_package_manifests.sh \
             scripts/ci/test_rollback_package_manifests.sh \
+            scripts/ci/rewrite_homebrew_cask_url.sh \
+            scripts/ci/test_rewrite_homebrew_cask_url.sh \
             scripts/ci/verify_release_assets.sh \
             scripts/ci/test_verify_release_assets.sh \
             scripts/ci/prepare_package_rollback_provenance.sh \
@@ -592,6 +594,7 @@ jobs:
           bash scripts/ci/test_prepare_package_manifests_bundle.sh
           bash scripts/ci/test_verify_release_assets.sh
           bash scripts/ci/test_rollback_package_manifests.sh
+          bash scripts/ci/test_rewrite_homebrew_cask_url.sh
           bash scripts/ci/test_push_version_branch.sh
           bash scripts/ci/test_smoke_goreleaser_artifacts.sh
       - name: Validate the .desktop launcher
