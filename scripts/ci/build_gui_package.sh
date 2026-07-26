@@ -13,6 +13,7 @@ BUILD_DATE="${BUILD_DATE:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}"
 BUILD_COMMIT="${GITHUB_SHA:-$(git -C "$ROOT" rev-parse HEAD)}"
 BINARY="$ROOT/cmd/radioactive_ralph/radioactive-ralph"
 [[ "$TARGET" == windows ]] && BINARY="${BINARY}.exe"
+EXPECTED_VERSION="$VERSION ($BUILD_COMMIT, built $BUILD_DATE)"
 
 CGO_ENABLED=1 go build \
   -tags gui \
@@ -20,15 +21,19 @@ CGO_ENABLED=1 go build \
   -ldflags "-s -w -X main.Version=$VERSION -X main.Commit=$BUILD_COMMIT -X main.Date=$BUILD_DATE" \
   -o "$BINARY" \
   "$ROOT/cmd/radioactive_ralph"
-"$BINARY" --version | grep -F "$VERSION"
+"$BINARY" --version | grep -F "$EXPECTED_VERSION"
 go version -m "$BINARY" | grep -F $'dep\tfyne.io/fyne/v2'
 
 pushd "$ROOT/cmd/radioactive_ralph" >/dev/null
 # Fyne v1.7.2's Windows packager rebuilds after injecting fyne.syso. Re-supply
 # both the GUI tag and every release ldflag so the delivered executable retains
 # the same product capability and version identity as the prebuilt input.
+# Fyne 1.7.2 tokenizes GOFLAGS with strings.Fields, extracts each no-space
+# -ldflags= field, and combines the values into one go build -ldflags argument.
+# A quoted space-containing GOFLAGS field is incompatible with that parser;
+# --release supplies -s and -w itself.
 CGO_ENABLED=1 \
-GOFLAGS="-trimpath -ldflags=-s -ldflags=-w -ldflags=-X=main.Version=$VERSION -ldflags=-X=main.Commit=$BUILD_COMMIT -ldflags=-X=main.Date=$BUILD_DATE" \
+GOFLAGS="-trimpath -ldflags=-X=main.Version=$VERSION -ldflags=-X=main.Commit=$BUILD_COMMIT -ldflags=-X=main.Date=$BUILD_DATE" \
 "$(go env GOPATH)/bin/fyne" package \
   --target "$TARGET" \
   --executable "$BINARY" \
@@ -59,6 +64,5 @@ case "$TARGET" in
   windows) delivered="$ROOT/radioactive-ralph.exe" ;;
 esac
 [[ -n "$delivered" && -x "$delivered" ]]
-"$delivered" --version | grep -F "$VERSION"
+"$delivered" --version | grep -F "$EXPECTED_VERSION"
 go version -m "$delivered" | grep -F $'dep\tfyne.io/fyne/v2'
-

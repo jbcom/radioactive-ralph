@@ -63,25 +63,23 @@ done
 case "$pattern" in
   checksums.txt)
     for asset in "${assets[@]:0:9}"; do
-      printf '%s  %s\n' "$EMPTY_SHA" "$asset"
+      printf '%s *%s\n' "$EMPTY_SHA" "$asset"
     done > "$output"
     ;;
   gui-checksums.txt)
     for asset in "${assets[@]:9:4}"; do
-      printf '%s  %s\n' "$EMPTY_SHA" "$asset"
+      printf '%s *%s\n' "$EMPTY_SHA" "$asset"
     done > "$output"
     ;;
   package-rollback.tar.gz)
     payload="$(mktemp -d)"
     mkdir -p "$payload/Casks" "$payload/bucket"
     : > "$payload/Casks/radioactive-ralph.rb"
-    : > "$payload/Casks/radioactive-ralph-gui.rb"
     : > "$payload/bucket/radioactive-ralph.json"
-    printf '{"schema":1,"release_version":"1.2.3","prior_main_oid":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","files":{"Casks/radioactive-ralph.rb":{"sha256":"%s"},"Casks/radioactive-ralph-gui.rb":{"sha256":"%s"},"bucket/radioactive-ralph.json":{"sha256":"%s"}}}\n' \
-      "$EMPTY_SHA" "$EMPTY_SHA" "$EMPTY_SHA" > "$payload/provenance.json"
+    printf '{"schema":2,"release_version":"1.2.3","prior_main_oid":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","files":{"Casks/radioactive-ralph.rb":{"state":"present","sha256":"%s"},"Casks/radioactive-ralph-gui.rb":{"state":"missing"},"bucket/radioactive-ralph.json":{"state":"present","sha256":"%s"}}}\n' \
+      "$EMPTY_SHA" "$EMPTY_SHA" > "$payload/provenance.json"
     tar -czf "$output" -C "$payload" provenance.json \
-      Casks/radioactive-ralph.rb Casks/radioactive-ralph-gui.rb \
-      bucket/radioactive-ralph.json
+      Casks/radioactive-ralph.rb bucket/radioactive-ralph.json
     rm -rf "$payload"
     ;;
   package-manifests.tar.gz)

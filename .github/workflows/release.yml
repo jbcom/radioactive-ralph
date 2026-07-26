@@ -595,30 +595,142 @@ jobs:
           RELEASE_GH_TOKEN: ${{ github.token }}
           PACKAGE_HEAD: ${{ needs.verify-package-heads.outputs.package_head_oid }}
         run: |
+          $ErrorActionPreference = 'Stop'
           New-Item -ItemType Directory exact-scoop | Out-Null
           $env:GH_TOKEN = $env:PKGS_GH_TOKEN
           gh api -H "Accept: application/vnd.github.raw+json" `
             "repos/jbcom/pkgs/contents/bucket/radioactive-ralph.json?ref=$env:PACKAGE_HEAD" `
             > exact-scoop/radioactive-ralph.json
+          if ($LASTEXITCODE -ne 0) {
+            throw "failed to fetch exact Scoop manifest at $env:PACKAGE_HEAD"
+          }
           $version = $env:GITHUB_REF_NAME.Substring(1)
           $asset = "radioactive_ralph_${version}_windows_amd64.zip"
           $env:GH_TOKEN = $env:RELEASE_GH_TOKEN
           gh release download $env:GITHUB_REF_NAME --pattern $asset --dir exact-scoop
-          $manifest = Get-Content exact-scoop/radioactive-ralph.json | ConvertFrom-Json
-          $manifest.architecture.'64bit'.url = "http://127.0.0.1:8123/$asset"
-          $manifest | ConvertTo-Json -Depth 20 | Set-Content exact-scoop/radioactive-ralph.json
+          if ($LASTEXITCODE -ne 0) {
+            throw "failed to cache exact draft asset $asset"
+          }
+
+          $manifestPath = "exact-scoop/radioactive-ralph.json"
+          $assetPath = "exact-scoop/$asset"
+          $manifest = Get-Content -Raw $manifestPath | ConvertFrom-Json
+          $expectedAssetUrl = "https://github.com/$env:GITHUB_REPOSITORY/releases/download/$env:GITHUB_REF_NAME/$asset"
+          $originalAssetUrl = $manifest.architecture.'64bit'.url
+          $originalAssetHash = $manifest.architecture.'64bit'.hash
+          if ($originalAssetUrl -ne $expectedAssetUrl) {
+            throw "Scoop manifest URL $originalAssetUrl does not name exact draft asset $expectedAssetUrl"
+          }
+          if ($originalAssetHash -notmatch '^[0-9a-fA-F]{64}$') {
+            throw "Scoop manifest hash is not a SHA-256 digest"
+          }
+          $cachedAssetHash = (Get-FileHash -Algorithm SHA256 $assetPath).Hash
+          if ($cachedAssetHash -ne $originalAssetHash) {
+            throw "cached draft asset hash does not match exact Scoop manifest"
+          }
+
+          $localAssetUrl = "http://127.0.0.1:8123/$asset"
+          $manifest.architecture.'64bit'.url = $localAssetUrl
+          $manifest | ConvertTo-Json -Depth 20 |
+            Set-Content -Path $manifestPath -Encoding utf8NoBOM
+          $rewrittenManifest = Get-Content -Raw $manifestPath | ConvertFrom-Json
+          if ($rewrittenManifest.architecture.'64bit'.url -ne $localAssetUrl -or
+              $rewrittenManifest.architecture.'64bit'.hash -ne $originalAssetHash) {
+            throw "local Scoop rewrite changed more than the exact draft asset URL"
+          }
       - name: Install cached exact Scoop manifest without credentials
         if: matrix.channel == 'scoop-exact-head'
         shell: pwsh
         run: |
-          Remove-Item Env:GH_TOKEN -ErrorAction SilentlyContinue
-          Remove-Item Env:PKGS_GH_TOKEN -ErrorAction SilentlyContinue
-          Remove-Item Env:RELEASE_GH_TOKEN -ErrorAction SilentlyContinue
-          $server = Start-Process python -ArgumentList '-m','http.server','8123','--directory','exact-scoop' -PassThru
-          scoop install "$PWD/exact-scoop/radioactive-ralph.json"
+          $ErrorActionPreference = 'Stop'
+          $credentialNames = @('GH_TOKEN', 'PKGS_GH_TOKEN', 'RELEASE_GH_TOKEN')
+          foreach ($credentialName in $credentialNames) {
+            Remove-Item "Env:$credentialName" -ErrorAction SilentlyContinue
+          }
+          foreach ($credentialName in $credentialNames) {
+            if (Test-Path "Env:$credentialName") {
+              throw "$credentialName remained before credential-free Scoop execution"
+            }
+          }
+
           $version = $env:GITHUB_REF_NAME.Substring(1)
-          radioactive_ralph --version | Select-String -SimpleMatch $version
-          Stop-Process -Id $server.Id
+          $asset = "radioactive_ralph_${version}_windows_amd64.zip"
+          $assetPath = "$PWD/exact-scoop/$asset"
+          $assetUrl = "http://127.0.0.1:8123/$asset"
+          $serverStdout = "$env:RUNNER_TEMP/scoop-http.stdout.log"
+          $serverStderr = "$env:RUNNER_TEMP/scoop-http.stderr.log"
+          $server = $null
+          try {
+            $server = Start-Process -FilePath python -ArgumentList @(
+              '-m', 'http.server', '8123',
+              '--bind', '127.0.0.1',
+              '--directory', 'exact-scoop'
+            ) -RedirectStandardOutput $serverStdout `
+              -RedirectStandardError $serverStderr -PassThru
+
+            $ready = $false
+            $expectedLength = (Get-Item -LiteralPath $assetPath).Length
+            for ($attempt = 1; $attempt -le 20; $attempt++) {
+              if ($server.HasExited) {
+                break
+              }
+              try {
+                $response = Invoke-WebRequest -UseBasicParsing -Method Head `
+                  -TimeoutSec 1 -Uri $assetUrl
+                if ($response.StatusCode -eq 200 -and
+                    [int64]$response.Headers.'Content-Length' -eq $expectedLength) {
+                  $ready = $true
+                  break
+                }
+              } catch {
+                # The bounded poll below owns readiness; retry transient refusal.
+              }
+              Start-Sleep -Milliseconds 250
+            }
+            if (-not $ready) {
+              if (Test-Path $serverStdout) {
+                Get-Content $serverStdout | Write-Host
+              }
+              if (Test-Path $serverStderr) {
+                Get-Content $serverStderr | Write-Host
+              }
+              if ($server.HasExited) {
+                throw "cached asset server exited before readiness with code $($server.ExitCode)"
+              }
+              throw "cached asset server never served the exact asset after 20 bounded attempts"
+            }
+
+            foreach ($credentialName in $credentialNames) {
+              if (Test-Path "Env:$credentialName") {
+                throw "$credentialName appeared before credential-free Scoop execution"
+              }
+            }
+            scoop install "$PWD/exact-scoop/radioactive-ralph.json"
+            if ($LASTEXITCODE -ne 0) {
+              throw "Scoop failed to install the exact cached PR-head manifest"
+            }
+            $versionOutput = radioactive_ralph --version
+            if ($LASTEXITCODE -ne 0) {
+              throw "installed radioactive_ralph failed its version command"
+            }
+            if (-not ($versionOutput | Select-String -Quiet -SimpleMatch $version)) {
+              throw "installed radioactive_ralph version did not contain $version"
+            }
+          } finally {
+            if ($null -ne $server) {
+              try {
+                if (-not $server.HasExited) {
+                  Stop-Process -InputObject $server -Force `
+                    -ErrorAction SilentlyContinue
+                }
+                if (-not $server.WaitForExit(10000)) {
+                  throw "cached asset server did not stop within 10 seconds"
+                }
+              } finally {
+                $server.Dispose()
+              }
+            }
+          }
 
   publish-release:
     name: Commit packages and publish immutable stable release

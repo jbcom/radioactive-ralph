@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jbcom/radioactive-ralph/internal/provider"
 	claudesession "github.com/jbcom/radioactive-ralph/internal/provider/claudesession"
 )
 
@@ -169,5 +170,54 @@ func TestLiveClaudeModelSanity(t *testing.T) {
 		// validity here is lenient — the test primarily verifies we
 		// received valid JSON from the CLI at all.
 		t.Logf("assistant payload not standalone valid JSON (expected; payload is content-blocks):\n%s", allMsgs.String())
+	}
+}
+
+// TestLiveCodexRunnerTurn exercises the same CodexRunner used by dispatched
+// work against the authenticated Codex CLI. It is deliberately gated so the
+// normal integration suite remains hermetic; provider-live.yml is the only
+// workflow that enables it after establishing an isolated Codex login.
+func TestLiveCodexRunnerTurn(t *testing.T) {
+	if os.Getenv("CODEX_AUTHENTICATED") != "1" {
+		t.Skip("CODEX_AUTHENTICATED != 1; skipping live codex runner turn")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+
+	const outputSchema = `{
+		"type": "object",
+		"properties": {
+			"ok": {"type": "boolean"}
+		},
+		"required": ["ok"],
+		"additionalProperties": false
+	}`
+	result, err := (provider.CodexRunner{}).Run(ctx, provider.Binding{
+		Name: "codex",
+		Config: provider.BindingConfig{
+			Type:   "codex",
+			Binary: "codex",
+		},
+	}, provider.Request{
+		WorkingDir:   t.TempDir(),
+		SystemPrompt: "Return only JSON that satisfies the supplied output schema.",
+		UserPrompt:   `Set "ok" to true.`,
+		OutputSchema: outputSchema,
+	})
+	if err != nil {
+		t.Fatalf("CodexRunner.Run: %v", err)
+	}
+
+	var payload struct {
+		OK bool `json:"ok"`
+	}
+	if err := json.Unmarshal([]byte(result.AssistantOutput), &payload); err != nil {
+		t.Fatalf("CodexRunner assistant output is not the required JSON: %v\n%s",
+			err, result.AssistantOutput)
+	}
+	if !payload.OK {
+		t.Fatalf("CodexRunner assistant output = %s, want ok=true",
+			result.AssistantOutput)
 	}
 }

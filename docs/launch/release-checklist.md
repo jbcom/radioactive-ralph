@@ -87,8 +87,8 @@ Do not create or move a release tag manually.
       targets `tag`, includes `refs/tags/v*`, has the creation rule, and grants
       only `OrganizationAdmin` an `always` bypass.
 - [ ] Ruleset **Release tags cannot move or be deleted** (ID `19752322`) is
-      active, targets `tag`, includes `refs/tags/v*`, has update and deletion
-      rules (the update and deletion rules), and has no bypass actors.
+      active, targets `tag`, includes `refs/tags/v*`, has update and deletion rules,
+      and has no bypass actors.
 - [ ] Merging the Release Please PR creates the forced stable tag and one
       non-prerelease draft.
 - [ ] `release-admission` binds tag, event SHA, draft target, manifest version,

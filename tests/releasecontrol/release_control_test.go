@@ -553,3 +553,89 @@ func TestPackagingDocsMatchImplementedGUIDelivery(t *testing.T) {
 	requireNotContains(t, packaging, "Homebrew strips `com.apple.quarantine`", path)
 	requireNotContains(t, packaging, "the MSI ships unsigned", path)
 }
+
+func TestHostedProviderAndGUIPackageChecksExerciseDeliveredCode(t *testing.T) {
+	const providerWorkflowPath = ".github/workflows/provider-live.yml"
+	providerWorkflow := readRepositoryFile(t, providerWorkflowPath)
+	codexJob := requireWorkflowJob(t, providerWorkflow, "live-codex", providerWorkflowPath)
+	requireContains(t, codexJob,
+		`go test ./tests/integration -run '^TestLiveCodexRunnerTurn$' -count=1 -v`,
+		providerWorkflowPath)
+
+	const liveTestPath = "tests/integration/live_test.go"
+	liveTest := readRepositoryFile(t, liveTestPath)
+	requireContains(t, liveTest, `os.Getenv("CODEX_AUTHENTICATED") != "1"`, liveTestPath)
+	requireContains(t, liveTest, `(provider.CodexRunner{}).Run`, liveTestPath)
+	requireContains(t, liveTest, `OutputSchema: outputSchema`, liveTestPath)
+	requireContains(t, liveTest, `context.WithTimeout(context.Background(), 2*time.Minute)`, liveTestPath)
+
+	const guiScriptPath = "scripts/ci/build_gui_package.sh"
+	guiScript := readRepositoryFile(t, guiScriptPath)
+	requireContains(t, guiScript,
+		`EXPECTED_VERSION="$VERSION ($BUILD_COMMIT, built $BUILD_DATE)"`,
+		guiScriptPath)
+	requireContains(t, guiScript,
+		`GOFLAGS="-trimpath -ldflags=-X=main.Version=$VERSION -ldflags=-X=main.Commit=$BUILD_COMMIT -ldflags=-X=main.Date=$BUILD_DATE"`,
+		guiScriptPath)
+	if got := strings.Count(guiScript, `grep -F "$EXPECTED_VERSION"`); got != 2 {
+		t.Errorf("%s exact version identity check count = %d, want 2", guiScriptPath, got)
+	}
+	if got := strings.Count(guiScript, `grep -F $'dep\tfyne.io/fyne/v2'`); got != 2 {
+		t.Errorf("%s Fyne module check count = %d, want 2", guiScriptPath, got)
+	}
+}
+
+func TestOfflinePackageSmokesAndInstallerPolicyRunInRequiredCI(t *testing.T) {
+	const ciPath = ".github/workflows/ci.yml"
+	ci := readRepositoryFile(t, ciPath)
+	for _, testPath := range []string{
+		"scripts/ci/test_install_signature_policy.sh",
+		"scripts/ci/test_prepare_package_rollback_provenance.sh",
+		"scripts/ci/test_premerge_scoop_server_contract.py",
+	} {
+		requireContains(t, ci, testPath, ciPath)
+	}
+
+	const installerPath = "docs/install.sh"
+	installer := readRepositoryFile(t, installerPath)
+	requireContains(t, installer,
+		`REQUIRE_SIGNATURE=${RADIOACTIVE_RALPH_REQUIRE_SIGNATURE:-0}`,
+		installerPath)
+	requireContains(t, installer,
+		`cosign is required when RADIOACTIVE_RALPH_REQUIRE_SIGNATURE=1`,
+		installerPath)
+	requireContains(t, installer, `signed checksum verification failed`, installerPath)
+
+	const scoopContractPath = "scripts/ci/test_premerge_scoop_server_contract.py"
+	scoopContract := readRepositoryFile(t, scoopContractPath)
+	requireContains(t, scoopContract, `"'--bind', '127.0.0.1'"`, scoopContractPath)
+	requireContains(t, scoopContract, `"$server.WaitForExit(10000)"`, scoopContractPath)
+	requireContains(t, scoopContract, `"$server.Dispose()"`, scoopContractPath)
+}
+
+func TestRollbackProvenanceModelsMissingFilesAndExactHTTPStatus(t *testing.T) {
+	for _, path := range []string{
+		"scripts/ci/prepare_package_rollback_provenance.sh",
+		"scripts/ci/rollback_package_manifests.sh",
+	} {
+		script := readRepositoryFile(t, path)
+		requireContains(t, script, `--silent --include`, path)
+		requireContains(t, script, `^HTTP/[0-9.]+ 404([[:space:]]|$)`, path)
+		requireContains(t, script, `.schema == 2`, path)
+		requireContains(t, script, `.state == "missing"`, path)
+	}
+
+	const rollbackPath = "scripts/ci/rollback_package_manifests.sh"
+	rollback := readRepositoryFile(t, rollbackPath)
+	requireContains(t, rollback, `git -C "$WORK/pkgs" rm -f -- "$path"`, rollbackPath)
+	requireContains(t, rollback, `named provenance archive is missing`, rollbackPath)
+
+	const verifierPath = "scripts/ci/verify_release_assets.sh"
+	verifier := readRepositoryFile(t, verifierPath)
+	requireContains(t, verifier, `sub(/^\*/, "", name)`, verifierPath)
+
+	const publisherPath = "scripts/ci/wait_for_package_publication.sh"
+	publisher := readRepositoryFile(t, publisherPath)
+	requireContains(t, publisher, `resolve_winning_release_merge || exit 1`, publisherPath)
+	requireContains(t, publisher, `resolved_main_oid="$(resolve_main_oid)" || exit 1`, publisherPath)
+}

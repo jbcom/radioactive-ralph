@@ -568,6 +568,7 @@ jobs:
             packaging/publish-cli-manifests.sh \
             packaging/macos/push-version-branch.sh \
             docs/install.sh \
+            scripts/ci/test_install_signature_policy.sh \
             scripts/verify-docs-artifact.sh \
             scripts/ci/wait_for_package_publication.sh \
             scripts/ci/test_wait_for_package_publication.sh \
@@ -583,6 +584,7 @@ jobs:
             scripts/ci/verify_release_assets.sh \
             scripts/ci/test_verify_release_assets.sh \
             scripts/ci/prepare_package_rollback_provenance.sh \
+            scripts/ci/test_prepare_package_rollback_provenance.sh \
             scripts/ci/prepare_package_manifests_bundle.sh \
             scripts/ci/test_prepare_package_manifests_bundle.sh \
             scripts/ci/prepare_release_seal.sh \
@@ -597,5 +599,8 @@ jobs:
           bash scripts/ci/test_rewrite_homebrew_cask_url.sh
           bash scripts/ci/test_push_version_branch.sh
           bash scripts/ci/test_smoke_goreleaser_artifacts.sh
+          bash scripts/ci/test_install_signature_policy.sh
+          bash scripts/ci/test_prepare_package_rollback_provenance.sh
+          python3 scripts/ci/test_premerge_scoop_server_contract.py
       - name: Validate the .desktop launcher
         run: desktop-file-validate packaging/linux/radioactive-ralph.desktop

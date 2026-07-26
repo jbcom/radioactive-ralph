@@ -97,9 +97,9 @@ done
   --certificate-identity "$identity" \
   --certificate-oidc-issuer "$issuer" >/dev/null
 
-cli_names="$(awk '{name=$2; sub(/^\\*/, "", name); print name}' \
+cli_names="$(awk '{name=$2; sub(/^\*/, "", name); print name}' \
   "$work/checksums.txt" | LC_ALL=C sort)"
-gui_names="$(awk '{name=$2; sub(/^\\*/, "", name); print name}' \
+gui_names="$(awk '{name=$2; sub(/^\*/, "", name); print name}' \
   "$work/gui-checksums.txt" | LC_ALL=C sort)"
 [[ "$cli_names" == "$(printf '%s\n' "${cli_assets[@]}" | LC_ALL=C sort)" ]]
 [[ "$gui_names" == "$(printf '%s\n' "${gui_assets[@]}" | LC_ALL=C sort)" ]]
@@ -108,31 +108,68 @@ gui_names="$(awk '{name=$2; sub(/^\\*/, "", name); print name}' \
   >/dev/null
 
 rollback_names="$(tar -tzf "$work/package-rollback.tar.gz" | LC_ALL=C sort)"
-expected_rollback_names="$(printf '%s\n' \
-  provenance.json \
-  Casks/radioactive-ralph.rb \
-  Casks/radioactive-ralph-gui.rb \
-  bucket/radioactive-ralph.json | LC_ALL=C sort)"
-[[ "$rollback_names" == "$expected_rollback_names" ]]
+[[ "$(printf '%s\n' "$rollback_names" | uniq)" == "$rollback_names" ]]
+while IFS= read -r member; do
+  case "$member" in
+    provenance.json|Casks/radioactive-ralph.rb|\
+      Casks/radioactive-ralph-gui.rb|bucket/radioactive-ralph.json)
+      ;;
+    *)
+      echo "release assets: rollback member is not trusted: $member" >&2
+      exit 1
+      ;;
+  esac
+done <<<"$rollback_names"
+[[ "$(grep -Fxc provenance.json <<<"$rollback_names")" == 1 ]]
 mkdir "$work/rollback"
 tar -xzf "$work/package-rollback.tar.gz" -C "$work/rollback"
+[[ -f "$work/rollback/provenance.json" &&
+   ! -L "$work/rollback/provenance.json" ]]
 jq -e \
   --arg version "$VERSION" \
-  '.schema == 1 and .release_version == $version and
+  '.schema == 2 and .release_version == $version and
    (.prior_main_oid | test("^[0-9a-f]{40,64}$")) and
+   (keys | sort) == [
+     "files", "prior_main_oid", "release_version", "schema"
+   ] and
    (.files | keys | sort) == [
      "Casks/radioactive-ralph-gui.rb",
      "Casks/radioactive-ralph.rb",
      "bucket/radioactive-ralph.json"
-   ]' "$work/rollback/provenance.json" >/dev/null
+   ] and
+   all(.files[];
+     ((keys | sort) == ["sha256", "state"] and
+      .state == "present" and
+      (.sha256 | test("^[0-9a-f]{64}$"))) or
+     ((keys | sort) == ["state"] and .state == "missing")
+   )' "$work/rollback/provenance.json" >/dev/null
+expected_rollback_names="provenance.json"
 for path in \
   Casks/radioactive-ralph.rb \
   Casks/radioactive-ralph-gui.rb \
   bucket/radioactive-ralph.json; do
-  expected_sha="$(jq -er --arg path "$path" '.files[$path].sha256' \
+  state="$(jq -er --arg path "$path" '.files[$path].state' \
     "$work/rollback/provenance.json")"
-  [[ "$(sha256sum "$work/rollback/$path" | awk '{print $1}')" == "$expected_sha" ]]
+  case "$state" in
+    present)
+      expected_rollback_names+=$'\n'"$path"
+      [[ -f "$work/rollback/$path" && ! -L "$work/rollback/$path" ]]
+      expected_sha="$(jq -er --arg path "$path" '.files[$path].sha256' \
+        "$work/rollback/provenance.json")"
+      [[ "$(sha256sum "$work/rollback/$path" | awk '{print $1}')" == "$expected_sha" ]]
+      ;;
+    missing)
+      [[ ! -e "$work/rollback/$path" && ! -L "$work/rollback/$path" ]]
+      ;;
+    *)
+      exit 1
+      ;;
+  esac
 done
+expected_rollback_names="$(
+  printf '%s\n' "$expected_rollback_names" | LC_ALL=C sort
+)"
+[[ "$rollback_names" == "$expected_rollback_names" ]]
 
 package_names="$(tar -tzf "$work/package-manifests.tar.gz" | LC_ALL=C sort)"
 expected_package_names="$(printf '%s\n' \

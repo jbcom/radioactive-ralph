@@ -30,6 +30,10 @@ FILES=(
   echo "package rollback: PKGS_GH_TOKEN is required" >&2
   exit 1
 }
+if [[ "$PROVENANCE" != "-" && ! -f "$PROVENANCE" ]]; then
+  echo "package rollback: named provenance archive is missing" >&2
+  exit 1
+fi
 
 pkgs_gh() {
   GH_TOKEN="$PKGS_GH_TOKEN" "$GH_BIN" "$@"
@@ -39,13 +43,38 @@ fetch_file() {
   pkgs_gh api -H "Accept: application/vnd.github.raw+json" \
     "repos/${PKGS_REPO}/contents/${path}?ref=${ref}"
 }
+fetch_file_state() {
+  local path="$1" ref="$2" destination="$3"
+  local endpoint fetch_error fetch_status
+  endpoint="repos/${PKGS_REPO}/contents/${path}?ref=${ref}"
+  fetch_error="$WORK/fetch-error"
+  fetch_status="$WORK/fetch-status"
+  if pkgs_gh api --silent --include "$endpoint" \
+    >"$fetch_status" 2>"$fetch_error"; then
+    fetch_file "$path" "$ref" > "$destination"
+    printf 'present\n'
+  elif grep -Eq '^HTTP/[0-9.]+ 404([[:space:]]|$)' "$fetch_status"; then
+    rm -f "$destination"
+    printf 'missing\n'
+  else
+    cat "$fetch_status" >&2
+    cat "$fetch_error" >&2
+    return 1
+  fi
+}
 sha256_file() {
   sha256sum "$1" | awk '{print $1}'
 }
 target_files_still_failed() {
-  local path
+  local path expected_state actual_state
   for path in "${FILES[@]}"; do
-    cmp -s "$WORK/failed/$path" <(fetch_file "$path" main) || return 1
+    expected_state="$(<"$WORK/failed-state/$path")"
+    actual_state="$(fetch_file_state \
+      "$path" main "$WORK/current/$path")" || return 1
+    [[ "$actual_state" == "$expected_state" ]] || return 1
+    if [[ "$expected_state" == "present" ]]; then
+      cmp -s "$WORK/failed/$path" "$WORK/current/$path" || return 1
+    fi
   done
 }
 validate_action_check() {
@@ -91,9 +120,17 @@ exact_file_set() {
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 mkdir -p "$WORK/prior/Casks" "$WORK/prior/bucket" \
-  "$WORK/failed/Casks" "$WORK/failed/bucket"
+  "$WORK/prior-state/Casks" "$WORK/prior-state/bucket" \
+  "$WORK/failed/Casks" "$WORK/failed/bucket" \
+  "$WORK/failed-state/Casks" "$WORK/failed-state/bucket" \
+  "$WORK/current/Casks" "$WORK/current/bucket"
 for path in "${FILES[@]}"; do
-  fetch_file "$path" "$FAILED_MERGE_OID" > "$WORK/failed/$path"
+  fetch_file_state "$path" "$FAILED_MERGE_OID" "$WORK/failed/$path" \
+    > "$WORK/failed-state/$path"
+  [[ "$(<"$WORK/failed-state/$path")" == "present" ]] || {
+    echo "package rollback: failed release target is missing $path" >&2
+    exit 1
+  }
 done
 
 merged="$(pkgs_gh pr list --repo "$PKGS_REPO" --state merged \
@@ -116,31 +153,82 @@ merge_commit="$(pkgs_gh api "repos/${PKGS_REPO}/git/commits/${merge_oid}")"
 PRIOR_MAIN_OID="$(jq -er '.parents[0].sha' <<<"$merge_commit")"
 [[ "$PRIOR_MAIN_OID" =~ ^[0-9a-f]{40,64}$ ]]
 for path in "${FILES[@]}"; do
-  fetch_file "$path" "$PRIOR_MAIN_OID" > "$WORK/prior/$path"
+  fetch_file_state "$path" "$PRIOR_MAIN_OID" "$WORK/prior/$path" \
+    > "$WORK/prior-state/$path"
 done
 
-if [[ "$PROVENANCE" != "-" && -f "$PROVENANCE" ]]; then
+if [[ "$PROVENANCE" != "-" ]]; then
   listing="$(tar -tzf "$PROVENANCE" | LC_ALL=C sort)"
-  expected="$(printf '%s\n' provenance.json "${FILES[@]}" | LC_ALL=C sort)"
+  [[ "$(printf '%s\n' "$listing" | uniq)" == "$listing" ]]
+  while IFS= read -r member; do
+    case "$member" in
+      provenance.json|Casks/radioactive-ralph.rb|\
+        Casks/radioactive-ralph-gui.rb|bucket/radioactive-ralph.json)
+        ;;
+      *)
+        echo "package rollback: provenance member is not trusted: $member" >&2
+        exit 1
+        ;;
+    esac
+  done <<<"$listing"
+  [[ "$(grep -Fxc provenance.json <<<"$listing")" == 1 ]]
+  mkdir -p "$WORK/sealed"
+  tar -xzf "$PROVENANCE" -C "$WORK/sealed"
+  [[ -f "$WORK/sealed/provenance.json" &&
+     ! -L "$WORK/sealed/provenance.json" ]]
+  sealed_prior_oid="$(jq -er \
+    --arg version "$VERSION" \
+    'select(
+      .schema == 2 and .release_version == $version and
+      (keys | sort) == [
+        "files", "prior_main_oid", "release_version", "schema"
+      ] and
+      (.files | keys | sort) == [
+        "Casks/radioactive-ralph-gui.rb",
+        "Casks/radioactive-ralph.rb",
+        "bucket/radioactive-ralph.json"
+      ] and
+      all(.files[];
+        ((keys | sort) == ["sha256", "state"] and
+         .state == "present" and
+         (.sha256 | test("^[0-9a-f]{64}$"))) or
+        ((keys | sort) == ["state"] and .state == "missing")
+      )
+    ) | .prior_main_oid' \
+    "$WORK/sealed/provenance.json")"
+  [[ "$sealed_prior_oid" =~ ^[0-9a-f]{40,64}$ ]]
+  expected="provenance.json"
+  for path in "${FILES[@]}"; do
+    sealed_state="$(jq -er --arg path "$path" '.files[$path].state' \
+      "$WORK/sealed/provenance.json")"
+    case "$sealed_state" in
+      present)
+        expected+=$'\n'"$path"
+        [[ -f "$WORK/sealed/$path" && ! -L "$WORK/sealed/$path" ]]
+        recorded="$(jq -er --arg path "$path" '.files[$path].sha256' \
+          "$WORK/sealed/provenance.json")"
+        [[ "$recorded" == "$(sha256_file "$WORK/sealed/$path")" ]]
+        ;;
+      missing)
+        [[ ! -e "$WORK/sealed/$path" && ! -L "$WORK/sealed/$path" ]]
+        ;;
+      *)
+        exit 1
+        ;;
+    esac
+  done
+  expected="$(printf '%s\n' "$expected" | LC_ALL=C sort)"
   [[ "$listing" == "$expected" ]] || {
     echo "package rollback: provenance member set is not exact" >&2
     exit 1
   }
-  mkdir -p "$WORK/sealed"
-  tar -xzf "$PROVENANCE" -C "$WORK/sealed"
-  sealed_prior_oid="$(jq -er \
-    --arg version "$VERSION" \
-    'select(.schema == 1 and .release_version == $version) | .prior_main_oid' \
-    "$WORK/sealed/provenance.json")"
-  [[ "$sealed_prior_oid" =~ ^[0-9a-f]{40,64}$ ]]
-  for path in "${FILES[@]}"; do
-    recorded="$(jq -er --arg path "$path" '.files[$path].sha256' \
-      "$WORK/sealed/provenance.json")"
-    [[ "$recorded" == "$(sha256_file "$WORK/sealed/$path")" ]]
-  done
   if [[ "$sealed_prior_oid" == "$PRIOR_MAIN_OID" ]]; then
     for path in "${FILES[@]}"; do
-      cmp -s "$WORK/sealed/$path" "$WORK/prior/$path"
+      [[ "$(jq -er --arg path "$path" '.files[$path].state' \
+        "$WORK/sealed/provenance.json")" == "$(<"$WORK/prior-state/$path")" ]]
+      if [[ "$(<"$WORK/prior-state/$path")" == "present" ]]; then
+        cmp -s "$WORK/sealed/$path" "$WORK/prior/$path"
+      fi
     done
   else
     echo "package rollback: package main advanced after seal; using winning merge ancestry $PRIOR_MAIN_OID" >&2
@@ -167,9 +255,13 @@ for ((rollback_attempt = 1; rollback_attempt <= ROLLBACK_ATTEMPTS; rollback_atte
   git -C "$WORK/pkgs" fetch origin main
   git -C "$WORK/pkgs" checkout -B "$BRANCH" origin/main
   for path in "${FILES[@]}"; do
-    cp "$WORK/prior/$path" "$WORK/pkgs/$path"
+    if [[ "$(<"$WORK/prior-state/$path")" == "present" ]]; then
+      cp "$WORK/prior/$path" "$WORK/pkgs/$path"
+      git -C "$WORK/pkgs" add -- "$path"
+    else
+      git -C "$WORK/pkgs" rm -f -- "$path"
+    fi
   done
-  git -C "$WORK/pkgs" add "${FILES[@]}"
   if git -C "$WORK/pkgs" diff --cached --quiet --exit-code; then
     echo "package rollback: prior manifest bytes are already exact on main"
     exit 0
@@ -205,7 +297,12 @@ for ((rollback_attempt = 1; rollback_attempt <= ROLLBACK_ATTEMPTS; rollback_atte
   number="$(jq -er '.number' <<<"$pr")"
   head_oid="$(jq -er '.headRefOid' <<<"$pr")"
   for path in "${FILES[@]}"; do
-    cmp -s "$WORK/prior/$path" <(fetch_file "$path" "$head_oid")
+    actual_state="$(fetch_file_state \
+      "$path" "$head_oid" "$WORK/current/$path")"
+    [[ "$actual_state" == "$(<"$WORK/prior-state/$path")" ]]
+    if [[ "$actual_state" == "present" ]]; then
+      cmp -s "$WORK/prior/$path" "$WORK/current/$path"
+    fi
   done
 
   checks_ok=false
@@ -226,7 +323,12 @@ for ((rollback_attempt = 1; rollback_attempt <= ROLLBACK_ATTEMPTS; rollback_atte
   if pkgs_gh pr merge --repo "$PKGS_REPO" --squash \
     --match-head-commit "$head_oid" "$number"; then
     for path in "${FILES[@]}"; do
-      cmp -s "$WORK/prior/$path" <(fetch_file "$path" main)
+      actual_state="$(fetch_file_state \
+        "$path" main "$WORK/current/$path")"
+      [[ "$actual_state" == "$(<"$WORK/prior-state/$path")" ]]
+      if [[ "$actual_state" == "present" ]]; then
+        cmp -s "$WORK/prior/$path" "$WORK/current/$path"
+      fi
     done
     echo "package rollback: prior exact manifest bytes restored through protected main"
     exit 0

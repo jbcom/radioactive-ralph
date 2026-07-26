@@ -9,6 +9,10 @@ cat > "$TMP/gh" <<'FAKEGH'
 #!/usr/bin/env bash
 set -euo pipefail
 kind="${1:?}"; shift
+include_status=0
+for argument in "$@"; do
+  [[ "$argument" == "--include" ]] && include_status=1
+done
 if [[ "$kind" == api ]]; then
   request="${*: -1}"
   if [[ "$request" == repos/jbcom/radioactive-ralph/contents/.release-please-manifest.json* ]]; then
@@ -22,8 +26,12 @@ if [[ "$kind" == api ]]; then
     ref="${path##*ref=}"
     path="${path%%\?*}"
     [[ "$ref" != main ]] || ref=refs/heads/main
-    git --git-dir="$FAKE_REMOTE" show "${ref}:${path}"
-    exit 0
+    if git --git-dir="$FAKE_REMOTE" show "${ref}:${path}"; then
+      exit 0
+    fi
+    ((include_status == 0)) || printf 'HTTP/2.0 404 Not Found\n'
+    echo "gh: Not Found (HTTP 404)" >&2
+    exit 1
   fi
   if [[ "$request" == repos/jbcom/pkgs/commits/*/check-runs* ]]; then
     head="${request#repos/jbcom/pkgs/commits/}"; head="${head%%/*}"
@@ -82,6 +90,7 @@ FAKEGH
 chmod +x "$TMP/gh"
 
 setup_remote() {
+  prior_gui_state="${1:-present}"
   CASE="$TMP/case-$RANDOM"
   FAKE_REMOTE="$CASE/pkgs.git"
   seed="$CASE/seed"
@@ -92,7 +101,9 @@ setup_remote() {
   git -C "$seed" config user.email test@example.invalid
   mkdir -p "$seed/Casks" "$seed/bucket"
   printf 'cli old\n' > "$seed/Casks/radioactive-ralph.rb"
-  printf 'gui old\n' > "$seed/Casks/radioactive-ralph-gui.rb"
+  if [[ "$prior_gui_state" == present ]]; then
+    printf 'gui old\n' > "$seed/Casks/radioactive-ralph-gui.rb"
+  fi
   printf '{"version":"1.2.2"}\n' > "$seed/bucket/radioactive-ralph.json"
   printf 'base\n' > "$seed/unrelated.txt"
   git -C "$seed" add .
@@ -100,19 +111,26 @@ setup_remote() {
   SEALED_PRIOR_OID="$(git -C "$seed" rev-parse HEAD)"
   provenance_dir="$CASE/provenance"
   mkdir -p "$provenance_dir/Casks" "$provenance_dir/bucket"
+  provenance_files='{}'
+  provenance_members=(provenance.json)
   for path in Casks/radioactive-ralph.rb Casks/radioactive-ralph-gui.rb bucket/radioactive-ralph.json; do
-    git -C "$seed" show "${SEALED_PRIOR_OID}:${path}" > "$provenance_dir/$path"
+    if git -C "$seed" cat-file -e "${SEALED_PRIOR_OID}:${path}" 2>/dev/null; then
+      git -C "$seed" show "${SEALED_PRIOR_OID}:${path}" > "$provenance_dir/$path"
+      digest="$(sha256sum "$provenance_dir/$path" | awk '{print $1}')"
+      provenance_files="$(jq -c --arg path "$path" --arg sha "$digest" \
+        '. + {($path): {state:"present", sha256:$sha}}' \
+        <<<"$provenance_files")"
+      provenance_members+=("$path")
+    else
+      provenance_files="$(jq -c --arg path "$path" \
+        '. + {($path): {state:"missing"}}' <<<"$provenance_files")"
+    fi
   done
-  cli_sha="$(sha256sum "$provenance_dir/Casks/radioactive-ralph.rb" | awk '{print $1}')"
-  gui_sha="$(sha256sum "$provenance_dir/Casks/radioactive-ralph-gui.rb" | awk '{print $1}')"
-  scoop_sha="$(sha256sum "$provenance_dir/bucket/radioactive-ralph.json" | awk '{print $1}')"
-  printf '{"schema":1,"release_version":"1.2.3","prior_main_oid":"%s","files":{"Casks/radioactive-ralph.rb":{"sha256":"%s"},"Casks/radioactive-ralph-gui.rb":{"sha256":"%s"},"bucket/radioactive-ralph.json":{"sha256":"%s"}}}\n' \
-    "$SEALED_PRIOR_OID" "$cli_sha" "$gui_sha" "$scoop_sha" \
+  jq -n --arg prior "$SEALED_PRIOR_OID" --argjson files "$provenance_files" \
+    '{schema:2,release_version:"1.2.3",prior_main_oid:$prior,files:$files}' \
     > "$provenance_dir/provenance.json"
   PROVENANCE="$CASE/package-rollback.tar.gz"
-  tar -czf "$PROVENANCE" -C "$provenance_dir" provenance.json \
-    Casks/radioactive-ralph.rb Casks/radioactive-ralph-gui.rb \
-    bucket/radioactive-ralph.json
+  tar -czf "$PROVENANCE" -C "$provenance_dir" "${provenance_members[@]}"
   # Legitimate package-main work between sealing and the release merge must be
   # retained. The winning squash merge's first parent, not seal-time
   # provenance, is the authoritative rollback point.
@@ -122,7 +140,11 @@ setup_remote() {
   printf 'cli failed\n' > "$seed/Casks/radioactive-ralph.rb"
   printf 'gui failed\n' > "$seed/Casks/radioactive-ralph-gui.rb"
   printf '{"version":"1.2.3"}\n' > "$seed/bucket/radioactive-ralph.json"
-  git -C "$seed" commit -qam failed
+  git -C "$seed" add \
+    Casks/radioactive-ralph.rb \
+    Casks/radioactive-ralph-gui.rb \
+    bucket/radioactive-ralph.json
+  git -C "$seed" commit -q -m failed
   FAILED_OID="$(git -C "$seed" rev-parse HEAD)"
   # Unrelated package-repo progress after the failed release is allowed.
   printf 'advanced\n' > "$seed/unrelated.txt"
@@ -148,15 +170,36 @@ run_rollback() {
 setup_remote
 run_rollback
 [[ "$(git --git-dir="$FAKE_REMOTE" show main:Casks/radioactive-ralph.rb)" == "cli old" ]]
+[[ "$(git --git-dir="$FAKE_REMOTE" show main:Casks/radioactive-ralph-gui.rb)" == "gui old" ]]
 [[ "$(git --git-dir="$FAKE_REMOTE" show main:unrelated.txt)" == "advanced" ]]
 
-for scenario in bad_provenance wrong_failed target_superseded head_mutation check_failure spoof_app; do
+# On the first GUI release, the prior main has no GUI cask. Compensation must
+# delete the failed release's newly added cask through the protected PR.
+setup_remote missing
+run_rollback
+if git --git-dir="$FAKE_REMOTE" cat-file -e \
+  main:Casks/radioactive-ralph-gui.rb 2>/dev/null; then
+  echo "expected rollback to delete the newly introduced GUI cask" >&2
+  exit 1
+fi
+[[ "$(git --git-dir="$FAKE_REMOTE" show main:Casks/radioactive-ralph.rb)" == "cli old" ]]
+[[ "$(git --git-dir="$FAKE_REMOTE" show main:unrelated.txt)" == "advanced" ]]
+
+# A literal dash is the sole explicit provenance-skip sentinel.
+setup_remote
+PROVENANCE=-
+run_rollback
+
+for scenario in bad_provenance missing_provenance wrong_failed target_superseded head_mutation check_failure spoof_app; do
   setup_remote
   provenance="$PROVENANCE"; failed="$FAILED_OID"
   unset FAKE_SOURCE_SUPERSEDED FAKE_HEAD_MUTATION FAKE_CHECK_FAILURE FAKE_SPOOF_APP
   case "$scenario" in
     bad_provenance)
       printf 'invalid\n' > "$provenance"
+      ;;
+    missing_provenance)
+      provenance="$CASE/does-not-exist.tar.gz"
       ;;
     wrong_failed) failed=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb ;;
     target_superseded)

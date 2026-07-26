@@ -194,6 +194,10 @@ if [[ "$command_name" == "api" ]]; then
     exit 0
   fi
   if [[ "$request" == "repos/jbcom/pkgs/git/ref/heads/main" ]]; then
+    if [[ "${FAKE_MAIN_REF_FAILURE:-0}" == "1" ]]; then
+      echo "fake gh: main ref unavailable" >&2
+      exit 1
+    fi
     main_oid='1111111111111111111111111111111111111111'
     if [[ "${FAKE_INTERVENING_MAIN:-0}" == "1" ]]; then
       main_oid='2222222222222222222222222222222222222222'
@@ -705,6 +709,20 @@ grep -Fx \
 grep -Fx \
   "package_release_merge_oid=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" \
   "$TMP/intervening-main.out" >/dev/null
+
+# Resolve-merged must capture current main successfully before appending either
+# output. A failed main-ref lookup cannot report a partial winning result.
+rm -rf "$FAKE_STATE_DIR"
+mkdir -p "$FAKE_STATE_DIR"
+: > "$TMP/main-ref-failure.out"
+if FAKE_ALREADY_MERGED=1 FAKE_MAIN_REF_FAILURE=1 \
+  PACKAGE_GATE_MODE=resolve-merged GITHUB_OUTPUT="$TMP/main-ref-failure.out" \
+  bash "$ROOT/scripts/ci/wait_for_package_publication.sh" 1.2.3 \
+  >/dev/null 2>&1; then
+  echo "expected resolve-merged main-ref failure to fail closed" >&2
+  exit 1
+fi
+[[ ! -s "$TMP/main-ref-failure.out" ]]
 
 # Different latest commits for the three target paths cannot establish one
 # atomic owner and must quarantine.

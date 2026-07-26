@@ -856,10 +856,11 @@ merge_checked_pr() {
 VERIFIED_PACKAGE_HEAD_OID=""
 VERIFIED_MAIN_BEFORE=""
 if [[ "$PACKAGE_GATE_MODE" == "resolve-merged" ]]; then
-  resolve_winning_release_merge
+  resolve_winning_release_merge || exit 1
+  resolved_main_oid="$(resolve_main_oid)" || exit 1
   if [[ -n "${GITHUB_OUTPUT:-}" ]]; then
     {
-      echo "pkgs_main_oid=$(resolve_main_oid)"
+      echo "pkgs_main_oid=$resolved_main_oid"
       echo "package_release_merge_oid=$WINNING_RELEASE_MERGE_OID"
     } >> "$GITHUB_OUTPUT"
   fi

@@ -4,6 +4,8 @@
 # Usage:
 #   curl -sSL https://jonbogaty.com/radioactive-ralph/install.sh | sh
 #   curl -sSL https://jonbogaty.com/radioactive-ralph/install.sh | sh -s -- --version v0.7.0
+#   curl -sSL https://jonbogaty.com/radioactive-ralph/install.sh |
+#     RADIOACTIVE_RALPH_REQUIRE_SIGNATURE=1 sh
 #
 # Downloads the appropriate GitHub release archive, verifies the
 # checksum, extracts radioactive_ralph into $INSTALL_DIR (default
@@ -20,10 +22,19 @@ INSTALL_DIR=""
 # exact GitHub release directory shape. Normal users retain the fixed GitHub
 # origin.
 RELEASE_BASE_URL=${RADIOACTIVE_RALPH_RELEASE_BASE_URL:-"https://github.com/$REPO/releases/download"}
+REQUIRE_SIGNATURE=${RADIOACTIVE_RALPH_REQUIRE_SIGNATURE:-0}
+case "$REQUIRE_SIGNATURE" in
+  0|1) ;;
+  *)
+    echo "install.sh: RADIOACTIVE_RALPH_REQUIRE_SIGNATURE must be 0 or 1" >&2
+    exit 2 ;;
+esac
 
 usage() {
   cat <<'EOF'
 Usage: install.sh [--version VERSION] [--install-dir DIR]
+
+Set RADIOACTIVE_RALPH_REQUIRE_SIGNATURE=1 to require cosign verification.
 EOF
 }
 
@@ -158,6 +169,9 @@ if command -v cosign >/dev/null 2>&1; then
       echo "install.sh: signed checksum verification failed" >&2
       exit 1
     }
+elif [ "$REQUIRE_SIGNATURE" = "1" ]; then
+  echo "install.sh: cosign is required when RADIOACTIVE_RALPH_REQUIRE_SIGNATURE=1" >&2
+  exit 1
 else
   echo "install.sh: cosign not found; falling back to the release's SHA-256 manifest" >&2
 fi

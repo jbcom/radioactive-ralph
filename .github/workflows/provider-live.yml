@@ -70,7 +70,7 @@ jobs:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           CODEX_AUTHENTICATED: '1'
           CODEX_HOME: ${{ runner.temp }}/codex-home
-        run: go test ./tests/integration -run 'TestLiveCodexRunnerTurn' -v
+        run: go test ./tests/integration -run '^TestLiveCodexRunnerTurn$' -count=1 -v
       - name: Destroy isolated Codex credentials
         if: always()
         env:

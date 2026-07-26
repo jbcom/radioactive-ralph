@@ -11,6 +11,7 @@ PKGS_GH_TOKEN="${PKGS_GH_TOKEN:-}"
 RELEASE_GH_TOKEN="${RELEASE_GH_TOKEN:-}"
 GH_BIN="${GH_BIN:-gh}"
 COSIGN_BIN="${COSIGN_BIN:-cosign}"
+TAR_BIN="${TAR_BIN:-tar}"
 ARCHIVE="package-rollback.tar.gz"
 BUNDLE="${ARCHIVE}.sigstore.json"
 FILES=(
@@ -46,34 +47,69 @@ issuer="https://token.actions.githubusercontent.com"
 
 validate_archive() {
   local archive="$1"
-  local listing expected path recorded actual
-  listing="$(tar -tzf "$archive" | LC_ALL=C sort)"
-  expected="$(printf '%s\n' \
-    provenance.json \
-    Casks/radioactive-ralph.rb \
-    Casks/radioactive-ralph-gui.rb \
-    bucket/radioactive-ralph.json | LC_ALL=C sort)"
-  [[ "$listing" == "$expected" ]] || {
-    echo "package provenance: archive member set is not exact" >&2
-    return 1
-  }
+  local listing expected path state recorded actual member
+  listing="$("$TAR_BIN" -tzf "$archive" | LC_ALL=C sort)"
+  [[ "$(printf '%s\n' "$listing" | uniq)" == "$listing" ]]
+  while IFS= read -r member; do
+    case "$member" in
+      provenance.json|Casks/radioactive-ralph.rb|\
+        Casks/radioactive-ralph-gui.rb|bucket/radioactive-ralph.json)
+        ;;
+      *)
+        echo "package provenance: archive member is not trusted: $member" >&2
+        return 1
+        ;;
+    esac
+  done <<<"$listing"
+  [[ "$(grep -Fxc provenance.json <<<"$listing")" == 1 ]]
   mkdir "$work/extracted"
-  tar -xzf "$archive" -C "$work/extracted"
+  "$TAR_BIN" -xzf "$archive" -C "$work/extracted"
+  [[ -f "$work/extracted/provenance.json" &&
+     ! -L "$work/extracted/provenance.json" ]]
   jq -e \
     --arg version "$VERSION" \
-    '.schema == 1 and .release_version == $version and
+    '.schema == 2 and .release_version == $version and
      (.prior_main_oid | test("^[0-9a-f]{40,64}$")) and
+     (keys | sort) == [
+       "files", "prior_main_oid", "release_version", "schema"
+     ] and
      (.files | keys | sort) == [
        "Casks/radioactive-ralph-gui.rb",
        "Casks/radioactive-ralph.rb",
        "bucket/radioactive-ralph.json"
-     ]' "$work/extracted/provenance.json" >/dev/null
+     ] and
+     all(.files[];
+       ((keys | sort) == ["sha256", "state"] and
+        .state == "present" and
+        (.sha256 | test("^[0-9a-f]{64}$"))) or
+       ((keys | sort) == ["state"] and .state == "missing")
+     )' "$work/extracted/provenance.json" >/dev/null
+  expected="provenance.json"
   for path in "${FILES[@]}"; do
-    recorded="$(jq -er --arg path "$path" '.files[$path].sha256' \
+    state="$(jq -er --arg path "$path" '.files[$path].state' \
       "$work/extracted/provenance.json")"
-    actual="$(sha256_file "$work/extracted/$path")"
-    [[ "$recorded" == "$actual" ]]
+    case "$state" in
+      present)
+        expected+=$'\n'"$path"
+        [[ -f "$work/extracted/$path" && ! -L "$work/extracted/$path" ]]
+        recorded="$(jq -er --arg path "$path" '.files[$path].sha256' \
+          "$work/extracted/provenance.json")"
+        actual="$(sha256_file "$work/extracted/$path")"
+        [[ "$recorded" == "$actual" ]]
+        ;;
+      missing)
+        [[ ! -e "$work/extracted/$path" && ! -L "$work/extracted/$path" ]]
+        ;;
+      *)
+        return 1
+        ;;
+    esac
   done
+  expected="$(printf '%s\n' "$expected" | LC_ALL=C sort)"
+  [[ "$listing" == "$expected" ]] || {
+    echo "package provenance: archive member set is not exact" >&2
+    return 1
+  }
 }
 
 mapfile -t existing < <(release_gh release view "v${VERSION}" \
@@ -113,24 +149,39 @@ prior_main_oid="$(pkgs_gh api --jq '.object.sha' \
 
 mkdir -p "$work/payload/Casks" "$work/payload/bucket"
 files_json='{}'
+archive_members=(provenance.json)
 for path in "${FILES[@]}"; do
-  pkgs_gh api -H "Accept: application/vnd.github.raw+json" \
-    "repos/${PKGS_REPO}/contents/${path}?ref=${prior_main_oid}" \
-    > "$work/payload/$path"
-  digest="$(sha256_file "$work/payload/$path")"
-  files_json="$(jq -c --arg path "$path" --arg sha "$digest" \
-    '. + {($path): {sha256: $sha}}' <<<"$files_json")"
+  fetch_status="$work/fetch-status"
+  fetch_error="$work/fetch-error"
+  endpoint="repos/${PKGS_REPO}/contents/${path}?ref=${prior_main_oid}"
+  if pkgs_gh api --silent --include "$endpoint" \
+    >"$fetch_status" 2>"$fetch_error"; then
+    pkgs_gh api -H "Accept: application/vnd.github.raw+json" "$endpoint" \
+      > "$work/payload/$path"
+    digest="$(sha256_file "$work/payload/$path")"
+    files_json="$(jq -c --arg path "$path" --arg sha "$digest" \
+      '. + {($path): {state: "present", sha256: $sha}}' <<<"$files_json")"
+    archive_members+=("$path")
+  elif grep -Eq '^HTTP/[0-9.]+ 404([[:space:]]|$)' "$fetch_status"; then
+    rm -f "$work/payload/$path"
+    files_json="$(jq -c --arg path "$path" \
+      '. + {($path): {state: "missing"}}' <<<"$files_json")"
+  else
+    cat "$fetch_status" >&2
+    cat "$fetch_error" >&2
+    exit 1
+  fi
 done
 jq -n \
   --arg version "$VERSION" \
   --arg prior "$prior_main_oid" \
   --argjson files "$files_json" \
-  '{schema: 1, release_version: $version, prior_main_oid: $prior, files: $files}' \
+  '{schema: 2, release_version: $version, prior_main_oid: $prior, files: $files}' \
   > "$work/payload/provenance.json"
 
-tar --sort=name --mtime='@0' --owner=0 --group=0 --numeric-owner \
+"$TAR_BIN" --sort=name --mtime='@0' --owner=0 --group=0 --numeric-owner \
   -czf "$work/$ARCHIVE" -C "$work/payload" \
-  provenance.json "${FILES[@]}"
+  "${archive_members[@]}"
 "$COSIGN_BIN" sign-blob "$work/$ARCHIVE" \
   --bundle "$work/$BUNDLE" --yes
 validate_archive "$work/$ARCHIVE"
