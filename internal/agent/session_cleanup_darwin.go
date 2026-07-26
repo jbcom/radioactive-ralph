@@ -73,7 +73,10 @@ func cleanupOriginalProcessSession(
 				return fmt.Errorf("agent: refuse to signal PTY session member %d owned by another user", member.pid)
 			}
 			token, err := api.auditTokenForPID(member.pid)
-			if errors.Is(err, syscall.ESRCH) {
+			// A member can exit between enumeration and this lookup. Darwin
+			// signals that as a Mach failure, never as ESRCH, so match the
+			// sentinel: a vanished member is already reclaimed, not a failure.
+			if errors.Is(err, errDarwinProcessGone) {
 				continue
 			}
 			if err != nil {

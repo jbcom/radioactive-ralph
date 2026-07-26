@@ -16,7 +16,19 @@ import (
 const (
 	taskAuditTokenFlavor = 15
 	machSuccess          = 0
+	// task_name_for_pid(2) reports a dead or reaped PID as KERN_FAILURE and a
+	// PID outside the valid range as KERN_INVALID_ARGUMENT. Neither sets ESRCH.
+	machKernInvalidArgument = 4
+	machKernFailure         = 5
 )
+
+// errDarwinProcessGone reports that a PID enumerated moments earlier no longer
+// names a live process. task_name_for_pid(2) fails with a Mach code rather than
+// setting ESRCH, so callers cannot detect an ordinary exit by inspecting errno.
+// Cleanup must treat a vanished member as already-reclaimed instead of as a
+// cleanup failure: a provider fan-out routinely exits children while the
+// session is being torn down.
+var errDarwinProcessGone = errors.New("agent: Darwin process is gone")
 
 // darwinAuditToken is audit_token_t from <bsm/audit.h>. The kernel embeds the
 // numeric PID and a monotonically changing pidversion in this token, allowing
@@ -95,6 +107,14 @@ func (api darwinProcessAPI) auditTokenForPID(pid int) (darwinAuditToken, error) 
 	self := api.machTaskSelf()
 	var taskName uint32
 	if code := api.taskNameForPID(self, int32(pid), &taskName); code != machSuccess {
+		// A member enumerated moments ago can exit before we look it up. That is
+		// an ordinary race during teardown, not a cleanup failure, so report it
+		// as errDarwinProcessGone and let the caller skip the member. EPERM-like
+		// refusals keep surfacing as real errors.
+		if code == machKernFailure || code == machKernInvalidArgument {
+			return darwinAuditToken{}, fmt.Errorf(
+				"%w: task_name_for_pid(%d) failed with Mach code %d", errDarwinProcessGone, pid, code)
+		}
 		return darwinAuditToken{}, fmt.Errorf("agent: task_name_for_pid(%d) failed with Mach code %d", pid, code)
 	}
 	defer func() { _ = api.machPortDeallocate(self, taskName) }()
