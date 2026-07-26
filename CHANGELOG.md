@@ -27,9 +27,9 @@ removing a prior development registration.
 
 ### Supervisor behavior
 
-Provider-pool admission now rejects ambiguous plans, selects providers
-atomically, validates backend-specific paths, reconciles service lifecycle
-state, and enforces configured worker ceilings after admission.
+Ralph now rejects ambiguous plans, selects providers atomically, validates
+backend-specific paths, reconciles service lifecycle state, and enforces
+configured worker ceilings after admission.
 
 
 ### Features
