@@ -1,0 +1,40 @@
+name: Release authority preflight
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/release-authority-preflight.yml
+      - .github/workflows/release.yml
+      - scripts/ci/require_immutable_releases.sh
+  repository_dispatch:
+    types: [release_authority_preflight]
+
+permissions: {}
+
+jobs:
+  immutable-release-authority:
+    name: Verify immutable-release authority
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Require exact current main
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin \
+            "+refs/heads/main:refs/remotes/origin/main"
+          current_main="$(git rev-parse 'refs/remotes/origin/main^{commit}')"
+          event_commit="$(git rev-parse "${GITHUB_SHA}^{commit}")"
+          if [[ "$GITHUB_REF" != "refs/heads/main" || "$event_commit" != "$current_main" ]]; then
+            echo "::error::release authority preflight must run from exact current main"
+            exit 1
+          fi
+      - name: Require repository immutable releases
+        env:
+          CI_GITHUB_TOKEN: ${{ secrets.CI_GITHUB_TOKEN }}
+        run: bash scripts/ci/require_immutable_releases.sh

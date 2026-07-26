@@ -595,6 +595,8 @@ jobs:
             scripts/ci/test_rewrite_homebrew_cask_url.sh \
             scripts/ci/verify_release_assets.sh \
             scripts/ci/test_verify_release_assets.sh \
+            scripts/ci/require_immutable_releases.sh \
+            scripts/ci/test_require_immutable_releases.sh \
             scripts/ci/prepare_package_rollback_provenance.sh \
             scripts/ci/test_prepare_package_rollback_provenance.sh \
             scripts/ci/prepare_package_manifests_bundle.sh \
@@ -607,6 +609,7 @@ jobs:
           bash scripts/ci/test_publish_cli_manifests.sh
           bash scripts/ci/test_prepare_package_manifests_bundle.sh
           bash scripts/ci/test_verify_release_assets.sh
+          bash scripts/ci/test_require_immutable_releases.sh
           bash scripts/ci/test_rollback_package_manifests.sh
           bash scripts/ci/test_rewrite_homebrew_cask_url.sh
           bash scripts/ci/test_push_version_branch.sh

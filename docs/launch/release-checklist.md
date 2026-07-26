@@ -1,6 +1,6 @@
 ---
 title: Release checklist
-lastUpdated: 2026-07-25
+lastUpdated: 2026-07-26
 ---
 
 # Release checklist
@@ -15,6 +15,17 @@ draft-to-prerelease promotion.
       `python3 -m tox -e docs` pass.
 - [ ] `RELEASE_PLEASE_GITHUB_TOKEN` is provisioned only for Release Please in
       this repository.
+- [ ] `CI_GITHUB_TOKEN` is present from Doppler repository sync and can read
+      repository Administration settings. The
+      release workflow exposes it only to
+      `GET /repos/jbcom/radioactive-ralph/immutable-releases`; missing,
+      inaccessible, malformed, or disabled state fails the release closed.
+- [ ] The `Release authority preflight` workflow has passed from exact current
+      `main`. Protected-main changes to the release authority path run it
+      automatically; a `release_authority_preflight` repository dispatch safely
+      re-runs default-branch code after credential rotation. It invokes the same
+      fail-closed helper without creating a tag, release, asset, or package
+      mutation.
 - [ ] `PKGS_GITHUB_TOKEN` can read, create PRs in, and squash-merge checked
       heads in `jbcom/pkgs`; it is not used for this repository's releases.
 - [ ] Repository immutable releases are enabled.
@@ -164,6 +175,13 @@ The final transaction orders its state changes and authority reads exactly:
    state and otherwise compensating an exact draft or quarantining ambiguity;
    and require `/releases/latest` to identify that release.
 
+The immutable-release authority gate runs at tag admission, again at the start
+of the final transaction before any package mutation, and a third time
+immediately before promotion. If the third read is missing, inaccessible,
+malformed, or disabled after the package merge, the transaction's protected
+compensation restores the exact prior package manifests and leaves the draft
+unpublished.
+
 - [ ] No public prerelease existed.
 - [ ] The current package-main OID and the actual winning release squash-merge
       OID are recorded separately. Official rollback consumes the winning merge
@@ -221,8 +239,15 @@ or use Contents API `DELETE` calls for package rollback.
 - `checksums.txt`, `gui-checksums.txt`, rollback provenance, and the release
   seal remain consolidated workflow-identity-signed artifacts.
 - Package creation is one atomic PR; package merge is not release publication.
-- Current-repository operations use the built-in token. Cross-repository package
-  operations use only `PKGS_GITHUB_TOKEN`. Release Please uses only
+- Current-repository release reads and writes use the built-in token.
+  `CI_GITHUB_TOKEN` is command-scoped only to immutable-release settings reads
+  that require `Administration: read`. Cross-repository package operations use
+  only `PKGS_GITHUB_TOKEN`. Release Please uses only
   `RELEASE_PLEASE_GITHUB_TOKEN`.
+- The release-authority preflight runs only for protected-`main` pushes to its
+  authority path or the `release_authority_preflight` repository-dispatch event.
+  GitHub resolves repository dispatches to default-branch code; the job also
+  rejects every SHA except exact current `main` and performs no release
+  mutation.
 - Fyne stays pinned at `v1.7.2`, GoReleaser at `v2.17.0`, Claude Code at
   `2.1.220`, and Codex at `0.145.0`.

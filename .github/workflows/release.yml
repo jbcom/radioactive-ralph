@@ -19,25 +19,24 @@ jobs:
     permissions:
       contents: read
     steps:
-      # The PAT is reserved for cross-repository jbcom/pkgs operations.
-      # Current-repository release reads and writes use the built-in token.
-      - name: Verify release secret is set
+      # Each non-built-in credential has a fixed call-site purpose:
+      # PKGS_GITHUB_TOKEN mutates jbcom/pkgs; the Doppler-synced
+      # CI_GITHUB_TOKEN reads this repository's immutable-release setting.
+      # Release reads and writes continue to use the built-in token.
+      - name: Verify release secrets are set
         env:
           PKGS_TOKEN_SET: ${{ secrets.PKGS_GITHUB_TOKEN != '' }}
+          CI_GITHUB_TOKEN_SET: ${{ secrets.CI_GITHUB_TOKEN != '' }}
         run: |
           if [[ "$PKGS_TOKEN_SET" != "true" ]]; then
             echo "::error::PKGS_GITHUB_TOKEN secret is not configured"
             exit 1
           fi
-          echo "Cross-repository package secret verified."
-      - name: Require repository immutable releases
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh api \
-            -H "X-GitHub-Api-Version: 2026-03-10" \
-            "repos/${GITHUB_REPOSITORY}/immutable-releases" |
-            jq -e '.enabled == true' >/dev/null
+          if [[ "$CI_GITHUB_TOKEN_SET" != "true" ]]; then
+            echo "::error::CI_GITHUB_TOKEN secret is not configured"
+            exit 1
+          fi
+          echo "Named release authorities verified."
 
       # This job is the first dependency of every publisher. Reject manual
       # prerelease or malformed tags before GoReleaser can upload an artifact or
@@ -49,12 +48,13 @@ jobs:
             exit 1
           fi
 
-      # The repository's active tag ruleset makes v* tags admin-created and
-      # immutable. Still prove the event is the checked-out tag commit on main
-      # before trusting the tag as executable release input.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+
+      # The repository's active tag ruleset makes v* tags admin-created and
+      # immutable. Still prove the event is the checked-out tag commit on main
+      # before executing repository code with the Doppler-synced credential.
       - name: Require tag commit on main
         id: tag_provenance
         run: |
@@ -77,6 +77,11 @@ jobs:
             exit 1
           fi
           echo "commit=$tag_commit" >> "$GITHUB_OUTPUT"
+
+      - name: Require repository immutable releases
+        env:
+          CI_GITHUB_TOKEN: ${{ secrets.CI_GITHUB_TOKEN }}
+        run: bash scripts/ci/require_immutable_releases.sh
 
       # `force-tag-creation` creates the tag before Release Please creates its
       # draft. The tag event can therefore start this workflow first; wait for
@@ -818,10 +823,8 @@ jobs:
           }
           trap compensate EXIT
 
-          GH_TOKEN="$RELEASE_GH_TOKEN" gh api \
-            -H "X-GitHub-Api-Version: 2026-03-10" \
-            "repos/${GITHUB_REPOSITORY}/immutable-releases" |
-            jq -e '.enabled == true' >/dev/null
+          CI_GITHUB_TOKEN="${{ secrets.CI_GITHUB_TOKEN }}" \
+            bash scripts/ci/require_immutable_releases.sh
           current_manifest="$(GH_TOKEN="$RELEASE_GH_TOKEN" gh api \
             -H "Accept: application/vnd.github.raw+json" \
             "repos/${GITHUB_REPOSITORY}/contents/.release-please-manifest.json?ref=main")"
@@ -856,10 +859,8 @@ jobs:
           EXPECTED_PACKAGE_RELEASE_MERGE_OID="$package_release_merge_oid" \
             PACKAGE_GATE_MODE=recheck-current \
             bash scripts/ci/wait_for_package_publication.sh "$VERSION"
-          GH_TOKEN="$RELEASE_GH_TOKEN" gh api \
-            -H "X-GitHub-Api-Version: 2026-03-10" \
-            "repos/${GITHUB_REPOSITORY}/immutable-releases" |
-            jq -e '.enabled == true' >/dev/null
+          CI_GITHUB_TOKEN="${{ secrets.CI_GITHUB_TOKEN }}" \
+            bash scripts/ci/require_immutable_releases.sh
           current_manifest="$(GH_TOKEN="$RELEASE_GH_TOKEN" gh api \
             -H "Accept: application/vnd.github.raw+json" \
             "repos/${GITHUB_REPOSITORY}/contents/.release-please-manifest.json?ref=main")"

@@ -133,8 +133,14 @@ func TestPublicReleaseWaitsForAllRequiredArtifacts(t *testing.T) {
 
 	publishJob := requireWorkflowJob(t, workflow, "publish-release", path)
 	requireContains(t, publishJob, "RELEASE_GH_TOKEN: ${{ github.token }}", path)
+	if got := strings.Count(publishJob,
+		`CI_GITHUB_TOKEN="${{ secrets.CI_GITHUB_TOKEN }}" \`); got != 2 {
+		t.Errorf("%s command-scoped CI credential count = %d, want 2", path, got)
+	}
 	requireContains(t, publishJob, "PKGS_GH_TOKEN: ${{ secrets.PKGS_GITHUB_TOKEN }}", path)
-	requireContains(t, publishJob, `immutable-releases`, path)
+	if got := strings.Count(publishJob, "bash scripts/ci/require_immutable_releases.sh"); got != 2 {
+		t.Errorf("%s publish-release immutable-release gate count = %d, want 2", path, got)
+	}
 	requireContains(t, publishJob, "bash scripts/ci/verify_release_assets.sh", path)
 	requireContains(t, publishJob, "PACKAGE_GATE_MODE=resolve-merged", path)
 	requireContains(t, publishJob, "package_release_merge_oid", path)
@@ -147,7 +153,7 @@ func TestPublicReleaseWaitsForAllRequiredArtifacts(t *testing.T) {
 
 	lastAssets := strings.LastIndex(publishJob, "bash scripts/ci/verify_release_assets.sh")
 	lastPackageRecheck := strings.LastIndex(publishJob, "PACKAGE_GATE_MODE=recheck-current")
-	lastImmutable := strings.LastIndex(publishJob, `"repos/${GITHUB_REPOSITORY}/immutable-releases"`)
+	lastImmutable := strings.LastIndex(publishJob, "bash scripts/ci/require_immutable_releases.sh")
 	lastManifest := strings.LastIndex(publishJob, `contents/.release-please-manifest.json?ref=main`)
 	lastTag := strings.LastIndex(publishJob, `git/ref/tags/${GITHUB_REF_NAME}`)
 	lastRelease := strings.LastIndex(publishJob, `release="$(GH_TOKEN="$RELEASE_GH_TOKEN" gh api`)
@@ -198,11 +204,91 @@ func TestStableAdmissionPrecedesAllPublishers(t *testing.T) {
 	requireContains(t, admission, `"$tag_name" != "$GITHUB_REF_NAME" || "$target_commitish" != "$TAG_COMMIT"`, path)
 	requireContains(t, admission, `"$is_draft" == "true" && "$is_prerelease" == "false"`, path)
 	requireContains(t, admission, "public prerelease or ambiguous release state is invalid", path)
-	requireContains(t, admission, "immutable-releases", path)
+	requireContains(t, admission, "CI_GITHUB_TOKEN_SET: ${{ secrets.CI_GITHUB_TOKEN != '' }}", path)
+	requireContains(t, admission, "CI_GITHUB_TOKEN: ${{ secrets.CI_GITHUB_TOKEN }}", path)
+	requireContains(t, admission, "bash scripts/ci/require_immutable_releases.sh", path)
+	requireNotContains(t, admission, "GH_TOKEN: ${{ github.token }}\n        run: bash scripts/ci/require_immutable_releases.sh", path)
+	secretPresence := strings.Index(admission, "Verify release secrets are set")
+	stableTag := strings.Index(admission, "Require stable SemVer tag")
+	checkout := strings.Index(admission, "actions/checkout@")
+	tagProvenance := strings.Index(admission, "Require tag commit on main")
+	immutableGate := strings.Index(admission, "Require repository immutable releases")
+	releaseState := strings.Index(admission, "Require exact Release Please release state")
+	if secretPresence == -1 || stableTag == -1 || checkout == -1 ||
+		tagProvenance == -1 || immutableGate == -1 || releaseState == -1 {
+		t.Fatalf("%s missing one or more release-admission boundaries", path)
+	}
+	if secretPresence >= stableTag || stableTag >= checkout ||
+		checkout >= tagProvenance || tagProvenance >= immutableGate ||
+		immutableGate >= releaseState {
+		t.Error("release-admission must validate secret presence and tag syntax, check out without secrets, prove exact protected-main provenance, and only then expose CI_GITHUB_TOKEN to repository code")
+	}
 
 	goreleaser := requireWorkflowJob(t, workflow, "goreleaser", path)
 	requireContains(t, goreleaser, "needs: release-admission", path)
 	requireNotContains(t, admission, "goreleaser/goreleaser-action@", path)
+}
+
+func TestImmutableReleaseAuthorityIsManagedAndInvokedExactlyThreeTimes(t *testing.T) {
+	const workflowPath = ".github/workflows/release.yml"
+	workflow := readRepositoryFile(t, workflowPath)
+	if got := strings.Count(workflow, "bash scripts/ci/require_immutable_releases.sh"); got != 3 {
+		t.Errorf("%s immutable-release gate count = %d, want 3", workflowPath, got)
+	}
+	if got := strings.Count(workflow,
+		"CI_GITHUB_TOKEN: ${{ secrets.CI_GITHUB_TOKEN }}"); got != 1 {
+		t.Errorf("%s immutable-release step credential mapping count = %d, want 1", workflowPath, got)
+	}
+	if got := strings.Count(workflow,
+		`CI_GITHUB_TOKEN="${{ secrets.CI_GITHUB_TOKEN }}" \`); got != 2 {
+		t.Errorf("%s immutable-release command credential count = %d, want 2", workflowPath, got)
+	}
+	requireNotContains(t, workflow,
+		`"repos/${GITHUB_REPOSITORY}/immutable-releases"`,
+		workflowPath)
+
+	const helperPath = "scripts/ci/require_immutable_releases.sh"
+	helper := readRepositoryFile(t, helperPath)
+	if got := strings.Count(helper, `"repos/${GITHUB_REPOSITORY}/immutable-releases"`); got != 1 {
+		t.Errorf("%s immutable-release endpoint count = %d, want 1", helperPath, got)
+	}
+	requireContains(t, helper,
+		`GH_TOKEN="$CI_GITHUB_TOKEN" "$GH_BIN" api`,
+		helperPath)
+	requireNotContains(t, helper, "github.token", helperPath)
+	requireNotContains(t, helper, "RELEASE_GH_TOKEN", helperPath)
+
+	admission := requireWorkflowJob(t, workflow, "release-admission", workflowPath)
+	publish := requireWorkflowJob(t, workflow, "publish-release", workflowPath)
+	requireContains(t, admission,
+		"CI_GITHUB_TOKEN: ${{ secrets.CI_GITHUB_TOKEN }}",
+		workflowPath)
+	requireNotContains(t, publish,
+		"CI_GITHUB_TOKEN: ${{ secrets.CI_GITHUB_TOKEN }}",
+		workflowPath)
+}
+
+func TestImmutableReleaseAuthorityPreflightIsDefaultBranchReadOnlyAndExactMain(t *testing.T) {
+	const path = ".github/workflows/release-authority-preflight.yml"
+	workflow := readRepositoryFile(t, path)
+
+	requireContains(t, workflow, "push:", path)
+	requireContains(t, workflow, "branches: [main]", path)
+	requireContains(t, workflow, "repository_dispatch:", path)
+	requireContains(t, workflow, "types: [release_authority_preflight]", path)
+	requireNotContains(t, workflow, "workflow_dispatch:", path)
+	requireNotContains(t, workflow, "pull_request:", path)
+	requireContains(t, workflow, "permissions: {}", path)
+	requireContains(t, workflow, "contents: read", path)
+	requireContains(t, workflow, `"$GITHUB_REF" != "refs/heads/main"`, path)
+	requireContains(t, workflow, `"$event_commit" != "$current_main"`, path)
+	requireContains(t, workflow, "CI_GITHUB_TOKEN: ${{ secrets.CI_GITHUB_TOKEN }}", path)
+	if got := strings.Count(workflow, "bash scripts/ci/require_immutable_releases.sh"); got != 1 {
+		t.Errorf("%s immutable-release gate count = %d, want 1", path, got)
+	}
+	requireNotContains(t, workflow, "contents: write", path)
+	requireNotContains(t, workflow, "releases/", path)
+	requireNotContains(t, workflow, "release create", path)
 }
 
 func TestPackagePublicationRequiresExactMergedMainVersions(t *testing.T) {
@@ -365,7 +451,10 @@ func TestReleaseToolingIsPinnedAndPermissionsAreLeastPrivilege(t *testing.T) {
 	signer := requireWorkflowJob(t, workflow, "sign-gui-checksums", path)
 	requireContains(t, signer, "contents: write", path)
 	requireContains(t, signer, "id-token: write", path)
-	requireNotContains(t, workflow, "CI_GITHUB_TOKEN", path)
+	if got := strings.Count(workflow, "secrets.CI_GITHUB_TOKEN"); got != 4 {
+		t.Errorf("%s CI_GITHUB_TOKEN secret references = %d, want 4", path, got)
+	}
+	requireNotContains(t, workflow, "\nenv:\n  CI_GITHUB_TOKEN:", path)
 
 	const cdPath = ".github/workflows/cd.yml"
 	cd := readRepositoryFile(t, cdPath)
@@ -512,6 +601,13 @@ func TestReleaseHelpersRequireNamedTokenAuthorities(t *testing.T) {
 	publisher := readRepositoryFile(t, "packaging/publish-cli-manifests.sh")
 	requireContains(t, publisher, "PKGS_GH_TOKEN is required", "packaging/publish-cli-manifests.sh")
 	requireContains(t, publisher, "RELEASE_GH_TOKEN is required", "packaging/publish-cli-manifests.sh")
+
+	immutable := readRepositoryFile(t, "scripts/ci/require_immutable_releases.sh")
+	requireContains(t, immutable, "CI_GITHUB_TOKEN is not configured", "scripts/ci/require_immutable_releases.sh")
+	requireContains(t, immutable, "Administration read", "scripts/ci/require_immutable_releases.sh")
+	requireContains(t, immutable, `GH_TOKEN="$CI_GITHUB_TOKEN"`, "scripts/ci/require_immutable_releases.sh")
+	requireNotContains(t, immutable, `${GH_TOKEN:-`, "scripts/ci/require_immutable_releases.sh")
+	requireNotContains(t, immutable, "RELEASE_GH_TOKEN", "scripts/ci/require_immutable_releases.sh")
 }
 
 func TestCosignChecklistPinsWorkflowIdentityAndIssuer(t *testing.T) {
@@ -666,6 +762,7 @@ func TestOfflinePackageSmokesAndInstallerPolicyRunInRequiredCI(t *testing.T) {
 	ci := readRepositoryFile(t, ciPath)
 	for _, testPath := range []string{
 		"scripts/ci/test_install_signature_policy.sh",
+		"scripts/ci/test_require_immutable_releases.sh",
 		"scripts/ci/test_prepare_package_rollback_provenance.sh",
 		"scripts/ci/test_premerge_scoop_server_contract.py",
 	} {
