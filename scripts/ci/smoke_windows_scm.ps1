@@ -548,6 +548,7 @@ func main() {
     $stopEventFound = $false
     $stoppedProcessID = [uint32]0
     $guardProcessExit = [uint32]0
+    $guardPIDStopCandidates = [System.Collections.Generic.List[string]]::new()
     $stopDeadline = (Get-Date).AddSeconds(15)
     while (-not $stopEventFound -and (Get-Date) -lt $stopDeadline) {
       $remainingSeconds = [Math]::Max(
@@ -564,6 +565,11 @@ func main() {
         $candidateProcessID = [uint32]$candidate.SourceEventArgs.NewEvent.ProcessID
         $candidateProcessName = [string]$candidate.SourceEventArgs.NewEvent.ProcessName
         $candidateTraceTime = [uint64]$candidate.SourceEventArgs.NewEvent.TIME_CREATED
+        if ($candidateProcessID -eq $guardProcessID) {
+          $guardPIDStopCandidates.Add(
+            "name='$candidateProcessName' time=$candidateTraceTime exit=$([uint32]$candidate.SourceEventArgs.NewEvent.ExitStatus)"
+          )
+        }
         if ($candidateProcessID -eq $guardProcessID -and
             [string]::Equals(
               $candidateProcessName,
@@ -580,7 +586,12 @@ func main() {
       }
     }
     if (-not $stopEventFound) {
-      throw "SCM child process $guardProcessID did not produce a process-stop event"
+      $candidateSummary = if ($guardPIDStopCandidates.Count -eq 0) {
+        "none"
+      } else {
+        $guardPIDStopCandidates -join "; "
+      }
+      throw "SCM child process $guardProcessID did not produce an accepted process-stop event; PID-matching candidates: $candidateSummary"
     }
     if ($stoppedProcessID -ne $guardProcessID) {
       throw "SCM process trace PID mismatch: start $guardProcessID, stop $stoppedProcessID"
