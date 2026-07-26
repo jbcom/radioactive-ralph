@@ -83,7 +83,7 @@ func TestHandlePlanImport_InvalidV2CapabilityIsInvalidArgs(t *testing.T) {
 - task
 
   ` + "```ralph-task" + `
-  {"id":"task.one","after":[],"team":"studio/test","requires":["telepathy"],"providers":[],"differentFrom":[],"inputs":[],"outputs":[]}
+  {"id":"task.one","after":[],"team":"studio/test","binding":{"mode":"pool","alias":"","provider":"","model":"","effort":"","calibration":"","repetitions":0,"fixture":""},"requires":["telepathy"],"providers":[],"differentFrom":[],"inputs":[],"outputs":[]}
   ` + "```" + `
 `
 	_, err = sup.HandlePlanImport(ctx, ipc.PlanImportArgs{
@@ -152,6 +152,69 @@ func TestHandleTaskApprove_UnknownIsNotFound(t *testing.T) {
 	}
 }
 
+func TestHandleTaskRetry_RequeuesBlockedTask(t *testing.T) {
+	sup := newTestSupervisor(t, nil)
+	ctx := context.Background()
+	projectID, err := sup.store.CreateProject(ctx, "retry", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	planID, err := sup.store.CreatePlanGraph(ctx, store.CreatePlanGraphOpts{
+		Plan: store.CreatePlanOpts{ProjectID: projectID, Slug: "retry", Title: "Retry"},
+		Tasks: []store.GraphTaskSpec{{
+			ID: "blocked", Description: "blocked", TeamPath: "studio", MetadataJSON: `{}`,
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := sup.store.MarkBlockedInput(ctx, planID, "blocked", "hash changed"); err != nil {
+		t.Fatal(err)
+	}
+	if err := sup.HandleTaskRetry(ctx, ipc.TaskRetryArgs{PlanID: planID, TaskID: "blocked"}); err != nil {
+		t.Fatal(err)
+	}
+	task, _ := sup.store.GetTask(ctx, planID, "blocked")
+	if task.Status != store.TaskStatusPending {
+		t.Fatalf("task status = %s", task.Status)
+	}
+	if err := sup.HandleTaskRetry(ctx, ipc.TaskRetryArgs{PlanID: planID, TaskID: "blocked"}); !ipc.IsCode(err, ipc.CodeConflict) {
+		t.Fatalf("second retry err = %v, want conflict", err)
+	}
+}
+
+func TestHandleTaskListExposesTeamBlockAndEvidenceProvenance(t *testing.T) {
+	sup := newTestSupervisor(t, nil)
+	ctx := context.Background()
+	projectID, err := sup.store.CreateProject(ctx, "task-list", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	planID, err := sup.store.CreatePlanGraph(ctx, store.CreatePlanGraphOpts{
+		Plan: store.CreatePlanOpts{ProjectID: projectID, Slug: "task-list", Title: "Task List"},
+		Tasks: []store.GraphTaskSpec{{
+			ID: "story", Description: "story", TeamPath: "studio/narrative",
+			MetadataJSON: `{"binding":{"mode":"await-calibration"}}`,
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := sup.store.MarkBlockedCapability(ctx, planID, "story", "awaiting calibration"); err != nil {
+		t.Fatal(err)
+	}
+	reply, err := sup.HandleTaskList(ctx, ipc.TaskListArgs{PlanID: planID})
+	if err != nil || len(reply.Tasks) != 1 {
+		t.Fatalf("HandleTaskList = %+v, %v", reply, err)
+	}
+	task := reply.Tasks[0]
+	if task.TeamPath != "studio/narrative" ||
+		task.Status != string(store.TaskStatusBlockedCapability) ||
+		task.BlockedReason != "awaiting calibration" {
+		t.Fatalf("task summary = %+v", task)
+	}
+}
+
 // TestDriveHandlers_ValidateEmptyArgs proves the drive handlers reject empty
 // required ids with CodeInvalidArgs (a clean, specific error) rather than
 // letting a blank id reach the store and surface as a confusing query miss —
@@ -168,6 +231,12 @@ func TestDriveHandlers_ValidateEmptyArgs(t *testing.T) {
 	}
 	if err := sup.HandleTaskApprove(ctx, ipc.TaskApproveArgs{PlanID: "p", TaskID: ""}); !ipc.IsCode(err, ipc.CodeInvalidArgs) {
 		t.Errorf("task-approve empty task_id err = %v, want CodeInvalidArgs", err)
+	}
+	if err := sup.HandleTaskRetry(ctx, ipc.TaskRetryArgs{PlanID: "", TaskID: "t"}); !ipc.IsCode(err, ipc.CodeInvalidArgs) {
+		t.Errorf("task-retry empty plan_id err = %v, want CodeInvalidArgs", err)
+	}
+	if _, err := sup.HandleTaskList(ctx, ipc.TaskListArgs{}); !ipc.IsCode(err, ipc.CodeInvalidArgs) {
+		t.Errorf("task-list empty plan_id err = %v, want CodeInvalidArgs", err)
 	}
 	if err := sup.HandleWorkerKill(ctx, ipc.WorkerKillArgs{WorkerID: ""}); !ipc.IsCode(err, ipc.CodeInvalidArgs) {
 		t.Errorf("worker-kill empty worker_id err = %v, want CodeInvalidArgs", err)

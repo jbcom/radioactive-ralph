@@ -20,6 +20,22 @@ func renderMeso(m Model) string {
 	b.WriteString(styleMuted.Render(fmt.Sprintf("status=%s  progress=%d/%d", m.selectedPlan.Status, prog.Done, prog.Total)))
 	b.WriteString("\n\n")
 
+	if hasTeamTasks(m.snap.tasks) {
+		for row, team := range teamRollupsFromTasks(m.snap.tasks) {
+			marker := styleUnselected.String()
+			if row == m.cursor {
+				marker = styleSelected.String()
+			}
+			fmt.Fprintf(
+				&b, "%s%-30s tasks=%-4d running=%-3d blocked=%-3d done=%-3d workers=%d\n",
+				marker, team.path, team.total, team.running, team.blocked,
+				team.done, team.activeWorkers,
+			)
+		}
+		b.WriteString(renderFooter(m, "enter: drill into team   esc: back to plans   q: quit"))
+		return b.String()
+	}
+
 	groups := groupTasks(m.snap.tasks)
 	row := 0
 	for _, g := range groups {

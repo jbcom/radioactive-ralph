@@ -16,7 +16,7 @@ func TestParseV2StrictMetadataAndStableIdentity(t *testing.T) {
 	md := "# Design\n\n" + v2Step("Audit the story", `{
     "id":"qfc.audit.story",
     "after":[],
-    "team":"preproduction/human-causality",
+    "team":"preproduction/human-causality","binding":{"mode":"pool","alias":"","provider":"","model":"","effort":"","calibration":"","repetitions":0,"fixture":""},
     "requires":["local-agent"],
     "providers":["claude","codex"],
     "differentFrom":[],
@@ -42,7 +42,7 @@ func TestParseV2StrictMetadataAndStableIdentity(t *testing.T) {
 func TestValidateForImportRejectsV2AdversarialInputs(t *testing.T) {
 	base := func(id, after, output string) string {
 		return v2Step(id, fmt.Sprintf(`{
-    "id":%q,"after":%s,"team":"design/team","requires":[],
+    "id":%q,"after":%s,"team":"design/team","binding":{"mode":"pool","alias":"","provider":"","model":"","effort":"","calibration":"","repetitions":0,"fixture":""},"requires":[],
     "providers":["claude"],"differentFrom":[],
     "inputs":[],"outputs":[{"path":%q,"mode":"exclusive"}]
   }`, id, after, output))
@@ -64,13 +64,22 @@ func TestValidateForImportRejectsV2AdversarialInputs(t *testing.T) {
 		"mixed legacy and v2": "# Wave\n\n" +
 			base("task.one", `[]`, "out/one") + "\n- legacy step\n",
 		"unknown field": "# Wave\n\n" +
-			v2Step("bad", `{"id":"task.one","after":[],"team":"design/team","requires":[],"providers":[],"differentFrom":[],"inputs":[],"outputs":[],"surprise":true}`),
+			v2Step("bad", `{"id":"task.one","after":[],"team":"design/team","binding":{"mode":"pool","alias":"","provider":"","model":"","effort":"","calibration":"","repetitions":0,"fixture":""},"requires":[],"providers":[],"differentFrom":[],"inputs":[],"outputs":[],"surprise":true}`),
 		"missing field": "# Wave\n\n" +
 			v2Step("bad", `{"id":"task.one","after":[],"team":"design/team","requires":[],"providers":[],"differentFrom":[],"inputs":[]}`),
 		"null field": "# Wave\n\n" +
 			v2Step("bad", `{"id":"task.one","after":null,"team":"design/team","requires":[],"providers":[],"differentFrom":[],"inputs":[],"outputs":[]}`),
 		"portable traversal": "# Wave\n\n" +
 			base("task.one", `[]`, `..\escape`),
+		"differentFrom self": "# Wave\n\n" +
+			v2Step("bad", `{"id":"task.one","after":[],"team":"design/team","binding":{"mode":"pool","alias":"","provider":"","model":"","effort":"","calibration":"","repetitions":0,"fixture":""},"requires":[],"providers":[],"differentFrom":["task.one"],"inputs":[],"outputs":[]}`),
+		"unordered read write": "# Wave\n\n" +
+			base("task.writer", `[]`, "shared/data.json") + "\n" +
+			v2Step("reader", `{"id":"task.reader","after":[],"team":"design/team","binding":{"mode":"pool","alias":"","provider":"","model":"","effort":"","calibration":"","repetitions":0,"fixture":""},"requires":[],"providers":[],"differentFrom":[],"inputs":[{"path":"shared/data.json","sha256":"`+testSHA+`"}],"outputs":[]}`),
+		"calibrated without content address": "# Wave\n\n" +
+			v2Step("bad", `{"id":"task.one","after":[],"team":"design/team","binding":{"mode":"calibrated","alias":"codex-sol-xhigh","provider":"codex","model":"gpt-5.6-sol","effort":"xhigh","calibration":"","repetitions":0,"fixture":""},"requires":[],"providers":["codex"],"differentFrom":[],"inputs":[],"outputs":[]}`),
+		"calibration requiring unmeasured capability": "# Wave\n\n" +
+			v2Step("bad", `{"id":"task.one","after":[],"team":"design/team","binding":{"mode":"calibration","alias":"codex-sol-xhigh","provider":"codex","model":"gpt-5.6-sol","effort":"xhigh","calibration":"","repetitions":3,"fixture":"graph-reasoning"},"requires":["quality.graph-reasoning"],"providers":["codex"],"differentFrom":[],"inputs":[],"outputs":[]}`),
 	}
 	for name, md := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -83,12 +92,12 @@ func TestValidateForImportRejectsV2AdversarialInputs(t *testing.T) {
 
 func TestValidateForImportAllowsOrderedExclusiveOutputReuse(t *testing.T) {
 	first := v2Step("first", `{
-    "id":"task.first","after":[],"team":"design/team","requires":[],
+    "id":"task.first","after":[],"team":"design/team","binding":{"mode":"pool","alias":"","provider":"","model":"","effort":"","calibration":"","repetitions":0,"fixture":""},"requires":[],
     "providers":[],"differentFrom":[],"inputs":[],
     "outputs":[{"path":"out/shared.json","mode":"exclusive"}]
   }`)
 	second := v2Step("second", `{
-    "id":"task.second","after":["task.first"],"team":"design/team","requires":[],
+    "id":"task.second","after":["task.first"],"team":"design/team","binding":{"mode":"pool","alias":"","provider":"","model":"","effort":"","calibration":"","repetitions":0,"fixture":""},"requires":[],
     "providers":[],"differentFrom":[],"inputs":[],
     "outputs":[{"path":"out/shared.json","mode":"exclusive"}]
   }`)
@@ -99,11 +108,11 @@ func TestValidateForImportAllowsOrderedExclusiveOutputReuse(t *testing.T) {
 
 func TestValidateForImportRequiresOrderedProviderSeparation(t *testing.T) {
 	first := v2Step("first", `{
-    "id":"task.first","after":[],"team":"design/team","requires":[],
+    "id":"task.first","after":[],"team":"design/team","binding":{"mode":"pool","alias":"","provider":"","model":"","effort":"","calibration":"","repetitions":0,"fixture":""},"requires":[],
     "providers":[],"differentFrom":[],"inputs":[],"outputs":[]
   }`)
 	second := v2Step("second", `{
-    "id":"task.second","after":[],"team":"design/team","requires":[],
+    "id":"task.second","after":[],"team":"design/team","binding":{"mode":"pool","alias":"","provider":"","model":"","effort":"","calibration":"","repetitions":0,"fixture":""},"requires":[],
     "providers":[],"differentFrom":["task.first"],"inputs":[],"outputs":[]
   }`)
 	err := ValidateForImport([]byte("# Wave\n\n" + first + "\n" + second))

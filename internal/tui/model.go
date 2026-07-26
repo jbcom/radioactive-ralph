@@ -18,6 +18,7 @@ type level int
 const (
 	levelMacro level = iota
 	levelMeso
+	levelTeam
 	levelMicro
 )
 
@@ -69,6 +70,7 @@ type Model struct {
 	// selectedPlan/selectedTask carry the drill-in choice down to meso/
 	// micro so a refresh at those levels knows what to re-fetch.
 	selectedPlan store.Plan
+	selectedTeam string
 	selectedTask store.Task
 
 	viewport viewportState // micro: scroll offset into the log tail
@@ -292,6 +294,13 @@ func (m Model) fetchCmd() tea.Cmd {
 			if prog, err := source.PlanProgress(ctx, selectedPlan.ID); err == nil {
 				snap.progress[selectedPlan.ID] = prog
 			}
+
+		case levelTeam:
+			tasks, err := source.ListTasks(ctx, selectedPlan.ID)
+			if err != nil {
+				return fetchedMsg{err: err}
+			}
+			snap.tasks = tasks
 
 		case levelMicro:
 			events, err := source.ListTaskEvents(ctx, selectedPlan.ID, selectedTask.ID, 50)
@@ -566,7 +575,12 @@ func (m Model) currentListLen() int {
 	case levelMacro:
 		return len(m.snap.plans)
 	case levelMeso:
+		if hasTeamTasks(m.snap.tasks) {
+			return len(teamRollupsFromTasks(m.snap.tasks))
+		}
 		return len(m.snap.tasks)
+	case levelTeam:
+		return len(tasksForTeam(m.snap.tasks, m.selectedTeam))
 	default:
 		return 0
 	}
@@ -584,10 +598,25 @@ func (m Model) selectableIDs() []string {
 		}
 		return ids
 	case levelMeso:
+		if hasTeamTasks(m.snap.tasks) {
+			rollups := teamRollupsFromTasks(m.snap.tasks)
+			ids := make([]string, len(rollups))
+			for i, rollup := range rollups {
+				ids[i] = "team:" + rollup.path
+			}
+			return ids
+		}
 		flat := flattenGroupedTasks(m.snap.tasks)
 		ids := make([]string, len(flat))
 		for i, t := range flat {
 			ids[i] = t.ID
+		}
+		return ids
+	case levelTeam:
+		flat := flattenGroupedTasks(tasksForTeam(m.snap.tasks, m.selectedTeam))
+		ids := make([]string, len(flat))
+		for i, task := range flat {
+			ids[i] = task.ID
 		}
 		return ids
 	default:
@@ -648,6 +677,16 @@ func (m Model) drillIn() (tea.Model, tea.Cmd) {
 		return m, m.drillFetch()
 
 	case levelMeso:
+		if hasTeamTasks(m.snap.tasks) {
+			rollups := teamRollupsFromTasks(m.snap.tasks)
+			if m.cursor >= len(rollups) {
+				return m, nil
+			}
+			m.selectedTeam = rollups[m.cursor].path
+			m.lvl = levelTeam
+			m.cursor = 0
+			return m, m.drillFetch()
+		}
 		// Select from the SAME grouped order the meso view renders and the
 		// cursor walks — not the raw m.snap.tasks order — so the highlighted
 		// row and the drilled-into task are always the same one.
@@ -664,6 +703,17 @@ func (m Model) drillIn() (tea.Model, tea.Cmd) {
 		m.viewport = viewportState{}
 		return m, m.drillFetch()
 
+	case levelTeam:
+		flat := flattenGroupedTasks(tasksForTeam(m.snap.tasks, m.selectedTeam))
+		if m.cursor >= len(flat) {
+			return m, nil
+		}
+		m.selectedTask = flat[m.cursor]
+		m.lvl = levelMicro
+		m.snap.live = nil
+		m.viewport = viewportState{}
+		return m, m.drillFetch()
+
 	default:
 		return m, nil
 	}
@@ -676,6 +726,16 @@ func (m Model) drillIn() (tea.Model, tea.Cmd) {
 func (m Model) drillOut() (tea.Model, tea.Cmd) {
 	switch m.lvl {
 	case levelMicro:
+		if m.selectedTeam != "" {
+			m.lvl = levelTeam
+		} else {
+			m.lvl = levelMeso
+		}
+		m.cursor = 0
+		return m, m.drillFetch()
+
+	case levelTeam:
+		m.selectedTeam = ""
 		m.lvl = levelMeso
 		m.cursor = 0
 		return m, m.drillFetch()
@@ -713,6 +773,8 @@ func (m Model) View() string {
 		return renderMacro(m)
 	case levelMeso:
 		return renderMeso(m)
+	case levelTeam:
+		return renderTeam(m)
 	case levelMicro:
 		return renderMicro(m)
 	default:
@@ -754,6 +816,12 @@ func taskDeltaStatus(kind string) store.TaskStatus {
 		return store.TaskStatusFailed
 	case "task.released":
 		return store.TaskStatusReady
+	case "task.requeued":
+		return store.TaskStatusPending
+	case "task.blocked_input":
+		return store.TaskStatusBlockedInput
+	case "task.blocked_capability":
+		return store.TaskStatusBlockedCapability
 	case "task.blocked", "task.context_requested":
 		// The store emits these on the running→blocked transition (a worker
 		// stalled or requested context). Reflect it immediately — a blocked

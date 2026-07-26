@@ -81,9 +81,45 @@ func (c *Client) TaskApprove(ctx context.Context, args TaskApproveArgs) error {
 	return c.driveCall(ctx, CmdTaskApprove, args, nil)
 }
 
+// TaskRetry requeues a blocked_input or blocked_capability task.
+func (c *Client) TaskRetry(ctx context.Context, args TaskRetryArgs) error {
+	return c.driveCall(ctx, CmdTaskRetry, args, nil)
+}
+
+// TaskList returns complete task execution provenance for one plan.
+func (c *Client) TaskList(ctx context.Context, args TaskListArgs) (TaskListReply, error) {
+	var reply TaskListReply
+	err := c.driveCall(ctx, CmdTaskList, args, &reply)
+	return reply, err
+}
+
 // WorkerKill kills a running worker via kill-and-reclaim.
 func (c *Client) WorkerKill(ctx context.Context, args WorkerKillArgs) error {
 	return c.driveCall(ctx, CmdWorkerKill, args, nil)
+}
+
+func (c *Client) CalibrationPut(
+	ctx context.Context,
+	args CalibrationPutArgs,
+) (CalibrationPutReply, error) {
+	var reply CalibrationPutReply
+	err := c.driveCall(ctx, CmdCalibrationPut, args, &reply)
+	return reply, err
+}
+
+func (c *Client) CalibrationGet(
+	ctx context.Context,
+	args CalibrationGetArgs,
+) (CalibrationRecord, error) {
+	var reply CalibrationRecord
+	err := c.driveCall(ctx, CmdCalibrationGet, args, &reply)
+	return reply, err
+}
+
+func (c *Client) CalibrationList(ctx context.Context) (CalibrationListReply, error) {
+	var reply CalibrationListReply
+	err := c.driveCall(ctx, CmdCalibrationList, struct{}{}, &reply)
+	return reply, err
 }
 
 // NegotiatedVersion returns the supervisor's supported wire protocol version

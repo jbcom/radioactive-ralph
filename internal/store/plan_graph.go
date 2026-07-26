@@ -14,17 +14,26 @@ type OutputReservation struct {
 	Mode string
 }
 
+// InputReservation is one shared-read project-relative content pin.
+type InputReservation struct {
+	Path   string
+	SHA256 string
+}
+
 // GraphTaskSpec is one fully validated ralph.plan/v2 task.
 type GraphTaskSpec struct {
-	ID               string
-	Description      string
-	TeamPath         string
-	MetadataJSON     string
-	AcceptanceJSON   string
-	DependsOn        []string
-	Outputs          []OutputReservation
-	RequiresApproval bool
-	Order            int
+	ID                string
+	Description       string
+	TeamPath          string
+	MetadataJSON      string
+	AcceptanceJSON    string
+	CalibrationID     string
+	CapabilitySetJSON string
+	DependsOn         []string
+	Inputs            []InputReservation
+	Outputs           []OutputReservation
+	RequiresApproval  bool
+	Order             int
 }
 
 // CreatePlanGraphOpts atomically creates a plan and its explicit task DAG.
@@ -36,11 +45,19 @@ type CreatePlanGraphOpts struct {
 
 // TaskExecutionMetadata is the durable v2 scheduling/provenance record.
 type TaskExecutionMetadata struct {
-	TeamPath               string
-	MetadataJSON           string
-	AssignedProvider       string
-	CompletionEvidenceJSON string
-	BlockedReason          string
+	TeamPath                   string
+	MetadataJSON               string
+	AssignedAlias              string
+	AssignedProvider           string
+	AssignedModel              string
+	AssignedEffort             string
+	AssignedIndependenceDomain string
+	AssignedSessionID          string
+	ProviderSessionID          string
+	CalibrationID              string
+	CapabilitySetJSON          string
+	CompletionEvidenceJSON     string
+	BlockedReason              string
 }
 
 // CreatePlanGraph persists the plan, stable tasks, metadata, dependencies, and
@@ -123,10 +140,20 @@ func insertGraphTask(ctx context.Context, tx *sql.Tx, planID string, task GraphT
 		return fmt.Errorf("store: insert graph task %s: %w", task.ID, err)
 	}
 	if _, err := tx.ExecContext(ctx, `
-		INSERT INTO task_metadata(plan_id, task_id, team_path, metadata_json)
-		VALUES (?, ?, ?, ?)
-	`, planID, task.ID, task.TeamPath, task.MetadataJSON); err != nil {
+		INSERT INTO task_metadata(
+			plan_id, task_id, team_path, metadata_json, calibration_id, capability_set_json
+		) VALUES (?, ?, ?, ?, ?, ?)
+	`, planID, task.ID, task.TeamPath, task.MetadataJSON,
+		nullIfEmpty(task.CalibrationID), nullIfEmpty(task.CapabilitySetJSON)); err != nil {
 		return fmt.Errorf("store: insert task metadata %s: %w", task.ID, err)
+	}
+	for _, input := range task.Inputs {
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO task_input_reservations(plan_id, task_id, path, sha256)
+			VALUES (?, ?, ?, ?)
+		`, planID, task.ID, input.Path, input.SHA256); err != nil {
+			return fmt.Errorf("store: reserve task input %s:%s: %w", task.ID, input.Path, err)
+		}
 	}
 	for _, output := range task.Outputs {
 		if _, err := tx.ExecContext(ctx, `
@@ -143,11 +170,19 @@ func insertGraphTask(ctx context.Context, tx *sql.Tx, planID string, task GraphT
 func (s *Store) GetTaskExecutionMetadata(ctx context.Context, planID, taskID string) (TaskExecutionMetadata, error) {
 	var metadata TaskExecutionMetadata
 	err := s.db.QueryRowContext(ctx, `
-		SELECT team_path, metadata_json, COALESCE(assigned_provider,''),
+		SELECT team_path, metadata_json, COALESCE(assigned_alias,''),
+		       COALESCE(assigned_provider,''),
+		       COALESCE(assigned_model,''), COALESCE(assigned_effort,''),
+		       COALESCE(assigned_independence_domain,''),
+		       COALESCE(assigned_session_id,''), COALESCE(provider_session_id,''),
+		       COALESCE(calibration_id,''), COALESCE(capability_set_json,''),
 		       COALESCE(completion_evidence_json,''), COALESCE(blocked_reason,'')
 		FROM task_metadata WHERE plan_id = ? AND task_id = ?
 	`, planID, taskID).Scan(
-		&metadata.TeamPath, &metadata.MetadataJSON, &metadata.AssignedProvider,
+		&metadata.TeamPath, &metadata.MetadataJSON, &metadata.AssignedAlias,
+		&metadata.AssignedProvider, &metadata.AssignedModel, &metadata.AssignedEffort,
+		&metadata.AssignedIndependenceDomain, &metadata.AssignedSessionID,
+		&metadata.ProviderSessionID, &metadata.CalibrationID, &metadata.CapabilitySetJSON,
 		&metadata.CompletionEvidenceJSON, &metadata.BlockedReason,
 	)
 	if err != nil {
@@ -159,16 +194,68 @@ func (s *Store) GetTaskExecutionMetadata(ctx context.Context, planID, taskID str
 // ErrTaskNotRunning reports a provenance update attempted outside a live claim.
 var ErrTaskNotRunning = errors.New("store: task is not running")
 
-// RecordTaskProvider binds the selected provider to the running task.
-func (s *Store) RecordTaskProvider(ctx context.Context, planID, taskID, provider string) error {
+// BindTaskCalibration snapshots the immutable calibration resolved for an
+// await-calibration task. The first successful bind wins; idempotent repeats
+// with the same content address are allowed, while a different address fails
+// closed so an alias can never retarget an admitted task.
+func (s *Store) BindTaskCalibration(
+	ctx context.Context,
+	planID, taskID, calibrationID, capabilitySetJSON string,
+) error {
+	if calibrationID == "" || capabilitySetJSON == "" {
+		return fmt.Errorf("store: calibration id and capability set required")
+	}
 	res, err := s.db.ExecContext(ctx, `
-		UPDATE task_metadata SET assigned_provider = ?, blocked_reason = NULL
+		UPDATE task_metadata
+		SET calibration_id = ?, capability_set_json = ?
+		WHERE plan_id = ? AND task_id = ?
+		  AND (calibration_id IS NULL OR calibration_id = '')
+	`, calibrationID, capabilitySetJSON, planID, taskID)
+	if err != nil {
+		return fmt.Errorf("store: bind task calibration: %w", err)
+	}
+	count, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("store: bind task calibration rows affected: %w", err)
+	}
+	if count == 1 {
+		return nil
+	}
+	var existingID, existingCapabilities string
+	err = s.db.QueryRowContext(ctx, `
+		SELECT COALESCE(calibration_id,''), COALESCE(capability_set_json,'')
+		FROM task_metadata WHERE plan_id = ? AND task_id = ?
+	`, planID, taskID).Scan(&existingID, &existingCapabilities)
+	if err != nil {
+		return fmt.Errorf("store: load task calibration binding: %w", err)
+	}
+	if existingID == calibrationID && existingCapabilities == capabilitySetJSON {
+		return nil
+	}
+	return fmt.Errorf(
+		"store: task calibration already bound to %q, cannot replace with %q",
+		existingID, calibrationID,
+	)
+}
+
+// RecordTaskExecution binds the selected provider request and worker session to
+// the running task.
+func (s *Store) RecordTaskExecution(
+	ctx context.Context,
+	planID, taskID, alias, provider, model, effort, independenceDomain, sessionID string,
+) error {
+	res, err := s.db.ExecContext(ctx, `
+		UPDATE task_metadata
+		SET assigned_alias = ?, assigned_provider = ?, assigned_model = ?,
+		    assigned_effort = ?, assigned_independence_domain = ?,
+		    assigned_session_id = ?, blocked_reason = NULL
 		WHERE plan_id = ? AND task_id = ?
 		  AND EXISTS (
 		    SELECT 1 FROM tasks
 		    WHERE plan_id = ? AND id = ? AND status = 'running'
 		  )
-	`, provider, planID, taskID, planID, taskID)
+	`, alias, provider, model, effort, independenceDomain, sessionID,
+		planID, taskID, planID, taskID)
 	if err != nil {
 		return fmt.Errorf("store: record task provider: %w", err)
 	}
@@ -176,6 +263,27 @@ func (s *Store) RecordTaskProvider(ctx context.Context, planID, taskID, provider
 		return fmt.Errorf("store: provider rows affected: %w", err)
 	} else if count == 0 {
 		return ErrTaskNotRunning
+	}
+	return nil
+}
+
+// RecordTaskProvider preserves the original provider-only write API.
+func (s *Store) RecordTaskProvider(ctx context.Context, planID, taskID, provider string) error {
+	return s.RecordTaskExecution(ctx, planID, taskID, provider, provider, "", "", "", "")
+}
+
+// RecordTaskProviderSession stores the session identifier returned by the
+// provider after a turn.
+func (s *Store) RecordTaskProviderSession(
+	ctx context.Context,
+	planID, taskID, providerSessionID string,
+) error {
+	_, err := s.db.ExecContext(ctx, `
+		UPDATE task_metadata SET provider_session_id = ?
+		WHERE plan_id = ? AND task_id = ?
+	`, nullIfEmpty(providerSessionID), planID, taskID)
+	if err != nil {
+		return fmt.Errorf("store: record provider session: %w", err)
 	}
 	return nil
 }

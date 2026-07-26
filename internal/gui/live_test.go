@@ -69,6 +69,9 @@ func TestLiveController_ReadAndDriveRoundTrip(t *testing.T) {
 	if len(plans) != 1 || plans[0].Status != store.PlanStatusActive {
 		t.Fatalf("plan not imported active via GUI controller: %+v", plans)
 	}
+	if tasks, err := ctrl.ListTasks(context.Background(), reply.PlanID); err != nil || len(tasks) != 0 {
+		t.Fatalf("liveController.ListTasks API round trip = %+v, %v", tasks, err)
+	}
 
 	cancel()
 	select {

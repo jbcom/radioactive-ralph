@@ -12,6 +12,9 @@ import (
 type Binding struct {
 	Name   string
 	Config BindingConfig
+	// CalibratedCapabilities are granted only by one immutable calibration
+	// record. Built-in provider declarations never populate this field.
+	CalibratedCapabilities []string
 
 	// BinaryFromLocal is true when Config.Binary was set by the gitignored
 	// local.toml provider_binary override rather than by committed
@@ -24,13 +27,14 @@ type Binding struct {
 
 // Request is the provider-neutral execution contract for one worker turn.
 type Request struct {
-	WorkingDir   string
-	SystemPrompt string
-	UserPrompt   string
-	OutputSchema string
-	Model        Model
-	Effort       string
-	AllowedTools []string
+	WorkingDir    string
+	SystemPrompt  string
+	UserPrompt    string
+	OutputSchema  string
+	Model         Model
+	Effort        string
+	StrictBinding bool
+	AllowedTools  []string
 }
 
 // Usage captures the token/cost accounting for one provider turn. Fields
@@ -54,6 +58,7 @@ type Result struct {
 	SessionID       string
 	AssistantOutput string
 	Usage           Usage
+	Invocation      Invocation
 }
 
 // Runner executes one provider turn.

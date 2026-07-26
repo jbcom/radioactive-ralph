@@ -38,16 +38,20 @@ func (OpencodeRunner) Run(ctx context.Context, binding Binding, req Request) (Re
 		return Result{}, err
 	}
 	defer cleanup()
+	invocation, err := ResolveInvocation(binding, req)
+	if err != nil {
+		return Result{}, err
+	}
 
-	args := []string{"run", combinePrompt(req), "--format", "json"}
+	args := []string{"run", combinePrompt(req), "--format", "json", "--pure", "--auto"}
 	if req.WorkingDir != "" {
 		args = append(args, "--dir", req.WorkingDir)
 	}
-	if model := resolveModel(binding.Config, req.Model); model != "" {
-		args = append(args, "--model", model)
+	if invocation.Model != "" {
+		args = append(args, "--model", invocation.Model)
 	}
-	if effort := resolveEffort(binding.Config, req.Effort); effort != "" {
-		args = append(args, "--variant", effort)
+	if invocation.Effort != "" {
+		args = append(args, "--variant", invocation.Effort)
 	}
 	args = append(args, binding.Config.Args...)
 
@@ -108,6 +112,7 @@ func (OpencodeRunner) Run(ctx context.Context, binding Binding, req Request) (Re
 		SessionID:       sessionID,
 		AssistantOutput: normalizeStructuredOutput(assistant.String(), req),
 		Usage:           usage,
+		Invocation:      invocation,
 	}, nil
 }
 

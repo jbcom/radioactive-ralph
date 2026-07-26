@@ -333,10 +333,31 @@ func (s *Supervisor) HandleStatus(ctx context.Context) (ipc.StatusReply, error) 
 	workers := make([]ipc.WorkerSummary, 0, len(running))
 	for _, w := range running {
 		workers = append(workers, ipc.WorkerSummary{
-			WorkerID: w.ID,
-			PlanID:   w.PlanID,
-			TaskID:   w.TaskID,
-			Provider: w.Provider,
+			WorkerID:           w.ID,
+			PlanID:             w.PlanID,
+			TaskID:             w.TaskID,
+			Provider:           w.Provider,
+			Alias:              w.Alias,
+			TeamPath:           w.TeamPath,
+			Model:              w.Model,
+			Effort:             w.Effort,
+			IndependenceDomain: w.IndependenceDomain,
+			AssignedSessionID:  w.AssignedSessionID,
+			ProviderSessionID:  w.ProviderSessionID,
+		})
+	}
+	rollups, err := s.store.TeamRollups(ctx, "")
+	if err != nil {
+		s.log("team rollups failed", "err", err)
+		rollups = nil
+	}
+	teams := make([]ipc.TeamSummary, 0, len(rollups))
+	for _, team := range rollups {
+		teams = append(teams, ipc.TeamSummary{
+			TeamPath: team.TeamPath, Total: team.Total, Pending: team.Pending,
+			Ready: team.Ready, Running: team.Running, Done: team.Done,
+			Blocked: team.Blocked, Failed: team.Failed,
+			ActiveWorkers: team.ActiveWorkers, Providers: team.Providers,
 		})
 	}
 
@@ -354,6 +375,7 @@ func (s *Supervisor) HandleStatus(ctx context.Context) (ipc.StatusReply, error) 
 		Uptime:        time.Since(s.startedAt),
 		ActiveWorkers: len(running),
 		Workers:       workers,
+		Teams:         teams,
 		ActivePlans:   counts.ActivePlans,
 		ReadyTasks:    counts.Ready,
 		RunningTasks:  counts.Running,

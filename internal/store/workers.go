@@ -183,10 +183,17 @@ func (s *Store) CountRunningWorkers(ctx context.Context) (int, error) {
 // key on — plus what it is working on. Distinct from WorkerOpts (create-time
 // input) and from any provider-session id.
 type RunningWorker struct {
-	ID       string
-	Provider string
-	PlanID   string
-	TaskID   string
+	ID                 string
+	Provider           string
+	PlanID             string
+	TaskID             string
+	TeamPath           string
+	Alias              string
+	Model              string
+	Effort             string
+	IndependenceDomain string
+	AssignedSessionID  string
+	ProviderSessionID  string
 }
 
 // ListRunningWorkers returns every worker row currently status='running', with
@@ -195,10 +202,18 @@ type RunningWorker struct {
 // kill. Workers with no assigned task are still listed (PlanID/TaskID empty).
 func (s *Store) ListRunningWorkers(ctx context.Context) ([]RunningWorker, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, provider, COALESCE(current_plan_id, ''), COALESCE(current_task_id, '')
-		FROM workers
-		WHERE status = 'running'
-		ORDER BY started_at
+		SELECT w.id, w.provider, COALESCE(w.current_plan_id, ''),
+		       COALESCE(w.current_task_id, ''), COALESCE(m.team_path, ''),
+		       COALESCE(m.assigned_alias, ''), COALESCE(m.assigned_model, ''),
+		       COALESCE(m.assigned_effort, ''),
+		       COALESCE(m.assigned_independence_domain, ''),
+		       COALESCE(m.assigned_session_id, ''),
+		       COALESCE(m.provider_session_id, '')
+		FROM workers w
+		LEFT JOIN task_metadata m
+		  ON m.plan_id = w.current_plan_id AND m.task_id = w.current_task_id
+		WHERE w.status = 'running'
+		ORDER BY w.started_at
 	`)
 	if err != nil {
 		return nil, fmt.Errorf("store: list running workers: %w", err)
@@ -208,7 +223,11 @@ func (s *Store) ListRunningWorkers(ctx context.Context) ([]RunningWorker, error)
 	var out []RunningWorker
 	for rows.Next() {
 		var w RunningWorker
-		if err := rows.Scan(&w.ID, &w.Provider, &w.PlanID, &w.TaskID); err != nil {
+		if err := rows.Scan(
+			&w.ID, &w.Provider, &w.PlanID, &w.TaskID, &w.TeamPath, &w.Alias,
+			&w.Model, &w.Effort, &w.IndependenceDomain,
+			&w.AssignedSessionID, &w.ProviderSessionID,
+		); err != nil {
 			return nil, fmt.Errorf("store: scan running worker: %w", err)
 		}
 		out = append(out, w)

@@ -103,6 +103,7 @@ func newRootCmd(ctx context.Context) *cobra.Command {
 	root.AddCommand(newDoctorCmd())
 	root.AddCommand(newServiceCmd())
 	root.AddCommand(newPlanCmd())
+	root.AddCommand(newProviderCmd())
 	root.AddCommand(newEventsCmd())
 	root.AddCommand(newGUICmd())
 

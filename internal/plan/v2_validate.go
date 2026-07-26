@@ -35,6 +35,9 @@ func ValidateV2(parsed *Plan) error {
 	}
 	for id, metadata := range byID {
 		for _, dependency := range append(metadata.After, metadata.DifferentFrom...) {
+			if dependency == id && contains(metadata.DifferentFrom, dependency) {
+				return fmt.Errorf("task %s differentFrom must not reference itself", id)
+			}
 			if _, exists := byID[dependency]; !exists {
 				return fmt.Errorf("task %s references unknown task %s", id, dependency)
 			}
@@ -53,7 +56,36 @@ func ValidateV2(parsed *Plan) error {
 			}
 		}
 	}
-	return validateOutputOverlaps(byID)
+	if err := validateOutputOverlaps(byID); err != nil {
+		return err
+	}
+	return validateInputOutputOverlaps(byID)
+}
+
+func validateInputOutputOverlaps(tasks map[string]TaskMetadata) error {
+	for writerID, writer := range tasks {
+		for _, output := range writer.Outputs {
+			for readerID, reader := range tasks {
+				if writerID == readerID {
+					continue
+				}
+				for _, input := range reader.Inputs {
+					if !pathsOverlap(output.Path, input.Path) {
+						continue
+					}
+					if transitivelyDepends(tasks, writerID, readerID) ||
+						transitivelyDepends(tasks, readerID, writerID) {
+						continue
+					}
+					return fmt.Errorf(
+						"exclusive output overlaps unordered shared input: %s:%s and %s:%s",
+						writerID, output.Path, readerID, input.Path,
+					)
+				}
+			}
+		}
+	}
+	return nil
 }
 
 func dependencyCycle(tasks map[string]TaskMetadata) []string {

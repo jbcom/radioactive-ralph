@@ -52,6 +52,11 @@ var acceptCommandRe = regexp.MustCompile("`accept:\\s*([^`]+)`")
 // file (relative to the project dir) must exist for the step to be accepted.
 var acceptFileRe = regexp.MustCompile("`accept-file:\\s*([^`]+)`")
 
+var (
+	acceptCommandMarkerRe = regexp.MustCompile("`accept:")
+	acceptFileMarkerRe    = regexp.MustCompile("`accept-file:")
+)
+
 // defaultAcceptanceJSON derives an Acceptance for a freshly materialized
 // step task by scanning the step's text and detail for inline acceptance
 // annotations — `accept: <command>` (a shell command re-run that must exit
@@ -82,6 +87,48 @@ func defaultAcceptanceJSON(step plan.Step) (string, error) {
 	raw, err := json.Marshal(acc)
 	if err != nil {
 		return "", fmt.Errorf("orch: marshal derived acceptance: %w", err)
+	}
+	return string(raw), nil
+}
+
+func strictV2AcceptanceJSON(step plan.Step, projectDir string) (string, error) {
+	haystack := step.Text
+	if step.Detail != "" {
+		haystack += "\n" + step.Detail
+	}
+	commandMatches := acceptCommandRe.FindAllStringSubmatch(haystack, -1)
+	fileMatches := acceptFileRe.FindAllStringSubmatch(haystack, -1)
+	commandMarkers := len(acceptCommandMarkerRe.FindAllString(haystack, -1))
+	fileMarkers := len(acceptFileMarkerRe.FindAllString(haystack, -1))
+	if commandMarkers != len(commandMatches) || fileMarkers != len(fileMatches) {
+		return "", fmt.Errorf("acceptance marker must be nonempty and backtick-delimited")
+	}
+	if len(commandMatches) > 1 || len(fileMatches) > 1 {
+		return "", fmt.Errorf("acceptance contract is ambiguous: at most one accept and one accept-file")
+	}
+	if len(commandMatches)+len(fileMatches) == 0 {
+		return "", fmt.Errorf("v2 task requires accept and/or accept-file")
+	}
+
+	var acceptance Acceptance
+	if len(commandMatches) == 1 {
+		acceptance.Command = strings.TrimSpace(commandMatches[0][1])
+		if acceptance.Command == "" {
+			return "", fmt.Errorf("accept command must be nonempty")
+		}
+	}
+	if len(fileMatches) == 1 {
+		acceptance.FileExists = strings.TrimSpace(fileMatches[0][1])
+		if acceptance.FileExists == "" {
+			return "", fmt.Errorf("accept-file must be nonempty")
+		}
+		if _, err := secureProjectPath(projectDir, acceptance.FileExists, false); err != nil {
+			return "", fmt.Errorf("unsafe accept-file %q: %w", acceptance.FileExists, err)
+		}
+	}
+	raw, err := json.Marshal(acceptance)
+	if err != nil {
+		return "", fmt.Errorf("orch: marshal strict acceptance: %w", err)
 	}
 	return string(raw), nil
 }

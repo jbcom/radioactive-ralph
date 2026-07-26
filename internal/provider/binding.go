@@ -139,15 +139,11 @@ func defaultCodexProvider() BindingConfig {
 
 // defaultOpencodeProvider is opencode's capability record.
 //
-// NativeFanout: true. Evidence (installed `opencode` 1.18.3 on
-// 2026-07-16): `opencode run --agent <agent>` selects among agents, and
-// `opencode agent create`/`opencode agent list` manage a native
-// multi-agent surface independent of Ralph's own worker-spawning — the CLI
-// natively fans out to its own agents, so the orchestrator may delegate a
-// parallel step-group to one opencode invocation instead of spawning N
-// Ralph-managed workers.
+// NativeFanout: false until a calibrated three-child provenance fixture proves
+// a `run` invocation actually delegates. Agent configuration/list commands
+// alone do not prove runtime fan-out.
 func defaultOpencodeProvider() BindingConfig {
-	return BindingConfig{Type: "opencode", Binary: "opencode", NativeFanout: true}
+	return BindingConfig{Type: "opencode", Binary: "opencode", NativeFanout: false}
 }
 
 // defaultAgyProvider exists only for tests/documentation purposes: the agy

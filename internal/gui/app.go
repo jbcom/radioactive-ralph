@@ -169,6 +169,7 @@ type ui struct {
 	// guards refreshSeq and actionErr (below).
 	mu           sync.Mutex
 	selectedPlan string
+	selectedTeam string
 	selectedTask string
 
 	// actionErr holds the last failed drive action's message ("" = none). Drive
@@ -322,12 +323,12 @@ func (u *ui) refreshNow() {
 	// selection is written by tap handlers on the main thread; this is the one
 	// cross-thread read).
 	u.mu.Lock()
-	plan, task := u.selectedPlan, u.selectedTask
+	plan, team, task := u.selectedPlan, u.selectedTeam, u.selectedTask
 	u.refreshSeq++
 	seq := u.refreshSeq
 	u.mu.Unlock()
 
-	snap := u.gather(plan, task)
+	snap := u.gather(plan, team, task)
 
 	paint := func() {
 		// Drop a stale paint: if a newer refresh already painted, this gather's
@@ -376,6 +377,7 @@ func (u *ui) refreshNow() {
 type snapshot struct {
 	level        drillLevel
 	selectedPlan string
+	selectedTeam string
 	selectedTask string
 	status       ipc.StatusReply
 	err          error
@@ -384,6 +386,7 @@ type snapshot struct {
 	progress   map[string]orch.Progress // planID -> progress (macro)
 	projEvents []store.Event            // macro: recent project-wide events
 	tasks      []store.Task             // meso
+	task       store.Task               // micro: selected task plus v2 metadata
 	events     []store.Event            // micro
 	killID     string                   // micro: worker id running the selected task ("" = none)
 }
@@ -393,6 +396,7 @@ type drillLevel int
 const (
 	levelMacro drillLevel = iota
 	levelMeso
+	levelTeam
 	levelMicro
 )
 
@@ -400,8 +404,8 @@ const (
 // main thread and returns a render-ready snapshot. The first error encountered
 // is recorded in snapshot.err (surfaced as a banner) but never aborts the whole
 // gather — a partial view beats a blank one.
-func (u *ui) gather(plan, task string) snapshot {
-	s := snapshot{selectedPlan: plan, selectedTask: task}
+func (u *ui) gather(plan, team, task string) snapshot {
+	s := snapshot{selectedPlan: plan, selectedTeam: team, selectedTask: task}
 	st, err := u.ctrl.Status(u.ctx)
 	s.status = st
 	s.err = err
@@ -418,8 +422,11 @@ func (u *ui) gather(plan, task string) snapshot {
 		// Fall back to the status Workers scan if the task row is unavailable.
 		if tasks, terr := u.ctrl.ListTasks(u.ctx, plan); terr == nil {
 			for _, t := range tasks {
-				if t.ID == task && t.Status == store.TaskStatusRunning {
-					s.killID = t.ClaimedByWorkerID
+				if t.ID == task {
+					s.task = t
+					if t.Status == store.TaskStatusRunning {
+						s.killID = t.ClaimedByWorkerID
+					}
 					break
 				}
 			}
@@ -432,6 +439,9 @@ func (u *ui) gather(plan, task string) snapshot {
 				}
 			}
 		}
+	case plan != "" && team != "":
+		s.level = levelTeam
+		s.tasks, _ = u.ctrl.ListTasks(u.ctx, plan)
 	case plan != "":
 		s.level = levelMeso
 		s.tasks, _ = u.ctrl.ListTasks(u.ctx, plan)

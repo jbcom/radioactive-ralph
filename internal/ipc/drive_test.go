@@ -15,10 +15,13 @@ type driveFakeHandler struct {
 	importErr    error
 	setStatusErr error
 	approveErr   error
+	retryErr     error
 	killErr      error
 	gotImport    PlanImportArgs
 	gotSetStatus PlanSetStatusArgs
 	gotApprove   TaskApproveArgs
+	gotRetry     TaskRetryArgs
+	gotTaskList  TaskListArgs
 	gotKill      WorkerKillArgs
 }
 
@@ -33,6 +36,27 @@ func (h *driveFakeHandler) HandlePlanSetStatus(_ context.Context, a PlanSetStatu
 func (h *driveFakeHandler) HandleTaskApprove(_ context.Context, a TaskApproveArgs) error {
 	h.gotApprove = a
 	return h.approveErr
+}
+func (h *driveFakeHandler) HandleTaskRetry(_ context.Context, a TaskRetryArgs) error {
+	h.gotRetry = a
+	return h.retryErr
+}
+func (h *driveFakeHandler) HandleTaskList(_ context.Context, a TaskListArgs) (TaskListReply, error) {
+	h.gotTaskList = a
+	return TaskListReply{Tasks: []TaskSummary{{
+		PlanID: a.PlanID, TaskID: "t", TeamPath: "studio/narrative",
+		AssignedAlias: "claude-story", BlockedReason: "awaiting evidence",
+		CompletionEvidenceJSON: `{"proof":true}`,
+	}}}, nil
+}
+func (h *driveFakeHandler) HandleCalibrationPut(_ context.Context, a CalibrationPutArgs) (CalibrationPutReply, error) {
+	return CalibrationPutReply{ID: a.Calibration.ID}, nil
+}
+func (h *driveFakeHandler) HandleCalibrationGet(_ context.Context, a CalibrationGetArgs) (CalibrationRecord, error) {
+	return CalibrationRecord{ID: a.ID}, nil
+}
+func (h *driveFakeHandler) HandleCalibrationList(context.Context) (CalibrationListReply, error) {
+	return CalibrationListReply{}, nil
 }
 func (h *driveFakeHandler) HandleWorkerKill(_ context.Context, a WorkerKillArgs) error {
 	h.gotKill = a
@@ -68,7 +92,7 @@ func TestDrive_PlanImportRoundTrip(t *testing.T) {
 	}
 }
 
-func TestDrive_SetStatusApproveKillRoundTrip(t *testing.T) {
+func TestDrive_SetStatusApproveRetryKillRoundTrip(t *testing.T) {
 	h := &driveFakeHandler{}
 	sock, _, cleanup := startServer(t, h)
 	defer cleanup()
@@ -96,12 +120,34 @@ func TestDrive_SetStatusApproveKillRoundTrip(t *testing.T) {
 	}
 
 	c3 := dialTest(t, sock)
-	if err := c3.WorkerKill(ctx, WorkerKillArgs{WorkerID: "w"}); err != nil {
-		t.Fatalf("WorkerKill: %v", err)
+	if err := c3.TaskRetry(ctx, TaskRetryArgs{PlanID: "p", TaskID: "blocked"}); err != nil {
+		t.Fatalf("TaskRetry: %v", err)
 	}
 	_ = c3.Close()
+	if h.gotRetry.TaskID != "blocked" {
+		t.Errorf("retry not forwarded: %+v", h.gotRetry)
+	}
+
+	c4 := dialTest(t, sock)
+	if err := c4.WorkerKill(ctx, WorkerKillArgs{WorkerID: "w"}); err != nil {
+		t.Fatalf("WorkerKill: %v", err)
+	}
+	_ = c4.Close()
 	if h.gotKill.WorkerID != "w" {
 		t.Errorf("kill not forwarded: %+v", h.gotKill)
+	}
+
+	c5 := dialTest(t, sock)
+	reply, err := c5.TaskList(ctx, TaskListArgs{PlanID: "p"})
+	if err != nil {
+		t.Fatalf("TaskList: %v", err)
+	}
+	_ = c5.Close()
+	if h.gotTaskList.PlanID != "p" || len(reply.Tasks) != 1 ||
+		reply.Tasks[0].TeamPath != "studio/narrative" ||
+		reply.Tasks[0].BlockedReason != "awaiting evidence" ||
+		reply.Tasks[0].CompletionEvidenceJSON != `{"proof":true}` {
+		t.Fatalf("task-list not forwarded with provenance: handler=%+v reply=%+v", h.gotTaskList, reply)
 	}
 }
 

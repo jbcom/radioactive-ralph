@@ -20,6 +20,7 @@ var (
 	teamPathPattern     = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]*(?:/[a-z0-9][a-z0-9._-]*)*$`)
 	sha256Pattern       = regexp.MustCompile(`^[0-9a-f]{64}$`)
 	namePattern         = regexp.MustCompile(`^[a-z][a-z0-9._-]*$`)
+	modelPattern        = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:/-]*$`)
 )
 
 // TaskMetadata is the additive ralph.plan/v2 contract embedded in a list item
@@ -28,11 +29,25 @@ type TaskMetadata struct {
 	ID            string       `json:"id"`
 	After         []string     `json:"after"`
 	Team          string       `json:"team"`
+	Binding       TaskBinding  `json:"binding"`
 	Requires      []string     `json:"requires"`
 	Providers     []string     `json:"providers"`
 	DifferentFrom []string     `json:"differentFrom"`
 	Inputs        []TaskInput  `json:"inputs"`
 	Outputs       []TaskOutput `json:"outputs"`
+}
+
+// TaskBinding either leaves every field empty for configured-pool selection,
+// or pins an immutable calibrated execution lane.
+type TaskBinding struct {
+	Mode        string `json:"mode"`
+	Alias       string `json:"alias"`
+	Provider    string `json:"provider"`
+	Model       string `json:"model"`
+	Effort      string `json:"effort"`
+	Calibration string `json:"calibration"`
+	Repetitions int    `json:"repetitions"`
+	Fixture     string `json:"fixture"`
 }
 
 // TaskInput pins one project-relative file to its exact content hash.
@@ -135,7 +150,7 @@ func requireMetadataFields(raw []byte) error {
 		return fmt.Errorf("decode %s object: %w", taskMetadataLanguage, err)
 	}
 	for _, field := range []string{
-		"id", "after", "team", "requires", "providers", "differentFrom", "inputs", "outputs",
+		"id", "after", "team", "binding", "requires", "providers", "differentFrom", "inputs", "outputs",
 	} {
 		value, ok := fields[field]
 		if !ok {
@@ -143,6 +158,22 @@ func requireMetadataFields(raw []byte) error {
 		}
 		if string(value) == "null" {
 			return fmt.Errorf("%s field %q must not be null", taskMetadataLanguage, field)
+		}
+	}
+	var bindingFields map[string]json.RawMessage
+	if err := json.Unmarshal(fields["binding"], &bindingFields); err != nil {
+		return fmt.Errorf("%s field %q must be an object", taskMetadataLanguage, "binding")
+	}
+	for _, field := range []string{
+		"mode", "alias", "provider", "model", "effort",
+		"calibration", "repetitions", "fixture",
+	} {
+		value, ok := bindingFields[field]
+		if !ok {
+			return fmt.Errorf("%s binding missing required field %q", taskMetadataLanguage, field)
+		}
+		if string(value) == "null" {
+			return fmt.Errorf("%s binding field %q must not be null", taskMetadataLanguage, field)
 		}
 	}
 	return nil
@@ -165,6 +196,63 @@ func validateTaskMetadata(metadata *TaskMetadata) error {
 	}
 	if !teamPathPattern.MatchString(metadata.Team) {
 		return fmt.Errorf("task %s has invalid team path %q", metadata.ID, metadata.Team)
+	}
+	bindingValues := []string{
+		metadata.Binding.Alias, metadata.Binding.Provider,
+		metadata.Binding.Model, metadata.Binding.Effort,
+	}
+	nonemptyBindingValues := 0
+	for _, value := range bindingValues {
+		if value != "" {
+			nonemptyBindingValues++
+		}
+	}
+	switch metadata.Binding.Mode {
+	case "pool":
+		if nonemptyBindingValues != 0 || metadata.Binding.Calibration != "" ||
+			metadata.Binding.Repetitions != 0 || metadata.Binding.Fixture != "" {
+			return fmt.Errorf("task %s pool binding must not pin calibration fields", metadata.ID)
+		}
+	case "calibrated":
+		if nonemptyBindingValues != len(bindingValues) || metadata.Binding.Calibration == "" ||
+			metadata.Binding.Repetitions != 0 || metadata.Binding.Fixture != "" {
+			return fmt.Errorf("task %s calibrated binding requires an exact tuple and content address", metadata.ID)
+		}
+	case "await-calibration":
+		if nonemptyBindingValues != len(bindingValues) || metadata.Binding.Calibration != "" ||
+			metadata.Binding.Repetitions != 0 || metadata.Binding.Fixture != "" {
+			return fmt.Errorf("task %s awaiting binding requires an exact tuple only", metadata.ID)
+		}
+	case "calibration":
+		if nonemptyBindingValues != len(bindingValues) || metadata.Binding.Calibration != "" ||
+			metadata.Binding.Repetitions < 3 || !namePattern.MatchString(metadata.Binding.Fixture) {
+			return fmt.Errorf("task %s calibration run requires an exact tuple, fixture, and at least 3 repetitions", metadata.ID)
+		}
+		if len(metadata.Requires) != 0 {
+			return fmt.Errorf("task %s calibration run cannot require capabilities before they are measured", metadata.ID)
+		}
+	default:
+		return fmt.Errorf("task %s binding mode %q is invalid", metadata.ID, metadata.Binding.Mode)
+	}
+	if metadata.Binding.Alias != "" && !namePattern.MatchString(metadata.Binding.Alias) {
+		return fmt.Errorf("task %s binding alias %q is invalid", metadata.ID, metadata.Binding.Alias)
+	}
+	if metadata.Binding.Provider != "" && !namePattern.MatchString(metadata.Binding.Provider) {
+		return fmt.Errorf("task %s binding provider %q is invalid", metadata.ID, metadata.Binding.Provider)
+	}
+	if metadata.Binding.Model != "" && !modelPattern.MatchString(metadata.Binding.Model) {
+		return fmt.Errorf("task %s binding model %q is invalid", metadata.ID, metadata.Binding.Model)
+	}
+	if metadata.Binding.Effort != "" && !namePattern.MatchString(metadata.Binding.Effort) {
+		return fmt.Errorf("task %s binding effort %q is invalid", metadata.ID, metadata.Binding.Effort)
+	}
+	if metadata.Binding.Calibration != "" &&
+		!strings.HasPrefix(metadata.Binding.Calibration, "sha256:") {
+		return fmt.Errorf("task %s binding calibration must be a sha256 content address", metadata.ID)
+	}
+	if metadata.Binding.Calibration != "" &&
+		!sha256Pattern.MatchString(strings.TrimPrefix(metadata.Binding.Calibration, "sha256:")) {
+		return fmt.Errorf("task %s binding calibration has invalid sha256", metadata.ID)
 	}
 	for field, values := range map[string][]string{
 		"after": metadata.After, "requires": metadata.Requires,

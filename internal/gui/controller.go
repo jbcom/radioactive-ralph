@@ -57,6 +57,8 @@ type Controller interface {
 	SetPlanStatus(ctx context.Context, planID, status string) error
 	// ApproveTask clears the approval gate on a ready_pending_approval task.
 	ApproveTask(ctx context.Context, planID, taskID string) error
+	// RetryTask requeues blocked_input/blocked_capability work.
+	RetryTask(ctx context.Context, planID, taskID string) error
 	// KillWorker kills a running worker via kill-and-reclaim.
 	KillWorker(ctx context.Context, workerID string) error
 }

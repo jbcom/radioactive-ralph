@@ -31,11 +31,13 @@ type fakeController struct {
 	imported   []ipc.PlanImportArgs
 	setStatus  [][2]string // {planID, status}
 	approved   [][2]string // {planID, taskID}
+	retried    [][2]string // {planID, taskID}
 	killed     []string    // workerIDs
 	importErr  error
 	setPlanErr error  // returned by SetPlanStatus() — a drive-action failure
 	onSetPlan  func() // optional hook run inside SetPlanStatus, before it returns
 	approveErr error
+	retryErr   error
 	killErr    error
 
 	// attachCount records how many times Attach was called — so a test can
@@ -134,6 +136,13 @@ func (f *fakeController) ApproveTask(_ context.Context, planID, taskID string) e
 	return f.approveErr
 }
 
+func (f *fakeController) RetryTask(_ context.Context, planID, taskID string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.retried = append(f.retried, [2]string{planID, taskID})
+	return f.retryErr
+}
+
 func (f *fakeController) KillWorker(_ context.Context, workerID string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -152,6 +161,12 @@ func (f *fakeController) approvedTasks() [][2]string {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return append([][2]string(nil), f.approved...)
+}
+
+func (f *fakeController) retriedTasks() [][2]string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([][2]string(nil), f.retried...)
 }
 
 func (f *fakeController) setStatusCalls() [][2]string {

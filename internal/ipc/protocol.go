@@ -30,9 +30,10 @@ import (
 
 // ProtoVersion is the wire protocol version this build speaks. The original
 // read-only-TUI surface (status/attach/enqueue/stop/reload-config) is v1; the
-// drive commands (plan-import/plan-set-status/task-approve/worker-kill) are v2.
+// drive commands (plan-import/plan-set-status/task-approve/worker-kill) are v2;
+// blocked-task recovery and hierarchical team telemetry are v3.
 // A client omitting Request.ProtoVersion is treated as v1 for back-compat.
-const ProtoVersion = 2
+const ProtoVersion = 3
 
 // Command names for the JSON-line protocol.
 const (
@@ -44,10 +45,15 @@ const (
 	CmdReloadConfig = "reload-config"
 
 	// v2 — drive surface (see the IPC drive-api design spec).
-	CmdPlanImport    = "plan-import"
-	CmdPlanSetStatus = "plan-set-status"
-	CmdTaskApprove   = "task-approve"
-	CmdWorkerKill    = "worker-kill"
+	CmdPlanImport      = "plan-import"
+	CmdPlanSetStatus   = "plan-set-status"
+	CmdTaskApprove     = "task-approve"
+	CmdTaskRetry       = "task-retry"
+	CmdTaskList        = "task-list"
+	CmdWorkerKill      = "worker-kill"
+	CmdCalibrationPut  = "calibration-put"
+	CmdCalibrationGet  = "calibration-get"
+	CmdCalibrationList = "calibration-list"
 )
 
 // Stable machine-readable error classes carried in Response.Code so a client
@@ -101,6 +107,7 @@ type StatusReply struct {
 	FailedTasks   int             `json:"failed_tasks"`
 	ActivePlans   int             `json:"active_plans"`
 	Workers       []WorkerSummary `json:"workers,omitempty"`
+	Teams         []TeamSummary   `json:"teams,omitempty"`
 	LastEventAt   time.Time       `json:"last_event_at,omitempty"`
 	HeartbeatAge  time.Duration   `json:"heartbeat_age_ns,omitempty"`
 }
@@ -110,11 +117,32 @@ type WorkerSummary struct {
 	// WorkerID is the store worker-row id — the value a client passes to the
 	// worker-kill drive command to target THIS worker. Distinct from any
 	// provider-session id.
-	WorkerID          string `json:"worker_id"`
-	PlanID            string `json:"plan_id"`
-	TaskID            string `json:"task_id"`
-	Provider          string `json:"provider,omitempty"`
-	ProviderSessionID string `json:"provider_session_id,omitempty"`
+	WorkerID           string `json:"worker_id"`
+	PlanID             string `json:"plan_id"`
+	TaskID             string `json:"task_id"`
+	Provider           string `json:"provider,omitempty"`
+	Alias              string `json:"alias,omitempty"`
+	TeamPath           string `json:"team_path,omitempty"`
+	Model              string `json:"model,omitempty"`
+	Effort             string `json:"effort,omitempty"`
+	IndependenceDomain string `json:"independence_domain,omitempty"`
+	AssignedSessionID  string `json:"assigned_session_id,omitempty"`
+	ProviderSessionID  string `json:"provider_session_id,omitempty"`
+}
+
+// TeamSummary is one hierarchical team-prefix rollup. A task assigned to
+// studio/narrative contributes to both studio and studio/narrative.
+type TeamSummary struct {
+	TeamPath      string         `json:"team_path"`
+	Total         int            `json:"total"`
+	Pending       int            `json:"pending"`
+	Ready         int            `json:"ready"`
+	Running       int            `json:"running"`
+	Done          int            `json:"done"`
+	Blocked       int            `json:"blocked"`
+	Failed        int            `json:"failed"`
+	ActiveWorkers int            `json:"active_workers"`
+	Providers     map[string]int `json:"providers,omitempty"`
 }
 
 // EnqueueArgs is the client's payload when pushing work via CmdEnqueue.
@@ -204,6 +232,79 @@ type PlanSetStatusReply struct {
 type TaskApproveArgs struct {
 	PlanID string `json:"plan_id"`
 	TaskID string `json:"task_id"`
+}
+
+// TaskRetryArgs requeues a task blocked by stale inputs or an unavailable
+// calibrated capability after the operator has corrected the condition.
+type TaskRetryArgs struct {
+	PlanID string `json:"plan_id"`
+	TaskID string `json:"task_id"`
+}
+
+// TaskListArgs scopes the v3 task/provenance read API to one plan.
+type TaskListArgs struct {
+	PlanID string `json:"plan_id"`
+}
+
+// TaskSummary exposes the complete operator-relevant v2 scheduling and
+// completion provenance without leaking the store's SQL row shape.
+type TaskSummary struct {
+	PlanID                     string `json:"plan_id"`
+	TaskID                     string `json:"task_id"`
+	Description                string `json:"description"`
+	Status                     string `json:"status"`
+	TeamPath                   string `json:"team_path,omitempty"`
+	AssignedAlias              string `json:"assigned_alias,omitempty"`
+	AssignedProvider           string `json:"assigned_provider,omitempty"`
+	AssignedModel              string `json:"assigned_model,omitempty"`
+	AssignedEffort             string `json:"assigned_effort,omitempty"`
+	AssignedIndependenceDomain string `json:"assigned_independence_domain,omitempty"`
+	AssignedSessionID          string `json:"assigned_session_id,omitempty"`
+	ProviderSessionID          string `json:"provider_session_id,omitempty"`
+	CalibrationID              string `json:"calibration_id,omitempty"`
+	CapabilitySetJSON          string `json:"capability_set_json,omitempty"`
+	BlockedReason              string `json:"blocked_reason,omitempty"`
+	CompletionEvidenceJSON     string `json:"completion_evidence_json,omitempty"`
+}
+
+type TaskListReply struct {
+	Tasks []TaskSummary `json:"tasks"`
+}
+
+// CalibrationRecord is the wire representation of one immutable calibrated
+// execution lane.
+type CalibrationRecord struct {
+	ID                 string          `json:"id,omitempty"`
+	Alias              string          `json:"alias"`
+	Provider           string          `json:"provider"`
+	Model              string          `json:"model"`
+	Effort             string          `json:"effort"`
+	BinaryPath         string          `json:"binary_path"`
+	BinaryVersion      string          `json:"binary_version"`
+	BinarySHA256       string          `json:"binary_sha256"`
+	InvocationHash     string          `json:"invocation_hash"`
+	InferenceDomain    string          `json:"inference_domain"`
+	ControlDomain      string          `json:"control_domain"`
+	IndependenceDomain string          `json:"independence_domain"`
+	ModelDigest        string          `json:"model_digest,omitempty"`
+	Capabilities       []string        `json:"capabilities"`
+	Evidence           json.RawMessage `json:"evidence"`
+}
+
+type CalibrationPutArgs struct {
+	Calibration CalibrationRecord `json:"calibration"`
+}
+
+type CalibrationPutReply struct {
+	ID string `json:"id"`
+}
+
+type CalibrationGetArgs struct {
+	ID string `json:"id"`
+}
+
+type CalibrationListReply struct {
+	Calibrations []CalibrationRecord `json:"calibrations"`
 }
 
 // WorkerKillArgs kills a running worker (CmdWorkerKill) via the same

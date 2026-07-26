@@ -35,8 +35,10 @@ type ClaudeRunner struct{}
 // JSON-line user message from stdin), tees stdout into a ResultPath file,
 // and parses the terminal result frame from that file for Usage.
 func (ClaudeRunner) Run(ctx context.Context, binding Binding, req Request) (Result, error) {
-	model := resolveModel(binding.Config, req.Model)
-	effort := resolveEffort(binding.Config, req.Effort)
+	invocation, err := ResolveInvocation(binding, req)
+	if err != nil {
+		return Result{}, err
+	}
 
 	resultPath, cleanup, err := newResultFile("claude-result-*.jsonl")
 	if err != nil {
@@ -51,15 +53,17 @@ func (ClaudeRunner) Run(ctx context.Context, binding Binding, req Request) (Resu
 		"--output-format", "stream-json",
 		"--verbose",
 		"--session-id", sessionID,
+		"--permission-mode", "bypassPermissions",
+		"--no-chrome",
 	}
 	if req.SystemPrompt != "" {
 		args = append(args, "--append-system-prompt", req.SystemPrompt)
 	}
-	if model != "" {
-		args = append(args, "--model", model)
+	if invocation.Model != "" {
+		args = append(args, "--model", invocation.Model)
 	}
-	if effort != "" {
-		args = append(args, "--effort", effort)
+	if invocation.Effort != "" {
+		args = append(args, "--effort", invocation.Effort)
 	}
 	for _, t := range req.AllowedTools {
 		args = append(args, "--allowed-tools", t)
@@ -141,6 +145,7 @@ func (ClaudeRunner) Run(ctx context.Context, binding Binding, req Request) (Resu
 		SessionID:       sessionID,
 		AssistantOutput: normalizeStructuredOutput(assistant.String(), req),
 		Usage:           frame.usage(),
+		Invocation:      invocation,
 	}, nil
 }
 
@@ -244,6 +249,12 @@ func resolveModel(cfg BindingConfig, model Model) string {
 		if cfg.OpusModel != "" {
 			return cfg.OpusModel
 		}
+	case ModelSonnet:
+		if cfg.SonnetModel != "" {
+			return cfg.SonnetModel
+		}
+	default:
+		return string(model)
 	}
 	// Sonnet is the default tier: used for ModelSonnet AND as the fallback
 	// when the requested tier has no configured override.
@@ -259,6 +270,9 @@ func resolveModel(cfg BindingConfig, model Model) string {
 }
 
 func resolveEffort(cfg BindingConfig, effort string) string {
+	if effort == "default" {
+		return ""
+	}
 	switch effort {
 	case "low":
 		if cfg.LowEffort != "" {

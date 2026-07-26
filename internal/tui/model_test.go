@@ -910,3 +910,66 @@ func TestModel_RefreshTickSkipsFetchWhileInFlight(t *testing.T) {
 		t.Fatal("fetchedMsg must clear fetching")
 	}
 }
+
+func TestTeamRollupDrillsToFilteredTasksBeforeMicro(t *testing.T) {
+	m := Model{
+		lvl:          levelMeso,
+		selectedPlan: store.Plan{ID: "p", Title: "Plan"},
+		snap: snapshot{tasks: []store.Task{
+			{ID: "story", TeamPath: "studio/narrative", Status: store.TaskStatusBlockedCapability},
+			{ID: "pixel", TeamPath: "studio/art", Status: store.TaskStatusRunning, AssignedAlias: "opencode-qwen"},
+		}},
+	}
+	view := renderMeso(m)
+	for _, want := range []string{"studio", "studio/art", "studio/narrative", "blocked=1", "running=1"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("team rollup missing %q:\n%s", want, view)
+		}
+	}
+	updated, _ := m.drillIn()
+	m = updated.(Model)
+	if m.lvl != levelTeam || m.selectedTeam != "studio" {
+		t.Fatalf("meso drill = level %v team %q", m.lvl, m.selectedTeam)
+	}
+	m.cursor = 1
+	updated, _ = m.drillIn()
+	m = updated.(Model)
+	if m.lvl != levelMicro || m.selectedTask.ID != "pixel" {
+		t.Fatalf("team drill = level %v task %q", m.lvl, m.selectedTask.ID)
+	}
+}
+
+func TestMicroRendersExactExecutionProvenance(t *testing.T) {
+	m := Model{
+		lvl: levelMicro,
+		selectedTask: store.Task{
+			ID: "story", Description: "review", Status: store.TaskStatusBlockedCapability,
+			TeamPath: "studio/narrative", AssignedAlias: "claude-story",
+			AssignedProvider: "claude", AssignedModel: "claude-exact",
+			AssignedEffort: "xhigh", AssignedIndependenceDomain: "anthropic",
+			AssignedSessionID: "worker-session", ProviderSessionID: "provider-session",
+			BlockedReason: "missing evidence", CompletionEvidenceJSON: `{"proof":true}`,
+		},
+	}
+	view := renderMicro(m)
+	for _, want := range []string{
+		"team=studio/narrative", "alias=claude-story", "model=claude-exact",
+		"independence=anthropic", "blocked=missing evidence", `evidence={"proof":true}`,
+	} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("micro provenance missing %q:\n%s", want, view)
+		}
+	}
+}
+
+func TestTaskDeltaStatusIncludesV2BlockedRecoveryStates(t *testing.T) {
+	for kind, want := range map[string]store.TaskStatus{
+		"task.blocked_input":      store.TaskStatusBlockedInput,
+		"task.blocked_capability": store.TaskStatusBlockedCapability,
+		"task.requeued":           store.TaskStatusPending,
+	} {
+		if got := taskDeltaStatus(kind); got != want {
+			t.Errorf("taskDeltaStatus(%q) = %q, want %q", kind, got, want)
+		}
+	}
+}

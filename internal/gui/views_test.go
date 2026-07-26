@@ -449,6 +449,70 @@ func TestMeso_ApproveOnlyForPendingApprovalTask(t *testing.T) {
 	}
 }
 
+func TestMeso_RetryBlockedTaskCallsRecoveryAPI(t *testing.T) {
+	f := newFakeController()
+	f.plans = []store.Plan{{ID: "p1", Title: "P", Status: store.PlanStatusActive}}
+	f.tasks["p1"] = []store.Task{{
+		ID: "blocked", Description: "repair input", Status: store.TaskStatusBlockedInput,
+	}}
+	u := newTestUI(t, f)
+	u.selectedPlan = "p1"
+	u.refreshNow()
+	tapButton(t, u.root, "Retry")
+	if got := f.retriedTasks(); len(got) != 1 || got[0] != [2]string{"p1", "blocked"} {
+		t.Fatalf("RetryTask calls = %v", got)
+	}
+}
+
+func TestMicro_RendersTeamBindingBlockedReasonAndEvidence(t *testing.T) {
+	f := newFakeController()
+	f.tasks["p1"] = []store.Task{{
+		ID: "t1", Description: "review", Status: store.TaskStatusBlockedCapability,
+		TeamPath: "studio/narrative", AssignedAlias: "claude-story",
+		AssignedProvider: "claude", AssignedModel: "claude-exact",
+		AssignedEffort: "high", AssignedIndependenceDomain: "anthropic",
+		AssignedSessionID: "worker-session", ProviderSessionID: "provider-session",
+		BlockedReason: "capability missing", CompletionEvidenceJSON: `{"proof":true}`,
+	}}
+	u := newTestUI(t, f)
+	u.selectedPlan, u.selectedTask = "p1", "t1"
+	u.refreshNow()
+	var labels []string
+	forEachLabel(u.root, func(label *widget.Label) { labels = append(labels, label.Text) })
+	rendered := strings.Join(labels, "\n")
+	for _, want := range []string{
+		"team=studio/narrative", "alias=claude-story", "model=claude-exact",
+		"independence=anthropic", "blocked: capability missing", `evidence: {"proof":true}`,
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("micro view missing %q:\n%s", want, rendered)
+		}
+	}
+}
+
+func TestMeso_TeamRollupDrillsToTeamThenTask(t *testing.T) {
+	f := newFakeController()
+	f.plans = []store.Plan{{ID: "p1", Title: "P", Status: store.PlanStatusActive}}
+	f.tasks["p1"] = []store.Task{
+		{ID: "story", Description: "story", TeamPath: "studio/narrative", Status: store.TaskStatusBlockedCapability},
+		{ID: "pixel", Description: "pixel", TeamPath: "studio/art", Status: store.TaskStatusRunning, AssignedAlias: "opencode-qwen"},
+	}
+	u := newTestUI(t, f)
+	u.selectedPlan = "p1"
+	u.refreshNow()
+	if findButton(u.root, "studio") == nil || findButton(u.root, "studio/art") == nil {
+		t.Fatal("hierarchical team rollups were not rendered")
+	}
+	tapButton(t, u.root, "studio/art")
+	if u.selectedTeam != "studio/art" || findButton(u.root, "pixel") == nil {
+		t.Fatalf("team drill state=%q did not render pixel task", u.selectedTeam)
+	}
+	tapButton(t, u.root, "pixel")
+	if u.selectedTask != "pixel" || findButton(u.root, "← Team") == nil {
+		t.Fatalf("task drill state=%q did not retain team path", u.selectedTask)
+	}
+}
+
 func TestMicro_KillButtonCallsKillWorker(t *testing.T) {
 	f := newFakeController()
 	f.plans = []store.Plan{{ID: "p1", Title: "P", Status: store.PlanStatusActive}}

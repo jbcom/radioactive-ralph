@@ -61,6 +61,8 @@ func (u *ui) render(s snapshot) {
 	switch s.level {
 	case levelMicro:
 		u.buildMicro(s)
+	case levelTeam:
+		u.buildTeam(s)
 	case levelMeso:
 		u.buildMeso(s)
 	default:
@@ -74,7 +76,10 @@ func (u *ui) render(s snapshot) {
 	// control, stealing it from an operator Tabbing toward Pause/Approve/Kill. So
 	// (re)initialize focus only when the view identity changes, and otherwise leave
 	// the operator's current focus untouched during ordinary data refreshes.
-	viewID := fmt.Sprintf("%d\x00%s\x00%s", s.level, s.selectedPlan, s.selectedTask)
+	viewID := fmt.Sprintf(
+		"%d\x00%s\x00%s\x00%s",
+		s.level, s.selectedPlan, s.selectedTeam, s.selectedTask,
+	)
 	if viewID != u.focusedView {
 		u.focusedView = viewID
 		if c := u.win.Canvas(); c != nil {
@@ -105,10 +110,38 @@ func (u *ui) button(label string, tapped func()) *widget.Button {
 
 func (u *ui) drillTo(plan, task string) {
 	u.mu.Lock()
-	u.selectedPlan, u.selectedTask = plan, task
+	u.selectedPlan, u.selectedTeam, u.selectedTask = plan, "", task
 	u.actionErr = "" // a prior view's action error must not follow the operator here
 	u.importing = false
 	u.viewToken++ // invalidate any in-flight drive issued from the prior view
+	u.mu.Unlock()
+	if u.syncRender {
+		u.refreshNow()
+		return
+	}
+	go u.refreshNow()
+}
+
+func (u *ui) drillToTeam(plan, team string) {
+	u.mu.Lock()
+	u.selectedPlan, u.selectedTeam, u.selectedTask = plan, team, ""
+	u.actionErr = ""
+	u.importing = false
+	u.viewToken++
+	u.mu.Unlock()
+	if u.syncRender {
+		u.refreshNow()
+		return
+	}
+	go u.refreshNow()
+}
+
+func (u *ui) drillToTeamTask(plan, team, task string) {
+	u.mu.Lock()
+	u.selectedPlan, u.selectedTeam, u.selectedTask = plan, team, task
+	u.actionErr = ""
+	u.importing = false
+	u.viewToken++
 	u.mu.Unlock()
 	if u.syncRender {
 		u.refreshNow()
@@ -123,7 +156,9 @@ func (u *ui) drillBack() {
 	u.mu.Lock()
 	switch {
 	case u.selectedTask != "":
-		u.selectedTask = "" // micro → meso
+		u.selectedTask = "" // micro → team or meso
+	case u.selectedTeam != "":
+		u.selectedTeam = "" // team → meso
 	case u.selectedPlan != "":
 		u.selectedPlan = "" // meso → macro
 	default:
@@ -222,6 +257,22 @@ func (u *ui) buildMeso(s snapshot) {
 		u.body.Add(widget.NewLabel("No tasks in this plan."))
 		return
 	}
+	if guiHasTeams(s.tasks) {
+		u.body.Add(widget.NewLabelWithStyle("Team rollups", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}))
+		for _, team := range guiTeamRollups(s.tasks) {
+			teamPath := team.path
+			open := u.button(team.path, func() { u.drillToTeam(planID, teamPath) })
+			open.Alignment = widget.ButtonAlignLeading
+			u.body.Add(container.NewHBox(
+				open,
+				widget.NewLabel(fmt.Sprintf(
+					"tasks=%d running=%d blocked=%d done=%d provider=%s",
+					team.total, team.running, team.blocked, team.done, team.provider,
+				)),
+			))
+		}
+		return
+	}
 	for _, t := range s.tasks {
 		taskID := t.ID
 		open := u.button(taskLabel(t), func() { u.drillTo(planID, taskID) })
@@ -232,7 +283,39 @@ func (u *ui) buildMeso(s snapshot) {
 				u.drive("approve", func() error { return u.ctrl.ApproveTask(u.ctx, planID, taskID) })
 			}))
 		}
+		if t.Status == store.TaskStatusBlockedInput ||
+			t.Status == store.TaskStatusBlockedCapability {
+			row.Add(widget.NewButton("Retry", func() {
+				u.drive("retry", func() error { return u.ctrl.RetryTask(u.ctx, planID, taskID) })
+			}))
+		}
 		u.body.Add(row)
+	}
+}
+
+func (u *ui) buildTeam(s snapshot) {
+	planID, teamPath := s.selectedPlan, s.selectedTeam
+	u.body.Add(u.button("← Team rollups", func() { u.drillTo(planID, "") }))
+	u.body.Add(widget.NewLabelWithStyle(
+		"Team "+teamPath, fyne.TextAlignLeading, fyne.TextStyle{Bold: true},
+	))
+	tasks := guiTasksForTeam(s.tasks, teamPath)
+	if len(tasks) == 0 {
+		u.body.Add(widget.NewLabel("No tasks in this team."))
+		return
+	}
+	for _, task := range tasks {
+		taskID := task.ID
+		open := u.button(taskLabel(task), func() {
+			u.drillToTeamTask(planID, teamPath, taskID)
+		})
+		open.Alignment = widget.ButtonAlignLeading
+		u.body.Add(container.NewHBox(
+			statusChip(string(task.Status)), open,
+			widget.NewLabel(fmt.Sprintf(
+				"%s  %s  %s", task.AssignedAlias, task.AssignedModel, task.AssignedEffort,
+			)),
+		))
 	}
 }
 
@@ -240,8 +323,37 @@ func (u *ui) buildMeso(s snapshot) {
 // worker running it (when the snapshot found one).
 func (u *ui) buildMicro(s snapshot) {
 	planID, taskID := s.selectedPlan, s.selectedTask
-	u.body.Add(u.backButton("← Tasks", planID, ""))
+	if s.selectedTeam != "" {
+		teamPath := s.selectedTeam
+		u.body.Add(u.button("← Team", func() { u.drillToTeam(planID, teamPath) }))
+	} else {
+		u.body.Add(u.backButton("← Tasks", planID, ""))
+	}
 	u.body.Add(widget.NewLabelWithStyle("Task "+taskID, fyne.TextAlignLeading, fyne.TextStyle{Bold: true}))
+	if s.task.TeamPath != "" {
+		u.body.Add(widget.NewLabel(fmt.Sprintf(
+			"team=%s  alias=%s  provider=%s  model=%s  effort=%s",
+			s.task.TeamPath, s.task.AssignedAlias, s.task.AssignedProvider,
+			s.task.AssignedModel, s.task.AssignedEffort,
+		)))
+		u.body.Add(widget.NewLabel(fmt.Sprintf(
+			"worker_session=%s  provider_session=%s  independence=%s",
+			s.task.AssignedSessionID, s.task.ProviderSessionID,
+			s.task.AssignedIndependenceDomain,
+		)))
+	}
+	if s.task.BlockedReason != "" {
+		u.body.Add(widget.NewLabel("blocked: " + s.task.BlockedReason))
+	}
+	if s.task.CompletionEvidenceJSON != "" {
+		u.body.Add(widget.NewLabel("evidence: " + s.task.CompletionEvidenceJSON))
+	}
+	if s.task.Status == store.TaskStatusBlockedInput ||
+		s.task.Status == store.TaskStatusBlockedCapability {
+		u.body.Add(widget.NewButton("Retry blocked task", func() {
+			u.drive("retry", func() error { return u.ctrl.RetryTask(u.ctx, planID, taskID) })
+		}))
+	}
 
 	if s.killID != "" {
 		killID := s.killID

@@ -12,6 +12,7 @@ package orch
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"runtime/debug"
@@ -456,9 +457,16 @@ func (c fanoutScopedContext) prompt() string {
 // dispatchedStep pairs a ready plan.Step with the store task created for
 // it, for bookkeeping across DispatchNext's per-step dispatch loop.
 type dispatchedStep struct {
-	ref  plan.StepRef
-	step plan.Step
-	task *store.Task
+	ref                    plan.StepRef
+	step                   plan.Step
+	task                   *store.Task
+	model                  provider.Model
+	effort                 string
+	independenceDomain     string
+	strictInvocation       bool
+	calibrationMode        string
+	calibrationFixture     string
+	calibrationRepetitions int
 }
 
 // DispatchNext loads the plan for planID, computes what's ready right now,
@@ -653,6 +661,13 @@ type dispatchStepArgs struct {
 	ref                           plan.StepRef
 	step                          plan.Step
 	constraints                   *BindingConstraints
+	bindingOverride               *provider.Binding
+	model                         provider.Model
+	effort                        string
+	independenceDomain            string
+	calibrationMode               string
+	calibrationFixture            string
+	calibrationRepetitions        int
 }
 
 // dispatchReadyStep runs one iteration of DispatchNext's per-step body with a
@@ -678,7 +693,9 @@ func (o *Orchestrator) dispatchReadyStep(ctx context.Context, a dispatchStepArgs
 	}
 
 	var binding provider.Binding
-	if a.constraints != nil {
+	if a.bindingOverride != nil {
+		binding = *a.bindingOverride
+	} else if a.constraints != nil {
 		binding, err = o.resolveConstrainedBinding(
 			ctx, a.projectID, a.parallel, BindingDispatch, *a.constraints,
 		)
@@ -738,7 +755,30 @@ func (o *Orchestrator) dispatchReadyStep(ctx context.Context, a dispatchStepArgs
 		return false, nil
 	}
 	if a.step.Metadata != nil {
-		if err := o.store.RecordTaskProvider(ctx, a.planID, ds.task.ID, binding.Name); err != nil {
+		ds.model, ds.effort = a.model, a.effort
+		independenceDomain := a.independenceDomain
+		if independenceDomain == "" {
+			independenceDomain = binding.Config.Type
+		}
+		ds.independenceDomain = independenceDomain
+		ds.strictInvocation = a.bindingOverride != nil
+		ds.calibrationMode = a.calibrationMode
+		ds.calibrationFixture = a.calibrationFixture
+		ds.calibrationRepetitions = a.calibrationRepetitions
+		invocation, err := provider.ResolveInvocation(binding, provider.Request{
+			Model: a.model, Effort: a.effort, StrictBinding: a.bindingOverride != nil,
+		})
+		if err != nil {
+			release()
+			_ = o.store.ReleaseClaim(ctx, a.planID, ds.task.ID, sessionID, "provider invocation resolution failed")
+			_ = o.store.ClearWorkerTask(ctx, workerID, "crashed")
+			return false, fmt.Errorf("orch: resolve exact invocation: %w", err)
+		}
+		if err := o.store.RecordTaskExecution(
+			ctx, a.planID, ds.task.ID, binding.Name, binding.Config.Type,
+			invocation.Model, normalizedInvocationEffort(a.effort, invocation.Effort),
+			independenceDomain, sessionID,
+		); err != nil {
 			release()
 			_ = o.store.ReleaseClaim(ctx, a.planID, ds.task.ID, sessionID, "provider provenance write failed")
 			_ = o.store.ClearWorkerTask(ctx, workerID, "crashed")
@@ -801,6 +841,13 @@ func (o *Orchestrator) dispatchReadyStep(ctx context.Context, a dispatchStepArgs
 		}
 	}()
 	return true, nil
+}
+
+func normalizedInvocationEffort(requested, invoked string) string {
+	if requested == "default" {
+		return "default"
+	}
+	return invoked
 }
 
 // panicCleanup carries the claim/worker bookkeeping recoverDispatchPanic needs
@@ -1164,29 +1211,103 @@ func (o *Orchestrator) dispatchWorker(ctx context.Context, projectID, projectDir
 	// re-check (which re-runs real shell commands) fail spuriously against an
 	// already-expired deadline. Use runCtx for Run; keep the parent ctx after.
 	req := provider.Request{
-		WorkingDir: projectDir,
-		UserPrompt: scoped.prompt(),
+		WorkingDir:    projectDir,
+		UserPrompt:    scoped.prompt(),
+		Model:         ds.model,
+		Effort:        ds.effort,
+		StrictBinding: ds.strictInvocation,
 	}
 
-	// The stall timeout bounds ONLY the agent turn: cancel it the instant Run
-	// returns (not at function end) so the timeout resources aren't held
-	// through the slower post-run store writes + VerifyAndComplete, which use
-	// the parent ctx.
-	result, runErr := o.runWithHeartbeat(ctx, workerID, func() (provider.Result, error) {
-		// A cancelable run context registered under workerID so an operator/GUI
-		// worker-kill can abort this provider turn (see KillWorker). The stall
-		// timeout, when set, layers on top of the same cancelable context.
-		runCtx, cancel := context.WithCancel(ctx)
-		defer cancel()
-		if o.watchdogConfig.StallTimeout > 0 {
-			var tcancel context.CancelFunc
-			runCtx, tcancel = context.WithTimeout(runCtx, o.watchdogConfig.StallTimeout)
-			defer tcancel()
+	repetitions := 1
+	if ds.calibrationMode == "calibration" {
+		repetitions = ds.calibrationRepetitions
+		if repetitions < 3 || ds.calibrationFixture == "" || !ds.strictInvocation {
+			return fmt.Errorf("orch: invalid calibration dispatch contract")
 		}
-		deregister := o.registerWorker(workerID, cancel)
-		defer deregister()
-		return runner.Run(runCtx, binding, req)
-	})
+	}
+	results := make([]provider.Result, 0, repetitions)
+	var result provider.Result
+	var runErr error
+	calibrationUsageRecorded := false
+	for repetition := 1; repetition <= repetitions; repetition++ {
+		turnRequest := req
+		if ds.calibrationMode == "calibration" {
+			turnRequest.UserPrompt = fmt.Sprintf(
+				"%s\n\nCalibration fixture: %s\nIndependent repetition: %d of %d\n"+
+					"Execute this fixture independently. Do not reuse or infer another repetition's answer.\n",
+				strings.TrimRight(req.UserPrompt, "\n"), ds.calibrationFixture,
+				repetition, repetitions,
+			)
+		}
+		// The stall timeout bounds ONLY this agent turn. Each calibration
+		// repetition gets a fresh runner invocation and cancellation scope.
+		turnResult, turnErr := o.runWithHeartbeat(ctx, workerID, func() (provider.Result, error) {
+			runCtx, cancel := context.WithCancel(ctx)
+			defer cancel()
+			if o.watchdogConfig.StallTimeout > 0 {
+				var tcancel context.CancelFunc
+				runCtx, tcancel = context.WithTimeout(runCtx, o.watchdogConfig.StallTimeout)
+				defer tcancel()
+			}
+			deregister := o.registerWorker(workerID, cancel)
+			defer deregister()
+			return runner.Run(runCtx, binding, turnRequest)
+		})
+		if ds.strictInvocation && turnErr == nil {
+			expected, resolveErr := provider.ResolveInvocation(binding, turnRequest)
+			if resolveErr != nil {
+				turnErr = resolveErr
+			} else if turnResult.Invocation != expected {
+				turnErr = fmt.Errorf(
+					"provider invocation mismatch on repetition %d: got %+v, want %+v",
+					repetition, turnResult.Invocation, expected,
+				)
+			}
+		}
+		result = turnResult
+		if ds.calibrationMode == "calibration" {
+			attemptCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+			if usageErr := o.recordUsage(
+				attemptCtx, projectID, workerID, binding.Name,
+				string(turnRequest.Model), turnResult.Usage,
+			); usageErr != nil && turnErr == nil {
+				turnErr = fmt.Errorf("record calibration usage: %w", usageErr)
+			}
+			calibrationUsageRecorded = true
+			if turnErr == nil {
+				outputHash := fmt.Sprintf("%x", sha256.Sum256([]byte(turnResult.AssistantOutput)))
+				invocationEffort := normalizedInvocationEffort(
+					turnRequest.Effort, turnResult.Invocation.Effort,
+				)
+				if attemptErr := o.store.RecordCalibrationAttempt(
+					attemptCtx,
+					store.CalibrationAttempt{
+						PlanID: planID, TaskID: ds.task.ID,
+						AttemptSequence:       ds.task.RetryCount + 1,
+						Repetition:            repetition,
+						Alias:                 turnResult.Invocation.Alias,
+						Provider:              turnResult.Invocation.Provider,
+						Model:                 turnResult.Invocation.Model,
+						Effort:                invocationEffort,
+						SessionID:             sessionID,
+						ProviderSessionID:     turnResult.SessionID,
+						AssistantOutputSHA256: outputHash,
+					},
+				); attemptErr != nil {
+					turnErr = fmt.Errorf("record calibration repetition: %w", attemptErr)
+				}
+			}
+			cancel()
+		}
+		if turnErr != nil {
+			runErr = turnErr
+			break
+		}
+		results = append(results, turnResult)
+	}
+	if runErr == nil && ds.calibrationMode == "calibration" {
+		result = aggregateCalibrationResults(ds.calibrationFixture, results)
+	}
 
 	// Post-run store writes (usage, evidence, mark-failed/verify, clear-worker)
 	// run under persistCtx, NOT ctx. ctx is the supervisor's run context, which
@@ -1197,13 +1318,20 @@ func (o *Orchestrator) dispatchWorker(ctx context.Context, projectID, projectDir
 	// bounded timeout so these writes land even as ctx is being torn down.
 	persistCtx, persistCancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 	defer persistCancel()
+	if err := o.store.RecordTaskProviderSession(
+		persistCtx, planID, ds.task.ID, result.SessionID,
+	); err != nil {
+		return fmt.Errorf("orch: record provider session: %w", err)
+	}
 
 	// Spend is real the moment tokens were billed, independent of whether
 	// the work is ultimately accepted by VerifyAndComplete — record it
 	// unconditionally so spend-cap accounting stays accurate even for
 	// rejected/failed turns.
-	if err := o.recordUsage(persistCtx, projectID, workerID, binding.Name, string(req.Model), result.Usage); err != nil {
-		return fmt.Errorf("orch: record usage: %w", err)
+	if !calibrationUsageRecorded {
+		if err := o.recordUsage(persistCtx, projectID, workerID, binding.Name, string(req.Model), result.Usage); err != nil {
+			return fmt.Errorf("orch: record usage: %w", err)
+		}
 	}
 
 	// A worker terminating — successfully or not — is NEVER completion.
@@ -1248,6 +1376,31 @@ func (o *Orchestrator) dispatchWorker(ctx context.Context, projectID, projectDir
 	}
 	_ = o.store.ClearWorkerTask(persistCtx, workerID, "idle")
 	return nil
+}
+
+func aggregateCalibrationResults(fixture string, results []provider.Result) provider.Result {
+	var output strings.Builder
+	var sessionIDs []string
+	fmt.Fprintf(&output, "Calibration fixture %s completed %d independent repetitions.\n", fixture, len(results))
+	for i, result := range results {
+		hash := fmt.Sprintf("%x", sha256.Sum256([]byte(result.AssistantOutput)))
+		fmt.Fprintf(
+			&output, "\nRepetition %d\nAssistant output SHA-256: %s\n%s\n",
+			i+1, hash, result.AssistantOutput,
+		)
+		if result.SessionID != "" {
+			sessionIDs = append(sessionIDs, result.SessionID)
+		}
+	}
+	var invocation provider.Invocation
+	if len(results) > 0 {
+		invocation = results[0].Invocation
+	}
+	return provider.Result{
+		SessionID:       strings.Join(sessionIDs, ","),
+		AssistantOutput: output.String(),
+		Invocation:      invocation,
+	}
 }
 
 // dispatchFanoutGroup delegates an entire ready parallel step-group to ONE

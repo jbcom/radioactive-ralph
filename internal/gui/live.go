@@ -69,7 +69,32 @@ func (l *liveController) PlanProgress(ctx context.Context, planID string) (orch.
 }
 
 func (l *liveController) ListTasks(ctx context.Context, planID string) ([]store.Task, error) {
-	return l.store.ListTasks(ctx, planID, nil)
+	c, err := l.dial()
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = c.Close() }()
+	reply, err := c.TaskList(ctx, ipc.TaskListArgs{PlanID: planID})
+	if err != nil {
+		return nil, err
+	}
+	tasks := make([]store.Task, 0, len(reply.Tasks))
+	for _, task := range reply.Tasks {
+		tasks = append(tasks, store.Task{
+			PlanID: task.PlanID, ID: task.TaskID, Description: task.Description,
+			Status: store.TaskStatus(task.Status), TeamPath: task.TeamPath,
+			AssignedAlias: task.AssignedAlias, AssignedProvider: task.AssignedProvider,
+			AssignedModel: task.AssignedModel, AssignedEffort: task.AssignedEffort,
+			AssignedIndependenceDomain: task.AssignedIndependenceDomain,
+			AssignedSessionID:          task.AssignedSessionID,
+			ProviderSessionID:          task.ProviderSessionID,
+			CalibrationID:              task.CalibrationID,
+			CapabilitySetJSON:          task.CapabilitySetJSON,
+			BlockedReason:              task.BlockedReason,
+			CompletionEvidenceJSON:     task.CompletionEvidenceJSON,
+		})
+	}
+	return tasks, nil
 }
 
 func (l *liveController) ListProjectEvents(ctx context.Context, projectID string, limit int) ([]store.Event, error) {
@@ -126,6 +151,15 @@ func (l *liveController) ApproveTask(ctx context.Context, planID, taskID string)
 	}
 	defer func() { _ = c.Close() }()
 	return c.TaskApprove(ctx, ipc.TaskApproveArgs{PlanID: planID, TaskID: taskID})
+}
+
+func (l *liveController) RetryTask(ctx context.Context, planID, taskID string) error {
+	c, err := l.dial()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = c.Close() }()
+	return c.TaskRetry(ctx, ipc.TaskRetryArgs{PlanID: planID, TaskID: taskID})
 }
 
 func (l *liveController) KillWorker(ctx context.Context, workerID string) error {

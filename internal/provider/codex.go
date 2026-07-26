@@ -43,6 +43,10 @@ func (CodexRunner) Run(ctx context.Context, binding Binding, req Request) (Resul
 		defer func() { _ = os.RemoveAll(tmpDir) }()
 	}
 	outPath := filepath.Join(tmpDir, "last-message.txt")
+	invocation, err := ResolveInvocation(binding, req)
+	if err != nil {
+		return Result{}, err
+	}
 
 	args := []string{
 		"exec",
@@ -51,9 +55,11 @@ func (CodexRunner) Run(ctx context.Context, binding Binding, req Request) (Resul
 		"-C", req.WorkingDir,
 		"--output-last-message", outPath,
 	}
-	model := resolveModel(binding.Config, req.Model)
-	if model != "" {
-		args = append(args, "-m", model)
+	if invocation.Model != "" {
+		args = append(args, "-m", invocation.Model)
+	}
+	if invocation.Effort != "" {
+		args = append(args, "-c", fmt.Sprintf("model_reasoning_effort=%q", invocation.Effort))
 	}
 	if schemaPath != "" {
 		args = append(args, "--output-schema", schemaPath)
@@ -96,5 +102,8 @@ func (CodexRunner) Run(ctx context.Context, binding Binding, req Request) (Resul
 	if err != nil {
 		return Result{}, fmt.Errorf("provider: read codex output: %w", err)
 	}
-	return Result{AssistantOutput: normalizeStructuredOutput(string(raw), req)}, nil
+	return Result{
+		AssistantOutput: normalizeStructuredOutput(string(raw), req),
+		Invocation:      invocation,
+	}, nil
 }

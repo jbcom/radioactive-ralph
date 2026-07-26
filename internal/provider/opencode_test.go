@@ -81,10 +81,10 @@ func TestParseOpencodeEventDiscardsNonJSONNoise(t *testing.T) {
 	}
 }
 
-func TestDefaultOpencodeProviderHasNativeFanout(t *testing.T) {
+func TestDefaultOpencodeProviderFailsClosedOnNativeFanout(t *testing.T) {
 	cfg := defaultOpencodeProvider()
-	if !cfg.NativeFanout {
-		t.Error("opencode capability record should report NativeFanout=true (opencode agent create/list + run --agent)")
+	if cfg.NativeFanout {
+		t.Error("opencode must not report NativeFanout before a child-provenance calibration")
 	}
 	if cfg.Binary != "opencode" {
 		t.Errorf("Binary = %q, want opencode", cfg.Binary)

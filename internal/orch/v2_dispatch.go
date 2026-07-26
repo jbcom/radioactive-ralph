@@ -2,10 +2,13 @@ package orch
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
+	"slices"
 
 	"github.com/jbcom/radioactive-ralph/internal/plan"
+	"github.com/jbcom/radioactive-ralph/internal/provider"
 	"github.com/jbcom/radioactive-ralph/internal/store"
 )
 
@@ -47,7 +50,7 @@ func (o *Orchestrator) dispatchNextV2(
 			}
 			continue
 		}
-		denied, err := o.separatedProviders(ctx, planID, metadata)
+		denied, err := o.separatedDomains(ctx, planID, metadata)
 		if err != nil {
 			if errors.Is(err, ErrNoCapableProvider) {
 				if blockErr := o.store.MarkBlockedCapability(
@@ -64,6 +67,97 @@ func (o *Orchestrator) dispatchNextV2(
 			DeniedProviders:  denied,
 			Requirements:     append([]string{}, metadata.Requires...),
 		}
+		var model provider.Model
+		var effort string
+		var bindingOverride *provider.Binding
+		var independenceDomain string
+		calibrationMode := ""
+		calibrationRepetitions := 0
+		calibrationFixture := ""
+		switch metadata.Binding.Mode {
+		case "calibrated", "await-calibration":
+			var calibration store.ProviderCalibration
+			if metadata.Binding.Mode == "calibrated" {
+				calibration, err = o.store.GetProviderCalibration(ctx, metadata.Binding.Calibration)
+			} else {
+				calibration, err = o.store.GetProviderCalibrationByAlias(ctx, metadata.Binding.Alias)
+			}
+			if err != nil {
+				if metadata.Binding.Mode == "await-calibration" && errors.Is(err, sql.ErrNoRows) {
+					if blockErr := o.store.MarkBlockedCapability(
+						ctx, planID, metadata.ID,
+						fmt.Sprintf("awaiting immutable calibration for alias %s", metadata.Binding.Alias),
+					); blockErr != nil {
+						return dispatched, fmt.Errorf("orch: persist calibration wait: %w", blockErr)
+					}
+					continue
+				}
+				return dispatched, fmt.Errorf("orch: load task calibration: %w", err)
+			}
+			resolvedCalibration, validationErr := validateTaskCalibration(metadata, calibration)
+			if validationErr != nil {
+				if blockErr := o.store.MarkBlockedCapability(
+					ctx, planID, metadata.ID, validationErr.Error(),
+				); blockErr != nil {
+					return dispatched, fmt.Errorf("orch: persist calibration validation block: %w", blockErr)
+				}
+				continue
+			}
+			if slices.Contains(denied, calibration.IndependenceDomain) {
+				if blockErr := o.store.MarkBlockedCapability(
+					ctx, planID, metadata.ID,
+					fmt.Sprintf("independence domain %s already used by separated dependency", calibration.IndependenceDomain),
+				); blockErr != nil {
+					return dispatched, fmt.Errorf("orch: persist independence block: %w", blockErr)
+				}
+				continue
+			}
+			binding, err := ValidateProviderCalibration(calibration)
+			if err != nil {
+				if blockErr := o.store.MarkBlockedCapability(
+					ctx, planID, metadata.ID, err.Error(),
+				); blockErr != nil {
+					return dispatched, fmt.Errorf("orch: persist calibrated provider block: %w", blockErr)
+				}
+				continue
+			}
+			if metadata.Binding.Mode == "await-calibration" {
+				if err := o.store.BindTaskCalibration(
+					ctx, planID, metadata.ID,
+					resolvedCalibration.calibrationID, resolvedCalibration.capabilitySetJSON,
+				); err != nil {
+					if blockErr := o.store.MarkBlockedCapability(
+						ctx, planID, metadata.ID, err.Error(),
+					); blockErr != nil {
+						return dispatched, fmt.Errorf("orch: persist calibration snapshot block: %w", blockErr)
+					}
+					continue
+				}
+			}
+			bindingOverride = &binding
+			constraints = BindingConstraints{}
+			model, effort = provider.Model(calibration.Model), calibration.Effort
+			independenceDomain = calibration.IndependenceDomain
+		case "calibration":
+			binding, err := provider.ResolveShippedBinding(metadata.Binding.Provider)
+			if err != nil {
+				return dispatched, fmt.Errorf("orch: resolve calibration provider: %w", err)
+			}
+			binding.Name = metadata.Binding.Alias
+			if _, err := provider.ResolveInvocation(binding, provider.Request{
+				Model:  provider.Model(metadata.Binding.Model),
+				Effort: metadata.Binding.Effort, StrictBinding: true,
+			}); err != nil {
+				return dispatched, fmt.Errorf("orch: resolve calibration invocation: %w", err)
+			}
+			bindingOverride = &binding
+			constraints = BindingConstraints{}
+			model, effort = provider.Model(metadata.Binding.Model), metadata.Binding.Effort
+			independenceDomain = binding.Config.Type
+			calibrationMode = metadata.Binding.Mode
+			calibrationRepetitions = metadata.Binding.Repetitions
+			calibrationFixture = metadata.Binding.Fixture
+		}
 		if !o.acquireDispatchSlot() {
 			break
 		}
@@ -71,7 +165,10 @@ func (o *Orchestrator) dispatchNextV2(
 			projectID: projectID, projectDir: projectDir, planID: planID,
 			parsedPlan: parsed, storeTitle: storedPlan.Title,
 			groupHeading: v2Task.GroupHeading, step: v2Task.Step,
-			constraints: &constraints,
+			constraints: &constraints, bindingOverride: bindingOverride,
+			model: model, effort: effort, independenceDomain: independenceDomain,
+			calibrationMode: calibrationMode, calibrationRepetitions: calibrationRepetitions,
+			calibrationFixture: calibrationFixture,
 		})
 		if err != nil {
 			return dispatched, err
@@ -83,7 +180,7 @@ func (o *Orchestrator) dispatchNextV2(
 	return dispatched, nil
 }
 
-func (o *Orchestrator) separatedProviders(
+func (o *Orchestrator) separatedDomains(
 	ctx context.Context,
 	planID string,
 	metadata *plan.TaskMetadata,
@@ -95,12 +192,12 @@ func (o *Orchestrator) separatedProviders(
 		if err != nil {
 			return nil, fmt.Errorf("orch: load provider provenance for %s: %w", taskID, err)
 		}
-		if execution.AssignedProvider == "" {
-			return nil, noCapableProvider("dependency %s has no provider provenance", taskID)
+		if execution.AssignedIndependenceDomain == "" {
+			return nil, noCapableProvider("dependency %s has no independence-domain provenance", taskID)
 		}
-		if !seen[execution.AssignedProvider] {
-			seen[execution.AssignedProvider] = true
-			denied = append(denied, execution.AssignedProvider)
+		if !seen[execution.AssignedIndependenceDomain] {
+			seen[execution.AssignedIndependenceDomain] = true
+			denied = append(denied, execution.AssignedIndependenceDomain)
 		}
 	}
 	return denied, nil

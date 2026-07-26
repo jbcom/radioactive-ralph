@@ -82,6 +82,13 @@ type DriveHandler interface {
 	HandlePlanSetStatus(ctx context.Context, args PlanSetStatusArgs) (PlanSetStatusReply, error)
 	// HandleTaskApprove clears the approval gate on a ready_pending_approval task.
 	HandleTaskApprove(ctx context.Context, args TaskApproveArgs) error
+	// HandleTaskRetry requeues blocked_input/blocked_capability work.
+	HandleTaskRetry(ctx context.Context, args TaskRetryArgs) error
+	// HandleTaskList exposes v3 task execution provenance for one plan.
+	HandleTaskList(ctx context.Context, args TaskListArgs) (TaskListReply, error)
+	HandleCalibrationPut(ctx context.Context, args CalibrationPutArgs) (CalibrationPutReply, error)
+	HandleCalibrationGet(ctx context.Context, args CalibrationGetArgs) (CalibrationRecord, error)
+	HandleCalibrationList(ctx context.Context) (CalibrationListReply, error)
 	// HandleWorkerKill kills a running worker via kill-and-reclaim.
 	HandleWorkerKill(ctx context.Context, args WorkerKillArgs) error
 }
@@ -453,7 +460,8 @@ func (s *Server) handleConn(conn net.Conn) {
 		// Final frame: single Response signals end-of-stream.
 		s.writeResponse(conn, Response{Ok: attachErr == nil, Error: errString(attachErr)})
 
-	case CmdPlanImport, CmdPlanSetStatus, CmdTaskApprove, CmdWorkerKill:
+	case CmdPlanImport, CmdPlanSetStatus, CmdTaskApprove, CmdTaskRetry, CmdWorkerKill,
+		CmdTaskList, CmdCalibrationPut, CmdCalibrationGet, CmdCalibrationList:
 		s.dispatchDrive(ctx, conn, req)
 
 	default:
@@ -517,6 +525,20 @@ func (s *Server) dispatchDrive(ctx context.Context, conn net.Conn, req Request) 
 		}
 		err := dh.HandleTaskApprove(ctx, args)
 		s.writeResult(conn, OKReply{OK: err == nil}, err)
+	case CmdTaskRetry:
+		var args TaskRetryArgs
+		if !s.decodeArgs(conn, req.Args, &args) {
+			return
+		}
+		err := dh.HandleTaskRetry(ctx, args)
+		s.writeResult(conn, OKReply{OK: err == nil}, err)
+	case CmdTaskList:
+		var args TaskListArgs
+		if !s.decodeArgs(conn, req.Args, &args) {
+			return
+		}
+		reply, err := dh.HandleTaskList(ctx, args)
+		s.writeResult(conn, reply, err)
 	case CmdWorkerKill:
 		var args WorkerKillArgs
 		if !s.decodeArgs(conn, req.Args, &args) {
@@ -524,6 +546,23 @@ func (s *Server) dispatchDrive(ctx context.Context, conn net.Conn, req Request) 
 		}
 		err := dh.HandleWorkerKill(ctx, args)
 		s.writeResult(conn, OKReply{OK: err == nil}, err)
+	case CmdCalibrationPut:
+		var args CalibrationPutArgs
+		if !s.decodeArgs(conn, req.Args, &args) {
+			return
+		}
+		reply, err := dh.HandleCalibrationPut(ctx, args)
+		s.writeResult(conn, reply, err)
+	case CmdCalibrationGet:
+		var args CalibrationGetArgs
+		if !s.decodeArgs(conn, req.Args, &args) {
+			return
+		}
+		reply, err := dh.HandleCalibrationGet(ctx, args)
+		s.writeResult(conn, reply, err)
+	case CmdCalibrationList:
+		reply, err := dh.HandleCalibrationList(ctx)
+		s.writeResult(conn, reply, err)
 	}
 }
 

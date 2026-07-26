@@ -31,20 +31,32 @@ const (
 // a worker from plan structure, not from a baked persona (§10 of the
 // supervisor-architecture design).
 type Task struct {
-	ID                string
-	PlanID            string
-	Description       string
-	Status            TaskStatus
-	ParallelGroup     sql.NullInt64
-	SequenceOrdinal   sql.NullInt64
-	AcceptanceJSON    string
-	ClaimedBySession  string
-	ClaimedByWorkerID string
-	RetryCount        int
-	ReclaimCount      int
-	ParentTaskID      string
-	CreatedAt         time.Time
-	UpdatedAt         time.Time
+	ID                         string
+	PlanID                     string
+	Description                string
+	Status                     TaskStatus
+	ParallelGroup              sql.NullInt64
+	SequenceOrdinal            sql.NullInt64
+	AcceptanceJSON             string
+	ClaimedBySession           string
+	ClaimedByWorkerID          string
+	RetryCount                 int
+	ReclaimCount               int
+	ParentTaskID               string
+	TeamPath                   string
+	AssignedAlias              string
+	AssignedProvider           string
+	AssignedModel              string
+	AssignedEffort             string
+	AssignedIndependenceDomain string
+	AssignedSessionID          string
+	ProviderSessionID          string
+	CalibrationID              string
+	CapabilitySetJSON          string
+	BlockedReason              string
+	CompletionEvidenceJSON     string
+	CreatedAt                  time.Time
+	UpdatedAt                  time.Time
 }
 
 // EventPayload keeps event payloads structured so the CLI, TUI, and tests
@@ -393,6 +405,9 @@ func (s *Store) GetTask(ctx context.Context, planID, id string) (*Task, error) {
 		}
 		return nil, fmt.Errorf("store: get task: %w", err)
 	}
+	if err := s.enrichTaskMetadata(ctx, planID, []*Task{&t}); err != nil {
+		return nil, err
+	}
 	return &t, nil
 }
 
@@ -434,7 +449,18 @@ func (s *Store) ListTasks(ctx context.Context, planID string, statuses []TaskSta
 		return nil, fmt.Errorf("store: list tasks: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
-	return scanTasks(rows)
+	tasks, err := scanTasks(rows)
+	if err != nil {
+		return nil, err
+	}
+	pointers := make([]*Task, len(tasks))
+	for i := range tasks {
+		pointers[i] = &tasks[i]
+	}
+	if err := s.enrichTaskMetadata(ctx, planID, pointers); err != nil {
+		return nil, err
+	}
+	return tasks, nil
 }
 
 // ListTaskEvents returns the most recent events for one task first.
@@ -513,6 +539,24 @@ func (s *Store) MarkDone(ctx context.Context, planID, taskID, sessionID string, 
 		WHERE plan_id = ? AND task_id = ?
 	`, jsonOrEmptyObject(evidenceJSON), planID, taskID); err != nil {
 		return nil, fmt.Errorf("store: persist completion evidence: %w", err)
+	}
+	// A v2 graph converges itself once every task reached a successful terminal
+	// state. Legacy plans preserve their historical operator-owned lifecycle.
+	// Blocked and failed tasks intentionally keep the plan active and visible.
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE plans
+		SET status = 'done'
+		WHERE id = ?
+		  AND EXISTS (
+		      SELECT 1 FROM task_metadata m WHERE m.plan_id = plans.id
+		  )
+		  AND NOT EXISTS (
+		      SELECT 1 FROM tasks t
+		      WHERE t.plan_id = plans.id
+		        AND t.status NOT IN ('done', 'skipped', 'decomposed')
+		  )
+	`, planID); err != nil {
+		return nil, fmt.Errorf("store: converge v2 plan: %w", err)
 	}
 
 	if err := tx.Commit(); err != nil {

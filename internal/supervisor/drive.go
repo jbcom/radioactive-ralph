@@ -123,6 +123,66 @@ func (s *Supervisor) HandleTaskApprove(ctx context.Context, args ipc.TaskApprove
 	return nil
 }
 
+// HandleTaskRetry requeues a task after its blocked input/capability condition
+// has been corrected. Dispatch performs the complete admission checks again.
+func (s *Supervisor) HandleTaskRetry(ctx context.Context, args ipc.TaskRetryArgs) error {
+	if args.PlanID == "" {
+		return &codedError{ipc.CodeInvalidArgs, "task-retry: plan_id required"}
+	}
+	if args.TaskID == "" {
+		return &codedError{ipc.CodeInvalidArgs, "task-retry: task_id required"}
+	}
+	found, _, err := s.store.RetryBlockedTask(ctx, args.PlanID, args.TaskID)
+	if errors.Is(err, store.ErrTaskNotRetryable) {
+		return &codedError{ipc.CodeConflict, err.Error()}
+	}
+	if err != nil {
+		return fmt.Errorf("supervisor: retry task: %w", err)
+	}
+	if !found {
+		return &codedError{ipc.CodeNotFound, fmt.Sprintf("task %s/%s not found", args.PlanID, args.TaskID)}
+	}
+	return nil
+}
+
+// HandleTaskList exposes durable task/team/binding/block/evidence provenance
+// through the authenticated local API.
+func (s *Supervisor) HandleTaskList(
+	ctx context.Context,
+	args ipc.TaskListArgs,
+) (ipc.TaskListReply, error) {
+	if args.PlanID == "" {
+		return ipc.TaskListReply{}, &codedError{ipc.CodeInvalidArgs, "task-list: plan_id required"}
+	}
+	if _, err := s.store.GetPlan(ctx, args.PlanID); err != nil {
+		if isPlanNotFound(err) {
+			return ipc.TaskListReply{}, &codedError{ipc.CodeNotFound, err.Error()}
+		}
+		return ipc.TaskListReply{}, fmt.Errorf("supervisor: load task-list plan: %w", err)
+	}
+	tasks, err := s.store.ListTasks(ctx, args.PlanID, nil)
+	if err != nil {
+		return ipc.TaskListReply{}, fmt.Errorf("supervisor: list tasks: %w", err)
+	}
+	reply := ipc.TaskListReply{Tasks: make([]ipc.TaskSummary, 0, len(tasks))}
+	for _, task := range tasks {
+		reply.Tasks = append(reply.Tasks, ipc.TaskSummary{
+			PlanID: task.PlanID, TaskID: task.ID, Description: task.Description,
+			Status: string(task.Status), TeamPath: task.TeamPath,
+			AssignedAlias: task.AssignedAlias, AssignedProvider: task.AssignedProvider,
+			AssignedModel: task.AssignedModel, AssignedEffort: task.AssignedEffort,
+			AssignedIndependenceDomain: task.AssignedIndependenceDomain,
+			AssignedSessionID:          task.AssignedSessionID,
+			ProviderSessionID:          task.ProviderSessionID,
+			CalibrationID:              task.CalibrationID,
+			CapabilitySetJSON:          task.CapabilitySetJSON,
+			BlockedReason:              task.BlockedReason,
+			CompletionEvidenceJSON:     task.CompletionEvidenceJSON,
+		})
+	}
+	return reply, nil
+}
+
 // HandleWorkerKill cancels the worker's live provider subprocess and then
 // reclaims its task and terminates the worker row. The process cancellation
 // (orch.KillWorker) aborts the in-flight runner.Run context so the subprocess

@@ -382,3 +382,27 @@ func TestStoreConstrainedBindingResolverFiltersWithoutConsumingProbe(t *testing.
 		t.Fatalf("error = %v, want ErrNoCapableProvider", err)
 	}
 }
+
+func TestPooledConstrainedResolverSuppressesNativeFanoutBeforeCapabilityCheck(t *testing.T) {
+	ctx := context.Background()
+	st := openBindingTestStore(t)
+	projectID, err := st.CreateProject(ctx, "pooled-native-fanout", []store.Fingerprint{{
+		Kind: store.FingerprintKindAbsPath, Value: t.TempDir(),
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetProjectConfig(
+		ctx, projectID, providersConfigKey, `["claude","codex"]`,
+	); err != nil {
+		t.Fatal(err)
+	}
+	resolve := storeConstrainedBindingResolver(st)
+	_, err = resolve(ctx, projectID, true, orch.BindingProbe, orch.BindingConstraints{
+		AllowedProviders: []string{"claude"},
+		Requirements:     []string{"native-fanout"},
+	})
+	if !errors.Is(err, orch.ErrNoCapableProvider) {
+		t.Fatalf("pooled Claude native-fanout probe = %v, want ErrNoCapableProvider", err)
+	}
+}

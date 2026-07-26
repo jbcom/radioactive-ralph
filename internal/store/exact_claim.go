@@ -74,7 +74,7 @@ func (s *Store) ClaimReadyTask(
 
 func ensureOutputsAvailable(ctx context.Context, tx *sql.Tx, planID, taskID string) error {
 	rows, err := tx.QueryContext(ctx, `
-		SELECT requested.path, active.path, active.task_id
+		SELECT requested.path, active.path, active.task_id, 'write/write'
 		FROM task_output_reservations requested
 		JOIN plans requested_plan ON requested_plan.id = requested.plan_id
 		JOIN plans active_plan ON active_plan.project_id = requested_plan.project_id
@@ -84,20 +84,46 @@ func ensureOutputsAvailable(ctx context.Context, tx *sql.Tx, planID, taskID stri
 		WHERE requested.plan_id = ? AND requested.task_id = ?
 		  AND active_task.status = 'running'
 		  AND NOT (active.plan_id = requested.plan_id AND active.task_id = requested.task_id)
-	`, planID, taskID)
+
+		UNION ALL
+
+		SELECT requested.path, active.path, active.task_id, 'write/read'
+		FROM task_output_reservations requested
+		JOIN plans requested_plan ON requested_plan.id = requested.plan_id
+		JOIN plans active_plan ON active_plan.project_id = requested_plan.project_id
+		JOIN task_input_reservations active ON active.plan_id = active_plan.id
+		JOIN tasks active_task
+		  ON active_task.plan_id = active.plan_id AND active_task.id = active.task_id
+		WHERE requested.plan_id = ? AND requested.task_id = ?
+		  AND active_task.status = 'running'
+		  AND NOT (active.plan_id = requested.plan_id AND active.task_id = requested.task_id)
+
+		UNION ALL
+
+		SELECT requested.path, active.path, active.task_id, 'read/write'
+		FROM task_input_reservations requested
+		JOIN plans requested_plan ON requested_plan.id = requested.plan_id
+		JOIN plans active_plan ON active_plan.project_id = requested_plan.project_id
+		JOIN task_output_reservations active ON active.plan_id = active_plan.id
+		JOIN tasks active_task
+		  ON active_task.plan_id = active.plan_id AND active_task.id = active.task_id
+		WHERE requested.plan_id = ? AND requested.task_id = ?
+		  AND active_task.status = 'running'
+		  AND NOT (active.plan_id = requested.plan_id AND active.task_id = requested.task_id)
+	`, planID, taskID, planID, taskID, planID, taskID)
 	if err != nil {
 		return fmt.Errorf("store: inspect output reservations: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
 	for rows.Next() {
-		var requested, active, owner string
-		if err := rows.Scan(&requested, &active, &owner); err != nil {
+		var requested, active, owner, conflictKind string
+		if err := rows.Scan(&requested, &active, &owner, &conflictKind); err != nil {
 			return fmt.Errorf("store: scan output reservation: %w", err)
 		}
 		if reservedPathsOverlap(requested, active) {
 			return fmt.Errorf(
-				"%w: task %s path %s overlaps running task %s path %s",
-				ErrOutputReserved, taskID, requested, owner, active,
+				"%w: task %s path %s overlaps running task %s path %s (%s)",
+				ErrOutputReserved, taskID, requested, owner, active, conflictKind,
 			)
 		}
 	}

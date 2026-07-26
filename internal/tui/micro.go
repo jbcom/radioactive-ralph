@@ -22,6 +22,29 @@ func renderMicro(m Model) string {
 	b.WriteString("\n")
 	b.WriteString(styleMuted.Render(m.selectedTask.Description) + "\n")
 	fmt.Fprintf(&b, "status=%s\n\n", statusStr)
+	if m.selectedTask.TeamPath != "" {
+		fmt.Fprintf(
+			&b, "team=%s alias=%s provider=%s model=%s effort=%s\n",
+			m.selectedTask.TeamPath, m.selectedTask.AssignedAlias,
+			m.selectedTask.AssignedProvider, m.selectedTask.AssignedModel,
+			m.selectedTask.AssignedEffort,
+		)
+		fmt.Fprintf(
+			&b, "worker_session=%s provider_session=%s independence=%s\n",
+			m.selectedTask.AssignedSessionID, m.selectedTask.ProviderSessionID,
+			m.selectedTask.AssignedIndependenceDomain,
+		)
+	}
+	if m.selectedTask.BlockedReason != "" {
+		fmt.Fprintf(&b, "blocked=%s\n", m.selectedTask.BlockedReason)
+	}
+	if m.selectedTask.CompletionEvidenceJSON != "" {
+		fmt.Fprintf(&b, "evidence=%s\n", m.selectedTask.CompletionEvidenceJSON)
+	}
+	if m.selectedTask.TeamPath != "" || m.selectedTask.BlockedReason != "" ||
+		m.selectedTask.CompletionEvidenceJSON != "" {
+		b.WriteString("\n")
+	}
 
 	lines := microLines(m)
 	view, canScrollUp, canScrollDown := windowLines(lines, m.viewport.offset, microViewportLines)

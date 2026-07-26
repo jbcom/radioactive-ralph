@@ -114,10 +114,10 @@ func storeConstrainedBindingResolver(st *store.Store) orch.ConstrainedBindingRes
 			if err != nil {
 				return provider.Binding{}, err
 			}
+			if pooled {
+				binding.Config.NativeFanout = false
+			}
 			if binding.SupportsRequirements(constraints.Requirements) {
-				if pooled {
-					binding.Config.NativeFanout = false
-				}
 				eligible = append(eligible, binding)
 			}
 		}
