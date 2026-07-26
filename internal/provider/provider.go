@@ -35,8 +35,8 @@ type Request struct {
 
 // Usage captures the token/cost accounting for one provider turn. Fields
 // are zero when the provider does not report them. Coverage today: the
-// claude runner populates Usage from the stream-json result frame; codex
-// and declarative bindings report zero (their CLIs surface usage
+// claude and opencode runners populate Usage from their stream-json frames;
+// codex and declarative bindings report zero (their CLIs surface usage
 // differently and are not yet parsed). CostUSD is authoritative when
 // non-zero; the runtime accumulates it for spend-cap enforcement, so a
 // capped variant on an unreported provider still requires a cap value but

@@ -39,7 +39,7 @@ func WriteFakeClaudeCLI(t *testing.T) string {
 # matching internal/provider.parseClaudeStreamLine's expected shape.
 read -r _line
 echo '{"type":"assistant","message":{"content":[{"type":"text","text":"fake E2E turn complete"}]}}'
-echo '{"type":"result","total_cost_usd":0.0001,"usage":{"input_tokens":10,"output_tokens":5,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}'
+echo '{"type":"result","subtype":"success","is_error":false,"total_cost_usd":0.0001,"usage":{"input_tokens":10,"output_tokens":5,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}'
 exit 0
 `
 	if err := os.WriteFile(path, []byte(script), 0o755); err != nil { //nolint:gosec // test-only fake CLI must be executable

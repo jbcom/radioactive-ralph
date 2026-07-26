@@ -3,16 +3,25 @@
 package agent
 
 import (
-	"os/exec"
-	"time"
+	"errors"
+	"os"
 )
 
-// setCancelKillsGroup on Windows keeps exec.CommandContext's default cancel
-// (no POSIX group to signal) but bounds the post-cancel wait via WaitDelay. The
-// pty agent path is unsupported on native Windows anyway (Start returns
-// ErrPTYUnsupported before any child is spawned). Must be called before the
-// process starts. A native ConPTY agent path, if added later, would reap
-// children via a Job Object or CREATE_NEW_PROCESS_GROUP + taskkill /T here.
-func setCancelKillsGroup(cmd *exec.Cmd) {
-	cmd.WaitDelay = 5 * time.Second
+// Native Windows pty execution is unsupported. The lifecycle still uses the
+// stable process handle so its platform tests prove natural/forced ordering. A
+// future ConPTY implementation must replace this with an owned Job Object.
+func cleanupExitedProcessTree(*os.Process) error { return nil }
+
+func terminateProcessTree(process *os.Process) terminationOutcome {
+	if process == nil {
+		return terminationOutcome{}
+	}
+	err := process.Kill()
+	if err == nil {
+		return terminationOutcome{}
+	}
+	if errors.Is(err, os.ErrProcessDone) {
+		return terminationOutcome{alreadyExited: true}
+	}
+	return terminationOutcome{terminationErr: errors.Join(ErrProcessTermination, err)}
 }

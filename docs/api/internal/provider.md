@@ -44,6 +44,27 @@ Package provider adapts configured CLI backends into radioactive\_ralph's provid
 
 ## Variables
 
+<a name="ErrAuthoritativeResultTooLarge"></a>
+
+```go
+var (
+    // ErrAuthoritativeResultTooLarge is static because provider-controlled
+    // result bytes must never cross into an error path.
+    ErrAuthoritativeResultTooLarge = errors.New("provider: authoritative result exceeded 16MiB limit")
+
+    // ErrStructuredEvidenceTooLarge applies to the Ralph-owned JSONL tee used
+    // by stream providers. It is independent of the Agent's observational
+    // per-line retention budget.
+    ErrStructuredEvidenceTooLarge = errors.New("provider: structured evidence exceeded 16MiB limit")
+
+    // ErrAuthoritativeResultUnsafe means the provider result path did not
+    // resolve to the same regular file before and after a non-following,
+    // nonblocking open. It is static so path or provider-controlled bytes never
+    // cross the error boundary.
+    ErrAuthoritativeResultUnsafe = errors.New("provider: authoritative result was not an identity-stable regular file")
+)
+```
+
 <a name="DefaultPromptPatterns"></a>DefaultPromptPatterns are the regexes superviseAgent uses out of the box to recognize an interactive permission/clarification prompt in a CLI's output — the shapes seen from Claude Code, Codex, opencode, and generic POSIX\-confirmation prompts \("\(y/n\)", "[Y/n](<https://pkg.go.dev/Y/n/>)", etc.\). Callers with a provider\-specific prompt shape should extend, not replace, this list.
 
 ```go
@@ -67,10 +88,64 @@ var DefaultPromptPatterns = []*regexp.Regexp{
 var DefaultStallTimeout = 3 * time.Minute
 ```
 
-<a name="ErrAgentBlocked"></a>ErrAgentBlocked is returned by superviseAgent \(and wrapped with the triggering reason\) when the control invariant fires: the agent produced a signal \(an interactive prompt or a stall\) that means it can no longer be trusted to make forward progress non\-interactively. superviseAgent ALWAYS kills the agent before returning this error — callers must never wait on it themselves.
+<a name="ErrAgentBlocked"></a>ErrAgentBlocked is returned by superviseAgent \(and wrapped with the triggering reason\) when the control invariant fires: the agent produced a signal \(an interactive prompt or a stall\) that means it can no longer be trusted to make forward progress non\-interactively. superviseAgent ALWAYS kills the agent before returning this error — callers must never wait on it themselves. Prompt failures use a static reason and never interpolate the observed terminal line, which may contain prompts or credentials.
 
 ```go
 var ErrAgentBlocked = errors.New("provider: agent blocked (killed by watchdog)")
+```
+
+<a name="ErrClaudeMaximumTurns"></a>ErrClaudeMaximumTurns is the static category for error\_max\_turns.
+
+```go
+var ErrClaudeMaximumTurns = errors.New("provider: claude maximum-turn limit reached")
+```
+
+<a name="ErrClaudeMissingResult"></a>ErrClaudeMissingResult means Claude exited cleanly without its required authoritative result frame.
+
+```go
+var ErrClaudeMissingResult = errors.New("provider: claude exited without a result frame")
+```
+
+<a name="ErrClaudeResultFailed"></a>ErrClaudeResultFailed is the static failure for is\_error results and non\-success subtypes not assigned a narrower category.
+
+```go
+var ErrClaudeResultFailed = errors.New("provider: claude reported an unsuccessful result")
+```
+
+<a name="ErrCodexOversizeSchema"></a>ErrCodexOversizeSchema is the fail\-closed boundary for a Codex JSON object whose top\-level type discriminator cannot be trusted. This includes duplicate type keys in a fully retained object and discarded objects other than an immediately recognizable turn.failed event.
+
+```go
+var ErrCodexOversizeSchema = errors.New("provider: codex event has an untrusted type discriminator")
+```
+
+<a name="ErrCodexTurnFailed"></a>ErrCodexTurnFailed is returned when Codex emits its authoritative turn.failed event. Provider\-controlled error text never crosses this boundary.
+
+```go
+var ErrCodexTurnFailed = errors.New("provider: codex reported a failed turn")
+```
+
+<a name="ErrOpencodeFinalReason"></a>ErrOpencodeFinalReason means the final step was not stop or length.
+
+```go
+var ErrOpencodeFinalReason = errors.New("provider: opencode exited without a final stop or length step")
+```
+
+<a name="ErrOpencodeInvalidUsage"></a>ErrOpencodeInvalidUsage is returned for negative, non\-finite, or overflowing aggregate usage.
+
+```go
+var ErrOpencodeInvalidUsage = errors.New("provider: opencode reported invalid usage")
+```
+
+<a name="ErrOpencodeMissingFinish"></a>ErrOpencodeMissingFinish means the natural stream ended without any step\_finish event.
+
+```go
+var ErrOpencodeMissingFinish = errors.New("provider: opencode exited without a step_finish frame")
+```
+
+<a name="ErrOpencodeReportedError"></a>ErrOpencodeReportedError is returned for a type=error session event. The provider's nested name/message deliberately never crosses this boundary.
+
+```go
+var ErrOpencodeReportedError = errors.New("provider: opencode reported a session error")
 ```
 
 <a name="ErrStreamJSONLineTooLong"></a>ErrStreamJSONLineTooLong reports that a stream\-json provider emitted a single frame larger than declarativeStreamJSONLineMax \(16MiB\). The turn is failed \(and retried\) rather than completed: the CLI was killed mid\-stream, so any text parsed before the oversized frame is PARTIAL, and reporting it as a successful turn would let the judgment\-only acceptance check \(mechanicalAcceptanceCheck: non\-empty output ⇒ done\) mark a step complete on the strength of a forcibly\-terminated worker. That partial text is discarded entirely — it reaches neither AssistantOutput nor rawOutput — so a killed turn can never satisfy verification.
@@ -80,7 +155,7 @@ var ErrStreamJSONLineTooLong = errors.New("provider: stream-json line exceeded 1
 ```
 
 <a name="DefaultWatchdogConfig"></a>
-## func [DefaultWatchdogConfig](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/watchdog.go#L54>)
+## func [DefaultWatchdogConfig](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/watchdog.go#L55>)
 
 ```go
 func DefaultWatchdogConfig() agent.WatchdogConfig
@@ -89,7 +164,7 @@ func DefaultWatchdogConfig() agent.WatchdogConfig
 DefaultWatchdogConfig returns a WatchdogConfig seeded with DefaultStallTimeout and DefaultPromptPatterns. Runners call this \(rather than constructing agent.WatchdogConfig\{\} directly\) so every provider gets the same baseline prompt/stall detection unless a caller has a reason to override it. Use this ONLY for providers whose output is free\-form pane text where a raw interactive prompt could actually appear \(see StreamJSONWatchdogConfig for the structured\-output case\).
 
 <a name="StreamJSONWatchdogConfig"></a>
-## func [StreamJSONWatchdogConfig](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/watchdog.go#L70>)
+## func [StreamJSONWatchdogConfig](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/watchdog.go#L71>)
 
 ```go
 func StreamJSONWatchdogConfig() agent.WatchdogConfig
@@ -183,38 +258,38 @@ type BindingConfig struct {
 ```
 
 <a name="ClaudeRunner"></a>
-## type [ClaudeRunner](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/claude.go#L30>)
+## type [ClaudeRunner](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/claude.go#L29>)
 
-ClaudeRunner executes a single \`claude \-p\` turn under Ralph's own pty via internal/agent, per spec §2/§3: Ralph owns the pty \(agent.Start\), the pane/output stream is for human/watchdog observation, and the structured result is read back from a file Ralph passes to the CLI — never scraped from the rendered pane.
+ClaudeRunner executes a single \`claude \-p\` turn under Ralph's own pty via internal/agent, per spec §2/§3: Ralph owns the pty \(agent.Start\), the pane/output stream is for human/watchdog observation, and the structured stream is framed before being accepted as result data.
 
-claude has no native "write result to a file" flag \(verified against \`claude \-\-help\` on the installed 2.1.211 CLI: \-\-output\-format json/stream\-json both write to stdout only\). So the ResultPath file here is Ralph\-side, not CLI\-native: the runner tees every stdout line \(which IS the stream\-json frames — the same content a human pane would show\) into req's ResultPath file as it arrives, then parses that file's accumulated content for the terminal result frame. This keeps the "never scrape the rendered pane for data" invariant: ResultPath holds the same raw JSON lines the CLI emitted, not a re\-rendered terminal.
+claude has no native "write result to a file" flag \(verified against \`claude \-\-help\` on the installed 2.1.218 CLI: \-\-output\-format json/stream\-json both write to stdout only\). So the ResultPath file here is Ralph\-side, not CLI\-native: the runner tees every stdout line \(which IS the stream\-json frames — the same content a human pane would show\) into req's bounded ResultPath evidence file while parsing the same bounded frames for assistant text and the terminal result. This keeps the "never scrape the rendered pane for data" invariant: ResultPath holds the same raw JSON lines the CLI emitted, not a re\-rendered terminal.
 
 ```go
 type ClaudeRunner struct{}
 ```
 
 <a name="ClaudeRunner.Run"></a>
-### func \(ClaudeRunner\) [Run](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/claude.go#L37>)
+### func \(ClaudeRunner\) [Run](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/claude.go#L47>)
 
 ```go
 func (ClaudeRunner) Run(ctx context.Context, binding Binding, req Request) (Result, error)
 ```
 
-Run spawns \`claude \-p \-\-input\-format stream\-json \-\-output\-format stream\-json\` under agent.Start, feeds req.UserPrompt on stdin via a one\-shot input file \(claude in \-\-input\-format stream\-json mode reads a JSON\-line user message from stdin\), tees stdout into a ResultPath file, and parses the terminal result frame from that file for Usage.
+Run spawns \`claude \-p \-\-input\-format stream\-json \-\-output\-format stream\-json\` under agent.Start, feeds req.UserPrompt on stdin via a one\-shot input file \(claude in \-\-input\-format stream\-json mode reads a JSON\-line user message from stdin\), tees stdout into a bounded ResultPath evidence file, and parses the terminal result frame for Usage.
 
 <a name="CodexRunner"></a>
-## type [CodexRunner](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/codex.go#L27>)
+## type [CodexRunner](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/codex.go#L23>)
 
 CodexRunner executes a single \`codex exec\` turn.
 
-codex, like claude/opencode, now runs under Ralph's own pty via internal/agent so its pane/stream goes through the same superviseAgent\-enforced watchdog \(spec §1's never\-block control invariant\): a stalled or \(despite \-\-dangerously\-bypass\-approvals\-and\-sandbox\) unexpectedly interactive codex process is killed rather than left to hang, exactly like claude/opencode. codex's own native result channel — the \-\-output\-last\-message file — is unaffected: it is still the authoritative source for AssistantOutput, read back from disk after the process exits. The pty pane output itself carries no structured result for codex \(unlike claude/opencode's stream\-json\), so onLine here has nothing to parse; it exists purely so superviseAgent's watchdog has output to observe for stall/prompt detection.
+Codex runs under Ralph's own pty via internal/agent so its JSONL stream goes through the superviseAgent\-enforced watchdog \(spec §1's never\-block control invariant\). The \-\-output\-last\-message file remains the sole success\-result channel. On failure, only the documented error.message fields from "error" and "turn.failed" JSONL events are inspected transiently and mapped to a closed set of static failure categories. Provider text, arbitrary terminal output, and partial last\-message files are never promoted into errors.
 
 ```go
 type CodexRunner struct{}
 ```
 
 <a name="CodexRunner.Run"></a>
-### func \(CodexRunner\) [Run](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/codex.go#L30>)
+### func \(CodexRunner\) [Run](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/codex.go#L63>)
 
 ```go
 func (CodexRunner) Run(ctx context.Context, binding Binding, req Request) (Result, error)
@@ -293,26 +368,26 @@ const (
 ```
 
 <a name="OpencodeRunner"></a>
-## type [OpencodeRunner](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/opencode.go#L31>)
+## type [OpencodeRunner](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/opencode.go#L33>)
 
 OpencodeRunner executes a single \`opencode run \-\-format json\` turn under Ralph's own pty via internal/agent, per spec §9 \("opencode bound via its local \`run\` path only"\) and §3 \(hybrid I/O\).
 
 Verified against the installed \`opencode\` 1.18.3 CLI on 2026\-07\-16: \`opencode run \[message..\] \-\-format json\` emits one JSON object per line on stdout \(never a file — there is no output\-file flag\), each with a top\-level "type": "step\_start" | "text" | "step\_finish" | others. The assistant reply lives in \`type":"text"\` frames' part.text; token/cost usage lives in the \`type":"step\_finish"\` frame's part.tokens \(input/output/cache.read\) and part.cost. \`\-\-session\`/\`\-\-continue\` resumes a session, \`\-\-variant\` sets reasoning effort, \`\-\-dir\` sets the working directory, \`\-\-model\` takes \`provider/model\`.
 
-Like ClaudeRunner, there is no CLI\-native result\-file flag, so ResultPath is Ralph\-side: the runner tees recognized JSON frames from the pty's Output\(\) into the ResultPath file as they arrive, then parses the accumulated file for the terminal step\_finish frame's usage.
+Like ClaudeRunner, there is no CLI\-native result\-file flag, so ResultPath is Ralph\-side: the runner tees recognized JSON frames from the pty's Output\(\) into a bounded ResultPath evidence file while parsing every text and step\_finish frame. It consumes until the CLI exits naturally after session idle, then validates the final step reason.
 
 ```go
 type OpencodeRunner struct{}
 ```
 
 <a name="OpencodeRunner.Run"></a>
-### func \(OpencodeRunner\) [Run](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/opencode.go#L35>)
+### func \(OpencodeRunner\) [Run](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/opencode.go#L54>)
 
 ```go
 func (OpencodeRunner) Run(ctx context.Context, binding Binding, req Request) (Result, error)
 ```
 
-Run spawns \`opencode run \<prompt\> \-\-format json\` and blocks until the step\_finish frame \(or process exit\) closes the turn.
+Run spawns \`opencode run \<prompt\> \-\-format json\` and blocks until the CLI exits naturally. A step\_finish with reason=tool\-calls is an intermediate model step; OpenCode 1.18.3 closes the actual run only after session.status becomes idle, so Ralph must consume the complete stream.
 
 <a name="Request"></a>
 ## type [Request](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/provider.go#L26-L34>)
@@ -367,7 +442,7 @@ NewRunner returns the runtime implementation for a provider type.
 <a name="Usage"></a>
 ## type [Usage](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/provider.go#L45-L50>)
 
-Usage captures the token/cost accounting for one provider turn. Fields are zero when the provider does not report them. Coverage today: the claude runner populates Usage from the stream\-json result frame; codex and declarative bindings report zero \(their CLIs surface usage differently and are not yet parsed\). CostUSD is authoritative when non\-zero; the runtime accumulates it for spend\-cap enforcement, so a capped variant on an unreported provider still requires a cap value but its cost is not yet metered. Extending codex parsing is the follow\-up to close that gap.
+Usage captures the token/cost accounting for one provider turn. Fields are zero when the provider does not report them. Coverage today: the claude and opencode runners populate Usage from their stream\-json frames; codex and declarative bindings report zero \(their CLIs surface usage differently and are not yet parsed\). CostUSD is authoritative when non\-zero; the runtime accumulates it for spend\-cap enforcement, so a capped variant on an unreported provider still requires a cap value but its cost is not yet metered. Extending codex parsing is the follow\-up to close that gap.
 
 ```go
 type Usage struct {

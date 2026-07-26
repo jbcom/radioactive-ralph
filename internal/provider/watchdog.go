@@ -15,7 +15,8 @@ import (
 // signal (an interactive prompt or a stall) that means it can no longer be
 // trusted to make forward progress non-interactively. superviseAgent ALWAYS
 // kills the agent before returning this error — callers must never wait on it
-// themselves.
+// themselves. Prompt failures use a static reason and never interpolate the
+// observed terminal line, which may contain prompts or credentials.
 var ErrAgentBlocked = errors.New("provider: agent blocked (killed by watchdog)")
 
 // DefaultStallTimeout is the default ceiling on how long superviseAgent will
@@ -82,20 +83,17 @@ func StreamJSONWatchdogConfig() agent.WatchdogConfig {
 // parsing keeps working exactly as before), while agent.Watch classifies
 // each line and watches for a stall.
 //
-// The moment agent.Watch emits Prompt or Stall,
-// superviseAgent immediately calls a.Kill() and returns an error wrapping
-// ErrAgentBlocked with the triggering detail — it NEVER waits for the
-// agent to finish on its own once one of those signals fires. This is the
+// The moment agent.Watch emits Prompt or Stall, superviseAgent synchronously
+// terminates, reaps, and joins the Agent before returning an error wrapping
+// ErrAgentBlocked with a fixed reason. This is the
 // enforcement the orchestrator's ctx-timeout wrapper (dispatchWorker) could
 // not provide on its own: that timeout only bounds total wall-clock time,
 // it cannot detect an interactive prompt and kill early, nor tell a
 // stalled-but-not-yet-timed-out CLI apart from one still working.
 //
-// onLine returns true to tell superviseAgent the caller is done (e.g. it
-// just parsed the CLI's own terminal result frame and has no reason to keep
-// reading further pane output): superviseAgent then kills the agent — the
-// turn is already complete, so there's no reason to keep the process or the
-// watchdog goroutine running — and returns nil. Passing a nil onLine, or
+// onLine returns true to tell superviseAgent the caller parsed a terminal
+// result frame. That is only a candidate success: superviseAgent terminates and
+// joins the Agent, and returns nil only if reclamation succeeded. Passing a nil onLine, or
 // one that never returns true, makes superviseAgent run until a.Output()
 // closes naturally (the agent exited on its own).
 //
@@ -104,7 +102,57 @@ func StreamJSONWatchdogConfig() agent.WatchdogConfig {
 // signals it is done. It returns ctx.Err() if ctx is canceled first (also
 // killing the agent, so a caller-side timeout/cancel still results in a
 // dead process rather than an orphan).
+type agentConvergence struct {
+	terminateAndWait func(*agent.Agent) error
+	wait             func(*agent.Agent) error
+}
+
+func defaultAgentConvergence() agentConvergence {
+	return agentConvergence{
+		terminateAndWait: func(a *agent.Agent) error { return a.TerminateAndWait() },
+		wait:             func(a *agent.Agent) error { return a.Wait() },
+	}
+}
+
 func superviseAgent(ctx context.Context, a *agent.Agent, cfg agent.WatchdogConfig, onLine func([]byte) (done bool)) error {
+	return superviseAgentWithConvergence(ctx, a, cfg, onLine, defaultAgentConvergence())
+}
+
+func superviseAgentWithDiscarded(
+	ctx context.Context,
+	a *agent.Agent,
+	cfg agent.WatchdogConfig,
+	onLine func([]byte) (done bool),
+	onDiscarded func([]byte) (done bool),
+) error {
+	return superviseAgentWithCallbacks(
+		ctx,
+		a,
+		cfg,
+		onLine,
+		onDiscarded,
+		defaultAgentConvergence(),
+	)
+}
+
+func superviseAgentWithConvergence(
+	ctx context.Context,
+	a *agent.Agent,
+	cfg agent.WatchdogConfig,
+	onLine func([]byte) (done bool),
+	convergence agentConvergence,
+) error {
+	return superviseAgentWithCallbacks(ctx, a, cfg, onLine, nil, convergence)
+}
+
+func superviseAgentWithCallbacks(
+	ctx context.Context,
+	a *agent.Agent,
+	cfg agent.WatchdogConfig,
+	onLine func([]byte) (done bool),
+	onDiscarded func([]byte) (done bool),
+	convergence agentConvergence,
+) error {
 	if cfg.StallTimeout <= 0 {
 		cfg.StallTimeout = DefaultStallTimeout
 	}
@@ -115,45 +163,66 @@ func superviseAgent(ctx context.Context, a *agent.Agent, cfg agent.WatchdogConfi
 	// defaults would re-introduce the false-kill-on-JSON-content bug for
 	// stream-json providers.
 
-	// Run Watch under a child context we cancel on EVERY return. When we return
-	// via the onLine-done path (or a kill), we stop reading sigs — but the Watch
-	// goroutine keeps emitting (remaining buffered pane lines + the terminal
-	// Exited signal) into a 16-buffered channel nobody drains, and blocks on its
-	// emit once that buffer fills. agent.Watch's emit selects on ctx.Done(), so
-	// cancelling this child unblocks and reaps that goroutine (and the pty fd it
-	// keeps referenced) immediately — instead of leaking it until the CALLER's
-	// ctx cancels, which for a long-lived caller (e.g. the genesis refine loop
-	// reusing one ctx across many rounds) is an unbounded per-turn leak.
+	// Run Watch under a child context we cancel on EVERY return. Its signal
+	// channel is deliberately unbuffered to avoid a second retained-output
+	// queue, so cancellation is also the release path if we return while Watch
+	// is waiting for downstream admission.
 	watchCtx, cancelWatch := context.WithCancel(ctx)
 	defer cancelWatch()
 
 	sigs := agent.Watch(watchCtx, a, cfg)
+	terminate := func(primary error) error {
+		convergenceErr := convergence.terminateAndWait(a)
+		// Cancellation can race the terminal frame or occur inside a slow
+		// convergence implementation. Recheck only after the process has
+		// converged so neither race can be laundered into success.
+		return errors.Join(primary, convergenceErr, ctx.Err())
+	}
+	wait := func(primary error) error {
+		convergenceErr := convergence.wait(a)
+		return errors.Join(primary, convergenceErr, ctx.Err())
+	}
 	for {
 		select {
 		case sig, ok := <-sigs:
+			// watchCtx is a child of ctx, so caller cancellation may close sigs
+			// in the same scheduler turn as this receive. Preserve the caller's
+			// context error instead of misreading that close as a clean agent
+			// exit and letting a runner consume a missing/partial result file.
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return terminate(ctxErr)
+			}
 			if !ok {
 				// agent.Watch's channel closes only after it observes
 				// a.Output() close (Exited) or ctx cancellation; either way
 				// there is nothing left to supervise.
-				return nil
+				return wait(nil)
 			}
 			switch sig.Kind {
 			case agent.Prompt, agent.Stall:
-				_ = a.Kill()
-				return fmt.Errorf("%w: %s", ErrAgentBlocked, blockedReason(sig))
+				return terminate(fmt.Errorf("%w: %s", ErrAgentBlocked, blockedReason(sig)))
 			case agent.Progress:
-				if onLine != nil && len(sig.Detail) > 0 {
-					if onLine([]byte(sig.Detail)) {
-						_ = a.Kill()
-						return nil
+				callback := onLine
+				if sig.Discarded {
+					callback = onDiscarded
+				}
+				if callback != nil && len(sig.Line) > 0 {
+					done := callback(sig.Line)
+					// The callback is application code and may take long enough
+					// for cancellation to win, or cancel ctx itself. Check before
+					// accepting its terminal-frame decision.
+					if ctxErr := ctx.Err(); ctxErr != nil {
+						return terminate(ctxErr)
+					}
+					if done {
+						return terminate(nil)
 					}
 				}
 			case agent.Exited:
-				return nil
+				return wait(nil)
 			}
 		case <-ctx.Done():
-			_ = a.Kill()
-			return ctx.Err()
+			return terminate(ctx.Err())
 		}
 	}
 }
@@ -163,7 +232,7 @@ func superviseAgent(ctx context.Context, a *agent.Agent, cfg agent.WatchdogConfi
 func blockedReason(sig agent.Signal) string {
 	switch sig.Kind {
 	case agent.Prompt:
-		return fmt.Sprintf("interactive prompt detected: %q", sig.Detail)
+		return "interactive prompt detected"
 	case agent.Stall:
 		return "no output before stall timeout"
 	default:

@@ -15,33 +15,119 @@ Package agent runs a single AI\-agent CLI subprocess under Ralph's own pty, so R
 
 ## Index
 
+- [Constants](<#constants>)
 - [Variables](<#variables>)
+- [func RetentionBudgetForLineBytes\(lineBytes int\) int](<#RetentionBudgetForLineBytes>)
 - [func Watch\(ctx context.Context, a \*Agent, cfg WatchdogConfig\) \<\-chan Signal](<#Watch>)
 - [type Agent](<#Agent>)
   - [func Start\(ctx context.Context, opts Options\) \(\*Agent, error\)](<#Start>)
+  - [func \(a \*Agent\) Activity\(\) \<\-chan time.Time](<#Agent.Activity>)
+  - [func \(a \*Agent\) DiscardedOutput\(\) \<\-chan \[\]byte](<#Agent.DiscardedOutput>)
   - [func \(a \*Agent\) Done\(\) \<\-chan struct\{\}](<#Agent.Done>)
   - [func \(a \*Agent\) ExitErr\(\) error](<#Agent.ExitErr>)
   - [func \(a \*Agent\) Kill\(\) error](<#Agent.Kill>)
   - [func \(a \*Agent\) Output\(\) \<\-chan \[\]byte](<#Agent.Output>)
+  - [func \(a \*Agent\) OutputErr\(\) error](<#Agent.OutputErr>)
   - [func \(a \*Agent\) PID\(\) int](<#Agent.PID>)
+  - [func \(a \*Agent\) TerminateAndWait\(\) error](<#Agent.TerminateAndWait>)
   - [func \(a \*Agent\) Wait\(\) error](<#Agent.Wait>)
   - [func \(a \*Agent\) WriteInput\(b \[\]byte\) error](<#Agent.WriteInput>)
 - [type Options](<#Options>)
+- [type OversizeOutputPolicy](<#OversizeOutputPolicy>)
 - [type Signal](<#Signal>)
 - [type SignalKind](<#SignalKind>)
 - [type WatchdogConfig](<#WatchdogConfig>)
 
 
+## Constants
+
+<a name="DefaultMaxOutputRetentionBytes"></a>
+
+```go
+const (
+
+    // DefaultMaxOutputRetentionBytes is the single aggregate bound for provider
+    // bytes retained by the fixed read buffer, callback-owned line, line awaiting
+    // Watch admission, current line, bounded slice-growth overlap, and three
+    // concurrently pipeline-owned discarded prefixes. It yields the historical
+    // 1 MiB retained-line threshold.
+    DefaultMaxOutputRetentionBytes = outputReadBufferBytes +
+        discardedPrefixRetentionSlots*maxDiscardedOutputPrefixBytes +
+        outputRetentionSlots*(defaultRetainedLineBytes+2)
+
+    // MaximumMaxOutputRetentionBytes is the hard process-local aggregate
+    // retention ceiling accepted through Options.
+    MaximumMaxOutputRetentionBytes = outputReadBufferBytes +
+        discardedPrefixRetentionSlots*maxDiscardedOutputPrefixBytes +
+        outputRetentionSlots*(maximumRetainedLineBytes+2)
+)
+```
+
 ## Variables
 
-<a name="ErrPTYUnsupported"></a>ErrPTYUnsupported is returned by Start on platforms where creack/pty cannot allocate a pseudo\-terminal — in practice, native Windows, where pty.Start returns pty.ErrUnsupported because there is no ConPTY\-backed implementation. Ralph's control model requires owning the agent's pty, so on Windows operators run Ralph under WSL. Callers can match this with errors.Is to distinguish "this host can't host agents" from a transient spawn failure.
+<a name="ErrOutputLineTooLong"></a>Output\-stream errors are static so terminal contents never leak through the control path.
+
+```go
+var (
+    ErrOutputLineTooLong          = errors.New("agent: output line exceeded retention limit")
+    ErrObservedOutputTooLarge     = errors.New("agent: observed output exceeded cumulative limit")
+    ErrOutputRead                 = errors.New("agent: output stream read failed")
+    ErrInvalidOutputRetention     = errors.New("agent: invalid output retention budget")
+    ErrInvalidObservedOutputLimit = errors.New("agent: invalid observed output limit")
+    ErrInvalidOversizePolicy      = errors.New("agent: invalid oversize output policy")
+)
+```
+
+<a name="ErrPTYUnsupported"></a>ErrPTYUnsupported is returned by Start on platforms where creack/pty cannot allocate a pseudo\-terminal. Native Windows operators run Ralph under WSL.
 
 ```go
 var ErrPTYUnsupported = fmt.Errorf("agent: pty allocation is unsupported on %s; run radioactive-ralph under WSL on Windows", runtime.GOOS)
 ```
 
+<a name="ErrProcessExitObservation"></a>ErrProcessExitObservation is a static boundary for a failed kernel exit observer. Ralph explicitly terminates and reaps the child before returning this failure whenever direct\-child termination succeeds.
+
+```go
+var ErrProcessExitObservation = errors.New("agent: process-exit observation failed")
+```
+
+<a name="ErrProcessExitObservationUnsupported"></a>ErrProcessExitObservationUnsupported reports a host on which Ralph cannot observe child exit without reaping it.
+
+```go
+var ErrProcessExitObservationUnsupported = fmt.Errorf(
+    "agent: non-reaping process-exit observation is unsupported on %s",
+    runtime.GOOS,
+)
+```
+
+<a name="ErrProcessSessionCleanup"></a>ErrProcessSessionCleanup means the direct child reached a terminal outcome but Ralph could not prove that every member of the PTY's original process session was reclaimed. A descendant that creates another session with setsid\(2\) is outside this boundary and cannot be discovered portably.
+
+```go
+var ErrProcessSessionCleanup = errors.New("agent: process-session cleanup failed")
+```
+
+<a name="ErrProcessTermination"></a>ErrProcessTermination means neither group termination nor the stable direct process handle could prove termination. The Agent releases its own control goroutines and returns this explicit failure instead of blocking forever or claiming that the child was reaped.
+
+```go
+var ErrProcessTermination = errors.New("agent: direct-child termination failed")
+```
+
+<a name="ErrProcessTreeCleanup"></a>ErrProcessTreeCleanup is the compatibility name retained for callers of the v5 process\-group contract. It matches ErrProcessSessionCleanup with errors.Is.
+
+```go
+var ErrProcessTreeCleanup = ErrProcessSessionCleanup
+```
+
+<a name="RetentionBudgetForLineBytes"></a>
+## func [RetentionBudgetForLineBytes](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/agent/output_retention.go#L58>)
+
+```go
+func RetentionBudgetForLineBytes(lineBytes int) int
+```
+
+RetentionBudgetForLineBytes returns the aggregate transport budget needed for a valid retained\-line threshold, or zero when the threshold is outside the supported range.
+
 <a name="Watch"></a>
-## func [Watch](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/agent/watchdog.go#L49>)
+## func [Watch](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/agent/watchdog.go#L56>)
 
 ```go
 func Watch(ctx context.Context, a *Agent, cfg WatchdogConfig) <-chan Signal
@@ -50,7 +136,7 @@ func Watch(ctx context.Context, a *Agent, cfg WatchdogConfig) <-chan Signal
 Watch observes an agent and emits Signals. It NEVER blocks waiting on the agent: a prompt pattern or a stall is surfaced immediately so the caller can kill\-and\-reclaim. The channel closes when the agent exits.
 
 <a name="Agent"></a>
-## type [Agent](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/agent/agent.go#L47-L88>)
+## type [Agent](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/agent/agent.go#L95-L135>)
 
 Agent is a pty\-owned agent subprocess.
 
@@ -61,7 +147,7 @@ type Agent struct {
 ```
 
 <a name="Start"></a>
-### func [Start](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/agent/agent.go#L91>)
+### func [Start](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/agent/agent.go#L138>)
 
 ```go
 func Start(ctx context.Context, opts Options) (*Agent, error)
@@ -69,71 +155,107 @@ func Start(ctx context.Context, opts Options) (*Agent, error)
 
 Start launches opts.Command under a pty and begins streaming its output.
 
+<a name="Agent.Activity"></a>
+### func \(\*Agent\) [Activity](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/agent/output.go#L377>)
+
+```go
+func (a *Agent) Activity() <-chan time.Time
+```
+
+Activity is a content\-free liveness stream. Its timestamp records when the underlying pty read returned bytes, including while a partial or discarded line is still being drained. The timestamp prevents downstream backpressure from turning an old queued pulse into a fresh stall\-timeout lease.
+
+<a name="Agent.DiscardedOutput"></a>
+### func \(\*Agent\) [DiscardedOutput](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/agent/output.go#L383>)
+
+```go
+func (a *Agent) DiscardedOutput() <-chan []byte
+```
+
+DiscardedOutput is an unbuffered stream of bounded prefixes from records drained under DiscardOversizeOutput. Prefixes are intended only for provider\-specific top\-level framing classification. They are never pane output, never prompt\-matched, and close before Output.
+
 <a name="Agent.Done"></a>
-### func \(\*Agent\) [Done](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/agent/agent.go#L211>)
+### func \(\*Agent\) [Done](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/agent/agent.go#L379>)
 
 ```go
 func (a *Agent) Done() <-chan struct{}
 ```
 
-Done is closed when the process exits.
+Done closes after Output and all reader\-side resources are released. A direct\-child termination failure also closes Done, but Wait returns ErrProcessTermination and does not claim the process was reclaimed.
 
 <a name="Agent.ExitErr"></a>
-### func \(\*Agent\) [ExitErr](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/agent/agent.go#L252>)
+### func \(\*Agent\) [ExitErr](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/agent/agent.go#L408>)
 
 ```go
 func (a *Agent) ExitErr() error
 ```
 
-ExitErr returns the subprocess's exit status once it has exited on its own \(nil if it exited 0\). It returns nil while the process is still running and nil when the process was KILLED by this Agent \(a signal\-death from Kill / ctx\-cancel / a stall\-or\-prompt watchdog kill is not a real failure — the caller already knows it forced the exit\). Call only after Output\(\) closes / Done\(\) fires. This lets a runner without a structured terminal frame \(codex\) distinguish a clean completion from a failed CLI exit, rather than treating any exit as success.
+ExitErr returns only a naturally exited child's cmd.Wait status. Forced or unrecoverable termination paths return nil because their cause is reported by Kill, TerminateAndWait, or Wait.
 
 <a name="Agent.Kill"></a>
-### func \(\*Agent\) [Kill](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/agent/agent.go#L217>)
+### func \(\*Agent\) [Kill](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/agent/agent.go#L384>)
 
 ```go
 func (a *Agent) Kill() error
 ```
 
-Kill terminates the process immediately and releases the pty. Killing an agent that already exited on its own is a no\-op success — a normal shutdown that races an agent finishing its task must not surface a spurious "already closed" error.
+Kill explicitly terminates and reaps the child when termination succeeds. Prefer TerminateAndWait at provider boundaries so reader/observer goroutines are also joined and cleanup errors cannot be ignored.
 
 <a name="Agent.Output"></a>
-### func \(\*Agent\) [Output](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/agent/agent.go#L197>)
+### func \(\*Agent\) [Output](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/agent/agent.go#L364>)
 
 ```go
 func (a *Agent) Output() <-chan []byte
 ```
 
-Output is the line\-oriented output stream; closed when the process exits.
+Output is the unbuffered line\-oriented output stream. PTY EOF ends output collection but does not close this channel until process control reaches a natural or explicit terminal result.
+
+<a name="Agent.OutputErr"></a>
+### func \(\*Agent\) [OutputErr](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/agent/output.go#L388>)
+
+```go
+func (a *Agent) OutputErr() error
+```
+
+OutputErr returns a bounded\-reader or process\-tree cleanup failure, if one occurred. It never includes terminal contents. Callers may read it once Output closes; the mutex also makes earlier diagnostic reads safe.
 
 <a name="Agent.PID"></a>
-### func \(\*Agent\) [PID](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/agent/agent.go#L264>)
+### func \(\*Agent\) [PID](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/agent/agent.go#L411>)
 
 ```go
 func (a *Agent) PID() int
 ```
 
-PID returns the subprocess PID \(0 before start / after release\).
+PID returns the direct child's PID only while its lifecycle is running.
+
+<a name="Agent.TerminateAndWait"></a>
+### func \(\*Agent\) [TerminateAndWait](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/agent/agent.go#L389>)
+
+```go
+func (a *Agent) TerminateAndWait() error
+```
+
+TerminateAndWait is the provider cleanup boundary. It takes explicit termination ownership, abandons unread output, and joins every Agent\-owned goroutine. It never reports success unless reclamation was proven.
 
 <a name="Agent.Wait"></a>
-### func \(\*Agent\) [Wait](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/agent/agent.go#L242>)
+### func \(\*Agent\) [Wait](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/agent/agent.go#L398>)
 
 ```go
 func (a *Agent) Wait() error
 ```
 
-Wait blocks until the process exits.
+Wait abandons unread Output and joins Agent\-owned goroutines after a natural or explicit terminal\-control result. It is passive: PTY EOF alone never authorizes termination. Observer, tree\-cleanup, termination, and output failures are joined in its return value.
 
 <a name="Agent.WriteInput"></a>
-### func \(\*Agent\) [WriteInput](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/agent/agent.go#L205>)
+### func \(\*Agent\) [WriteInput](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/agent/agent.go#L370>)
 
 ```go
 func (a *Agent) WriteInput(b []byte) error
 ```
 
-WriteInput writes raw bytes to the agent's pty stdin. Per spec §1, agents run non\-interactively and need little/no input; this exists for the providers that drive a CLI's stdin\-based protocol \(e.g. \`claude \-p \-\-input\-format stream\-json\`, which reads one JSON\-line user message per turn\) rather than passing the whole prompt as an argv/file. Direct Write\(\) to the ptmx, per spec §2.
+WriteInput delivers the complete byte slice to the PTY or returns an error. The PTY is nonblocking so lifecycle failure can interrupt reads; writes therefore retry short/EAGAIN results behind readiness polling and honor caller cancellation or a terminal process result.
 
 <a name="Options"></a>
-## type [Options](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/agent/agent.go#L29-L44>)
+## type [Options](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/agent/agent.go#L54-L87>)
 
 Options configures one agent subprocess.
 
@@ -145,26 +267,68 @@ type Options struct {
     Env        []string
     ResultPath string // file the CLI is told to write its structured result to
 
+    // MaxOutputRetentionBytes bounds the aggregate provider-output bytes retained
+    // inside the reader/watch pipeline. Zero selects
+    // DefaultMaxOutputRetentionBytes. The line-retention threshold is derived
+    // from this single budget; it is not a provider protocol-size assertion.
+    MaxOutputRetentionBytes int
+
+    // MaxObservedOutputBytes bounds cumulative raw bytes read from the pty,
+    // including bytes in partial or discarded oversized lines. Zero disables
+    // this work/liveness ceiling.
+    MaxObservedOutputBytes int64
+
+    // OversizeOutputPolicy chooses whether a line larger than the derived
+    // retention threshold terminates the agent or is drained and discarded.
+    OversizeOutputPolicy OversizeOutputPolicy
+
     // DisableEcho turns OFF the pty's terminal echo before the child starts.
-    // Providers that drive the CLI over stdin (claude/opencode stream-json)
-    // MUST set this: otherwise the pty echoes every stdin line back onto the
-    // output stream, where the never-block watchdog pattern-matches the
-    // operator's OWN prompt text ("do you want to…", "approve", …) as an
-    // interactive prompt and kills the turn. Disabling echo removes the
-    // echoed line at the source. No effect on native Windows (no pty there).
     DisableEcho bool
+    // contains filtered or unexported fields
 }
 ```
 
+<a name="OversizeOutputPolicy"></a>
+## type [OversizeOutputPolicy](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/agent/output_retention.go#L10>)
+
+OversizeOutputPolicy controls what happens when one newline\-delimited output record exceeds its share of the aggregate retention budget.
+
+```go
+type OversizeOutputPolicy uint8
+```
+
+<a name="RejectOversizeOutput"></a>
+
+```go
+const (
+    // RejectOversizeOutput terminates the agent with ErrOutputLineTooLong.
+    // It is the safe default for providers whose result itself is line framed.
+    RejectOversizeOutput OversizeOutputPolicy = iota
+
+    // DiscardOversizeOutput continues draining the record without retaining or
+    // emitting it as ordinary Output. A separately bounded classifier prefix is
+    // exposed through DiscardedOutput. Use only for observational streams with a
+    // separate authoritative result channel.
+    DiscardOversizeOutput
+)
+```
+
 <a name="Signal"></a>
-## type [Signal](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/agent/watchdog.go#L25-L28>)
+## type [Signal](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/agent/watchdog.go#L25-L35>)
 
 Signal is one watchdog observation about an agent.
 
 ```go
 type Signal struct {
-    Kind   SignalKind
-    Detail string
+    Kind SignalKind
+    // Line is present only for Progress. It shares the transport's retained
+    // byte slice; Watch neither converts nor copies arbitrary provider output.
+    // Prompt, Stall, and Exited signals are content-free.
+    Line []byte
+    // Discarded marks Line as a bounded prefix of a record drained under
+    // DiscardOversizeOutput. It is for provider framing only and was not
+    // retained as ordinary pane output.
+    Discarded bool
 }
 ```
 
@@ -189,7 +353,7 @@ const (
 ```
 
 <a name="WatchdogConfig"></a>
-## type [WatchdogConfig](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/agent/watchdog.go#L31-L44>)
+## type [WatchdogConfig](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/agent/watchdog.go#L38-L51>)
 
 WatchdogConfig tunes stall and prompt detection.
 

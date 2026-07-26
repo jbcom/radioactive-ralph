@@ -9,13 +9,45 @@ package agent
 
 import (
 	"context"
+	"errors"
+	"io"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
 )
+
+type alwaysFailReader struct{}
+
+func (alwaysFailReader) Read([]byte) (int, error) {
+	return 0, errors.New("sensitive device failure")
+}
+
+type sizedLineReader struct {
+	remaining int
+	newline   bool
+}
+
+func (r *sizedLineReader) Read(p []byte) (int, error) {
+	if r.remaining > 0 {
+		n := min(len(p), r.remaining)
+		for i := range n {
+			p[i] = 'x'
+		}
+		r.remaining -= n
+		return n, nil
+	}
+	if !r.newline {
+		p[0] = '\n'
+		r.newline = true
+		return 1, nil
+	}
+	return 0, io.EOF
+}
 
 // TestKillReapsGrandchildProcess proves Kill() takes down the whole process
 // GROUP, not just the direct child: an agent that spawns a long-lived grandchild
@@ -85,6 +117,9 @@ func TestAgentStreamsOutputAndExits(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}
+	if a.PID() <= 0 {
+		t.Fatalf("PID = %d while running, want > 0", a.PID())
+	}
 	var got strings.Builder
 	timeout := time.After(5 * time.Second)
 	for {
@@ -102,8 +137,489 @@ done:
 	if !strings.Contains(got.String(), "hello") || !strings.Contains(got.String(), "world") {
 		t.Fatalf("output = %q, want hello+world", got.String())
 	}
-	if a.PID() <= 0 {
-		t.Errorf("PID = %d, want > 0", a.PID())
+	if a.PID() != 0 {
+		t.Errorf("PID = %d after reaping, want 0", a.PID())
+	}
+}
+
+func TestAgentConfiguredLargeLineIsDrained(t *testing.T) {
+	const payloadBytes = 2 << 20
+	a, err := Start(context.Background(), Options{
+		Command:                 "python3",
+		Args:                    []string{"-c", `import sys; sys.stdout.write("x" * (2 << 20) + "\n"); sys.stdout.flush()`},
+		MaxOutputRetentionBytes: RetentionBudgetForLineBytes(payloadBytes),
+	})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	var got []byte
+	select {
+	case got = <-a.Output():
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out draining configured large output line")
+	}
+	for line := range a.Output() {
+		got = append(got, line...)
+	}
+	if len(got) != payloadBytes+1 {
+		t.Fatalf("large line length = %d, want %d payload bytes plus newline", len(got), payloadBytes+1)
+	}
+	if err := a.OutputErr(); err != nil {
+		t.Fatalf("OutputErr = %v, want nil for legal configured line", err)
+	}
+	if err := a.ExitErr(); err != nil {
+		t.Fatalf("ExitErr = %v, want clean child exit", err)
+	}
+}
+
+func TestWriteInputRetriesMultiMiBBackpressureWithoutBusySpin(t *testing.T) {
+	const payloadBytes = 2 << 20
+	var blocked atomic.Int32
+	a, err := Start(context.Background(), Options{
+		Command: "python3",
+		Args: []string{"-c", `import os,sys,time,tty
+tty.setraw(0)
+os.write(1,b"ready\n")
+time.sleep(.25)
+remaining=` + strconv.Itoa(payloadBytes) + `
+received=0
+while remaining:
+    chunk=os.read(0,min(65536,remaining))
+    if not chunk:
+        break
+    received+=len(chunk)
+    remaining-=len(chunk)
+os.write(1,("\nreceived:%d\n" % received).encode())`},
+		onWriteBlockForTest: func() { blocked.Add(1) },
+	})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	select {
+	case line := <-a.Output():
+		if strings.TrimSpace(string(line)) != "ready" {
+			_ = a.TerminateAndWait()
+			t.Fatalf("first output = %q, want ready", line)
+		}
+	case <-time.After(3 * time.Second):
+		_ = a.TerminateAndWait()
+		t.Fatal("timed out waiting for raw-input child")
+	}
+
+	payload := []byte(strings.Repeat("x", payloadBytes))
+	writeDone := make(chan error, 1)
+	go func() { writeDone <- a.WriteInput(payload) }()
+
+	// The child deliberately does not read for 250ms. The writer must remain
+	// blocked and use the 10ms readiness poll, not spin through EAGAIN.
+	time.Sleep(100 * time.Millisecond)
+	select {
+	case writeErr := <-writeDone:
+		_ = a.TerminateAndWait()
+		t.Fatalf("WriteInput returned before the child read: %v", writeErr)
+	default:
+	}
+	if calls := blocked.Load(); calls == 0 || calls > 30 {
+		_ = a.TerminateAndWait()
+		t.Fatalf("write-block polls after 100ms = %d, want bounded readiness waits", calls)
+	}
+
+	select {
+	case writeErr := <-writeDone:
+		if writeErr != nil {
+			_ = a.TerminateAndWait()
+			t.Fatalf("WriteInput: %v", writeErr)
+		}
+	case <-time.After(10 * time.Second):
+		_ = a.TerminateAndWait()
+		t.Fatal("WriteInput did not deliver the complete multi-MiB payload")
+	}
+
+	var got strings.Builder
+	for line := range a.Output() {
+		got.Write(line)
+	}
+	if err := a.Wait(); err != nil {
+		t.Fatalf("Wait: %v", err)
+	}
+	if !strings.Contains(got.String(), "received:"+strconv.Itoa(payloadBytes)) {
+		t.Fatalf("child output = %q, want complete byte count %d", got.String(), payloadBytes)
+	}
+}
+
+func TestAgentOverLimitKillsReapsAndSurfacesPromptly(t *testing.T) {
+	const limit = 64 << 10
+	a, err := Start(context.Background(), Options{
+		Command: "python3",
+		Args: []string{"-c",
+			`import sys,time; sys.stdout.write("x" * ((64 << 10) + 1)); sys.stdout.flush(); time.sleep(300)`},
+		MaxOutputRetentionBytes: RetentionBudgetForLineBytes(limit),
+	})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	pid := a.PID()
+	start := time.Now()
+	select {
+	case <-a.Done():
+	case <-time.After(3 * time.Second):
+		t.Fatal("over-limit agent was not killed and reaped promptly")
+	}
+	if elapsed := time.Since(start); elapsed > 3*time.Second {
+		t.Fatalf("over-limit agent took %s to terminate", elapsed)
+	}
+	if !errors.Is(a.OutputErr(), ErrOutputLineTooLong) {
+		t.Fatalf("OutputErr = %v, want ErrOutputLineTooLong", a.OutputErr())
+	}
+	if err := a.ExitErr(); err != nil {
+		t.Fatalf("ExitErr = %v, want nil killed semantics after output-contract kill", err)
+	}
+	if pid > 1 {
+		if err := syscall.Kill(pid, 0); err == nil {
+			t.Fatalf("over-limit child pid %d still exists after Done closed", pid)
+		}
+	}
+}
+
+func TestAgentDiscardPolicyDrainsEndlessLineUntilCallerCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	a, err := Start(ctx, Options{
+		Command: "python3",
+		Args: []string{"-u", "-c",
+			`import sys; chunk=b"x"*(64<<10)
+while True:
+ sys.stdout.buffer.write(chunk)
+ sys.stdout.buffer.flush()`},
+		MaxOutputRetentionBytes: RetentionBudgetForLineBytes(4 << 10),
+		OversizeOutputPolicy:    DiscardOversizeOutput,
+	})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	select {
+	case <-a.Activity():
+	case <-time.After(3 * time.Second):
+		t.Fatal("agent did not drain bytes from endless output line")
+	}
+	cancel()
+	select {
+	case <-a.Done():
+	case <-time.After(3 * time.Second):
+		t.Fatal("caller cancellation did not kill and reap endless-output agent")
+	}
+	if err := a.OutputErr(); err != nil {
+		t.Fatalf("OutputErr = %v, want nil for discard-mode cancellation", err)
+	}
+	if err := a.ExitErr(); err != nil {
+		t.Fatalf("ExitErr = %v, want nil forced-kill semantics after caller cancellation", err)
+	}
+	for line := range a.Output() {
+		t.Fatalf("discarded endless line unexpectedly reached Output: %d bytes", len(line))
+	}
+}
+
+func TestAgentObservedOutputCeilingKillsReapsDiscardedEndlessLine(t *testing.T) {
+	const limit = 96 << 10
+	a, err := Start(context.Background(), Options{
+		Command: "sh",
+		Args: []string{"-c", `sleep 300 & printf '%s\n' "$!"; exec python3 -u -c '
+import sys
+chunk=b"x"*(64<<10)
+while True:
+ sys.stdout.buffer.write(chunk)
+ sys.stdout.buffer.flush()
+'`},
+		MaxOutputRetentionBytes: RetentionBudgetForLineBytes(4 << 10),
+		MaxObservedOutputBytes:  limit,
+		OversizeOutputPolicy:    DiscardOversizeOutput,
+	})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	agentPID := a.PID()
+
+	var descendantPID int
+	select {
+	case line := <-a.Output():
+		descendantPID, err = strconv.Atoi(strings.TrimSpace(string(line)))
+		if err != nil || descendantPID <= 1 {
+			_ = a.TerminateAndWait()
+			t.Fatalf("descendant PID line = %q: %v", line, err)
+		}
+	case <-time.After(3 * time.Second):
+		_ = a.TerminateAndWait()
+		t.Fatal("timed out waiting for descendant PID")
+	}
+
+	waitDone := make(chan error, 1)
+	go func() { waitDone <- a.Wait() }()
+	select {
+	case waitErr := <-waitDone:
+		if !errors.Is(waitErr, ErrObservedOutputTooLarge) {
+			t.Fatalf("Wait = %v, want ErrObservedOutputTooLarge", waitErr)
+		}
+	case <-time.After(3 * time.Second):
+		_ = a.TerminateAndWait()
+		t.Fatal("observed-output ceiling did not terminate and join endless output")
+	}
+	if a.OutputErr() != ErrObservedOutputTooLarge {
+		t.Fatalf("OutputErr = %v, want static ErrObservedOutputTooLarge", a.OutputErr())
+	}
+	for line := range a.Output() {
+		t.Fatalf("discarded endless line unexpectedly reached Output: %d bytes", len(line))
+	}
+	requireWaitReleasedAgent(t, a, agentPID)
+	if !waitForPIDGone(descendantPID) {
+		_ = syscall.Kill(descendantPID, syscall.SIGKILL)
+		t.Fatalf("descendant pid %d survived observed-output convergence", descendantPID)
+	}
+}
+
+func TestAgentObservedOutputErrorSurvivesNaturalExitRace(t *testing.T) {
+	const limit = 4 << 10
+	for iteration := range 10 {
+		a, err := Start(context.Background(), Options{
+			Command: "python3",
+			Args: []string{"-c",
+				`import os; os.write(1, b"x" * (` + strconv.Itoa(limit) + ` + 1)); raise SystemExit(23)`},
+			MaxOutputRetentionBytes: RetentionBudgetForLineBytes(8 << 10),
+			MaxObservedOutputBytes:  limit,
+		})
+		if err != nil {
+			t.Fatalf("iteration %d Start: %v", iteration, err)
+		}
+		pid := a.PID()
+		waitErr := a.Wait()
+		if !errors.Is(waitErr, ErrObservedOutputTooLarge) {
+			t.Fatalf(
+				"iteration %d Wait = %v, want ErrObservedOutputTooLarge",
+				iteration,
+				waitErr,
+			)
+		}
+		if a.OutputErr() != ErrObservedOutputTooLarge {
+			t.Fatalf(
+				"iteration %d OutputErr = %v, want static ErrObservedOutputTooLarge",
+				iteration,
+				a.OutputErr(),
+			)
+		}
+		requireWaitReleasedAgent(t, a, pid)
+	}
+}
+
+func TestAgentObservedOutputErrorSurvivesConcurrentCancellation(t *testing.T) {
+	const limit = 4 << 10
+	ctx, cancel := context.WithCancel(context.Background())
+	terminationStarted := make(chan struct{})
+	releaseTermination := make(chan struct{})
+	var startOnce sync.Once
+	var releaseOnce sync.Once
+	release := func() { releaseOnce.Do(func() { close(releaseTermination) }) }
+
+	a, err := Start(ctx, Options{
+		Command: "python3",
+		Args: []string{"-c",
+			`import os,time; os.write(1, b"x" * (` + strconv.Itoa(limit) + ` + 1)); time.sleep(300)`},
+		MaxOutputRetentionBytes: RetentionBudgetForLineBytes(8 << 10),
+		MaxObservedOutputBytes:  limit,
+		terminateTreeForTest: func(process *os.Process) terminationOutcome {
+			startOnce.Do(func() { close(terminationStarted) })
+			<-releaseTermination
+			return terminateProcessTree(process)
+		},
+	})
+	if err != nil {
+		cancel()
+		t.Fatalf("Start: %v", err)
+	}
+	defer func() {
+		release()
+		cancel()
+		_ = a.TerminateAndWait()
+	}()
+
+	select {
+	case <-terminationStarted:
+	case <-time.After(3 * time.Second):
+		t.Fatal("observed-output failure did not begin active termination")
+	}
+	cancel()
+	release()
+
+	waitErr := a.Wait()
+	if !errors.Is(waitErr, ErrObservedOutputTooLarge) {
+		t.Fatalf("Wait = %v, want ErrObservedOutputTooLarge", waitErr)
+	}
+	if a.OutputErr() != ErrObservedOutputTooLarge {
+		t.Fatalf("OutputErr = %v, want static ErrObservedOutputTooLarge", a.OutputErr())
+	}
+}
+
+func TestCallerCancellationMarksAgentExitAsForced(t *testing.T) {
+	for iteration := range 10 {
+		ctx, cancel := context.WithCancel(context.Background())
+		a, err := Start(ctx, Options{
+			Command: "sh",
+			Args:    []string{"-c", "sleep 300"},
+		})
+		if err != nil {
+			cancel()
+			t.Fatalf("iteration %d Start: %v", iteration, err)
+		}
+		cancel()
+		select {
+		case <-a.Done():
+		case <-time.After(3 * time.Second):
+			t.Fatalf("iteration %d caller cancellation did not reap agent", iteration)
+		}
+		if err := a.ExitErr(); err != nil {
+			t.Fatalf("iteration %d ExitErr = %v, want nil caller-forced semantics", iteration, err)
+		}
+	}
+}
+
+func TestNaturalExitRemainsVisibleWhenCancellationComesAfterDone(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	a, err := Start(ctx, Options{
+		Command: "sh",
+		Args:    []string{"-c", "exit 23"},
+	})
+	if err != nil {
+		cancel()
+		t.Fatalf("Start: %v", err)
+	}
+	for range a.Output() {
+		cancel()
+	}
+	<-a.Done()
+	cancel()
+	if err := a.ExitErr(); err == nil {
+		t.Fatal("ExitErr = nil, want natural nonzero exit preserved after later cancellation")
+	}
+}
+
+func TestReadOutputLineContracts(t *testing.T) {
+	t.Run("exact limit and CRLF", func(t *testing.T) {
+		const payload = "123456789012345"
+		line, discarded, err := newOutputLineReader(
+			// payload + CR exactly fills a historical scanner boundary; the
+			// streaming reader must still
+			// normalize the delimiter without counting CR as payload.
+			strings.NewReader(payload+"\r\n"),
+			nil,
+		).nextLine(
+			len(payload),
+			RejectOversizeOutput,
+		)
+		if err != nil {
+			t.Fatalf("readOutputLine: %v", err)
+		}
+		if discarded {
+			t.Fatal("exact-limit line was discarded")
+		}
+		if got := string(line); got != payload+"\n" {
+			t.Fatalf("line = %q, want normalized newline", got)
+		}
+	})
+
+	t.Run("over limit", func(t *testing.T) {
+		_, _, err := newOutputLineReader(
+			strings.NewReader("123456789\n"),
+			nil,
+		).nextLine(
+			8,
+			RejectOversizeOutput,
+		)
+		if !errors.Is(err, ErrOutputLineTooLong) {
+			t.Fatalf("error = %v, want ErrOutputLineTooLong", err)
+		}
+	})
+
+	t.Run("discard drains and preserves next line", func(t *testing.T) {
+		reader := newOutputLineReader(strings.NewReader("123456789\nok\n"), nil)
+		_, discarded, err := reader.nextLine(8, DiscardOversizeOutput)
+		if err != nil || !discarded {
+			t.Fatalf("oversize discard = (%v, %v), want discarded without error", discarded, err)
+		}
+		line, discarded, err := reader.nextLine(8, DiscardOversizeOutput)
+		if err != nil || discarded || string(line) != "ok\n" {
+			t.Fatalf("next line = (%q, %v, %v), want preserved ok line", line, discarded, err)
+		}
+	})
+
+	t.Run("read error is static", func(t *testing.T) {
+		_, _, err := newOutputLineReader(
+			alwaysFailReader{},
+			nil,
+		).nextLine(
+			8,
+			RejectOversizeOutput,
+		)
+		if !errors.Is(err, ErrOutputRead) {
+			t.Fatalf("error = %v, want ErrOutputRead", err)
+		}
+		if strings.Contains(err.Error(), "sensitive device failure") {
+			t.Fatalf("read error leaked source detail: %q", err)
+		}
+	})
+}
+
+func BenchmarkDiscardOversizeOutputLine(b *testing.B) {
+	for _, size := range []int{8 << 20, 64 << 20} {
+		b.Run(strconv.Itoa(size>>20)+"MiB", func(b *testing.B) {
+			b.SetBytes(int64(size + 1))
+			b.ReportAllocs()
+			for b.Loop() {
+				line, discarded, err := newOutputLineReader(
+					&sizedLineReader{remaining: size},
+					nil,
+				).nextLine(
+					64<<10,
+					DiscardOversizeOutput,
+				)
+				if err != nil || !discarded || line != nil {
+					b.Fatalf("discard = (%d bytes, %v, %v), want nil/discarded/nil", len(line), discarded, err)
+				}
+			}
+		})
+	}
+}
+
+func TestAgentRejectsInvalidOutputRetention(t *testing.T) {
+	for _, lineBytes := range []int{-1, 0, maximumRetainedLineBytes + 1} {
+		if got := RetentionBudgetForLineBytes(lineBytes); got != 0 {
+			t.Errorf("RetentionBudgetForLineBytes(%d) = %d, want 0", lineBytes, got)
+		}
+	}
+	for _, budget := range []int{-1, 1, MaximumMaxOutputRetentionBytes + 1} {
+		_, err := Start(context.Background(), Options{
+			Command:                 "sh",
+			MaxOutputRetentionBytes: budget,
+		})
+		if !errors.Is(err, ErrInvalidOutputRetention) {
+			t.Errorf("Start(MaxOutputRetentionBytes=%d) error = %v, want ErrInvalidOutputRetention", budget, err)
+		}
+	}
+	_, err := Start(context.Background(), Options{
+		Command:              "sh",
+		OversizeOutputPolicy: OversizeOutputPolicy(255),
+	})
+	if !errors.Is(err, ErrInvalidOversizePolicy) {
+		t.Errorf("Start(invalid OversizeOutputPolicy) error = %v, want ErrInvalidOversizePolicy", err)
+	}
+	_, err = Start(context.Background(), Options{
+		Command:                "sh",
+		MaxObservedOutputBytes: -1,
+	})
+	if !errors.Is(err, ErrInvalidObservedOutputLimit) {
+		t.Errorf(
+			"Start(MaxObservedOutputBytes=-1) error = %v, want ErrInvalidObservedOutputLimit",
+			err,
+		)
 	}
 }
 
@@ -176,15 +692,14 @@ func TestKillAfterNaturalExitIsNilError(t *testing.T) {
 }
 
 // TestKillUnblocksParkedReadLoop is the regression for the audit's
-// back-pressure finding: readLoop now blocks on the output send rather than
-// silently dropping lines, so a consumer that never reads must not deadlock
-// the reader — Kill must unblock it. We start an agent that emits far more
-// lines than the output buffer (256) and NEVER drain a.Output(); the
-// readLoop parks on a full channel. Kill must return promptly and the done
-// channel must close, proving no goroutine leak.
+// back-pressure finding: readLoop now blocks on the unbuffered output send
+// rather than silently dropping lines, so a consumer that never reads must not
+// deadlock the reader — Kill must unblock it. We start an agent that emits many
+// lines and NEVER drain a.Output(); readLoop parks on admission. Kill must
+// return promptly and Done must close, proving no goroutine leak.
 func TestKillUnblocksParkedReadLoop(t *testing.T) {
-	// Emit ~1000 lines with no consumer so a.out (cap 256) fills and the
-	// readLoop parks on its blocking send.
+	// Emit ~1000 lines with no consumer so a.out fills and the readLoop parks on
+	// its blocking send.
 	a, err := Start(context.Background(), Options{
 		Command: "sh",
 		Args:    []string{"-c", "i=0; while [ $i -lt 1000 ]; do echo line$i; i=$((i+1)); done; sleep 30"},
@@ -261,11 +776,11 @@ done:
 
 // TestKillRacingNaturalExitDoesNotSignalReapedPID stresses the window where a
 // Kill races readLoop's own reaping of a naturally-exiting child. Before the
-// reapMu guard, Kill gated on a.done (closed two defers AFTER cmd.Wait())
-// could call killProcessTree on a PID already reaped by readLoop — and possibly
-// recycled by the kernel — sending SIGKILL to a bystander. Each iteration a
-// short-lived agent exits on its own while a concurrent goroutine hammers
-// Kill; run under -race, this must stay clean and every Kill must return nil.
+// lifecycle transition, Kill could call killProcessTree on a PID already
+// reaped by readLoop — and possibly recycled by the kernel. Each iteration a
+// short-lived agent exits while concurrent goroutines call Kill; deterministic
+// lifecycle tests inject the winner ordering, while this real-process stress
+// proves both paths remain race-clean and idempotent.
 func TestKillRacingNaturalExitDoesNotSignalReapedPID(t *testing.T) {
 	for i := range 50 {
 		a, err := Start(context.Background(), Options{

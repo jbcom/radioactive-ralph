@@ -3,56 +3,110 @@
 package agent
 
 import (
+	"errors"
 	"os"
-	"os/exec"
+	"runtime"
 	"syscall"
-	"time"
 )
 
-// setCancelKillsGroup makes ctx cancellation (from KillWorker, supervisor
-// shutdown, or the orchestrator's stall timeout) reap the whole process GROUP.
-// exec.CommandContext's DEFAULT cancel is cmd.Process.Kill() — the direct child
-// only — so without this a ctx-cancelled turn would leave the agent's
-// grandchildren orphaned exactly as an explicit Kill() would have before the
-// process-group fix. Overriding cmd.Cancel routes the automatic cancel through
-// the same group kill. WaitDelay bounds the post-kill wait for the pty copy to
-// drain. Must be called BEFORE pty.Start (which starts the process).
-func setCancelKillsGroup(cmd *exec.Cmd) {
-	cmd.Cancel = func() error {
-		if cmd.Process == nil {
-			return nil
-		}
-		return killProcessTree(cmd.Process)
-	}
-	cmd.WaitDelay = 5 * time.Second
-}
-
-// killProcessTree SIGKILLs the process AND its whole process group, so any
-// grandchildren the agent spawned (a shell tool, a git subprocess, an MCP
-// server) die with it rather than orphaning against the checkout and continuing
-// to consume CPU/tokens/network after Ralph believes the turn is reclaimed —
-// the never-block control invariant demands the WHOLE agent tree be reaped.
-//
-// creack/pty starts the child with Setsid (a new session), so the child is a
-// session/process-group leader and its PGID == its PID. Signalling the negative
-// PID (syscall.Kill(-pid, SIGKILL)) therefore delivers SIGKILL to every process
-// in that group. Falls back to killing just the process if the group signal
-// fails (e.g. the leader already reaped the group).
-func killProcessTree(p *os.Process) error {
-	if p == nil {
+// cleanupExitedProcessTree kills any descendants that remain in the PTY
+// session after the leader's natural exit. ESRCH is success: no process group
+// remains. The caller holds processLifecycle.mu while the unreaped leader keeps
+// its PID/PGID reserved.
+func cleanupExitedProcessTree(process *os.Process) error {
+	if process == nil || process.Pid <= 1 {
 		return nil
 	}
-	// CRITICAL guard: syscall.Kill(-pid, ...) with pid 0 signals the CALLER's own
-	// process group (Ralph would SIGKILL itself); pid 1 targets init's group.
-	// Never group-signal those — fall back to the direct kill, which for pid 1 is
-	// itself a no-op-or-EPERM. A real agent child always has pid > 1.
-	if p.Pid <= 1 {
-		return p.Kill()
+	err := syscall.Kill(-process.Pid, syscall.SIGKILL)
+	groupSignaled := err == nil
+	// Darwin reports EPERM when the only remaining group member is the
+	// already-observed zombie leader. If any live same-UID descendant remains,
+	// that descendant is signalable and the group kill succeeds. Linux reports
+	// ESRCH for the empty-live-group case, so retain EPERM as a real failure
+	// there.
+	if errors.Is(err, syscall.ESRCH) ||
+		(runtime.GOOS == "darwin" && errors.Is(err, syscall.EPERM)) {
+		err = nil
 	}
-	if err := syscall.Kill(-p.Pid, syscall.SIGKILL); err != nil {
-		// The group may already be gone, or (defensively) the child wasn't a
-		// group leader; fall back to the direct-process kill.
-		return p.Kill()
+	return errors.Join(err, cleanupOriginalProcessSession(process, groupSignaled))
+}
+
+// terminateProcessTree first signals the whole PTY process group. If group
+// cleanup fails, it falls back to os.Process.Kill for the direct child: Go's
+// stable process handle/signal synchronization cannot target a recycled PID.
+// A successful fallback proves direct-child termination but retains the group
+// failure as ErrProcessTreeCleanup.
+func terminateProcessTree(process *os.Process) terminationOutcome {
+	return terminateProcessTreeWithGroupSignal(process, syscall.Kill)
+}
+
+func terminateProcessTreeWithGroupSignal(
+	process *os.Process,
+	signalGroup func(int, syscall.Signal) error,
+) terminationOutcome {
+	if process == nil {
+		return terminationOutcome{}
 	}
-	return nil
+	if process.Pid > 1 {
+		if err := signalGroup(-process.Pid, syscall.SIGKILL); err == nil {
+			return terminationOutcome{
+				cleanupErr: wrapSessionCleanup(
+					cleanupOriginalProcessSession(process, true),
+				),
+			}
+		} else if !errors.Is(err, syscall.ESRCH) {
+			directErr := process.Kill()
+			if directErr == nil || errors.Is(directErr, os.ErrProcessDone) {
+				// On Darwin, signalling a group whose only member has already
+				// become a zombie returns EPERM even though no live descendant
+				// remains. Re-probe the group after the stable direct-handle
+				// signal: EPERM/ESRCH here proves there is no signalable
+				// same-UID descendant to reclaim. A live descendant makes the
+				// group probe succeed, preserving the cleanup failure.
+				if runtime.GOOS == "darwin" && errors.Is(err, syscall.EPERM) {
+					groupProbeErr := signalGroup(-process.Pid, 0)
+					if errors.Is(groupProbeErr, syscall.EPERM) ||
+						errors.Is(groupProbeErr, syscall.ESRCH) {
+						return terminationOutcome{
+							cleanupErr: wrapSessionCleanup(
+								cleanupOriginalProcessSession(process, false),
+							),
+						}
+					}
+				}
+				return terminationOutcome{
+					cleanupErr: errors.Join(
+						ErrProcessSessionCleanup,
+						err,
+						cleanupOriginalProcessSession(process, false),
+					),
+				}
+			}
+			return terminationOutcome{
+				cleanupErr: errors.Join(ErrProcessSessionCleanup, err),
+				terminationErr: errors.Join(
+					ErrProcessTermination,
+					directErr,
+				),
+			}
+		}
+		// ESRCH means no group was found. The direct child may still be
+		// signalable through its stable os.Process identity.
+	}
+	directErr := process.Kill()
+	if directErr == nil || errors.Is(directErr, os.ErrProcessDone) {
+		return terminationOutcome{
+			cleanupErr: wrapSessionCleanup(
+				cleanupOriginalProcessSession(process, false),
+			),
+		}
+	}
+	return terminationOutcome{terminationErr: errors.Join(ErrProcessTermination, directErr)}
+}
+
+func wrapSessionCleanup(err error) error {
+	if err == nil {
+		return nil
+	}
+	return errors.Join(ErrProcessSessionCleanup, err)
 }

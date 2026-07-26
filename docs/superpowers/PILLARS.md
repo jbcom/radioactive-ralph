@@ -221,10 +221,11 @@ CASCADE-kill the still-live worker, NULL its running task's claim, and re-dispat
 that task to a second worker (double execution). Caught by a codex P1 on a
 follow-up after my first pass wrongly called it latent. Fixed by beating the
 worker session in lockstep (HeartbeatWorkerAndSession) AND excluding sessions
-with a fresh worker from step-2 deletion (#149). **codex runner:** codex has no
-structured terminal frame, so superviseAgent returned nil on ANY exit — a
-nonzero exit (auth/model error, crash) that had written a partial
---output-last-message was laundered into a successful, zero-cost result,
+with a fresh worker from step-2 deletion (#149). **codex runner:** the binding
+did not yet request Codex's structured JSONL stream, so superviseAgent
+returned nil on ANY exit — a nonzero exit (auth/model error, crash) that had
+written a partial --output-last-message was laundered into a successful,
+zero-cost result,
 defeating both correctness and spend accounting. The agent layer now captures
 cmd.Wait()'s status (Agent.ExitErr, nil when killed) and codex fails the turn on
 a nonzero exit (#152). **Watchdog scoping:** superviseAgent now runs agent.Watch
@@ -246,10 +247,74 @@ The remaining three subsystems audited, completing an adversarial-audit sweep of
 the whole runtime (orchestrator, store, provider-runners, agent-watchdog, TUI,
 IPC, GUI). **Agent-watchdog:** Kill could SIGKILL an already-reaped/kernel-
 recycled PID (it decided via state that only reflects after cmd.Wait RETURNS,
-but Process.Wait reaps inside it) — a codex P1 disproved a mutex attempt, so the
-fix routes Kill through exec.Cmd's own Cancel→Wait via a private cancelable ctx,
-which never signals after the reap; and Watch no longer spurious-stalls on a
-non-positive StallTimeout (#156). **IPC:** the server had NO read/write deadlines
+but Process.Wait reaps inside it). A later audit also disproved the claim that a
+custom `exec.Cmd.Cancel` coordinated safely with `Process.Wait`: cancellation
+can still enter the callback after reaping begins. Agent now uses plain
+`exec.Command` and Ralph-owned natural/forced/failed lifecycle paths plus a
+non-reaping kernel exit observer. Natural status is captured even when
+unbuffered final-line admission is blocked; a late cancellation checks the
+kernel-observed exit state under the lifecycle mutex and cannot overwrite it.
+Every raw exit probe takes that mutex, so it cannot cross `cmd.Wait` and observe
+a recycled PID. Direct termination failures receive three bounded stable-handle
+attempts with a fresh probe between attempts, and the actual `cmd.Wait`
+status—not a requested signal—decides whether a probe/signal race ended
+naturally or forcibly; Windows `Process.Kill` returning `os.ErrProcessDone`
+likewise transfers to natural reaping.
+Natural observation and forced ownership are separate: a successful force owns
+its own `cmd.Wait`, a failed group cleanup falls back to the stable direct
+handle and reports `ErrProcessSessionCleanup` (`ErrProcessTreeCleanup` remains
+the compatibility alias), and an impossible direct kill has an explicit
+non-wedging `ErrProcessTermination` terminal path. Linux enumerates the original
+PTY session and uses revalidated pidfds to reclaim `setpgrp` descendants; macOS
+detects that escape but returns the typed cleanup failure because it has no
+stable descendant handle. `setsid` is the explicit portable boundary pending
+cgroup-v2/Job Object containment. PTY EOF is only
+output EOF—no grace timer or forced kill—so close-stdio work preserves its
+natural status; terminal-aware polling drains ready bytes and cannot be held
+open by an escaped descendant's inherited slave. Permanent observer errors fail
+the turn and converge through explicit termination. Provider early/abnormal
+paths synchronously join
+`TerminateAndWait`, preventing terminal frames from laundering cleanup errors.
+`Wait` explicitly abandons unread output, and the nonblocking PTY transport
+bounds repeated `(0, nil)` reads while `WriteInput` polls/retries to preserve a
+full-write contract under backpressure.
+An optional cumulative raw-output ceiling now counts each PTY read before
+retention or discard, allows the exact limit, and actively kills/reaps on the
+next byte with static `ErrObservedOutputTooLarge`; zero remains explicitly
+unlimited. All three built-in providers set 16 MiB, closing the endless
+partial/non-JSON/discarded-output path that could otherwise keep refreshing the
+stall clock forever.
+Watch uses the pty read timestamp for its deadline, so a stale activity
+observation delayed by downstream backpressure cannot grant a fresh stall
+window; it also no longer spurious-stalls on a non-positive StallTimeout (#156).
+Provider terminal contracts were tightened alongside the lifecycle: Claude
+2.1.218 accepts only `subtype=success` with `is_error=false`; OpenCode 1.18.3
+consumes every step through natural idle, aggregates all text/usage, and accepts
+only final `stop`/`length`; Codex reads its authoritative regular result file
+through a no-follow/nonblocking, identity-checked open with a 16 MiB limited-read
+boundary and classifies diagnostics using pinned whole-token precedence. A
+Claude success remains provisional until natural exit, OpenCode `type:error`
+terminates immediately, and Codex `turn.failed` dominates exit zero and the
+last-message file even after diagnostic exhaustion. Codex records are fully
+retained through a measured 4 MiB inspection threshold (1 MiB Darwin arm64
+`ARG_MAX`, common quote/backslash JSON expansion, and envelope headroom).
+Complete event objects require one case-sensitive, first top-level `type`;
+reordered or duplicate discriminators fail closed, while valid retained objects
+without that exact key remain pane noise. Beyond 4 MiB, records cross only a
+bounded, unbuffered prefix framing seam: an immediate top-level
+`type=turn.failed` remains authoritative, while every other structured or
+all-whitespace/inconclusive prefix fails closed because later reordering or
+duplicates cannot be excluded. Only a positively proven non-object remains
+pane noise. Prefix capture reserves three separate 4 KiB retention slots for
+the provider callback, Watch admission, and readLoop's next unbuffered handoff,
+so even a first read larger than a provider's retained-line threshold still
+supplies the classifier without exceeding the aggregate budget. Agent's
+normalized record delimiter is excluded from the separate 64 KiB
+diagnostic-frame bound, and the 16 MiB cumulative raw ceiling remains unchanged.
+Claude/OpenCode assistant output and their independent evidence tees are also
+capped at 16 MiB, with static overflow errors and no partial successful
+`Result`.
+**IPC:** the server had NO read/write deadlines
 and NO request size cap — a bad client could hang shutdown, leak goroutines/fds,
 or OOM the supervisor; fixed with a bounded request read (deadline + 32MiB
 LimitReader), response/Attach write deadlines, Stop closing all conns so shutdown
