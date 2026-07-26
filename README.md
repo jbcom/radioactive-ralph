@@ -53,8 +53,9 @@ because an agent said so.
   vocabulary comes from the official [`a2aproject/a2a-go`](https://github.com/a2aproject/a2a-go).
 - **Observable multi-provider teams.** Project config can declare
   `providers = ["claude", "codex", "opencode"]`; Ralph assigns one supervised
-  worker per ready step across the pool. Set the process-wide ceiling with
-  `service install --env RALPH_MAX_PARALLEL=16`.
+  worker per dispatched step across the pool. `RALPH_MAX_PARALLEL` is an
+  operator-selected process-wide emergency ceiling, not an optimal or
+  recommended team size.
 
 ## Install
 
@@ -91,8 +92,8 @@ credentials are configured.
 ```bash
 # 1. Start the supervisor (owns everything; user/XDG-level, directory-independent)
 radioactive_ralph --supervisor
-# Or install + start it with an explicit worker ceiling:
-radioactive_ralph service install --env RALPH_MAX_PARALLEL=16
+# Or install + start it as the user service:
+radioactive_ralph service install
 
 # 2. In a project directory, initialize it (registers the project in the user DB)
 radioactive_ralph --init

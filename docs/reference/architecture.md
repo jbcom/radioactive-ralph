@@ -103,7 +103,13 @@ inference. `gemini` was removed (CLI auth endpoint deprecated
 2026-06-18); `cursor-agent` is excluded (delegates session control to
 Cursor's cloud). A project can select a singular provider or a
 Ralph-managed provider pool; the latter creates one supervised worker per
-ready step. The supervisor-wide `RALPH_MAX_PARALLEL` environment setting
-bounds simultaneous workers. See [Provider
+admitted, dispatched step. The supervisor-wide `RALPH_MAX_PARALLEL`
+environment setting bounds simultaneous workers. See [Provider
 contract](../design/provider-contract.md) and [Config virtual
 layers](../design/config-layers.md).
+
+`RALPH_MAX_PARALLEL` is a process-local emergency ceiling, not adaptive
+admission policy and not a statement of optimal team size. The current
+compatibility default is unbounded when unset. Planned adaptive admission will
+measure work class, provider lane, empirical independence domain, and host
+pressure instead of assuming one fixed worker count.

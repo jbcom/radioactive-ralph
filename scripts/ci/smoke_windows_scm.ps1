@@ -130,6 +130,10 @@ try {
   if (-not (Test-Path $configPath)) {
     throw "service install did not persist config at $configPath"
   }
+  $createdService = Get-CimInstance Win32_Service -Filter "Name='$serviceName'"
+  if ($createdService.StartName -ne "LocalSystem") {
+    throw "new SCM service identity is $($createdService.StartName), want LocalSystem"
+  }
   if (-not (Wait-Supervisor $stateOne $true)) {
     Write-Diagnostics "first install did not become ready" $stateOne
     throw "CLI-installed Windows supervisor never became ready"
@@ -155,6 +159,9 @@ try {
   }
   if ($config.extra_env.RALPH_MAX_PARALLEL -ne "3") {
     throw "reinstall did not persist RALPH_MAX_PARALLEL=3"
+  }
+  if ($null -ne $config.extra_env.PSObject.Properties["PATH"]) {
+    throw "Windows SCM config persisted the installing administrator's inferred PATH"
   }
   if (-not (Wait-Supervisor $stateTwo $true)) {
     Write-Diagnostics "reinstalled service did not become ready with changed environment" $stateTwo

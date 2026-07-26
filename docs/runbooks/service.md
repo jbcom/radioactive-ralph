@@ -54,32 +54,59 @@ systemctl --user status radioactive_ralph-supervisor
 
 ### Bound worker concurrency
 
-Pass supervisor environment at install time. For example, to permit at
-most 16 simultaneous provider turns:
+Pass supervisor environment at install time to set an operator-chosen
+emergency ceiling for simultaneous provider turns:
 
 ```sh
-radioactive_ralph service install --env RALPH_MAX_PARALLEL=16
+# Replace N with an operator-chosen positive-integer emergency ceiling.
+radioactive_ralph service install --env RALPH_MAX_PARALLEL=N
 ```
 
 The generated service definition persists the value across login and
 restart. Valid values are `1` through `256`; values outside that range are
-rejected before an existing service is changed. Re-run `service install`
-with the intended environment whenever changing the bound.
+rejected before an existing service is changed. An explicitly empty or
+whitespace-only value is invalid; only an absent variable selects the
+compatibility default. The range is validation, not an operating
+recommendation. Unset selects the pre-ceiling unbounded behavior preserved by
+v0.22, which is neither adaptive nor recommended as an optimum. Re-run
+`service install` with the intended environment whenever changing the bound.
 
-`service install` also persists a de-duplicated execution `PATH` derived
-from the installing shell, with the Ralph binary directory first and
-standard Homebrew/system paths included. Relative, missing, non-directory,
-and group/other-writable inferred entries are discarded. This is required
-on macOS because launchd's default path omits Homebrew and `~/.local` agent
-CLIs. An explicit `--env PATH=...` is an operator-controlled override and
-is not filtered:
+`service install` considers the Ralph executable directory first, then
+inherited and platform-standard candidates, retaining accepted entries in that
+order as a de-duplicated execution `PATH`. Unix rejects an entire entry when
+any lexical component is relative, missing, non-directory,
+symlinked, foreign-owned, or group/other-writable. macOS additionally
+recognizes the architecture-specific exact Homebrew path
+(`/opt/homebrew/bin` on Apple Silicon or `/usr/local/bin` on Intel) when its
+root/current-user ownership, privileged `wheel`/`admin` group metadata, and
+trusted fixed ancestry are intact. These narrow exceptions permit Homebrew's
+normal group-writable bin directory without weakening unrelated inferred
+entries. This is required because launchd's default path omits Homebrew and
+`~/.local` agent CLIs. An explicit `--env PATH=...` is an operator-controlled
+override and is not filtered:
 
 ```sh
 radioactive_ralph service install \
   --env PATH=/controlled/provider/bin:/usr/bin:/bin
 ```
 
+Symlinked Homebrew `opt` paths are intentionally not inferred. To pin
+service-side scripts to Node 24, first validate the local Homebrew installation
+and then use the explicit override, for example:
+
+```sh
+radioactive_ralph service install \
+  --env PATH=/opt/homebrew/opt/node@24/bin:/opt/homebrew/bin:/usr/bin:/bin
+```
+
 ### Windows (Service Control Manager)
+
+Ralph never infers the elevated installer's `PATH` for Windows SCM because the
+installer and service identities may differ. A newly created service uses
+SCM's default `LocalSystem` identity; reconciliation preserves an existing
+administrator-configured service account. SCM supplies that identity's service
+environment. Supplying `--env PATH=...` is an explicit administrator override
+whose directories must be safe for the configured service identity.
 
 ```powershell
 radioactive_ralph service install

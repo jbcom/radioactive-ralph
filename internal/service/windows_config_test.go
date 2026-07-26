@@ -53,7 +53,7 @@ func TestLoadWindowsServiceConfig(t *testing.T) {
 	raw, err := MarshalWindowsServiceConfig(InstallOptions{
 		ExtraEnv: map[string]string{
 			"RALPH_STATE_DIR":    `C:\Users\alice\AppData\Local\radioactive-ralph`,
-			"RALPH_MAX_PARALLEL": "16",
+			"RALPH_MAX_PARALLEL": "7",
 		},
 	})
 	if err != nil {
@@ -67,7 +67,7 @@ func TestLoadWindowsServiceConfig(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadWindowsServiceConfig: %v", err)
 	}
-	if got := cfg.ExtraEnv["RALPH_MAX_PARALLEL"]; got != "16" {
-		t.Fatalf("RALPH_MAX_PARALLEL = %q, want 16", got)
+	if got := cfg.ExtraEnv["RALPH_MAX_PARALLEL"]; got != "7" {
+		t.Fatalf("RALPH_MAX_PARALLEL = %q, want 7", got)
 	}
 }

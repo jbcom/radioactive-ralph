@@ -56,12 +56,17 @@ func newServiceInstallCmd() *cobra.Command {
 				return err
 			}
 			if _, configured := extraEnv[maxParallelEnv]; configured {
-				if _, err := supervisorMaxParallel(func(key string) string { return extraEnv[key] }); err != nil {
+				if _, err := supervisorMaxParallel(func(key string) (string, bool) {
+					value, ok := extraEnv[key]
+					return value, ok
+				}); err != nil {
 					return fmt.Errorf("validate service environment: %w", err)
 				}
 			}
 			if _, explicitlySet := extraEnv["PATH"]; !explicitlySet {
-				extraEnv["PATH"] = serviceExecutionPath(bin, os.Getenv("PATH"))
+				if inferredPath := serviceExecutionPath(bin, os.Getenv("PATH")); inferredPath != "" {
+					extraEnv["PATH"] = inferredPath
+				}
 			}
 			opts := service.InstallOptions{RalphBin: bin, ExtraEnv: extraEnv}
 			path, err := service.Install(opts)
@@ -94,27 +99,33 @@ func newServiceInstallCmd() *cobra.Command {
 // operator's current PATH into the user service. launchd starts agents with
 // only /usr/bin:/bin:/usr/sbin:/sbin, which cannot find Homebrew or ~/.local
 // provider CLIs; systemd user-manager PATHs have the same shell-vs-service
-// drift. The Ralph binary's directory is always first. Duplicate, relative,
-// nonexistent, non-directory, and group/other-writable entries are removed;
-// an operator who intentionally needs a different trust policy can pass an
-// explicit --env PATH=... value.
+// drift. The Ralph binary's directory is considered first. Duplicate,
+// relative, missing, and non-directory entries are removed. Unix additionally
+// rejects paths with symlinked or ownership/mode-untrusted components. Windows
+// SCM does not inherit the installing user's PATH because installer and
+// service identities can differ. An operator who intentionally needs a
+// different trust policy can pass an explicit --env PATH=... value.
 func serviceExecutionPath(ralphBin, current string) string {
-	candidates := []string{filepath.Dir(ralphBin)}
-	candidates = append(candidates, filepath.SplitList(current)...)
-	switch runtime.GOOS {
-	case "windows":
-		// Preserve the inherited absolute Windows paths above; there is no
-		// portable synthetic SystemRoot path to add without expanding env.
-	default:
-		candidates = append(candidates,
-			"/opt/homebrew/bin",
-			"/usr/local/bin",
-			"/usr/bin",
-			"/bin",
-			"/usr/sbin",
-			"/sbin",
-		)
+	if runtime.GOOS == "windows" {
+		// The SCM service identity can differ from the installing
+		// administrator, so none of the administrator's user PATH is safe to
+		// infer across that boundary. Leave PATH absent and inherit SCM's
+		// service environment.
+		return ""
 	}
+
+	currentEntries := filepath.SplitList(current)
+	candidates := make([]string, 0, 1+len(currentEntries)+6)
+	candidates = append(candidates, filepath.Dir(ralphBin))
+	candidates = append(candidates, currentEntries...)
+	candidates = append(candidates,
+		"/opt/homebrew/bin",
+		"/usr/local/bin",
+		"/usr/bin",
+		"/bin",
+		"/usr/sbin",
+		"/sbin",
+	)
 
 	seen := make(map[string]struct{}, len(candidates))
 	paths := make([]string, 0, len(candidates))
@@ -133,17 +144,6 @@ func serviceExecutionPath(ralphBin, current string) string {
 		paths = append(paths, clean)
 	}
 	return strings.Join(paths, string(os.PathListSeparator))
-}
-
-func servicePathDirAllowed(candidate string) bool {
-	info, err := os.Stat(candidate)
-	if err != nil || !info.IsDir() {
-		return false
-	}
-	if runtime.GOOS == "windows" {
-		return true
-	}
-	return info.Mode().Perm()&0o022 == 0
 }
 
 // parseEnvPairs parses repeated --env KEY=VALUE flag values into a map.

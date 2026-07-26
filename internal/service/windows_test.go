@@ -113,7 +113,7 @@ func TestInstallWindowsServiceUpdatesRestartsAndPersistsEnvironment(t *testing.T
 		RalphBin: `C:\Program Files\radioactive-ralph\radioactive_ralph.exe`,
 		ExtraEnv: map[string]string{
 			"RALPH_STATE_DIR":    `C:\Users\alice\AppData\Local\radioactive-ralph`,
-			"RALPH_MAX_PARALLEL": "16",
+			"RALPH_MAX_PARALLEL": "7",
 		},
 	}, path)
 	if err != nil {
@@ -142,7 +142,7 @@ func TestInstallWindowsServiceUpdatesRestartsAndPersistsEnvironment(t *testing.T
 	if err != nil {
 		t.Fatalf("LoadWindowsServiceConfig: %v", err)
 	}
-	if config.ExtraEnv["RALPH_MAX_PARALLEL"] != "16" {
+	if config.ExtraEnv["RALPH_MAX_PARALLEL"] != "7" {
 		t.Fatalf("persisted ExtraEnv = %#v", config.ExtraEnv)
 	}
 }
