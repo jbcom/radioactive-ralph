@@ -40,6 +40,7 @@ Plans are markdown documents parsed with goldmark into an AST and decomposed heu
   - [func Decompose\(p \*Plan, done map\[string\]bool\) \(readyNow \[\]Step, parallel bool\)](<#Decompose>)
 - [type StepRef](<#StepRef>)
   - [func \(r StepRef\) ID\(\) string](<#StepRef.ID>)
+- [type TaskBinding](<#TaskBinding>)
 - [type TaskInput](<#TaskInput>)
 - [type TaskMetadata](<#TaskMetadata>)
 - [type TaskOutput](<#TaskOutput>)
@@ -151,7 +152,7 @@ func (p *Plan) StepIDs() []string
 StepIDs returns every step's stable identity in document order. Legacy steps use their positional StepRef ID; v2 steps use their explicit metadata ID so progress and durable task state share the same key.
 
 <a name="Plan.V2Tasks"></a>
-### func \(\*Plan\) [V2Tasks](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plan/v2.go#L58>)
+### func \(\*Plan\) [V2Tasks](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plan/v2.go#L73>)
 
 ```go
 func (p *Plan) V2Tasks() []V2Task
@@ -249,8 +250,26 @@ func (r StepRef) ID() string
 
 ID returns a stable, deterministic string key for this step, suitable for use in a done\-set. It is derived purely from position in the plan tree \(e.g. "0.1.2"\), not from step text, so it stays stable across re\-parses of the same document and is independent of wording edits that don't change structure.
 
+<a name="TaskBinding"></a>
+## type [TaskBinding](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plan/v2.go#L42-L51>)
+
+TaskBinding either leaves every field empty for configured\-pool selection, or pins an immutable calibrated execution lane.
+
+```go
+type TaskBinding struct {
+    Mode        string `json:"mode"`
+    Alias       string `json:"alias"`
+    Provider    string `json:"provider"`
+    Model       string `json:"model"`
+    Effort      string `json:"effort"`
+    Calibration string `json:"calibration"`
+    Repetitions int    `json:"repetitions"`
+    Fixture     string `json:"fixture"`
+}
+```
+
 <a name="TaskInput"></a>
-## type [TaskInput](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plan/v2.go#L39-L42>)
+## type [TaskInput](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plan/v2.go#L54-L57>)
 
 TaskInput pins one project\-relative file to its exact content hash.
 
@@ -262,7 +281,7 @@ type TaskInput struct {
 ```
 
 <a name="TaskMetadata"></a>
-## type [TaskMetadata](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plan/v2.go#L27-L36>)
+## type [TaskMetadata](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plan/v2.go#L28-L38>)
 
 TaskMetadata is the additive ralph.plan/v2 contract embedded in a list item as one strict JSON fenced block labelled ralph\-task.
 
@@ -271,6 +290,7 @@ type TaskMetadata struct {
     ID            string       `json:"id"`
     After         []string     `json:"after"`
     Team          string       `json:"team"`
+    Binding       TaskBinding  `json:"binding"`
     Requires      []string     `json:"requires"`
     Providers     []string     `json:"providers"`
     DifferentFrom []string     `json:"differentFrom"`
@@ -280,7 +300,7 @@ type TaskMetadata struct {
 ```
 
 <a name="TaskOutput"></a>
-## type [TaskOutput](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plan/v2.go#L45-L48>)
+## type [TaskOutput](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plan/v2.go#L60-L63>)
 
 TaskOutput declares one project\-relative exclusive output reservation.
 
@@ -292,7 +312,7 @@ type TaskOutput struct {
 ```
 
 <a name="V2Task"></a>
-## type [V2Task](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plan/v2.go#L51-L55>)
+## type [V2Task](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plan/v2.go#L66-L70>)
 
 V2Task pairs a task with its hierarchy and document order.
 

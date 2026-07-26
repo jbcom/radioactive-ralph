@@ -3,12 +3,11 @@ package store
 import (
 	"context"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"slices"
 	"strings"
-
-	"github.com/jbcom/radioactive-ralph/internal/provider"
 )
 
 // ProviderCalibration is immutable evidence-backed provider capability data.
@@ -33,6 +32,42 @@ type ProviderCalibration struct {
 // PutProviderCalibration validates, content-addresses, and durably stores one
 // calibration result. Identical content is idempotent.
 func (s *Store) PutProviderCalibration(ctx context.Context, value ProviderCalibration) (string, error) {
+	value, capabilitiesJSON, id, err := prepareProviderCalibration(value)
+	if err != nil {
+		return "", err
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return "", fmt.Errorf("store: begin provider calibration: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	_, err = tx.ExecContext(ctx, `
+		INSERT INTO provider_calibrations(
+			id, alias, provider, model, effort, binary_path, binary_version,
+			binary_sha256, invocation_hash, inference_domain, control_domain,
+			independence_domain, model_digest, capabilities_json, evidence_json
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(id) DO NOTHING
+	`, id, value.Alias, value.Provider, value.Model, value.Effort,
+		value.BinaryPath, value.BinaryVersion, value.BinarySHA256,
+		value.InvocationHash, value.InferenceDomain, value.ControlDomain,
+		value.IndependenceDomain, nullIfEmpty(value.ModelDigest),
+		string(capabilitiesJSON), value.EvidenceJSON)
+	if err != nil {
+		return "", fmt.Errorf("store: put provider calibration: %w", err)
+	}
+	if err := readmitCalibrationWaiters(ctx, tx, value.Alias); err != nil {
+		return "", err
+	}
+	if err := tx.Commit(); err != nil {
+		return "", fmt.Errorf("store: commit provider calibration: %w", err)
+	}
+	return id, nil
+}
+
+func prepareProviderCalibration(
+	value ProviderCalibration,
+) (ProviderCalibration, []byte, string, error) {
 	value.Alias = strings.TrimSpace(value.Alias)
 	value.Provider = strings.TrimSpace(value.Provider)
 	value.Model = strings.TrimSpace(value.Model)
@@ -51,42 +86,37 @@ func (s *Store) PutProviderCalibration(ctx context.Context, value ProviderCalibr
 		value.InferenceDomain == "" || value.ControlDomain == "" ||
 		value.IndependenceDomain == "" ||
 		strings.TrimSpace(value.EvidenceJSON) == "" || len(value.Capabilities) == 0 {
-		return "", fmt.Errorf("store: complete calibration identity, binary, domains, capabilities, and evidence required")
+		return ProviderCalibration{}, nil, "", fmt.Errorf("store: complete calibration identity, binary, domains, capabilities, and evidence required")
 	}
 	for label, hash := range map[string]string{
 		"binary sha256":   value.BinarySHA256,
 		"invocation hash": value.InvocationHash,
 	} {
 		if len(hash) != 64 {
-			return "", fmt.Errorf("store: calibration %s must be 64 lowercase hex characters", label)
+			return ProviderCalibration{}, nil, "", fmt.Errorf("store: calibration %s must be 64 lowercase hex characters", label)
 		}
 		for _, char := range hash {
 			if !strings.ContainsRune("0123456789abcdef", char) {
-				return "", fmt.Errorf("store: calibration %s must be 64 lowercase hex characters", label)
+				return ProviderCalibration{}, nil, "", fmt.Errorf("store: calibration %s must be 64 lowercase hex characters", label)
 			}
 		}
 	}
 	if !json.Valid([]byte(value.EvidenceJSON)) {
-		return "", fmt.Errorf("store: calibration evidence must be valid JSON")
+		return ProviderCalibration{}, nil, "", fmt.Errorf("store: calibration evidence must be valid JSON")
 	}
 	capabilities := append([]string{}, value.Capabilities...)
 	slices.Sort(capabilities)
 	capabilities = slices.Compact(capabilities)
 	for _, capability := range capabilities {
 		if strings.TrimSpace(capability) == "" {
-			return "", fmt.Errorf("store: calibration capability must be nonempty")
-		}
-		if !provider.CalibrationRequiredCapability(capability) {
-			return "", fmt.Errorf(
-				"store: calibration capability %q is outside the measured vocabulary",
-				capability,
-			)
+			return ProviderCalibration{}, nil, "", fmt.Errorf("store: calibration capability must be nonempty")
 		}
 	}
 	capabilitiesJSON, err := json.Marshal(capabilities)
 	if err != nil {
-		return "", fmt.Errorf("store: marshal calibration capabilities: %w", err)
+		return ProviderCalibration{}, nil, "", fmt.Errorf("store: marshal calibration capabilities: %w", err)
 	}
+	value.Capabilities = capabilities
 	canonical, err := json.Marshal(struct {
 		Alias              string          `json:"alias"`
 		Provider           string          `json:"provider"`
@@ -111,29 +141,13 @@ func (s *Store) PutProviderCalibration(ctx context.Context, value ProviderCalibr
 		Capabilities: capabilitiesJSON, Evidence: json.RawMessage(value.EvidenceJSON),
 	})
 	if err != nil {
-		return "", fmt.Errorf("store: marshal calibration: %w", err)
+		return ProviderCalibration{}, nil, "", fmt.Errorf("store: marshal calibration: %w", err)
 	}
 	id := fmt.Sprintf("sha256:%x", sha256.Sum256(canonical))
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return "", fmt.Errorf("store: begin provider calibration: %w", err)
-	}
-	defer func() { _ = tx.Rollback() }()
-	_, err = tx.ExecContext(ctx, `
-		INSERT INTO provider_calibrations(
-			id, alias, provider, model, effort, binary_path, binary_version,
-			binary_sha256, invocation_hash, inference_domain, control_domain,
-			independence_domain, model_digest, capabilities_json, evidence_json
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-		ON CONFLICT(id) DO NOTHING
-	`, id, value.Alias, value.Provider, value.Model, value.Effort,
-		value.BinaryPath, value.BinaryVersion, value.BinarySHA256,
-		value.InvocationHash, value.InferenceDomain, value.ControlDomain,
-		value.IndependenceDomain, nullIfEmpty(value.ModelDigest),
-		string(capabilitiesJSON), value.EvidenceJSON)
-	if err != nil {
-		return "", fmt.Errorf("store: put provider calibration: %w", err)
-	}
+	return value, capabilitiesJSON, id, nil
+}
+
+func readmitCalibrationWaiters(ctx context.Context, tx *sql.Tx, alias string) error {
 	rows, err := tx.QueryContext(ctx, `
 		SELECT m.plan_id, m.task_id, m.metadata_json
 		FROM task_metadata m
@@ -141,7 +155,7 @@ func (s *Store) PutProviderCalibration(ctx context.Context, value ProviderCalibr
 		WHERE t.status = 'blocked_capability'
 	`)
 	if err != nil {
-		return "", fmt.Errorf("store: list calibration waiters: %w", err)
+		return fmt.Errorf("store: list calibration waiters: %w", err)
 	}
 	type waiter struct {
 		planID string
@@ -152,7 +166,7 @@ func (s *Store) PutProviderCalibration(ctx context.Context, value ProviderCalibr
 		var planID, taskID, metadataJSON string
 		if err := rows.Scan(&planID, &taskID, &metadataJSON); err != nil {
 			_ = rows.Close()
-			return "", fmt.Errorf("store: scan calibration waiter: %w", err)
+			return fmt.Errorf("store: scan calibration waiter: %w", err)
 		}
 		var metadata struct {
 			Binding struct {
@@ -162,17 +176,17 @@ func (s *Store) PutProviderCalibration(ctx context.Context, value ProviderCalibr
 		}
 		if err := json.Unmarshal([]byte(metadataJSON), &metadata); err != nil {
 			_ = rows.Close()
-			return "", fmt.Errorf("store: decode calibration waiter %s/%s: %w", planID, taskID, err)
+			return fmt.Errorf("store: decode calibration waiter %s/%s: %w", planID, taskID, err)
 		}
-		if metadata.Binding.Mode == "await-calibration" && metadata.Binding.Alias == value.Alias {
+		if metadata.Binding.Mode == "await-calibration" && metadata.Binding.Alias == alias {
 			waiters = append(waiters, waiter{planID: planID, taskID: taskID})
 		}
 	}
 	if err := rows.Close(); err != nil {
-		return "", fmt.Errorf("store: close calibration waiters: %w", err)
+		return fmt.Errorf("store: close calibration waiters: %w", err)
 	}
 	if err := rows.Err(); err != nil {
-		return "", fmt.Errorf("store: iterate calibration waiters: %w", err)
+		return fmt.Errorf("store: iterate calibration waiters: %w", err)
 	}
 	for _, waiter := range waiters {
 		res, err := tx.ExecContext(ctx, `
@@ -181,11 +195,11 @@ func (s *Store) PutProviderCalibration(ctx context.Context, value ProviderCalibr
 			WHERE plan_id = ? AND id = ? AND status = 'blocked_capability'
 		`, waiter.planID, waiter.taskID)
 		if err != nil {
-			return "", fmt.Errorf("store: readmit calibration waiter: %w", err)
+			return fmt.Errorf("store: readmit calibration waiter: %w", err)
 		}
 		count, err := res.RowsAffected()
 		if err != nil {
-			return "", fmt.Errorf("store: calibration waiter rows affected: %w", err)
+			return fmt.Errorf("store: calibration waiter rows affected: %w", err)
 		}
 		if count == 0 {
 			continue
@@ -194,21 +208,18 @@ func (s *Store) PutProviderCalibration(ctx context.Context, value ProviderCalibr
 			UPDATE task_metadata SET blocked_reason = NULL
 			WHERE plan_id = ? AND task_id = ?
 		`, waiter.planID, waiter.taskID); err != nil {
-			return "", fmt.Errorf("store: clear calibration waiter reason: %w", err)
+			return fmt.Errorf("store: clear calibration waiter reason: %w", err)
 		}
 		if _, err := tx.ExecContext(ctx, `
 			INSERT INTO events(plan_id, task_id, kind, actor, stream, payload_json)
 			VALUES (?, ?, 'task.requeued', 'calibration', 'task', ?)
 		`, waiter.planID, waiter.taskID, payloadJSON(EventPayload{
-			Reason: "calibration alias " + value.Alias + " became available",
+			Reason: "calibration alias " + alias + " became available",
 		})); err != nil {
-			return "", fmt.Errorf("store: log calibration readmission: %w", err)
+			return fmt.Errorf("store: log calibration readmission: %w", err)
 		}
 	}
-	if err := tx.Commit(); err != nil {
-		return "", fmt.Errorf("store: commit provider calibration: %w", err)
-	}
-	return id, nil
+	return nil
 }
 
 // GetProviderCalibration loads one immutable calibration by content address.

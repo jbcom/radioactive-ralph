@@ -693,13 +693,14 @@ func (o *Orchestrator) dispatchReadyStep(ctx context.Context, a dispatchStepArgs
 	}
 
 	var binding provider.Binding
-	if a.bindingOverride != nil {
+	switch {
+	case a.bindingOverride != nil:
 		binding = *a.bindingOverride
-	} else if a.constraints != nil {
+	case a.constraints != nil:
 		binding, err = o.resolveConstrainedBinding(
 			ctx, a.projectID, a.parallel, BindingDispatch, *a.constraints,
 		)
-	} else {
+	default:
 		binding, err = o.resolveBinding(ctx, a.projectID, a.parallel, BindingDispatch)
 	}
 	if err != nil {
@@ -1218,27 +1219,16 @@ func (o *Orchestrator) dispatchWorker(ctx context.Context, projectID, projectDir
 		StrictBinding: ds.strictInvocation,
 	}
 
-	repetitions := 1
-	if ds.calibrationMode == "calibration" {
-		repetitions = ds.calibrationRepetitions
-		if repetitions < 3 || ds.calibrationFixture == "" || !ds.strictInvocation {
-			return fmt.Errorf("orch: invalid calibration dispatch contract")
-		}
+	repetitions, err := calibrationRepetitionCount(ds)
+	if err != nil {
+		return err
 	}
 	results := make([]provider.Result, 0, repetitions)
 	var result provider.Result
 	var runErr error
 	calibrationUsageRecorded := false
 	for repetition := 1; repetition <= repetitions; repetition++ {
-		turnRequest := req
-		if ds.calibrationMode == "calibration" {
-			turnRequest.UserPrompt = fmt.Sprintf(
-				"%s\n\nCalibration fixture: %s\nIndependent repetition: %d of %d\n"+
-					"Execute this fixture independently. Do not reuse or infer another repetition's answer.\n",
-				strings.TrimRight(req.UserPrompt, "\n"), ds.calibrationFixture,
-				repetition, repetitions,
-			)
-		}
+		turnRequest := calibrationTurnRequest(req, ds, repetition, repetitions)
 		// The stall timeout bounds ONLY this agent turn. Each calibration
 		// repetition gets a fresh runner invocation and cancellation scope.
 		turnResult, turnErr := o.runWithHeartbeat(ctx, workerID, func() (provider.Result, error) {
@@ -1401,6 +1391,35 @@ func aggregateCalibrationResults(fixture string, results []provider.Result) prov
 		AssistantOutput: output.String(),
 		Invocation:      invocation,
 	}
+}
+
+func calibrationRepetitionCount(ds *dispatchedStep) (int, error) {
+	if ds.calibrationMode != "calibration" {
+		return 1, nil
+	}
+	if ds.calibrationRepetitions < 3 ||
+		ds.calibrationFixture == "" ||
+		!ds.strictInvocation {
+		return 0, fmt.Errorf("orch: invalid calibration dispatch contract")
+	}
+	return ds.calibrationRepetitions, nil
+}
+
+func calibrationTurnRequest(
+	req provider.Request,
+	ds *dispatchedStep,
+	repetition, repetitions int,
+) provider.Request {
+	if ds.calibrationMode != "calibration" {
+		return req
+	}
+	req.UserPrompt = fmt.Sprintf(
+		"%s\n\nCalibration fixture: %s\nIndependent repetition: %d of %d\n"+
+			"Execute this fixture independently. Do not reuse or infer another repetition's answer.\n",
+		strings.TrimRight(req.UserPrompt, "\n"), ds.calibrationFixture,
+		repetition, repetitions,
+	)
+	return req
 }
 
 // dispatchFanoutGroup delegates an entire ready parallel step-group to ONE

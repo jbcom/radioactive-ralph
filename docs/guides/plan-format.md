@@ -221,6 +221,13 @@ V2 scheduling fails closed:
 - output paths that overlap inside one plan are only legal when the DAG orders
   every reader and writer involved.
 
+`RALPH_MAX_PARALLEL` is currently only a supervisor-wide safety ceiling; it is
+not a per-work-class optimizer. Heterogeneous plans that need measured
+global/class/provider/independence-domain budgets are blocked on the
+[adaptive-concurrency contract](../design/plan-v2-adaptive-concurrency.md).
+That follow-on keeps graph size unbounded and adds atomic, durable admission;
+do not encode a fixed worker count into a plan as a substitute.
+
 Input and output paths use portable forward-slash, project-relative spelling.
 Absolute paths, `..` traversal, backslashes, and symlinks escaping the project
 root are rejected.

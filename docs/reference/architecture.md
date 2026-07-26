@@ -107,3 +107,8 @@ ready step. The supervisor-wide `RALPH_MAX_PARALLEL` environment setting
 bounds simultaneous workers. See [Provider
 contract](../design/provider-contract.md) and [Config virtual
 layers](../design/config-layers.md).
+
+`RALPH_MAX_PARALLEL` is a safety ceiling, not an adaptive policy. Measured
+per-work-class/provider/independence-domain scheduling is explicitly blocked on
+the [v2 adaptive-concurrency follow-on](../design/plan-v2-adaptive-concurrency.md);
+Ralph does not assume a fixed optimal worker count.

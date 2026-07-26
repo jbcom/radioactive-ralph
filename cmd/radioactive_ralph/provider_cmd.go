@@ -38,8 +38,8 @@ func newCalibrationImportCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "%s\n", id)
-			return nil
+			_, err = fmt.Fprintf(cmd.OutOrStdout(), "%s\n", id)
+			return err
 		},
 	}
 }
@@ -67,10 +67,12 @@ func newCalibrationListCmd() *cobra.Command {
 				return err
 			}
 			for _, record := range records {
-				fmt.Fprintf(
+				if _, err := fmt.Fprintf(
 					cmd.OutOrStdout(), "%s\t%s\t%s\t%s\t%s\n",
 					record.ID, record.Alias, record.Provider, record.Model, record.Effort,
-				)
+				); err != nil {
+					return err
+				}
 			}
 			return nil
 		},

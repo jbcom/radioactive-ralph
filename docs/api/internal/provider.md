@@ -17,7 +17,9 @@ Package provider adapts configured CLI backends into radioactive\_ralph's provid
 
 - [Constants](<#constants>)
 - [Variables](<#variables>)
+- [func CalibrationRequiredCapability\(name string\) bool](<#CalibrationRequiredCapability>)
 - [func DefaultWatchdogConfig\(\) agent.WatchdogConfig](<#DefaultWatchdogConfig>)
+- [func InvocationConfigHash\(binding Binding, model Model, effort string\) \(string, error\)](<#InvocationConfigHash>)
 - [func KnownCapability\(name string\) bool](<#KnownCapability>)
 - [func StreamJSONWatchdogConfig\(\) agent.WatchdogConfig](<#StreamJSONWatchdogConfig>)
 - [func ValidateBinding\(binding Binding\) error](<#ValidateBinding>)
@@ -33,6 +35,8 @@ Package provider adapts configured CLI backends into radioactive\_ralph's provid
 - [type DeclarativeRunner](<#DeclarativeRunner>)
   - [func \(DeclarativeRunner\) Run\(ctx context.Context, binding Binding, req Request\) \(Result, error\)](<#DeclarativeRunner.Run>)
 - [type File](<#File>)
+- [type Invocation](<#Invocation>)
+  - [func ResolveInvocation\(binding Binding, req Request\) \(Invocation, error\)](<#ResolveInvocation>)
 - [type Local](<#Local>)
   - [func \(l Local\) BinaryFor\(providerName string\) \(string, bool\)](<#Local.BinaryFor>)
 - [type Model](<#Model>)
@@ -96,6 +100,15 @@ var ErrAgentBlocked = errors.New("provider: agent blocked (killed by watchdog)")
 var ErrStreamJSONLineTooLong = errors.New("provider: stream-json line exceeded 16MiB limit")
 ```
 
+<a name="CalibrationRequiredCapability"></a>
+## func [CalibrationRequiredCapability](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/capabilities.go#L52>)
+
+```go
+func CalibrationRequiredCapability(name string) bool
+```
+
+CalibrationRequiredCapability reports capabilities that may only be granted by measured fixture evidence, never by a built\-in flag or CLI help text.
+
 <a name="DefaultWatchdogConfig"></a>
 ## func [DefaultWatchdogConfig](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/watchdog.go#L54>)
 
@@ -105,8 +118,17 @@ func DefaultWatchdogConfig() agent.WatchdogConfig
 
 DefaultWatchdogConfig returns a WatchdogConfig seeded with DefaultStallTimeout and DefaultPromptPatterns. Runners call this \(rather than constructing agent.WatchdogConfig\{\} directly\) so every provider gets the same baseline prompt/stall detection unless a caller has a reason to override it. Use this ONLY for providers whose output is free\-form pane text where a raw interactive prompt could actually appear \(see StreamJSONWatchdogConfig for the structured\-output case\).
 
+<a name="InvocationConfigHash"></a>
+## func [InvocationConfigHash](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/invocation.go#L22>)
+
+```go
+func InvocationConfigHash(binding Binding, model Model, effort string) (string, error)
+```
+
+InvocationConfigHash fingerprints every binding configuration value that can alter the command line, plus the exact requested model/effort.
+
 <a name="KnownCapability"></a>
-## func [KnownCapability](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/capabilities.go#L14>)
+## func [KnownCapability](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/capabilities.go#L41>)
 
 ```go
 func KnownCapability(name string) bool
@@ -133,7 +155,7 @@ func ValidateBinding(binding Binding) error
 ValidateBinding validates the parts of a binding that can be checked without spawning a provider turn.
 
 <a name="Binding"></a>
-## type [Binding](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/provider.go#L12-L23>)
+## type [Binding](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/provider.go#L12-L26>)
 
 Binding is one resolved provider selection after repo config, local overrides, and per\-variant overrides have been applied.
 
@@ -141,6 +163,9 @@ Binding is one resolved provider selection after repo config, local overrides, a
 type Binding struct {
     Name   string
     Config BindingConfig
+    // CalibratedCapabilities are granted only by one immutable calibration
+    // record. Built-in provider declarations never populate this field.
+    CalibratedCapabilities []string
 
     // BinaryFromLocal is true when Config.Binary was set by the gitignored
     // local.toml provider_binary override rather than by committed
@@ -153,7 +178,7 @@ type Binding struct {
 ```
 
 <a name="ResolveBinding"></a>
-### func [ResolveBinding](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/provider.go#L65>)
+### func [ResolveBinding](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/provider.go#L70>)
 
 ```go
 func ResolveBinding(cfg File, local Local, fromConfig VariantFile) (Binding, error)
@@ -162,7 +187,7 @@ func ResolveBinding(cfg File, local Local, fromConfig VariantFile) (Binding, err
 ResolveBinding picks the provider for one variant.
 
 <a name="ResolveShippedBinding"></a>
-### func [ResolveShippedBinding](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/capabilities.go#L44>)
+### func [ResolveShippedBinding](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/capabilities.go#L80>)
 
 ```go
 func ResolveShippedBinding(name string) (Binding, error)
@@ -171,7 +196,7 @@ func ResolveShippedBinding(name string) (Binding, error)
 ResolveShippedBinding resolves a built\-in provider by its stable name.
 
 <a name="Binding.SupportsRequirements"></a>
-### func \(Binding\) [SupportsRequirements](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/capabilities.go#L25>)
+### func \(Binding\) [SupportsRequirements](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/capabilities.go#L58>)
 
 ```go
 func (b Binding) SupportsRequirements(requirements []string) bool
@@ -296,6 +321,29 @@ type File struct {
 }
 ```
 
+<a name="Invocation"></a>
+## type [Invocation](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/invocation.go#L13-L18>)
+
+Invocation is the exact tuple placed on a provider command line. Empty Effort represents an explicitly calibrated provider\-default lane.
+
+```go
+type Invocation struct {
+    Alias    string
+    Provider string
+    Model    string
+    Effort   string
+}
+```
+
+<a name="ResolveInvocation"></a>
+### func [ResolveInvocation](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/invocation.go#L38>)
+
+```go
+func ResolveInvocation(binding Binding, req Request) (Invocation, error)
+```
+
+ResolveInvocation resolves a request without silently falling back.
+
 <a name="Local"></a>
 ## type [Local](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/binding.go#L88-L91>)
 
@@ -359,24 +407,25 @@ func (OpencodeRunner) Run(ctx context.Context, binding Binding, req Request) (Re
 Run spawns \`opencode run \<prompt\> \-\-format json\` and blocks until the step\_finish frame \(or process exit\) closes the turn.
 
 <a name="Request"></a>
-## type [Request](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/provider.go#L26-L34>)
+## type [Request](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/provider.go#L29-L38>)
 
 Request is the provider\-neutral execution contract for one worker turn.
 
 ```go
 type Request struct {
-    WorkingDir   string
-    SystemPrompt string
-    UserPrompt   string
-    OutputSchema string
-    Model        Model
-    Effort       string
-    AllowedTools []string
+    WorkingDir    string
+    SystemPrompt  string
+    UserPrompt    string
+    OutputSchema  string
+    Model         Model
+    Effort        string
+    StrictBinding bool
+    AllowedTools  []string
 }
 ```
 
 <a name="Result"></a>
-## type [Result](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/provider.go#L53-L57>)
+## type [Result](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/provider.go#L57-L62>)
 
 Result captures the observable output of one provider turn.
 
@@ -385,11 +434,12 @@ type Result struct {
     SessionID       string
     AssistantOutput string
     Usage           Usage
+    Invocation      Invocation
 }
 ```
 
 <a name="Runner"></a>
-## type [Runner](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/provider.go#L60-L62>)
+## type [Runner](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/provider.go#L65-L67>)
 
 Runner executes one provider turn.
 
@@ -400,7 +450,7 @@ type Runner interface {
 ```
 
 <a name="NewRunner"></a>
-### func [NewRunner](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/provider.go#L110>)
+### func [NewRunner](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/provider.go#L115>)
 
 ```go
 func NewRunner(binding Binding) (Runner, error)
@@ -409,7 +459,7 @@ func NewRunner(binding Binding) (Runner, error)
 NewRunner returns the runtime implementation for a provider type.
 
 <a name="Usage"></a>
-## type [Usage](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/provider.go#L45-L50>)
+## type [Usage](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/provider.go#L49-L54>)
 
 Usage captures the token/cost accounting for one provider turn. Fields are zero when the provider does not report them. Coverage today: the claude runner populates Usage from the stream\-json result frame; codex and declarative bindings report zero \(their CLIs surface usage differently and are not yet parsed\). CostUSD is authoritative when non\-zero; the runtime accumulates it for spend\-cap enforcement, so a capped variant on an unreported provider still requires a cap value but its cost is not yet metered. Extending codex parsing is the follow\-up to close that gap.
 

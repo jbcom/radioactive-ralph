@@ -54,6 +54,7 @@ func (s *Supervisor) HandleCalibrationPut(
 	return ipc.CalibrationPutReply{ID: id}, nil
 }
 
+// HandleCalibrationGet loads one immutable calibration for the local API.
 func (s *Supervisor) HandleCalibrationGet(
 	ctx context.Context,
 	args ipc.CalibrationGetArgs,
@@ -71,6 +72,7 @@ func (s *Supervisor) HandleCalibrationGet(
 	return calibrationToWire(value), nil
 }
 
+// HandleCalibrationList returns every immutable calibration in alias order.
 func (s *Supervisor) HandleCalibrationList(ctx context.Context) (ipc.CalibrationListReply, error) {
 	values, err := s.store.ListProviderCalibrations(ctx)
 	if err != nil {

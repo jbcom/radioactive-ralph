@@ -62,101 +62,19 @@ func (o *Orchestrator) dispatchNextV2(
 			}
 			return dispatched, err
 		}
-		constraints := BindingConstraints{
-			AllowedProviders: append([]string{}, metadata.Providers...),
-			DeniedProviders:  denied,
-			Requirements:     append([]string{}, metadata.Requires...),
+		dispatchBinding, blockReason, err := o.resolveV2DispatchBinding(
+			ctx, planID, metadata, denied,
+		)
+		if err != nil {
+			return dispatched, err
 		}
-		var model provider.Model
-		var effort string
-		var bindingOverride *provider.Binding
-		var independenceDomain string
-		calibrationMode := ""
-		calibrationRepetitions := 0
-		calibrationFixture := ""
-		switch metadata.Binding.Mode {
-		case "calibrated", "await-calibration":
-			var calibration store.ProviderCalibration
-			if metadata.Binding.Mode == "calibrated" {
-				calibration, err = o.store.GetProviderCalibration(ctx, metadata.Binding.Calibration)
-			} else {
-				calibration, err = o.store.GetProviderCalibrationByAlias(ctx, metadata.Binding.Alias)
+		if blockReason != "" {
+			if blockErr := o.store.MarkBlockedCapability(
+				ctx, planID, metadata.ID, blockReason,
+			); blockErr != nil {
+				return dispatched, fmt.Errorf("orch: persist capability block: %w", blockErr)
 			}
-			if err != nil {
-				if metadata.Binding.Mode == "await-calibration" && errors.Is(err, sql.ErrNoRows) {
-					if blockErr := o.store.MarkBlockedCapability(
-						ctx, planID, metadata.ID,
-						fmt.Sprintf("awaiting immutable calibration for alias %s", metadata.Binding.Alias),
-					); blockErr != nil {
-						return dispatched, fmt.Errorf("orch: persist calibration wait: %w", blockErr)
-					}
-					continue
-				}
-				return dispatched, fmt.Errorf("orch: load task calibration: %w", err)
-			}
-			resolvedCalibration, validationErr := validateTaskCalibration(metadata, calibration)
-			if validationErr != nil {
-				if blockErr := o.store.MarkBlockedCapability(
-					ctx, planID, metadata.ID, validationErr.Error(),
-				); blockErr != nil {
-					return dispatched, fmt.Errorf("orch: persist calibration validation block: %w", blockErr)
-				}
-				continue
-			}
-			if slices.Contains(denied, calibration.IndependenceDomain) {
-				if blockErr := o.store.MarkBlockedCapability(
-					ctx, planID, metadata.ID,
-					fmt.Sprintf("independence domain %s already used by separated dependency", calibration.IndependenceDomain),
-				); blockErr != nil {
-					return dispatched, fmt.Errorf("orch: persist independence block: %w", blockErr)
-				}
-				continue
-			}
-			binding, err := ValidateProviderCalibration(calibration)
-			if err != nil {
-				if blockErr := o.store.MarkBlockedCapability(
-					ctx, planID, metadata.ID, err.Error(),
-				); blockErr != nil {
-					return dispatched, fmt.Errorf("orch: persist calibrated provider block: %w", blockErr)
-				}
-				continue
-			}
-			if metadata.Binding.Mode == "await-calibration" {
-				if err := o.store.BindTaskCalibration(
-					ctx, planID, metadata.ID,
-					resolvedCalibration.calibrationID, resolvedCalibration.capabilitySetJSON,
-				); err != nil {
-					if blockErr := o.store.MarkBlockedCapability(
-						ctx, planID, metadata.ID, err.Error(),
-					); blockErr != nil {
-						return dispatched, fmt.Errorf("orch: persist calibration snapshot block: %w", blockErr)
-					}
-					continue
-				}
-			}
-			bindingOverride = &binding
-			constraints = BindingConstraints{}
-			model, effort = provider.Model(calibration.Model), calibration.Effort
-			independenceDomain = calibration.IndependenceDomain
-		case "calibration":
-			binding, err := provider.ResolveShippedBinding(metadata.Binding.Provider)
-			if err != nil {
-				return dispatched, fmt.Errorf("orch: resolve calibration provider: %w", err)
-			}
-			binding.Name = metadata.Binding.Alias
-			if _, err := provider.ResolveInvocation(binding, provider.Request{
-				Model:  provider.Model(metadata.Binding.Model),
-				Effort: metadata.Binding.Effort, StrictBinding: true,
-			}); err != nil {
-				return dispatched, fmt.Errorf("orch: resolve calibration invocation: %w", err)
-			}
-			bindingOverride = &binding
-			constraints = BindingConstraints{}
-			model, effort = provider.Model(metadata.Binding.Model), metadata.Binding.Effort
-			independenceDomain = binding.Config.Type
-			calibrationMode = metadata.Binding.Mode
-			calibrationRepetitions = metadata.Binding.Repetitions
-			calibrationFixture = metadata.Binding.Fixture
+			continue
 		}
 		if !o.acquireDispatchSlot() {
 			break
@@ -165,10 +83,13 @@ func (o *Orchestrator) dispatchNextV2(
 			projectID: projectID, projectDir: projectDir, planID: planID,
 			parsedPlan: parsed, storeTitle: storedPlan.Title,
 			groupHeading: v2Task.GroupHeading, step: v2Task.Step,
-			constraints: &constraints, bindingOverride: bindingOverride,
-			model: model, effort: effort, independenceDomain: independenceDomain,
-			calibrationMode: calibrationMode, calibrationRepetitions: calibrationRepetitions,
-			calibrationFixture: calibrationFixture,
+			constraints:     &dispatchBinding.constraints,
+			bindingOverride: dispatchBinding.bindingOverride,
+			model:           dispatchBinding.model, effort: dispatchBinding.effort,
+			independenceDomain:     dispatchBinding.independenceDomain,
+			calibrationMode:        dispatchBinding.calibrationMode,
+			calibrationRepetitions: dispatchBinding.calibrationRepetitions,
+			calibrationFixture:     dispatchBinding.calibrationFixture,
 		})
 		if err != nil {
 			return dispatched, err
@@ -178,6 +99,102 @@ func (o *Orchestrator) dispatchNextV2(
 		}
 	}
 	return dispatched, nil
+}
+
+type v2DispatchBinding struct {
+	constraints            BindingConstraints
+	bindingOverride        *provider.Binding
+	model                  provider.Model
+	effort                 string
+	independenceDomain     string
+	calibrationMode        string
+	calibrationRepetitions int
+	calibrationFixture     string
+}
+
+func (o *Orchestrator) resolveV2DispatchBinding(
+	ctx context.Context,
+	planID string,
+	metadata *plan.TaskMetadata,
+	denied []string,
+) (v2DispatchBinding, string, error) {
+	resolved := v2DispatchBinding{constraints: BindingConstraints{
+		AllowedProviders: append([]string{}, metadata.Providers...),
+		DeniedProviders:  denied,
+		Requirements:     append([]string{}, metadata.Requires...),
+	}}
+	switch metadata.Binding.Mode {
+	case "pool":
+		return resolved, "", nil
+	case "calibration":
+		binding, err := provider.ResolveShippedBinding(metadata.Binding.Provider)
+		if err != nil {
+			return v2DispatchBinding{}, "", fmt.Errorf("orch: resolve calibration provider: %w", err)
+		}
+		binding.Name = metadata.Binding.Alias
+		if _, err := provider.ResolveInvocation(binding, provider.Request{
+			Model: provider.Model(metadata.Binding.Model), Effort: metadata.Binding.Effort,
+			StrictBinding: true,
+		}); err != nil {
+			return v2DispatchBinding{}, "", fmt.Errorf("orch: resolve calibration invocation: %w", err)
+		}
+		resolved.constraints = BindingConstraints{}
+		resolved.bindingOverride = &binding
+		resolved.model = provider.Model(metadata.Binding.Model)
+		resolved.effort = metadata.Binding.Effort
+		resolved.independenceDomain = binding.Config.Type
+		resolved.calibrationMode = metadata.Binding.Mode
+		resolved.calibrationRepetitions = metadata.Binding.Repetitions
+		resolved.calibrationFixture = metadata.Binding.Fixture
+		return resolved, "", nil
+	}
+
+	calibration, err := o.loadTaskCalibration(ctx, metadata)
+	if err != nil {
+		if metadata.Binding.Mode == "await-calibration" && errors.Is(err, sql.ErrNoRows) {
+			return v2DispatchBinding{}, fmt.Sprintf(
+				"awaiting immutable calibration for alias %s", metadata.Binding.Alias,
+			), nil
+		}
+		return v2DispatchBinding{}, "", fmt.Errorf("orch: load task calibration: %w", err)
+	}
+	snapshot, err := validateTaskCalibration(metadata, calibration)
+	if err != nil {
+		return v2DispatchBinding{}, err.Error(), nil
+	}
+	if slices.Contains(denied, calibration.IndependenceDomain) {
+		return v2DispatchBinding{}, fmt.Sprintf(
+			"independence domain %s already used by separated dependency",
+			calibration.IndependenceDomain,
+		), nil
+	}
+	binding, err := ValidateProviderCalibration(calibration)
+	if err != nil {
+		return v2DispatchBinding{}, err.Error(), nil
+	}
+	if metadata.Binding.Mode == "await-calibration" {
+		if err := o.store.BindTaskCalibration(
+			ctx, planID, metadata.ID, snapshot.calibrationID, snapshot.capabilitySetJSON,
+		); err != nil {
+			return v2DispatchBinding{}, err.Error(), nil
+		}
+	}
+	resolved.constraints = BindingConstraints{}
+	resolved.bindingOverride = &binding
+	resolved.model = provider.Model(calibration.Model)
+	resolved.effort = calibration.Effort
+	resolved.independenceDomain = calibration.IndependenceDomain
+	return resolved, "", nil
+}
+
+func (o *Orchestrator) loadTaskCalibration(
+	ctx context.Context,
+	metadata *plan.TaskMetadata,
+) (store.ProviderCalibration, error) {
+	if metadata.Binding.Mode == "calibrated" {
+		return o.store.GetProviderCalibration(ctx, metadata.Binding.Calibration)
+	}
+	return o.store.GetProviderCalibrationByAlias(ctx, metadata.Binding.Alias)
 }
 
 func (o *Orchestrator) separatedDomains(

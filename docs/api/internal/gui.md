@@ -33,7 +33,7 @@ func Run(ctx context.Context, o Opts) error
 Run builds and runs the Ralph desktop client: a system\-tray entry plus a main window showing the macro→meso→micro drill of the supervisor's live state, with drive affordances \(approve/pause/resume/abandon/kill/import\). It blocks until the window closes \(or, under the test driver, until the app stops\).
 
 <a name="Controller"></a>
-## type [Controller](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/gui/controller.go#L32-L62>)
+## type [Controller](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/gui/controller.go#L32-L64>)
 
 Controller is every read the GUI renders plus every drive action it can take. The read methods mirror tui.DataSource so the two clients share one mental model of the live supervisor state; the drive methods map 1:1 onto the ipc v2 drive commands so the GUI can act, not just watch. An in\-memory fake implementation \(fakeController in tests\) drives the views with no supervisor and no store, recording the drive calls the widgets make.
 
@@ -65,6 +65,8 @@ type Controller interface {
     SetPlanStatus(ctx context.Context, planID, status string) error
     // ApproveTask clears the approval gate on a ready_pending_approval task.
     ApproveTask(ctx context.Context, planID, taskID string) error
+    // RetryTask requeues blocked_input/blocked_capability work.
+    RetryTask(ctx context.Context, planID, taskID string) error
     // KillWorker kills a running worker via kill-and-reclaim.
     KillWorker(ctx context.Context, workerID string) error
 }

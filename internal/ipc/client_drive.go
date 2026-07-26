@@ -98,6 +98,7 @@ func (c *Client) WorkerKill(ctx context.Context, args WorkerKillArgs) error {
 	return c.driveCall(ctx, CmdWorkerKill, args, nil)
 }
 
+// CalibrationPut imports one immutable evidence-backed execution lane.
 func (c *Client) CalibrationPut(
 	ctx context.Context,
 	args CalibrationPutArgs,
@@ -107,6 +108,7 @@ func (c *Client) CalibrationPut(
 	return reply, err
 }
 
+// CalibrationGet loads one calibration by content address.
 func (c *Client) CalibrationGet(
 	ctx context.Context,
 	args CalibrationGetArgs,
@@ -116,6 +118,7 @@ func (c *Client) CalibrationGet(
 	return reply, err
 }
 
+// CalibrationList returns every immutable calibration in alias order.
 func (c *Client) CalibrationList(ctx context.Context) (CalibrationListReply, error) {
 	var reply CalibrationListReply
 	err := c.driveCall(ctx, CmdCalibrationList, struct{}{}, &reply)

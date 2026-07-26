@@ -267,6 +267,7 @@ type TaskSummary struct {
 	CompletionEvidenceJSON     string `json:"completion_evidence_json,omitempty"`
 }
 
+// TaskListReply contains complete task summaries for one plan.
 type TaskListReply struct {
 	Tasks []TaskSummary `json:"tasks"`
 }
@@ -291,18 +292,22 @@ type CalibrationRecord struct {
 	Evidence           json.RawMessage `json:"evidence"`
 }
 
+// CalibrationPutArgs carries one calibration record to authenticated ingress.
 type CalibrationPutArgs struct {
 	Calibration CalibrationRecord `json:"calibration"`
 }
 
+// CalibrationPutReply reports the immutable content address assigned on import.
 type CalibrationPutReply struct {
 	ID string `json:"id"`
 }
 
+// CalibrationGetArgs identifies one calibration by content address.
 type CalibrationGetArgs struct {
 	ID string `json:"id"`
 }
 
+// CalibrationListReply contains immutable calibration records in alias order.
 type CalibrationListReply struct {
 	Calibrations []CalibrationRecord `json:"calibrations"`
 }

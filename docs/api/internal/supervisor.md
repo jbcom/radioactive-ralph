@@ -24,6 +24,9 @@ Package supervisor implements the \`\-\-supervisor\` process: the single durable
 - [type Options](<#Options>)
 - [type Supervisor](<#Supervisor>)
   - [func \(s \*Supervisor\) HandleAttach\(ctx context.Context, args ipc.AttachArgs, emit func\(json.RawMessage\) error\) error](<#Supervisor.HandleAttach>)
+  - [func \(s \*Supervisor\) HandleCalibrationGet\(ctx context.Context, args ipc.CalibrationGetArgs\) \(ipc.CalibrationRecord, error\)](<#Supervisor.HandleCalibrationGet>)
+  - [func \(s \*Supervisor\) HandleCalibrationList\(ctx context.Context\) \(ipc.CalibrationListReply, error\)](<#Supervisor.HandleCalibrationList>)
+  - [func \(s \*Supervisor\) HandleCalibrationPut\(ctx context.Context, args ipc.CalibrationPutArgs\) \(ipc.CalibrationPutReply, error\)](<#Supervisor.HandleCalibrationPut>)
   - [func \(s \*Supervisor\) HandleEnqueue\(ctx context.Context, args ipc.EnqueueArgs\) \(ipc.EnqueueReply, error\)](<#Supervisor.HandleEnqueue>)
   - [func \(s \*Supervisor\) HandlePlanImport\(ctx context.Context, args ipc.PlanImportArgs\) \(ipc.PlanImportReply, error\)](<#Supervisor.HandlePlanImport>)
   - [func \(s \*Supervisor\) HandlePlanSetStatus\(ctx context.Context, args ipc.PlanSetStatusArgs\) \(ipc.PlanSetStatusReply, error\)](<#Supervisor.HandlePlanSetStatus>)
@@ -31,6 +34,8 @@ Package supervisor implements the \`\-\-supervisor\` process: the single durable
   - [func \(s \*Supervisor\) HandleStatus\(ctx context.Context\) \(ipc.StatusReply, error\)](<#Supervisor.HandleStatus>)
   - [func \(s \*Supervisor\) HandleStop\(\_ context.Context, \_ ipc.StopArgs\) error](<#Supervisor.HandleStop>)
   - [func \(s \*Supervisor\) HandleTaskApprove\(ctx context.Context, args ipc.TaskApproveArgs\) error](<#Supervisor.HandleTaskApprove>)
+  - [func \(s \*Supervisor\) HandleTaskList\(ctx context.Context, args ipc.TaskListArgs\) \(ipc.TaskListReply, error\)](<#Supervisor.HandleTaskList>)
+  - [func \(s \*Supervisor\) HandleTaskRetry\(ctx context.Context, args ipc.TaskRetryArgs\) error](<#Supervisor.HandleTaskRetry>)
   - [func \(s \*Supervisor\) HandleWorkerKill\(ctx context.Context, args ipc.WorkerKillArgs\) error](<#Supervisor.HandleWorkerKill>)
 
 
@@ -141,7 +146,7 @@ type Supervisor struct {
 ```
 
 <a name="Supervisor.HandleAttach"></a>
-### func \(\*Supervisor\) [HandleAttach](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/supervisor/supervisor.go#L442>)
+### func \(\*Supervisor\) [HandleAttach](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/supervisor/supervisor.go#L464>)
 
 ```go
 func (s *Supervisor) HandleAttach(ctx context.Context, args ipc.AttachArgs, emit func(json.RawMessage) error) error
@@ -149,8 +154,35 @@ func (s *Supervisor) HandleAttach(ctx context.Context, args ipc.AttachArgs, emit
 
 HandleAttach streams the project's events to the client as they are written, turning the observe half of the drive\+observe API from a stub into a live feed. It TAILS the append\-only events table: each tick it reads rows with id greater than the cursor \(scoped to args.ProjectID, including plan\-linked rows\), emits each, and advances the cursor. The cursor starts at args.AfterID — the client owns it \(it obtains an initial value from MaxEventID/backlog\), so there is no server\-side seed and no lost\-event race. The loop returns when ctx is cancelled \(client disconnect — \#165's watcher — or supervisor shutdown\) or when emit reports the client is gone.
 
+<a name="Supervisor.HandleCalibrationGet"></a>
+### func \(\*Supervisor\) [HandleCalibrationGet](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/supervisor/calibration.go#L58-L61>)
+
+```go
+func (s *Supervisor) HandleCalibrationGet(ctx context.Context, args ipc.CalibrationGetArgs) (ipc.CalibrationRecord, error)
+```
+
+HandleCalibrationGet loads one immutable calibration for the local API.
+
+<a name="Supervisor.HandleCalibrationList"></a>
+### func \(\*Supervisor\) [HandleCalibrationList](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/supervisor/calibration.go#L76>)
+
+```go
+func (s *Supervisor) HandleCalibrationList(ctx context.Context) (ipc.CalibrationListReply, error)
+```
+
+HandleCalibrationList returns every immutable calibration in alias order.
+
+<a name="Supervisor.HandleCalibrationPut"></a>
+### func \(\*Supervisor\) [HandleCalibrationPut](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/supervisor/calibration.go#L40-L43>)
+
+```go
+func (s *Supervisor) HandleCalibrationPut(ctx context.Context, args ipc.CalibrationPutArgs) (ipc.CalibrationPutReply, error)
+```
+
+HandleCalibrationPut imports evidence through the OS\-authenticated local control endpoint after proving it still matches this host.
+
 <a name="Supervisor.HandleEnqueue"></a>
-### func \(\*Supervisor\) [HandleEnqueue](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/supervisor/supervisor.go#L389>)
+### func \(\*Supervisor\) [HandleEnqueue](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/supervisor/supervisor.go#L411>)
 
 ```go
 func (s *Supervisor) HandleEnqueue(ctx context.Context, args ipc.EnqueueArgs) (ipc.EnqueueReply, error)
@@ -179,7 +211,7 @@ func (s *Supervisor) HandlePlanSetStatus(ctx context.Context, args ipc.PlanSetSt
 HandlePlanSetStatus changes a plan's lifecycle status, validated to the allowed operator transitions.
 
 <a name="Supervisor.HandleReloadConfig"></a>
-### func \(\*Supervisor\) [HandleReloadConfig](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/supervisor/supervisor.go#L418>)
+### func \(\*Supervisor\) [HandleReloadConfig](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/supervisor/supervisor.go#L440>)
 
 ```go
 func (s *Supervisor) HandleReloadConfig(_ context.Context) error
@@ -197,7 +229,7 @@ func (s *Supervisor) HandleStatus(ctx context.Context) (ipc.StatusReply, error)
 HandleStatus reports supervisor\-level liveness. ActiveWorkers and the per\-worker detail are sourced from the store's real worker rows \(store.ListRunningWorkers\) rather than an in\-process map: no in\-process structure could ever reflect this anyway, since agent subprocess lifetime is fully owned by whichever provider runner orch dispatched, not by the supervisor itself. A query failure degrades to an empty list / 0 count rather than failing the whole status reply — a transient error should never make \`status\` itself fail.
 
 <a name="Supervisor.HandleStop"></a>
-### func \(\*Supervisor\) [HandleStop](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/supervisor/supervisor.go#L410>)
+### func \(\*Supervisor\) [HandleStop](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/supervisor/supervisor.go#L432>)
 
 ```go
 func (s *Supervisor) HandleStop(_ context.Context, _ ipc.StopArgs) error
@@ -214,8 +246,26 @@ func (s *Supervisor) HandleTaskApprove(ctx context.Context, args ipc.TaskApprove
 
 HandleTaskApprove clears the approval gate on a ready\_pending\_approval task.
 
+<a name="Supervisor.HandleTaskList"></a>
+### func \(\*Supervisor\) [HandleTaskList](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/supervisor/drive.go#L150-L153>)
+
+```go
+func (s *Supervisor) HandleTaskList(ctx context.Context, args ipc.TaskListArgs) (ipc.TaskListReply, error)
+```
+
+HandleTaskList exposes durable task/team/binding/block/evidence provenance through the authenticated local API.
+
+<a name="Supervisor.HandleTaskRetry"></a>
+### func \(\*Supervisor\) [HandleTaskRetry](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/supervisor/drive.go#L128>)
+
+```go
+func (s *Supervisor) HandleTaskRetry(ctx context.Context, args ipc.TaskRetryArgs) error
+```
+
+HandleTaskRetry requeues a task after its blocked input/capability condition has been corrected. Dispatch performs the complete admission checks again.
+
 <a name="Supervisor.HandleWorkerKill"></a>
-### func \(\*Supervisor\) [HandleWorkerKill](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/supervisor/drive.go#L132>)
+### func \(\*Supervisor\) [HandleWorkerKill](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/supervisor/drive.go#L192>)
 
 ```go
 func (s *Supervisor) HandleWorkerKill(ctx context.Context, args ipc.WorkerKillArgs) error

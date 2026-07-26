@@ -197,6 +197,16 @@ func validateTaskMetadata(metadata *TaskMetadata) error {
 	if !teamPathPattern.MatchString(metadata.Team) {
 		return fmt.Errorf("task %s has invalid team path %q", metadata.ID, metadata.Team)
 	}
+	if err := validateTaskBinding(metadata); err != nil {
+		return err
+	}
+	if err := validateTaskLists(metadata); err != nil {
+		return err
+	}
+	return validateTaskPaths(metadata)
+}
+
+func validateTaskBinding(metadata *TaskMetadata) error {
 	bindingValues := []string{
 		metadata.Binding.Alias, metadata.Binding.Provider,
 		metadata.Binding.Model, metadata.Binding.Effort,
@@ -234,6 +244,10 @@ func validateTaskMetadata(metadata *TaskMetadata) error {
 	default:
 		return fmt.Errorf("task %s binding mode %q is invalid", metadata.ID, metadata.Binding.Mode)
 	}
+	return validateTaskBindingSyntax(metadata)
+}
+
+func validateTaskBindingSyntax(metadata *TaskMetadata) error {
 	if metadata.Binding.Alias != "" && !namePattern.MatchString(metadata.Binding.Alias) {
 		return fmt.Errorf("task %s binding alias %q is invalid", metadata.ID, metadata.Binding.Alias)
 	}
@@ -254,6 +268,10 @@ func validateTaskMetadata(metadata *TaskMetadata) error {
 		!sha256Pattern.MatchString(strings.TrimPrefix(metadata.Binding.Calibration, "sha256:")) {
 		return fmt.Errorf("task %s binding calibration has invalid sha256", metadata.ID)
 	}
+	return nil
+}
+
+func validateTaskLists(metadata *TaskMetadata) error {
 	for field, values := range map[string][]string{
 		"after": metadata.After, "requires": metadata.Requires,
 		"providers": metadata.Providers, "differentFrom": metadata.DifferentFrom,
@@ -267,6 +285,10 @@ func validateTaskMetadata(metadata *TaskMetadata) error {
 			return fmt.Errorf("task %s has invalid capability/provider %q", metadata.ID, value)
 		}
 	}
+	return nil
+}
+
+func validateTaskPaths(metadata *TaskMetadata) error {
 	for _, input := range metadata.Inputs {
 		if err := validateRelativePath(input.Path); err != nil {
 			return fmt.Errorf("task %s input: %w", metadata.ID, err)
