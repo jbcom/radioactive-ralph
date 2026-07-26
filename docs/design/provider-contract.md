@@ -26,6 +26,8 @@ type Request struct {
     Model        Model
     Effort       string
     AllowedTools []string
+    TurnTimeout  time.Duration
+    StallTimeout time.Duration
 }
 
 type Result struct {
@@ -41,6 +43,14 @@ pty, captures output, and returns the assistant's output plus an optional
 session ID for resume and a best-effort `Usage` (tokens + `CostUSD`). The
 orchestrator accumulates `Usage.CostUSD` per provider to enforce spend
 caps.
+
+Every turn resolves two independent clocks. `TurnTimeout` is an absolute
+deadline over the entire turn; `StallTimeout` is a renewable progress lease.
+Built-in PTY runners renew the lease on underlying reads, and declarative
+runners renew it on stdout or stderr bytes. Progress never extends the absolute
+deadline. Request overrides win over binding/project configuration, which wins
+over bounded defaults (30-minute turn, 3-minute stall). Hard maxima are 24
+hours and 1 hour respectively.
 
 ## Capability record
 
@@ -221,10 +231,9 @@ being discarded. The channel retains one content-free timestamp and coalesces
 to the newest read time. Watch computes the stall deadline from that read time,
 not from when downstream backpressure finally lets it consume the observation;
 an old queued observation therefore cannot grant a fresh timeout. Partial
-content never reaches prompt matching or parsers. Codex keeps a ten-second
-cold-start floor for aggressively shortened test timeouts; it is not derived
-from or presented as a protocol-size bound. The normal three-minute production
-timeout is unchanged. A reader that returns `(0, nil)` without progress is
+content never reaches prompt matching or parsers. Every built-in provider
+honors the resolved stall lease exactly; no provider-specific floor silently
+widens configured policy. A reader that returns `(0, nil)` without progress is
 rejected after 100 consecutive reads, matching Go's bounded no-progress
 convention; any successful read resets the counter, and cancellation is checked
 between empty reads. The failure is the static `ErrOutputRead` and never
@@ -267,14 +276,34 @@ returning `os.ErrProcessDone` explicitly transfers to natural reaping rather
 than marking the earlier termination request as forced.
 
 On Linux, cleanup enumerates the original PTY session, opens and revalidates a
-pidfd for each regrouped member, signals it, and repeats with a fixed bound until
-no live member remains. This reclaims descendants that use `setpgrp(2)` without
-signalling a recycled PID. macOS has no equivalent stable descendant handle:
-Ralph detects a live regrouped same-session process and returns
-`ErrProcessSessionCleanup` instead of risking an unrelated process. A descendant
-that deliberately calls `setsid(2)` is outside the portable original-session
-boundary; it cannot wedge Ralph, but full kernel containment remains future
-cgroup-v2 work on Linux and Job Object work on native Windows.
+pidfd for each regrouped member, signals it, and repeats with a fixed bound
+until no live member remains. On Darwin, Ralph obtains each member's
+`TASK_AUDIT_TOKEN`, revalidates its session, start time, parent, group, and
+effective UID, then calls the public `proc_signal_with_audittoken` API
+leaf-first. XNU validates the token's PID version, so an exited process cannot
+turn a recycled numeric PID into a signal target. Darwin deliberately has no
+raw-PID descendant fallback. Both implementations therefore reclaim
+`setpgrp(2)` descendants without PID-reuse risk. Apple documents `(pid,
+pidversion)` as a specific execution identity in
+[Endpoint Security](https://developer.apple.com/documentation/endpointsecurity/es_process_t),
+and the validation path is visible in
+[XNU's `proc_find_audit_token`](https://github.com/apple-oss-distributions/xnu/blob/main/bsd/kern/kern_proc.c).
+
+A descendant that deliberately creates a new session with `setsid(2)` remains
+outside the portable original-PTY-session boundary; the terminal-aware reader
+prevents it from wedging Ralph, but the child is not claimed as safely
+discoverable after reparenting. Extending the boundary requires a pre-exec
+kernel containment primitive rather than a raw process-tree walk (cgroup v2 on
+Linux, a native Job Object design on Windows, or an entitled Darwin equivalent).
+
+Provider failures cross the persistence boundary only as a closed
+`failure_category` plus a static summary. Categories distinguish total
+deadline, stall, interactive prompt, cancellation, output limit, process
+cleanup, provider rejection, and generic runtime failure. Raw CLI diagnostics
+remain transient error causes and never enter task events or A2A evidence.
+Successful assistant output is rechecked against the 16 MiB evidence ceiling
+at the orchestrator boundary, so declarative and custom runners cannot bypass
+the bounds enforced while built-in provider streams are parsed.
 
 Linux retries only `EINTR` around pidfd acquisition/polling and the `waitid`
 fallback. Every other observer backend error is wrapped by

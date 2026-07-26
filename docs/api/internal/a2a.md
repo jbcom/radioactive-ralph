@@ -67,7 +67,7 @@ const (
 ```
 
 <a name="MarshalEvidence"></a>
-## func [MarshalEvidence](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/a2a/a2a.go#L107>)
+## func [MarshalEvidence](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/a2a/a2a.go#L111>)
 
 ```go
 func MarshalEvidence(ev Evidence) (string, error)
@@ -76,7 +76,7 @@ func MarshalEvidence(ev Evidence) (string, error)
 MarshalEvidence serializes Evidence to a JSON string for storage in the store's evidence/payload columns \(e.g. MarkDone's evidenceJSON parameter\).
 
 <a name="Evidence"></a>
-## type [Evidence](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/a2a/a2a.go#L72-L92>)
+## type [Evidence](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/a2a/a2a.go#L72-L96>)
 
 Evidence is what a worker submits after it believes it has completed a task: what it ran, what happened, and what changed. This is a PROPOSAL — the orchestrator's VerifyAndComplete re\-checks it against the task's acceptance criteria before ever marking the task done in the store.
 
@@ -96,6 +96,10 @@ type Evidence struct {
     // kept for the audit trail and for judgment-based acceptance criteria.
     Output string `json:"output,omitempty"`
 
+    // FailureCategory is a closed, privacy-safe provider failure code. Raw
+    // provider diagnostics are never persisted in evidence.
+    FailureCategory string `json:"failure_category,omitempty"`
+
     // Diff is the worker's summary/patch of what it changed, if any.
     Diff string `json:"diff,omitempty"`
 
@@ -105,7 +109,7 @@ type Evidence struct {
 ```
 
 <a name="EvidenceFromMessage"></a>
-### func [EvidenceFromMessage](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/a2a/a2a.go#L131>)
+### func [EvidenceFromMessage](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/a2a/a2a.go#L135>)
 
 ```go
 func EvidenceFromMessage(msg *Message) (Evidence, error)
@@ -114,7 +118,7 @@ func EvidenceFromMessage(msg *Message) (Evidence, error)
 EvidenceFromMessage extracts Evidence from an a2a.Message's first Data part. Returns an error if the message carries no data part.
 
 <a name="UnmarshalEvidence"></a>
-### func [UnmarshalEvidence](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/a2a/a2a.go#L118>)
+### func [UnmarshalEvidence](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/a2a/a2a.go#L122>)
 
 ```go
 func UnmarshalEvidence(raw string) (Evidence, error)
@@ -132,7 +136,7 @@ type Message = a2a.Message
 ```
 
 <a name="NewEvidenceMessage"></a>
-### func [NewEvidenceMessage](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/a2a/a2a.go#L97>)
+### func [NewEvidenceMessage](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/a2a/a2a.go#L101>)
 
 ```go
 func NewEvidenceMessage(role a2a.MessageRole, taskID, contextID string, ev Evidence) *Message

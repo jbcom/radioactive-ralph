@@ -3,8 +3,11 @@
 package agent
 
 import (
+	"errors"
 	"fmt"
 	"os"
+	"slices"
+	"syscall"
 	"time"
 
 	"golang.org/x/sys/unix"
@@ -15,12 +18,21 @@ const (
 	sessionCleanupInterval = 5 * time.Millisecond
 )
 
-// cleanupOriginalProcessSession proves ordinary process-group cleanup and
-// detects setpgrp(2) escape on Darwin. Darwin exposes no pidfd-equivalent
-// stable descendant handle; signalling a discovered raw PID/PGID could hit a
-// recycled unrelated process. Preserve that safety invariant by reporting an
-// escaped live member instead. The terminal-aware PTY reader still guarantees
-// the descendant cannot wedge Agent.Wait.
+type darwinSessionMember struct {
+	pid       int
+	parentPID int
+	group     int
+	euid      uint32
+	startSec  int64
+	startUsec int32
+}
+
+// cleanupOriginalProcessSession reclaims descendants that moved process group
+// while remaining in Ralph's PTY session. Darwin's
+// proc_signal_with_audittoken is the pidfd-equivalent safety primitive here:
+// the kernel validates the token's PID version, so a recycled numeric PID is
+// never signaled. Enumeration is revalidated after token acquisition and
+// escaped members are killed leaf-first.
 func cleanupOriginalProcessSession(
 	process *os.Process,
 	originalGroupSignaled bool,
@@ -32,41 +44,56 @@ func cleanupOriginalProcessSession(
 	// PID the original session ID. Darwin getsid(2) returns ESRCH for a zombie,
 	// so derive the invariant from launch rather than probing the exited leader.
 	sessionID := process.Pid
-	var ordinaryGroupMembers []int
+	api, err := systemDarwinProcessAPI()
+	if err != nil {
+		return err
+	}
+	var remaining []int
+	effectiveUID := os.Geteuid()
+	if effectiveUID < 0 {
+		return fmt.Errorf("agent: invalid effective UID %d", effectiveUID)
+	}
 	for range sessionCleanupAttempts {
-		processes, err := unix.SysctlKinfoProcSlice("kern.proc.all")
+		members, err := darwinSessionMembers(sessionID)
 		if err != nil {
-			return fmt.Errorf("agent: enumerate PTY session: %w", err)
+			return err
 		}
-		ordinaryGroupMembers = ordinaryGroupMembers[:0]
-		for i := range processes {
-			candidate := &processes[i]
-			pid := int(candidate.Proc.P_pid)
-			if pid <= 1 || pid == process.Pid ||
-				candidate.Proc.P_stat == darwinZombieState {
+		sortDarwinMembersLeafFirst(members)
+		remaining = remaining[:0]
+		for _, member := range members {
+			if member.pid == process.Pid {
 				continue
 			}
-			candidateSession, sessionErr := unix.Getsid(pid)
-			if sessionErr != nil || candidateSession != sessionID {
+			remaining = append(remaining, member.pid)
+			if originalGroupSignaled && member.group == process.Pid {
 				continue
 			}
-			if int(candidate.Eproc.Pgid) != process.Pid {
-				return fmt.Errorf(
-					"agent: Darwin cannot safely signal escaped PTY session member %d in process group %d",
-					pid,
-					candidate.Eproc.Pgid,
-				)
+			// Darwin uid_t is uint32; effectiveUID was checked non-negative.
+			if member.euid != uint32(effectiveUID) { //nolint:gosec // Darwin uid_t ABI
+				return fmt.Errorf("agent: refuse to signal PTY session member %d owned by another user", member.pid)
 			}
-			if !originalGroupSignaled {
-				return fmt.Errorf(
-					"agent: original PTY process group %d was not signaled; live member %d remains",
-					process.Pid,
-					pid,
-				)
+			token, err := api.auditTokenForPID(member.pid)
+			if errors.Is(err, syscall.ESRCH) {
+				continue
 			}
-			ordinaryGroupMembers = append(ordinaryGroupMembers, pid)
+			if err != nil {
+				return err
+			}
+			if token.euid() != member.euid {
+				return fmt.Errorf("agent: audit-token UID changed for PTY session member %d", member.pid)
+			}
+			current, found, err := readDarwinSessionMember(member.pid)
+			if err != nil {
+				return err
+			}
+			if !found || current != member || currentSession(member.pid) != sessionID {
+				continue
+			}
+			if err := api.signalAuditToken(token, syscall.SIGKILL); err != nil {
+				return fmt.Errorf("agent: audit-token kill PTY session member %d: %w", member.pid, err)
+			}
 		}
-		if len(ordinaryGroupMembers) == 0 {
+		if len(remaining) == 0 {
 			return nil
 		}
 		time.Sleep(sessionCleanupInterval)
@@ -74,6 +101,84 @@ func cleanupOriginalProcessSession(
 	return fmt.Errorf(
 		"agent: PTY process group %d still has live members after cleanup: %v",
 		process.Pid,
-		ordinaryGroupMembers,
+		remaining,
 	)
+}
+
+func darwinSessionMembers(sessionID int) ([]darwinSessionMember, error) {
+	processes, err := unix.SysctlKinfoProcSlice("kern.proc.all")
+	if err != nil {
+		return nil, fmt.Errorf("agent: enumerate PTY session: %w", err)
+	}
+	members := make([]darwinSessionMember, 0)
+	for i := range processes {
+		candidate := &processes[i]
+		pid := int(candidate.Proc.P_pid)
+		if pid <= 1 || candidate.Proc.P_stat == darwinZombieState || currentSession(pid) != sessionID {
+			continue
+		}
+		members = append(members, darwinMemberFromKinfo(candidate))
+	}
+	return members, nil
+}
+
+func readDarwinSessionMember(pid int) (darwinSessionMember, bool, error) {
+	candidate, err := unix.SysctlKinfoProc("kern.proc.pid", pid)
+	if errors.Is(err, syscall.ESRCH) || errors.Is(err, syscall.ENOENT) {
+		return darwinSessionMember{}, false, nil
+	}
+	if err != nil {
+		return darwinSessionMember{}, false, fmt.Errorf("agent: inspect Darwin process %d: %w", pid, err)
+	}
+	if candidate.Proc.P_stat == darwinZombieState {
+		return darwinSessionMember{}, false, nil
+	}
+	return darwinMemberFromKinfo(candidate), true, nil
+}
+
+func darwinMemberFromKinfo(candidate *unix.KinfoProc) darwinSessionMember {
+	return darwinSessionMember{
+		pid:       int(candidate.Proc.P_pid),
+		parentPID: int(candidate.Eproc.Ppid),
+		group:     int(candidate.Eproc.Pgid),
+		euid:      candidate.Eproc.Ucred.Uid,
+		startSec:  candidate.Proc.P_starttime.Sec,
+		startUsec: candidate.Proc.P_starttime.Usec,
+	}
+}
+
+func currentSession(pid int) int {
+	session, err := unix.Getsid(pid)
+	if err != nil {
+		return -1
+	}
+	return session
+}
+
+func sortDarwinMembersLeafFirst(members []darwinSessionMember) {
+	byPID := make(map[int]darwinSessionMember, len(members))
+	for _, member := range members {
+		byPID[member.pid] = member
+	}
+	depth := func(member darwinSessionMember) int {
+		seen := map[int]bool{member.pid: true}
+		current := member
+		value := 0
+		for {
+			parent, ok := byPID[current.parentPID]
+			if !ok || seen[parent.pid] {
+				return value
+			}
+			seen[parent.pid] = true
+			value++
+			current = parent
+		}
+	}
+	slices.SortFunc(members, func(a, b darwinSessionMember) int {
+		aDepth, bDepth := depth(a), depth(b)
+		if aDepth != bDepth {
+			return bDepth - aDepth
+		}
+		return b.pid - a.pid
+	})
 }

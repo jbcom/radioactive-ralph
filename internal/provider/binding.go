@@ -46,6 +46,7 @@ type BindingConfig struct {
 	OutputFile string `toml:"output_file"`
 
 	TurnTimeout    string `toml:"turn_timeout"`
+	StallTimeout   string `toml:"stall_timeout"`
 	MaxRetries     int    `toml:"max_retries"`
 	SessionIDRegex string `toml:"session_id_regex"`
 

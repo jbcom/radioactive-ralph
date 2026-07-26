@@ -65,10 +65,7 @@ printf '%s' "$@"
 }
 
 // TestDeclarativeTurnTimeoutBoundsHungCLI proves a declarative binding whose CLI
-// hangs is bounded by turn_timeout rather than blocking forever — declarative
-// modes have no stall watchdog, so the turn timeout is their only never-block
-// guarantee. Uses a short explicit turn_timeout so the test is fast; the
-// production default (DefaultStallTimeout) applies the same bound when unset.
+// hangs is bounded by turn_timeout rather than blocking forever.
 func TestDeclarativeTurnTimeoutBoundsHungCLI(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("shell-script fake CLI is Unix-only")
@@ -102,11 +99,107 @@ sleep 300
 }
 
 // TestDeclarativeDefaultsTurnTimeout confirms an unset turn_timeout defaults to a
-// bounded value (DefaultStallTimeout) rather than "unbounded", so a declarative
+// bounded value distinct from the renewable stall lease, so a declarative
 // binding an operator forgot to configure still can't block forever.
 func TestDeclarativeDefaultsTurnTimeout(t *testing.T) {
-	if DefaultStallTimeout <= 0 {
-		t.Fatalf("DefaultStallTimeout = %v, want a positive bound for declarative fallback", DefaultStallTimeout)
+	if DefaultTurnTimeout <= 0 || DefaultTurnTimeout == DefaultStallTimeout {
+		t.Fatalf("defaults turn=%v stall=%v, want positive independent bounds", DefaultTurnTimeout, DefaultStallTimeout)
+	}
+}
+
+func TestDeclarativeProgressRenewsStallButTotalDeadlineStillWins(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell-script fake CLI is Unix-only")
+	}
+	bin := writeFakeCLI(t, "fake-progress.sh", `#!/bin/sh
+while :; do
+  /bin/echo '.'
+  sleep 0.04
+done
+`)
+	start := time.Now()
+	_, err := DeclarativeRunner{}.Run(context.Background(), Binding{
+		Name:            "progress",
+		BinaryFromLocal: true,
+		Config: BindingConfig{
+			Type:         declarativePlainStdout,
+			Binary:       bin,
+			TurnTimeout:  "1200ms",
+			StallTimeout: "400ms",
+		},
+	}, Request{WorkingDir: t.TempDir(), UserPrompt: "x"})
+	elapsed := time.Since(start)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("error = %v, want total deadline", err)
+	}
+	if elapsed < 900*time.Millisecond || elapsed > 3*time.Second {
+		t.Fatalf("elapsed = %s, want progress beyond stall but bounded by total", elapsed)
+	}
+}
+
+func TestDeclarativeSilenceTriggersTypedStallBeforeTotalDeadline(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell-script fake CLI is Unix-only")
+	}
+	bin := writeFakeCLI(t, "fake-silent.sh", `#!/bin/sh
+sleep 300
+`)
+	start := time.Now()
+	_, err := DeclarativeRunner{}.Run(context.Background(), Binding{
+		Name:            "silent",
+		BinaryFromLocal: true,
+		Config: BindingConfig{
+			Type:         declarativePlainStdout,
+			Binary:       bin,
+			TurnTimeout:  "2s",
+			StallTimeout: "80ms",
+		},
+	}, Request{WorkingDir: t.TempDir(), UserPrompt: "x"})
+	if !errors.Is(err, ErrProviderStalled) {
+		t.Fatalf("error = %v, want ErrProviderStalled", err)
+	}
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Fatalf("stall returned after %s, want before total deadline", elapsed)
+	}
+}
+
+func TestDeclarativeRetriesShareOneTotalTurnBudget(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell-script fake CLI is Unix-only")
+	}
+	bin := writeFakeCLI(t, "fake-retry-budget.sh", `#!/bin/sh
+state="$PWD/attempts"
+n=0
+if [ -f "$state" ]; then n="$(cat "$state")"; fi
+echo "$((n + 1))" > "$state"
+sleep 300
+`)
+	workingDir := t.TempDir()
+	start := time.Now()
+	_, err := DeclarativeRunner{}.Run(context.Background(), Binding{
+		Name:            "retry-budget",
+		BinaryFromLocal: true,
+		Config: BindingConfig{
+			Type:         declarativePlainStdout,
+			Binary:       bin,
+			TurnTimeout:  "1800ms",
+			StallTimeout: "500ms",
+			MaxRetries:   10,
+		},
+	}, Request{WorkingDir: workingDir, UserPrompt: "x"})
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("error = %v, want shared total deadline", err)
+	}
+	rawAttempts, readErr := os.ReadFile(filepath.Join(workingDir, "attempts"))
+	if readErr != nil {
+		t.Fatalf("read attempt count: %v", readErr)
+	}
+	attempts := strings.TrimSpace(string(rawAttempts))
+	if attempts != "3" && attempts != "4" {
+		t.Fatalf("attempts = %s, want only 3-4 within one shared budget", attempts)
+	}
+	if elapsed := time.Since(start); elapsed > 3*time.Second {
+		t.Fatalf("retries escaped total budget: %s", elapsed)
 	}
 }
 

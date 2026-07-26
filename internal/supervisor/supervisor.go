@@ -182,7 +182,7 @@ runLoop:
 	// turn in its own goroutine (the never-block invariant), so cancellation
 	// aborts the in-flight runner.Run subprocesses (via the orchestrator's
 	// worker-cancel registry) and makes the drain in shutdown bounded rather than
-	// a wait of up to StallTimeout per in-flight worker.
+	// a wait of up to the independently configured turn deadline per worker.
 	cancel()
 	return sup.shutdown(context.Background())
 }
@@ -370,11 +370,10 @@ func (s *Supervisor) HandleStatus(ctx context.Context) (ipc.StatusReply, error) 
 // not just one) and calls DispatchNext on each, in plan order, until
 // either every plan has been tried or maxEnqueueDispatchPlans is reached
 // (a bound so one enqueue call can never scan an unbounded number of
-// plans). It is NOT a blocking wait for any of that work to finish —
-// DispatchNext itself is synchronous per dispatched step but bounded by
-// orch's own watchdog config (agent.WatchdogConfig.StallTimeout), so a
-// stalled/prompting provider still returns (killed) rather than hanging
-// this IPC call.
+// plans). It is NOT a blocking wait for any of that work to finish:
+// DispatchNext claims each admitted step and launches its independently
+// bounded provider turn asynchronously, so this IPC call never waits on a
+// turn deadline or stall lease.
 //
 // args.Description/args.TaskID name the work the caller wanted enqueued,
 // but a store task cannot be created without a plan_id (tasks.plan_id is a

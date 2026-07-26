@@ -66,7 +66,8 @@ type Orchestrator struct {
 	resolveBinding  BindingResolver
 	now             Clock
 	maxParallel     int
-	watchdogConfig  agent.WatchdogConfig
+	turnTimeout     time.Duration
+	stallTimeout    time.Duration
 	spendCapUSD     map[string]float64 // provider name -> cap; 0/absent = uncapped
 	acceptanceCheck AcceptanceChecker
 
@@ -111,7 +112,7 @@ type Orchestrator struct {
 	capInFlight   map[string]int
 
 	// Async dispatch (the never-block invariant): dispatchWorker runs the provider
-	// agent turn, which can block for up to watchdogConfig.StallTimeout. It must
+	// agent turn, which can block for up to its independent total deadline. It must
 	// NOT run inline under the supervisor's dispatchMu, or a slow turn wedges the
 	// periodic tick, HandleEnqueue, and the reaper. So DispatchNext launches each
 	// worker in its own goroutine, tracked by inflight (for shutdown drain) and
@@ -278,10 +279,17 @@ func WithMaxParallel(n int) Option {
 	return func(o *Orchestrator) { o.maxParallel = n }
 }
 
-// WithWatchdog overrides the stall/prompt watchdog configuration used for
-// dispatched workers.
+// WithWatchdog overrides the renewable provider stall lease used for
+// dispatched workers. It never changes the absolute turn deadline.
 func WithWatchdog(cfg agent.WatchdogConfig) Option {
-	return func(o *Orchestrator) { o.watchdogConfig = cfg }
+	return func(o *Orchestrator) { o.stallTimeout = cfg.StallTimeout }
+}
+
+// WithTurnTimeout overrides the absolute wall-clock ceiling for dispatched
+// provider turns. It is independent of WithWatchdog: progress renews only the
+// stall lease and can never extend this bound.
+func WithTurnTimeout(timeout time.Duration) Option {
+	return func(o *Orchestrator) { o.turnTimeout = timeout }
 }
 
 // WithSpendCap sets a per-provider spend cap in USD. A provider with no
@@ -309,7 +317,7 @@ func WithDecisionLogRoot(dir string) Option {
 
 // New constructs an Orchestrator against st. Defaults: provider.NewRunner
 // as the runner factory, a claude binding resolver, real time, unbounded
-// parallelism, a 5-minute stall timeout, no spend caps, and the built-in
+// parallelism, provider-resolved bounded turn/stall defaults, no spend caps, and the built-in
 // mechanical acceptance checker.
 func New(st *store.Store, opts ...Option) *Orchestrator {
 	o := &Orchestrator{
@@ -318,10 +326,7 @@ func New(st *store.Store, opts ...Option) *Orchestrator {
 		resolveBinding: func(_ context.Context, _ string, _ bool, _ BindingResolutionPurpose) (provider.Binding, error) {
 			return provider.ResolveBinding(provider.File{}, provider.Local{}, provider.VariantFile{})
 		},
-		now: time.Now,
-		watchdogConfig: agent.WatchdogConfig{
-			StallTimeout: 5 * time.Minute,
-		},
+		now:             time.Now,
 		acceptanceCheck: mechanicalAcceptanceCheck,
 		baseCtx:         context.Background(),
 	}
@@ -1027,57 +1032,54 @@ func mustPayloadJSON(p store.EventPayload) string {
 // verification (e.g. a real long-running worker) can instead call
 // VerifyAndComplete themselves once evidence lands.
 //
-// Watchdog note: provider.Runner.Run is a synchronous, provider-owned
-// call — it internally drives agent.Start and its own output-framing
-// loop (stream-json for claude, file-based for codex/declarative), so it
-// does not hand back the underlying *agent.Agent for this package to run
-// agent.Watch against directly. Every shipped Runner DOES honor ctx
-// cancellation to kill its underlying process (verified: claude.go and
-// opencode.go select on ctx.Done(); codex.go and declarative.go use
-// exec.CommandContext), so dispatchWorker enforces the "never wait"
-// control invariant by wrapping Run in a context bounded by
-// o.watchdogConfig.StallTimeout: a worker that produces no result within
-// that window is killed via ctx cancellation, exactly the kill+reclaim
-// agent.Watch's Stall signal would trigger for a caller with direct pty
-// access. A future phase that threads agent.Start/agent.Watch through to
-// this layer (e.g. a Runner variant that exposes its *agent.Agent) can
-// additionally react to Prompt-pattern detection mid-turn; today that
-// signal is only available to callers inside the provider package itself.
+// Provider runners own progress observation and renew only their stall lease.
+// This layer independently applies the absolute turn deadline so custom/fake
+// runners cannot bypass the bounded-turn invariant.
 func (o *Orchestrator) dispatchWorker(ctx context.Context, projectID, projectDir, planID, sessionID, workerID string, binding provider.Binding, ds *dispatchedStep, scoped scopedContext) error {
 	runner, err := o.newRunner(binding)
 	if err != nil {
 		return fmt.Errorf("orch: resolve runner for %q: %w", binding.Name, err)
 	}
 
-	// The stall timeout bounds ONLY the agent turn (runner.Run), not the
+	// The total turn timeout bounds ONLY the agent turn (runner.Run), not the
 	// post-run store writes and verification below. Threading the shrinking
 	// timeout ctx into VerifyAndComplete made a near-timeout run's acceptance
 	// re-check (which re-runs real shell commands) fail spuriously against an
 	// already-expired deadline. Use runCtx for Run; keep the parent ctx after.
 	req := provider.Request{
-		WorkingDir: projectDir,
-		UserPrompt: scoped.prompt(),
+		WorkingDir:   projectDir,
+		UserPrompt:   scoped.prompt(),
+		TurnTimeout:  o.turnTimeout,
+		StallTimeout: o.stallTimeout,
 	}
+	limits, err := provider.ResolveTurnLimits(binding, req)
+	if err != nil {
+		return fmt.Errorf("orch: resolve provider timeouts: %w", err)
+	}
+	req.TurnTimeout = limits.TurnTimeout
+	req.StallTimeout = limits.StallTimeout
 
-	// The stall timeout bounds ONLY the agent turn: cancel it the instant Run
+	// The total turn timeout bounds ONLY the agent turn: cancel it the instant Run
 	// returns (not at function end) so the timeout resources aren't held
 	// through the slower post-run store writes + VerifyAndComplete, which use
 	// the parent ctx.
 	result, runErr := o.runWithHeartbeat(ctx, workerID, func() (provider.Result, error) {
 		// A cancelable run context registered under workerID so an operator/GUI
-		// worker-kill can abort this provider turn (see KillWorker). The stall
-		// timeout, when set, layers on top of the same cancelable context.
+		// worker-kill can abort this provider turn (see KillWorker).
 		runCtx, cancel := context.WithCancel(ctx)
 		defer cancel()
-		if o.watchdogConfig.StallTimeout > 0 {
-			var tcancel context.CancelFunc
-			runCtx, tcancel = context.WithTimeout(runCtx, o.watchdogConfig.StallTimeout)
-			defer tcancel()
-		}
+		runCtx, cancelTurn := provider.WithTurnDeadline(runCtx, limits.TurnTimeout)
+		defer cancelTurn()
 		deregister := o.registerWorker(workerID, cancel)
 		defer deregister()
 		return runner.Run(runCtx, binding, req)
 	})
+	if runErr == nil {
+		if evidenceErr := provider.ValidateEvidenceBounds(result.AssistantOutput); evidenceErr != nil {
+			runErr = evidenceErr
+			result.AssistantOutput = ""
+		}
+	}
 
 	// Post-run store writes (usage, evidence, mark-failed/verify, clear-worker)
 	// run under persistCtx, NOT ctx. ctx is the supervisor's run context, which
@@ -1104,8 +1106,10 @@ func (o *Orchestrator) dispatchWorker(ctx context.Context, projectID, projectDir
 		Output: result.AssistantOutput,
 	}
 	if runErr != nil {
+		failure := provider.ClassifyFailure(runErr)
 		ev.ExitCode = 1
-		ev.Output = runErr.Error()
+		ev.Output = failure.Summary
+		ev.FailureCategory = string(failure.Category)
 	}
 
 	msg := a2a.NewEvidenceMessage(a2a.RoleAgent, ds.task.ID, planID, ev)
@@ -1127,7 +1131,10 @@ func (o *Orchestrator) dispatchWorker(ctx context.Context, projectID, projectDir
 		// A stale failure report (the reaper reclaimed this worker's claim
 		// mid-run and possibly reassigned the task) is benign — the current
 		// owner keeps its work; we just release this now-defunct worker.
-		if _, err := o.store.MarkFailed(persistCtx, planID, ds.task.ID, sessionID, runErr.Error(), 3); err != nil && !errors.Is(err, store.ErrTaskNotOwnedRunning) {
+		failure := provider.ClassifyFailure(runErr)
+		if _, err := o.store.MarkFailedWithPayload(persistCtx, planID, ds.task.ID, sessionID, store.EventPayload{
+			Reason: failure.Summary, FailureCategory: string(failure.Category),
+		}, 3); err != nil && !errors.Is(err, store.ErrTaskNotOwnedRunning) {
 			return fmt.Errorf("orch: mark failed after run error: %w", err)
 		}
 		_ = o.store.ClearWorkerTask(persistCtx, workerID, "crashed")
@@ -1292,25 +1299,36 @@ func (o *Orchestrator) runFanoutGroup(ctx context.Context, projectID, projectDir
 	}
 
 	req := provider.Request{
-		WorkingDir: projectDir,
-		UserPrompt: scoped.prompt(),
+		WorkingDir:   projectDir,
+		UserPrompt:   scoped.prompt(),
+		TurnTimeout:  o.turnTimeout,
+		StallTimeout: o.stallTimeout,
 	}
-	// Stall timeout bounds ONLY the fan-out turn; cancel it the instant Run
+	limits, err := provider.ResolveTurnLimits(binding, req)
+	if err != nil {
+		return fmt.Errorf("orch: resolve provider timeouts: %w", err)
+	}
+	req.TurnTimeout = limits.TurnTimeout
+	req.StallTimeout = limits.StallTimeout
+	// The total timeout bounds ONLY the fan-out turn; cancel it the instant Run
 	// returns so it isn't held through the per-task verification below. The run
 	// context is also registered under workerID so a worker-kill cancels the
 	// whole fan-out turn (see KillWorker).
 	result, runErr := o.runWithHeartbeat(ctx, workerID, func() (provider.Result, error) {
 		runCtx, cancel := context.WithCancel(ctx)
 		defer cancel()
-		if o.watchdogConfig.StallTimeout > 0 {
-			var tcancel context.CancelFunc
-			runCtx, tcancel = context.WithTimeout(runCtx, o.watchdogConfig.StallTimeout)
-			defer tcancel()
-		}
+		runCtx, cancelTurn := provider.WithTurnDeadline(runCtx, limits.TurnTimeout)
+		defer cancelTurn()
 		deregister := o.registerWorker(workerID, cancel)
 		defer deregister()
 		return runner.Run(runCtx, binding, req)
 	})
+	if runErr == nil {
+		if evidenceErr := provider.ValidateEvidenceBounds(result.AssistantOutput); evidenceErr != nil {
+			runErr = evidenceErr
+			result.AssistantOutput = ""
+		}
+	}
 
 	// Post-run writes run under persistCtx (detached from ctx's shutdown
 	// cancellation, bounded timeout) so a nearly-complete fan-out turn's evidence
@@ -1331,8 +1349,10 @@ func (o *Orchestrator) runFanoutGroup(ctx context.Context, projectID, projectDir
 		Output: result.AssistantOutput,
 	}
 	if runErr != nil {
+		failure := provider.ClassifyFailure(runErr)
 		ev.ExitCode = 1
-		ev.Output = runErr.Error()
+		ev.Output = failure.Summary
+		ev.FailureCategory = string(failure.Category)
 	}
 
 	// The single evidence message is logged once per task, since
@@ -1356,10 +1376,13 @@ func (o *Orchestrator) runFanoutGroup(ctx context.Context, projectID, projectDir
 	}
 
 	if runErr != nil {
+		failure := provider.ClassifyFailure(runErr)
 		for _, ds := range claimed {
 			// Benign if the reaper already reclaimed/reassigned this task —
 			// don't stomp the new owner (see MarkFailed's owner guard).
-			if _, err := o.store.MarkFailed(persistCtx, planID, ds.task.ID, sessionID, runErr.Error(), 3); err != nil && !errors.Is(err, store.ErrTaskNotOwnedRunning) {
+			if _, err := o.store.MarkFailedWithPayload(persistCtx, planID, ds.task.ID, sessionID, store.EventPayload{
+				Reason: failure.Summary, FailureCategory: string(failure.Category),
+			}, 3); err != nil && !errors.Is(err, store.ErrTaskNotOwnedRunning) {
 				return fmt.Errorf("orch: mark failed after run error: %w", err)
 			}
 		}

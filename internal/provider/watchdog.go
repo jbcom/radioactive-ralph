@@ -3,7 +3,6 @@ package provider
 import (
 	"context"
 	"errors"
-	"fmt"
 	"regexp"
 	"time"
 
@@ -18,6 +17,35 @@ import (
 // themselves. Prompt failures use a static reason and never interpolate the
 // observed terminal line, which may contain prompts or credentials.
 var ErrAgentBlocked = errors.New("provider: agent blocked (killed by watchdog)")
+
+// BlockReason is the provider-output-free reason a watchdog blocked a turn.
+type BlockReason string
+
+const (
+	// BlockReasonPrompt means the provider requested interactive input.
+	BlockReasonPrompt BlockReason = "interactive_prompt"
+	// BlockReasonStall means the provider stopped producing progress.
+	BlockReasonStall BlockReason = "stall"
+)
+
+// BlockedError retains a typed, provider-output-free reason while preserving
+// errors.Is(err, ErrAgentBlocked) compatibility.
+type BlockedError struct {
+	Reason BlockReason
+}
+
+func (e *BlockedError) Error() string {
+	switch e.Reason {
+	case BlockReasonPrompt:
+		return ErrAgentBlocked.Error() + ": interactive prompt detected"
+	case BlockReasonStall:
+		return ErrAgentBlocked.Error() + ": no output before stall timeout"
+	default:
+		return ErrAgentBlocked.Error()
+	}
+}
+
+func (e *BlockedError) Unwrap() error { return ErrAgentBlocked }
 
 // DefaultStallTimeout is the default ceiling on how long superviseAgent will
 // wait for output from an agent before treating it as stalled and killing
@@ -74,6 +102,12 @@ func StreamJSONWatchdogConfig() agent.WatchdogConfig {
 		PromptPatterns:             DefaultPromptPatterns,
 		SkipPromptMatchOnJSONLines: true,
 	}
+}
+
+func streamJSONWatchdogConfigWithStall(stall time.Duration) agent.WatchdogConfig {
+	cfg := StreamJSONWatchdogConfig()
+	cfg.StallTimeout = stall
+	return cfg
 }
 
 // superviseAgent is the shared enforcement point for the control invariant
@@ -208,7 +242,7 @@ func superviseAgentWithCallbacks(
 			}
 			switch sig.Kind {
 			case agent.Prompt, agent.Stall:
-				return terminate(fmt.Errorf("%w: %s", ErrAgentBlocked, blockedReason(sig)))
+				return terminate(&BlockedError{Reason: blockReason(sig)})
 			case agent.Progress:
 				callback := onLine
 				if sig.Discarded {
@@ -237,13 +271,13 @@ func superviseAgentWithCallbacks(
 
 // blockedReason renders a human-readable reason for the ErrAgentBlocked
 // wrap based on which signal triggered the kill.
-func blockedReason(sig agent.Signal) string {
+func blockReason(sig agent.Signal) BlockReason {
 	switch sig.Kind {
 	case agent.Prompt:
-		return "interactive prompt detected"
+		return BlockReasonPrompt
 	case agent.Stall:
-		return "no output before stall timeout"
+		return BlockReasonStall
 	default:
-		return "unknown blocking signal"
+		return ""
 	}
 }

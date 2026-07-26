@@ -56,51 +56,35 @@ func (DeclarativeRunner) Run(ctx context.Context, binding Binding, req Request) 
 	if err := ValidateBinding(binding); err != nil {
 		return Result{}, err
 	}
+	limits, err := ResolveTurnLimits(binding, req)
+	if err != nil {
+		return Result{}, err
+	}
+	ctx, cancelTurn := WithTurnDeadline(ctx, limits.TurnTimeout)
+	defer cancelTurn()
+
 	attempts := max(1, binding.Config.MaxRetries+1)
 	var lastErr error
 	for attempt := 1; attempt <= attempts; attempt++ {
-		result, err := runDeclarativeAttempt(ctx, binding, req)
+		result, err := runDeclarativeAttempt(ctx, binding, req, limits.StallTimeout)
 		if err == nil {
 			return result, nil
 		}
 		lastErr = err
+		if ctx.Err() != nil {
+			break
+		}
 	}
 	return Result{}, lastErr
 }
 
-func runDeclarativeAttempt(ctx context.Context, binding Binding, req Request) (Result, error) {
+func runDeclarativeAttempt(ctx context.Context, binding Binding, req Request, stallTimeout time.Duration) (Result, error) {
 	var cleanups []func()
 	defer func() {
 		for i := len(cleanups) - 1; i >= 0; i-- {
 			cleanups[i]()
 		}
 	}()
-
-	// Bound the declarative turn. Unlike the pty-backed providers (claude/codex/
-	// opencode), declarative modes run a batch CLI directly via exec.CommandContext
-	// with no stall watchdog — so without a timeout a hung declarative CLI (one
-	// that wedges or waits on an interactive prompt) would block FOREVER, violating
-	// the never-block invariant. An explicit turn_timeout wins; otherwise default
-	// to DefaultStallTimeout so every declarative binding gets the guarantee with
-	// no operator action.
-	timeout := DefaultStallTimeout
-	if binding.Config.TurnTimeout != "" {
-		parsed, err := time.ParseDuration(binding.Config.TurnTimeout)
-		if err != nil {
-			return Result{}, fmt.Errorf("provider %q: parse turn_timeout: %w", binding.Name, err)
-		}
-		if parsed <= 0 {
-			// A zero/negative explicit timeout would mean "no bound" and reopen the
-			// never-block gap the operator meant to close. ValidateBinding rejects
-			// this too; guard here defensively.
-			return Result{}, fmt.Errorf("provider %q: turn_timeout must be positive, got %q", binding.Name, binding.Config.TurnTimeout)
-		}
-		timeout = parsed
-	}
-	// timeout is always positive here (default or a validated explicit value).
-	var cancel context.CancelFunc
-	ctx, cancel = context.WithTimeout(ctx, timeout)
-	defer cancel()
 
 	promptPath, err := writeProviderTempFile("prompt.txt", combinePrompt(req))
 	if err != nil {
@@ -147,7 +131,7 @@ func runDeclarativeAttempt(ctx context.Context, binding Binding, req Request) (R
 
 	switch binding.Config.Type {
 	case declarativePlainStdout:
-		out, err := runCommand(ctx, req.WorkingDir, binding.Config.Binary, args)
+		out, err := runCommandWithStall(ctx, stallTimeout, req.WorkingDir, binding.Config.Binary, args)
 		if err != nil {
 			return Result{}, err
 		}
@@ -156,7 +140,7 @@ func runDeclarativeAttempt(ctx context.Context, binding Binding, req Request) (R
 			AssistantOutput: normalizeStructuredOutput(out, req),
 		}, nil
 	case declarativeLastMessageFile:
-		if _, err := runCommand(ctx, req.WorkingDir, binding.Config.Binary, args); err != nil {
+		if _, err := runCommandWithStall(ctx, stallTimeout, req.WorkingDir, binding.Config.Binary, args); err != nil {
 			return Result{}, err
 		}
 		raw, err := os.ReadFile(outputPath) //nolint:gosec // provider-configured path after templating
@@ -169,7 +153,7 @@ func runDeclarativeAttempt(ctx context.Context, binding Binding, req Request) (R
 			AssistantOutput: normalizeStructuredOutput(out, req),
 		}, nil
 	case declarativeStreamJSON:
-		out, raw, err := runStreamJSONCommand(ctx, req.WorkingDir, binding.Config.Binary, args)
+		out, raw, err := runStreamJSONCommand(ctx, stallTimeout, req.WorkingDir, binding.Config.Binary, args)
 		if err != nil {
 			// raw is empty on error by runStreamJSONCommand's contract (diagnostic
 			// context is folded into err), so there is nothing to extract here.
@@ -236,16 +220,8 @@ func ValidateBinding(binding Binding) error {
 	if _, err := exec.LookPath(cfg.Binary); err != nil {
 		return fmt.Errorf("provider %q: binary %q not on PATH", binding.Name, cfg.Binary)
 	}
-	if cfg.TurnTimeout != "" {
-		d, err := time.ParseDuration(cfg.TurnTimeout)
-		if err != nil {
-			return fmt.Errorf("provider %q: parse turn_timeout: %w", binding.Name, err)
-		}
-		if d <= 0 {
-			// Reject "0"/negative: it would leave the turn UNBOUNDED, reopening the
-			// never-block gap. Omit turn_timeout entirely to get the default bound.
-			return fmt.Errorf("provider %q: turn_timeout must be positive (omit it for the default bound), got %q", binding.Name, cfg.TurnTimeout)
-		}
+	if _, err := ResolveTurnLimits(binding, Request{}); err != nil {
+		return err
 	}
 	return nil
 }
@@ -349,8 +325,10 @@ func validateArgTemplate(input string) error {
 // where the caller uses it to extract a session id; on every error path it is
 // returned empty, because a failed turn has no usable output and any diagnostic
 // context (stderr, a scan error) is folded into the returned error instead.
-func runStreamJSONCommand(ctx context.Context, dir, bin string, args []string) (assistantText, rawOutput string, err error) {
-	cmd := exec.CommandContext(ctx, bin, args...) //nolint:gosec // argv is runtime-controlled
+func runStreamJSONCommand(ctx context.Context, stallTimeout time.Duration, dir, bin string, args []string) (assistantText, rawOutput string, err error) {
+	stallCtx, progress, cancelStall := withProgressLease(ctx, stallTimeout)
+	defer cancelStall()
+	cmd := exec.CommandContext(stallCtx, bin, args...) //nolint:gosec // argv is runtime-controlled
 	cmd.Dir = dir
 	setProcessGroupKill(cmd) // ctx-cancel must reap the whole tree, not just the CLI
 	stdout, err := cmd.StdoutPipe()
@@ -358,14 +336,14 @@ func runStreamJSONCommand(ctx context.Context, dir, bin string, args []string) (
 		return "", "", fmt.Errorf("provider: stdout pipe: %w", err)
 	}
 	var stderr strings.Builder
-	cmd.Stderr = &stderr
+	cmd.Stderr = progressWriter{Writer: &stderr, progress: progress}
 	if err := cmd.Start(); err != nil {
 		return "", "", fmt.Errorf("provider: start %s: %w", bin, err)
 	}
 
 	var assistant strings.Builder
 	var raw strings.Builder
-	scanner := bufio.NewScanner(stdout)
+	scanner := bufio.NewScanner(progressReader{Reader: stdout, progress: progress})
 	scanner.Buffer(make([]byte, 0, 64*1024), declarativeStreamJSONLineMax)
 	for scanner.Scan() {
 		line := scanner.Text()
@@ -383,6 +361,9 @@ func runStreamJSONCommand(ctx context.Context, dir, bin string, args []string) (
 			_ = killProcessTree(cmd.Process)
 		}
 		_ = cmd.Wait()
+		if cause := context.Cause(stallCtx); cause != nil {
+			return "", "", cause
+		}
 		if errors.Is(scanErr, bufio.ErrTooLong) {
 			// A single stream-json line exceeded declarativeStreamJSONLineMax
 			// (16MiB), so we killed the CLI mid-stream. FAIL the turn (Run retries,
@@ -402,6 +383,9 @@ func runStreamJSONCommand(ctx context.Context, dir, bin string, args []string) (
 		return "", "", fmt.Errorf("provider: scan stream-json: %w", scanErr)
 	}
 	if err := cmd.Wait(); err != nil {
+		if cause := context.Cause(stallCtx); cause != nil {
+			return "", "", cause
+		}
 		msg := strings.TrimSpace(stderr.String())
 		if msg == "" {
 			msg = strings.TrimSpace(raw.String())

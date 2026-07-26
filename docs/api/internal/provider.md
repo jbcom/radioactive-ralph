@@ -15,19 +15,31 @@ Package provider adapts configured CLI backends into radioactive\_ralph's provid
 
 ## Index
 
+- [Constants](<#constants>)
 - [Variables](<#variables>)
 - [func DefaultWatchdogConfig\(\) agent.WatchdogConfig](<#DefaultWatchdogConfig>)
 - [func StreamJSONWatchdogConfig\(\) agent.WatchdogConfig](<#StreamJSONWatchdogConfig>)
 - [func ValidateBinding\(binding Binding\) error](<#ValidateBinding>)
+- [func ValidateEvidenceBounds\(output string\) error](<#ValidateEvidenceBounds>)
+- [func WithTurnDeadline\(parent context.Context, timeout time.Duration\) \(context.Context, context.CancelFunc\)](<#WithTurnDeadline>)
 - [type Binding](<#Binding>)
   - [func ResolveBinding\(cfg File, local Local, fromConfig VariantFile\) \(Binding, error\)](<#ResolveBinding>)
 - [type BindingConfig](<#BindingConfig>)
+- [type BlockReason](<#BlockReason>)
+- [type BlockedError](<#BlockedError>)
+  - [func \(e \*BlockedError\) Error\(\) string](<#BlockedError.Error>)
+  - [func \(e \*BlockedError\) Unwrap\(\) error](<#BlockedError.Unwrap>)
 - [type ClaudeRunner](<#ClaudeRunner>)
   - [func \(ClaudeRunner\) Run\(ctx context.Context, binding Binding, req Request\) \(Result, error\)](<#ClaudeRunner.Run>)
 - [type CodexRunner](<#CodexRunner>)
   - [func \(CodexRunner\) Run\(ctx context.Context, binding Binding, req Request\) \(Result, error\)](<#CodexRunner.Run>)
 - [type DeclarativeRunner](<#DeclarativeRunner>)
   - [func \(DeclarativeRunner\) Run\(ctx context.Context, binding Binding, req Request\) \(Result, error\)](<#DeclarativeRunner.Run>)
+- [type Failure](<#Failure>)
+  - [func ClassifyFailure\(err error\) Failure](<#ClassifyFailure>)
+  - [func \(f Failure\) Error\(\) string](<#Failure.Error>)
+  - [func \(f Failure\) Unwrap\(\) error](<#Failure.Unwrap>)
+- [type FailureCategory](<#FailureCategory>)
 - [type File](<#File>)
 - [type Local](<#Local>)
   - [func \(l Local\) BinaryFor\(providerName string\) \(string, bool\)](<#Local.BinaryFor>)
@@ -38,9 +50,28 @@ Package provider adapts configured CLI backends into radioactive\_ralph's provid
 - [type Result](<#Result>)
 - [type Runner](<#Runner>)
   - [func NewRunner\(binding Binding\) \(Runner, error\)](<#NewRunner>)
+- [type TurnLimits](<#TurnLimits>)
+  - [func ResolveTurnLimits\(binding Binding, req Request\) \(TurnLimits, error\)](<#ResolveTurnLimits>)
 - [type Usage](<#Usage>)
 - [type VariantFile](<#VariantFile>)
 
+
+## Constants
+
+<a name="DefaultTurnTimeout"></a>
+
+```go
+const (
+    // DefaultTurnTimeout is deliberately much longer than the progress lease:
+    // a productive provider may run for a substantial bounded turn.
+    DefaultTurnTimeout = 30 * time.Minute
+    // MaxTurnTimeout and MaxStallTimeout are safety ceilings. Configuration can
+    // lengthen normal work, but cannot create an unbounded provider process.
+    MaxTurnTimeout = 24 * time.Hour
+    // MaxStallTimeout is the hard ceiling for a renewable no-progress lease.
+    MaxStallTimeout = time.Hour
+)
+```
 
 ## Variables
 
@@ -148,6 +179,12 @@ var ErrOpencodeMissingFinish = errors.New("provider: opencode exited without a s
 var ErrOpencodeReportedError = errors.New("provider: opencode reported a session error")
 ```
 
+<a name="ErrProviderStalled"></a>ErrProviderStalled is returned when a provider produces no observable progress before its renewable stall lease expires.
+
+```go
+var ErrProviderStalled = errors.New("provider: progress stalled")
+```
+
 <a name="ErrStreamJSONLineTooLong"></a>ErrStreamJSONLineTooLong reports that a stream\-json provider emitted a single frame larger than declarativeStreamJSONLineMax \(16MiB\). The turn is failed \(and retried\) rather than completed: the CLI was killed mid\-stream, so any text parsed before the oversized frame is PARTIAL, and reporting it as a successful turn would let the judgment\-only acceptance check \(mechanicalAcceptanceCheck: non\-empty output ⇒ done\) mark a step complete on the strength of a forcibly\-terminated worker. That partial text is discarded entirely — it reaches neither AssistantOutput nor rawOutput — so a killed turn can never satisfy verification.
 
 ```go
@@ -155,7 +192,7 @@ var ErrStreamJSONLineTooLong = errors.New("provider: stream-json line exceeded 1
 ```
 
 <a name="DefaultWatchdogConfig"></a>
-## func [DefaultWatchdogConfig](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/watchdog.go#L55>)
+## func [DefaultWatchdogConfig](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/watchdog.go#L83>)
 
 ```go
 func DefaultWatchdogConfig() agent.WatchdogConfig
@@ -164,7 +201,7 @@ func DefaultWatchdogConfig() agent.WatchdogConfig
 DefaultWatchdogConfig returns a WatchdogConfig seeded with DefaultStallTimeout and DefaultPromptPatterns. Runners call this \(rather than constructing agent.WatchdogConfig\{\} directly\) so every provider gets the same baseline prompt/stall detection unless a caller has a reason to override it. Use this ONLY for providers whose output is free\-form pane text where a raw interactive prompt could actually appear \(see StreamJSONWatchdogConfig for the structured\-output case\).
 
 <a name="StreamJSONWatchdogConfig"></a>
-## func [StreamJSONWatchdogConfig](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/watchdog.go#L71>)
+## func [StreamJSONWatchdogConfig](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/watchdog.go#L99>)
 
 ```go
 func StreamJSONWatchdogConfig() agent.WatchdogConfig
@@ -173,7 +210,7 @@ func StreamJSONWatchdogConfig() agent.WatchdogConfig
 StreamJSONWatchdogConfig is the watchdog config for providers driven in a structured stream\-json mode \(claude/opencode: \`\-\-output\-format stream\-json\`\). Their normal output is JSON frames whose text can innocently contain prompt\-like words \("permission", "continue?"\), which content\-blind matching would misread and KILL a valid turn. It keeps the prompt patterns but sets SkipPromptMatchOnJSONLines: patterns are matched ONLY on lines that are NOT valid JSON, so a legitimate JSON frame is never a false prompt while a GENUINE raw interactive prompt \(never valid JSON\) is still caught immediately — not merely by the slower stall timeout.
 
 <a name="ValidateBinding"></a>
-## func [ValidateBinding](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/declarative.go#L189>)
+## func [ValidateBinding](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/declarative.go#L173>)
 
 ```go
 func ValidateBinding(binding Binding) error
@@ -181,8 +218,26 @@ func ValidateBinding(binding Binding) error
 
 ValidateBinding validates the parts of a binding that can be checked without spawning a provider turn.
 
+<a name="ValidateEvidenceBounds"></a>
+## func [ValidateEvidenceBounds](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/result_limits.go#L42>)
+
+```go
+func ValidateEvidenceBounds(output string) error
+```
+
+ValidateEvidenceBounds refuses provider\-controlled assistant output that is too large to cross Ralph's durable evidence boundary. Built\-in runners apply the same ceiling while parsing; the orchestrator calls this again so custom and declarative runners cannot bypass it.
+
+<a name="WithTurnDeadline"></a>
+## func [WithTurnDeadline](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/timeouts.go#L86>)
+
+```go
+func WithTurnDeadline(parent context.Context, timeout time.Duration) (context.Context, context.CancelFunc)
+```
+
+WithTurnDeadline creates the absolute turn deadline. The returned cause is stable and privacy\-safe; raw provider output is never incorporated.
+
 <a name="Binding"></a>
-## type [Binding](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/provider.go#L12-L23>)
+## type [Binding](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/provider.go#L13-L24>)
 
 Binding is one resolved provider selection after repo config, local overrides, and per\-variant overrides have been applied.
 
@@ -202,7 +257,7 @@ type Binding struct {
 ```
 
 <a name="ResolveBinding"></a>
-### func [ResolveBinding](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/provider.go#L65>)
+### func [ResolveBinding](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/provider.go#L73>)
 
 ```go
 func ResolveBinding(cfg File, local Local, fromConfig VariantFile) (Binding, error)
@@ -211,7 +266,7 @@ func ResolveBinding(cfg File, local Local, fromConfig VariantFile) (Binding, err
 ResolveBinding picks the provider for one variant.
 
 <a name="BindingConfig"></a>
-## type [BindingConfig](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/binding.go#L37-L73>)
+## type [BindingConfig](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/binding.go#L37-L74>)
 
 BindingConfig is one provider's capability record: what binary to run, how to invoke it non\-interactively, how to read back its structured result and resume a session, and whether it can fan out work itself.
 
@@ -230,6 +285,7 @@ type BindingConfig struct {
     OutputFile string `toml:"output_file"`
 
     TurnTimeout    string `toml:"turn_timeout"`
+    StallTimeout   string `toml:"stall_timeout"`
     MaxRetries     int    `toml:"max_retries"`
     SessionIDRegex string `toml:"session_id_regex"`
 
@@ -256,6 +312,55 @@ type BindingConfig struct {
     NativeFanout bool `toml:"native_fanout"`
 }
 ```
+
+<a name="BlockReason"></a>
+## type [BlockReason](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/watchdog.go#L22>)
+
+BlockReason is the provider\-output\-free reason a watchdog blocked a turn.
+
+```go
+type BlockReason string
+```
+
+<a name="BlockReasonPrompt"></a>
+
+```go
+const (
+    // BlockReasonPrompt means the provider requested interactive input.
+    BlockReasonPrompt BlockReason = "interactive_prompt"
+    // BlockReasonStall means the provider stopped producing progress.
+    BlockReasonStall BlockReason = "stall"
+)
+```
+
+<a name="BlockedError"></a>
+## type [BlockedError](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/watchdog.go#L33-L35>)
+
+BlockedError retains a typed, provider\-output\-free reason while preserving errors.Is\(err, ErrAgentBlocked\) compatibility.
+
+```go
+type BlockedError struct {
+    Reason BlockReason
+}
+```
+
+<a name="BlockedError.Error"></a>
+### func \(\*BlockedError\) [Error](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/watchdog.go#L37>)
+
+```go
+func (e *BlockedError) Error() string
+```
+
+
+
+<a name="BlockedError.Unwrap"></a>
+### func \(\*BlockedError\) [Unwrap](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/watchdog.go#L48>)
+
+```go
+func (e *BlockedError) Unwrap() error
+```
+
+
 
 <a name="ClaudeRunner"></a>
 ## type [ClaudeRunner](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/claude.go#L29>)
@@ -289,7 +394,7 @@ type CodexRunner struct{}
 ```
 
 <a name="CodexRunner.Run"></a>
-### func \(CodexRunner\) [Run](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/codex.go#L63>)
+### func \(CodexRunner\) [Run](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/codex.go#L52>)
 
 ```go
 func (CodexRunner) Run(ctx context.Context, binding Binding, req Request) (Result, error)
@@ -315,8 +420,80 @@ func (DeclarativeRunner) Run(ctx context.Context, binding Binding, req Request) 
 
 Run executes one declarative provider turn.
 
+<a name="Failure"></a>
+## type [Failure](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/failure.go#L35-L39>)
+
+Failure is the privacy\-safe durable representation of a provider error. Cause remains available transiently for errors.Is/debug logging, but Summary and Category are the only fields suitable for evidence or event persistence.
+
+```go
+type Failure struct {
+    Category FailureCategory
+    Summary  string
+    Cause    error
+}
+```
+
+<a name="ClassifyFailure"></a>
+### func [ClassifyFailure](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/failure.go#L46>)
+
+```go
+func ClassifyFailure(err error) Failure
+```
+
+ClassifyFailure converts a transient provider error to its durable, provider\-output\-free category and summary.
+
+<a name="Failure.Error"></a>
+### func \(Failure\) [Error](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/failure.go#L41>)
+
+```go
+func (f Failure) Error() string
+```
+
+
+
+<a name="Failure.Unwrap"></a>
+### func \(Failure\) [Unwrap](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/failure.go#L42>)
+
+```go
+func (f Failure) Unwrap() error
+```
+
+
+
+<a name="FailureCategory"></a>
+## type [FailureCategory](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/failure.go#L11>)
+
+FailureCategory is a closed privacy\-safe durable provider failure code.
+
+```go
+type FailureCategory string
+```
+
+<a name="FailureProcessCleanup"></a>
+
+```go
+const (
+    // FailureProcessCleanup means Ralph could not prove process convergence.
+    FailureProcessCleanup FailureCategory = "process_cleanup"
+    // FailureOutputLimit means a bounded output/evidence ceiling was crossed.
+    FailureOutputLimit FailureCategory = "output_limit"
+    // FailureInteractivePrompt means the CLI requested operator input.
+    FailureInteractivePrompt FailureCategory = "interactive_prompt"
+    // FailureStall means the renewable progress lease expired.
+    FailureStall FailureCategory = "stall_timeout"
+    // FailureTurnDeadline means the absolute turn deadline expired.
+    FailureTurnDeadline FailureCategory = "turn_deadline"
+    // FailureCanceled means an external caller canceled the turn.
+    FailureCanceled FailureCategory = "canceled"
+    // FailureProviderRejected means the provider reported an unsuccessful turn.
+    FailureProviderRejected FailureCategory = "provider_rejected"
+    // FailureRuntime is the fail-closed category for unrecognized failures.
+    FailureRuntime FailureCategory = "provider_runtime"
+)
+```
+
 <a name="File"></a>
-## type [File](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/binding.go#L80-L83>)
+## type [File](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/binding.go#L81-L84>)
 
 File is the provider package's own minimal config surface: enough for ResolveBinding to read DefaultProvider and look up a named provider's BindingConfig. A later phase may replace this with a direct internal/vconfig\-backed decode; the shape here matches what committed config.toml historically expressed for the equivalent keys.
 
@@ -328,7 +505,7 @@ type File struct {
 ```
 
 <a name="Local"></a>
-## type [Local](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/binding.go#L88-L91>)
+## type [Local](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/binding.go#L89-L92>)
 
 Local is the provider package's local\-override surface: just enough for ResolveBinding's local\-binary\-override lookup \(the gitignored local.toml escape hatch for pointing a provider at a non\-shipped binary\).
 
@@ -340,7 +517,7 @@ type Local struct {
 ```
 
 <a name="Local.BinaryFor"></a>
-### func \(Local\) [BinaryFor](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/binding.go#L96>)
+### func \(Local\) [BinaryFor](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/binding.go#L97>)
 
 ```go
 func (l Local) BinaryFor(providerName string) (string, bool)
@@ -390,7 +567,7 @@ func (OpencodeRunner) Run(ctx context.Context, binding Binding, req Request) (Re
 Run spawns \`opencode run \<prompt\> \-\-format json\` and blocks until the CLI exits naturally. A step\_finish with reason=tool\-calls is an intermediate model step; OpenCode 1.18.3 closes the actual run only after session.status becomes idle, so Ralph must consume the complete stream.
 
 <a name="Request"></a>
-## type [Request](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/provider.go#L26-L34>)
+## type [Request](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/provider.go#L27-L42>)
 
 Request is the provider\-neutral execution contract for one worker turn.
 
@@ -403,11 +580,18 @@ type Request struct {
     Model        Model
     Effort       string
     AllowedTools []string
+    // TurnTimeout is the absolute wall-clock ceiling for the complete turn,
+    // including provider retries. StallTimeout is the renewable progress
+    // lease: output renews it, but never extends TurnTimeout.
+    //
+    // Zero values inherit the resolved provider/project defaults.
+    TurnTimeout  time.Duration
+    StallTimeout time.Duration
 }
 ```
 
 <a name="Result"></a>
-## type [Result](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/provider.go#L53-L57>)
+## type [Result](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/provider.go#L61-L65>)
 
 Result captures the observable output of one provider turn.
 
@@ -420,7 +604,7 @@ type Result struct {
 ```
 
 <a name="Runner"></a>
-## type [Runner](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/provider.go#L60-L62>)
+## type [Runner](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/provider.go#L68-L70>)
 
 Runner executes one provider turn.
 
@@ -431,7 +615,7 @@ type Runner interface {
 ```
 
 <a name="NewRunner"></a>
-### func [NewRunner](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/provider.go#L110>)
+### func [NewRunner](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/provider.go#L118>)
 
 ```go
 func NewRunner(binding Binding) (Runner, error)
@@ -439,8 +623,29 @@ func NewRunner(binding Binding) (Runner, error)
 
 NewRunner returns the runtime implementation for a provider type.
 
+<a name="TurnLimits"></a>
+## type [TurnLimits](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/timeouts.go#L26-L29>)
+
+TurnLimits are the two independent runtime bounds for a provider turn.
+
+```go
+type TurnLimits struct {
+    TurnTimeout  time.Duration
+    StallTimeout time.Duration
+}
+```
+
+<a name="ResolveTurnLimits"></a>
+### func [ResolveTurnLimits](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/timeouts.go#L33>)
+
+```go
+func ResolveTurnLimits(binding Binding, req Request) (TurnLimits, error)
+```
+
+ResolveTurnLimits resolves request overrides over binding configuration over safe defaults. Every result is positive and bounded.
+
 <a name="Usage"></a>
-## type [Usage](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/provider.go#L45-L50>)
+## type [Usage](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/provider.go#L53-L58>)
 
 Usage captures the token/cost accounting for one provider turn. Fields are zero when the provider does not report them. Coverage today: the claude and opencode runners populate Usage from their stream\-json frames; codex and declarative bindings report zero \(their CLIs surface usage differently and are not yet parsed\). CostUSD is authoritative when non\-zero; the runtime accumulates it for spend\-cap enforcement, so a capped variant on an unreported provider still requires a cap value but its cost is not yet metered. Extending codex parsing is the follow\-up to close that gap.
 
@@ -454,7 +659,7 @@ type Usage struct {
 ```
 
 <a name="VariantFile"></a>
-## type [VariantFile](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/binding.go#L110-L112>)
+## type [VariantFile](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/binding.go#L111-L113>)
 
 VariantFile is the provider package's per\-binding\-request input — despite the name \(kept for config\-key compatibility with existing committed config.toml files\), it carries no persona: it is just the provider override for one binding request.
 
