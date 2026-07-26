@@ -13,6 +13,7 @@ package orch
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"runtime/debug"
@@ -406,7 +407,16 @@ type scopedContext struct {
 	GroupHeading string
 	StepText     string
 	StepDetail   string
+	TaskID       string
+	ContractJSON string
+	Acceptance   string
 }
+
+const (
+	v2ContractBegin  = "----- BEGIN RALPH.PLAN/V2 TASK CONTRACT -----"
+	v2ContractEnd    = "----- END RALPH.PLAN/V2 TASK CONTRACT -----"
+	v2AcceptanceHead = "----- RALPH.PLAN/V2 ACCEPTANCE -----"
+)
 
 // prompt renders the scoped context as the worker's user prompt.
 func (c scopedContext) prompt() string {
@@ -417,6 +427,16 @@ func (c scopedContext) prompt() string {
 	if c.StepDetail != "" {
 		b.WriteString("\n\n")
 		b.WriteString(c.StepDetail)
+	}
+	if c.ContractJSON != "" {
+		fmt.Fprintf(
+			&b,
+			"\n\n%s\nTask ID: %s\n%s\n%s\n%s\n",
+			v2ContractBegin, c.TaskID, c.ContractJSON, v2ContractEnd,
+			v2AcceptanceHead,
+		)
+		b.WriteString(c.Acceptance)
+		b.WriteString("\nFollow this complete contract. Read only the declared immutable inputs and create every declared output. Writes outside declared outputs are not authorized by this task contract.")
 	}
 	return b.String()
 }
@@ -796,6 +816,18 @@ func (o *Orchestrator) dispatchReadyStep(ctx context.Context, a dispatchStepArgs
 		GroupHeading: a.groupHeading,
 		StepText:     ds.step.Text,
 		StepDetail:   ds.step.Detail,
+	}
+	if ds.step.Metadata != nil {
+		rawContract, err := json.Marshal(ds.step.Metadata)
+		if err != nil {
+			release()
+			_ = o.store.ReleaseClaim(ctx, a.planID, ds.task.ID, sessionID, "v2 task contract marshal failed")
+			_ = o.store.ClearWorkerTask(ctx, workerID, "crashed")
+			return false, fmt.Errorf("orch: marshal v2 task contract: %w", err)
+		}
+		scoped.TaskID = ds.task.ID
+		scoped.ContractJSON = string(rawContract)
+		scoped.Acceptance = ds.task.AcceptanceJSON
 	}
 
 	// Launch the provider turn asynchronously: the claim above (fast store I/O)
@@ -1308,19 +1340,25 @@ func (o *Orchestrator) dispatchWorker(ctx context.Context, projectID, projectDir
 	// bounded timeout so these writes land even as ctx is being torn down.
 	persistCtx, persistCancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 	defer persistCancel()
-	if err := o.store.RecordTaskProviderSession(
-		persistCtx, planID, ds.task.ID, result.SessionID,
-	); err != nil {
-		return fmt.Errorf("orch: record provider session: %w", err)
-	}
 
 	// Spend is real the moment tokens were billed, independent of whether
 	// the work is ultimately accepted by VerifyAndComplete — record it
-	// unconditionally so spend-cap accounting stays accurate even for
-	// rejected/failed turns.
+	// before any owner-guarded provenance write so a reaper/operator reclaim
+	// cannot make a stale result bypass spend-cap accounting.
 	if !calibrationUsageRecorded {
 		if err := o.recordUsage(persistCtx, projectID, workerID, binding.Name, string(req.Model), result.Usage); err != nil {
 			return fmt.Errorf("orch: record usage: %w", err)
+		}
+	}
+	if ds.step.Metadata != nil {
+		if err := o.store.RecordTaskProviderSession(
+			persistCtx, planID, ds.task.ID, sessionID, result.SessionID,
+		); err != nil {
+			if errors.Is(err, store.ErrTaskNotOwnedRunning) {
+				_ = o.store.ClearWorkerTask(persistCtx, workerID, "crashed")
+				return nil
+			}
+			return fmt.Errorf("orch: record provider session: %w", err)
 		}
 	}
 

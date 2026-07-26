@@ -39,11 +39,15 @@ func IsCode(err error, code string) bool {
 // into out (out may be nil for OK-only commands). A !Ok response becomes a
 // *CodedError carrying the response Code.
 func (c *Client) driveCall(ctx context.Context, cmd string, args any, out any) error {
+	protoVersion, err := commandProtoVersion(cmd)
+	if err != nil {
+		return err
+	}
 	body, err := json.Marshal(args)
 	if err != nil {
 		return fmt.Errorf("ipc: marshal %s args: %w", cmd, err)
 	}
-	if err := c.send(ctx, Request{Cmd: cmd, Args: body, ProtoVersion: ProtoVersion}); err != nil {
+	if err := c.send(ctx, Request{Cmd: cmd, Args: body, ProtoVersion: protoVersion}); err != nil {
 		return err
 	}
 	resp, err := c.readResponse(ctx)
@@ -59,6 +63,27 @@ func (c *Client) driveCall(ctx context.Context, cmd string, args any, out any) e
 		}
 	}
 	return nil
+}
+
+// commandProtoVersion returns the minimum wire version that introduced cmd.
+// Clients stamp that minimum rather than their own newest version so unchanged
+// commands survive rolling upgrades; servers use the same table to prevent a
+// raw older request from invoking newer semantics.
+func commandProtoVersion(cmd string) (int, error) {
+	switch cmd {
+	case CmdStatus, CmdAttach, CmdEnqueue, CmdStop, CmdReloadConfig:
+		return 1, nil
+	case CmdPlanImport, CmdPlanSetStatus, CmdTaskApprove, CmdWorkerKill:
+		return 2, nil
+	case CmdTaskRetry, CmdTaskList,
+		CmdCalibrationPut, CmdCalibrationGet, CmdCalibrationList:
+		return 3, nil
+	default:
+		return 0, &CodedError{
+			Class:   CodeUnsupportedCommand,
+			Message: fmt.Sprintf("unknown drive command %q", cmd),
+		}
+	}
 }
 
 // PlanImport imports a markdown plan and activates it, returning the created

@@ -191,8 +191,19 @@ func (s *Store) GetTaskExecutionMetadata(ctx context.Context, planID, taskID str
 	return metadata, nil
 }
 
-// ErrTaskNotRunning reports a provenance update attempted outside a live claim.
+// ErrTaskNotRunning reports a provenance update attempted outside a live
+// claim. ErrTaskNotOwnedRunning wraps this sentinel for backwards-compatible
+// errors.Is checks while also distinguishing stale-session writes.
 var ErrTaskNotRunning = errors.New("store: task is not running")
+
+// ErrTaskExecutionConflict reports a second provenance write from the current
+// owner that disagrees with the immutable tuple already bound to its attempt.
+var ErrTaskExecutionConflict = errors.New("store: task execution provenance conflicts with the current owner")
+
+// ErrTaskProviderSessionConflict reports a second provider-session write from
+// the current owner that disagrees with the first session ID bound to the
+// attempt.
+var ErrTaskProviderSessionConflict = errors.New("store: provider session conflicts with the current owner")
 
 // BindTaskCalibration snapshots the immutable calibration resolved for an
 // await-calibration task. The first successful bind wins; idempotent repeats
@@ -239,51 +250,121 @@ func (s *Store) BindTaskCalibration(
 }
 
 // RecordTaskExecution binds the selected provider request and worker session to
-// the running task.
+// the running task. The reporting session must still own the live claim so a
+// late provenance write from a reclaimed worker cannot overwrite the current
+// owner's immutable execution record.
 func (s *Store) RecordTaskExecution(
 	ctx context.Context,
 	planID, taskID, alias, provider, model, effort, independenceDomain, sessionID string,
 ) error {
-	res, err := s.db.ExecContext(ctx, `
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("store: begin task execution provenance: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	res, err := tx.ExecContext(ctx, `
 		UPDATE task_metadata
 		SET assigned_alias = ?, assigned_provider = ?, assigned_model = ?,
 		    assigned_effort = ?, assigned_independence_domain = ?,
+		    provider_session_id = CASE
+		      WHEN assigned_session_id = ? THEN provider_session_id
+		      ELSE NULL
+		    END,
 		    assigned_session_id = ?, blocked_reason = NULL
 		WHERE plan_id = ? AND task_id = ?
 		  AND EXISTS (
 		    SELECT 1 FROM tasks
 		    WHERE plan_id = ? AND id = ? AND status = 'running'
+		      AND claimed_by_session = ?
 		  )
-	`, alias, provider, model, effort, independenceDomain, sessionID,
-		planID, taskID, planID, taskID)
+		  AND (
+		    COALESCE(assigned_session_id, '') <> ?
+		    OR (
+		      COALESCE(assigned_alias, '') = ?
+		      AND COALESCE(assigned_provider, '') = ?
+		      AND COALESCE(assigned_model, '') = ?
+		      AND COALESCE(assigned_effort, '') = ?
+		      AND COALESCE(assigned_independence_domain, '') = ?
+		      AND COALESCE(assigned_session_id, '') = ?
+		    )
+		  )
+	`, alias, provider, model, effort, independenceDomain, sessionID, sessionID,
+		planID, taskID, planID, taskID, sessionID,
+		sessionID, alias, provider, model, effort, independenceDomain, sessionID)
 	if err != nil {
 		return fmt.Errorf("store: record task provider: %w", err)
 	}
 	if count, err := res.RowsAffected(); err != nil {
 		return fmt.Errorf("store: provider rows affected: %w", err)
 	} else if count == 0 {
-		return ErrTaskNotRunning
+		var owner string
+		err := tx.QueryRowContext(ctx, `
+			SELECT COALESCE(claimed_by_session, '')
+			FROM tasks
+			WHERE plan_id = ? AND id = ? AND status = 'running'
+		`, planID, taskID).Scan(&owner)
+		if err != nil || owner != sessionID {
+			return ErrTaskNotOwnedRunning
+		}
+		return ErrTaskExecutionConflict
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("store: commit task execution provenance: %w", err)
 	}
 	return nil
 }
 
-// RecordTaskProvider preserves the original provider-only write API.
-func (s *Store) RecordTaskProvider(ctx context.Context, planID, taskID, provider string) error {
-	return s.RecordTaskExecution(ctx, planID, taskID, provider, provider, "", "", "", "")
-}
-
 // RecordTaskProviderSession stores the session identifier returned by the
-// provider after a turn.
+// provider after a turn. Both the live task claim and the execution metadata
+// must still identify claimingSessionID; otherwise this is a stale post-run
+// write from a reclaimed worker.
 func (s *Store) RecordTaskProviderSession(
 	ctx context.Context,
-	planID, taskID, providerSessionID string,
+	planID, taskID, claimingSessionID, providerSessionID string,
 ) error {
-	_, err := s.db.ExecContext(ctx, `
-		UPDATE task_metadata SET provider_session_id = ?
+	storedProviderSessionID := nullIfEmpty(providerSessionID)
+	res, err := s.db.ExecContext(ctx, `
+		UPDATE task_metadata
+		SET provider_session_id = ?
 		WHERE plan_id = ? AND task_id = ?
-	`, nullIfEmpty(providerSessionID), planID, taskID)
+		  AND assigned_session_id = ?
+		  AND (
+		    provider_session_id IS NULL
+		    OR provider_session_id = ?
+		  )
+		  AND EXISTS (
+		    SELECT 1 FROM tasks
+		    WHERE plan_id = ? AND id = ? AND status = 'running'
+		      AND claimed_by_session = ?
+		  )
+	`, storedProviderSessionID, planID, taskID, claimingSessionID,
+		storedProviderSessionID,
+		planID, taskID, claimingSessionID)
 	if err != nil {
 		return fmt.Errorf("store: record provider session: %w", err)
+	}
+	if count, err := res.RowsAffected(); err != nil {
+		return fmt.Errorf("store: provider session rows affected: %w", err)
+	} else if count == 0 {
+		var owner, assignedSession, currentProviderSession string
+		err := s.db.QueryRowContext(ctx, `
+			SELECT
+			  COALESCE(t.claimed_by_session, ''),
+			  COALESCE(m.assigned_session_id, ''),
+			  COALESCE(m.provider_session_id, '')
+			FROM tasks t
+			JOIN task_metadata m
+			  ON m.plan_id = t.plan_id AND m.task_id = t.id
+			WHERE t.plan_id = ? AND t.id = ? AND t.status = 'running'
+		`, planID, taskID).Scan(&owner, &assignedSession, &currentProviderSession)
+		if err != nil || owner != claimingSessionID || assignedSession != claimingSessionID {
+			return ErrTaskNotOwnedRunning
+		}
+		if currentProviderSession != providerSessionID {
+			return ErrTaskProviderSessionConflict
+		}
+		return nil
 	}
 	return nil
 }

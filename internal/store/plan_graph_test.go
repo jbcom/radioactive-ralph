@@ -120,8 +120,10 @@ func TestTaskExecutionProvenanceAndCapabilityBlock(t *testing.T) {
 	if metadata.BlockedReason != "no eligible provider" {
 		t.Fatalf("blocked reason = %q", metadata.BlockedReason)
 	}
-	if err := s.RecordTaskProvider(ctx, planID, "task.one", "codex"); !errors.Is(err, ErrTaskNotRunning) {
-		t.Fatalf("RecordTaskProvider error = %v, want ErrTaskNotRunning", err)
+	if err := s.RecordTaskExecution(
+		ctx, planID, "task.one", "codex", "codex", "", "", "", "not-owner",
+	); !errors.Is(err, ErrTaskNotRunning) {
+		t.Fatalf("RecordTaskExecution error = %v, want ErrTaskNotRunning", err)
 	}
 }
 

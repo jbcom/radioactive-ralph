@@ -353,11 +353,34 @@ func (s *Server) handleConn(conn net.Conn) {
 		return
 	}
 
+	minimumVersion, versionErr := commandProtoVersion(req.Cmd)
+	if versionErr != nil {
+		s.writeResponse(conn, Response{
+			Ok:    false,
+			Code:  CodeUnsupportedCommand,
+			Error: versionErr.Error(),
+		})
+		return
+	}
+	requestVersion := req.ProtoVersion
+	if requestVersion == 0 {
+		requestVersion = 1
+	}
+	if requestVersion < minimumVersion {
+		s.writeResponse(conn, Response{
+			Ok:   false,
+			Code: CodeUnsupportedCommand,
+			Error: fmt.Sprintf(
+				"command %q requires protocol v%d (request speaks v%d)",
+				req.Cmd, minimumVersion, requestVersion,
+			),
+		})
+		return
+	}
+
 	// Reject a request from a newer protocol than this server speaks BEFORE
 	// dispatch — a future version may reuse a command name with changed payload
-	// semantics, so decoding it as our version would mis-execute it. (dispatchDrive
-	// double-checks for the drive commands; this covers the observe/enqueue/stop
-	// surface too.)
+	// semantics, so decoding it as our version would mis-execute it.
 	if req.ProtoVersion > ProtoVersion {
 		s.writeResponse(conn, Response{
 			Ok:    false,
@@ -473,17 +496,13 @@ func (s *Server) handleConn(conn net.Conn) {
 	}
 }
 
-// dispatchDrive routes a v2 drive command. If the handler does not implement
+// dispatchDrive routes a drive command. If the handler does not implement
 // DriveHandler, the command is answered with an unsupported_command response
 // so an older supervisor fails cleanly against a newer client.
 func (s *Server) dispatchDrive(ctx context.Context, conn net.Conn, req Request) {
-	// Reject a client asking for a wire version newer than this supervisor
-	// speaks. A future v3 may reuse a v2 command name with changed payload
-	// semantics; without this guard we would decode it as v2 and act on it,
-	// defeating the versioning contract. An unknown-newer version fails clean
-	// with unsupported_command (the same class an old supervisor returns to a
-	// newer client), so the client can fall back or report a mismatch. A zero/
-	// omitted version is pre-versioned and allowed through.
+	// Keep a defensive upper-bound check close to the mutating handlers even
+	// though handleConn already enforces the shared per-command minimum/maximum
+	// table before routing.
 	if req.ProtoVersion > ProtoVersion {
 		s.writeResponse(conn, Response{
 			Ok:    false,

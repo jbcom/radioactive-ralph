@@ -54,6 +54,16 @@ instead of heading/list-order inference. Every list item must contain exactly
 one indented `ralph-task` fenced block. Once any step uses the block, every
 step must use it; mixed legacy/v2 plans are rejected.
 
+V2 is currently an **experimental explicit-DAG foundation**. Workers receive
+the complete task contract, inputs are rehashed after the turn, and every
+declared output must exist before acceptance; provider workers and acceptance
+still run in the project checkout. V2 does not attribute a pre-existing output
+to an attempt or enforce isolated ingress, undeclared-write exclusion,
+output-only publication, or generated-artifact lineage, so it must not be used
+as a trusted publication boundary. Those semantics are additive
+[`ralph.plan/v3` deterministic execution](../design/deterministic-execution.md)
+so older binaries reject rather than weaken the stronger contract.
+
 ````markdown
 # Story
 
@@ -124,13 +134,15 @@ step must use it; mixed legacy/v2 plans are rejected.
 Replace the example hash with the file's real SHA-256. Imported hashes must
 be exactly 64 lowercase hexadecimal characters.
 
-All nine task fields and all eight binding fields are required, even when a
-value is empty or an array is empty. Unknown fields, `null` values, duplicate
-values, malformed IDs, unknown task references, cycles, and unsafe paths are
-rejected before any plan row is created. Every v2 step must also declare
-exactly one non-empty mechanical acceptance criterion: one `accept:` command,
-one `accept-file:` path, or one of each. Duplicate or ambiguous declarations
-are rejected.
+All nine task fields and all eight binding fields are required, including
+fields whose mode permits an empty value or array. `outputs` is never empty:
+even a read-only review publishes an explicit review artifact. Unknown fields,
+`null` values, duplicate values, malformed IDs, unknown task references,
+cycles, and unsafe paths are rejected before any plan row is created. Every v2
+step must also declare exactly one non-empty mechanical acceptance criterion:
+one `accept:` command, one `accept-file:` path, or one of each. An
+`accept-file` must name a declared output or a path beneath it. Duplicate or
+ambiguous declarations are rejected.
 
 | Field | Contract |
 | --- | --- |
@@ -141,8 +153,8 @@ are rejected.
 | `requires` | Closed provider-capability list. Legacy intrinsic values are `local-agent` and `native-fanout`; measured capabilities are listed below. Unknown values fail import. |
 | `providers` | Optional shipped-provider allowlist. Empty means the project's configured provider pool. |
 | `differentFrom` | Tasks whose recorded independence domain may not run this task. Each reference must also be reachable through `after`, so provenance exists before scheduling. |
-| `inputs` | Project-relative files plus exact SHA-256. Ralph hashes the bytes again immediately before dispatch. |
-| `outputs` | Project-relative paths reserved with mode `exclusive`. |
+| `inputs` | Project-relative files plus import-time SHA-256, rechecked during v2 admission. Generated ancestor artifacts whose digest is not yet known require v3 symbolic inputs. |
+| `outputs` | One or more project-relative paths reserved with mode `exclusive`; every path must exist before completion. In v2 this remains an existence check plus scheduler reservation, not isolated or attempt-attributed publication. |
 
 Task metadata, dependency edges, team ownership, output declarations,
 assigned provider, blocked reason, and completion evidence are durable SQLite
@@ -192,7 +204,8 @@ quality.visual-critique
 quality.pixel-composition
 ```
 
-Built-in declarations and CLI help never grant these capabilities. A
+Built-in declarations and CLI help never grant these capabilities. In the
+experimental v2 bootstrap, a
 `calibration` task performs the declared fixture as independent exact
 invocations, persists the actual tuple, provider session, and assistant-output
 hash for every repetition, and aggregates the evidence for a dependent
@@ -201,20 +214,27 @@ adjudication task. The adjudicator imports one complete calibration record with
 the alias, provider, model, effort, binary path/version/SHA-256, invocation
 configuration hash, inference/control/independence domains, capabilities, and
 evidence. The record ID is content-addressed and its alias cannot be retargeted.
+Current import does not yet causally prove that the claimed adjudication and
+capability set derive from the recorded repetitions, and local Ollama identity
+also requires live endpoint/digest attestation. Therefore a stored calibration
+record is not yet a production capability grant; see
+[Exact provider identity](../design/exact-provider-identity.md).
 
 This makes a bootstrap graph self-progressing: fixture tasks run without
 optimistic capabilities; adjudication mints the immutable record; downstream
 `await-calibration` tasks for that alias are atomically requeued and bind the
 record before their first provider turn.
 
-V2 scheduling fails closed:
+V2 scheduler admission fails closed for the implemented checks:
 
 - no configured provider satisfying the allowlist, capability requirements,
   and `differentFrom` exclusions moves the task to `blocked_capability`;
 - an `await-calibration` task without its alias record moves to
   `blocked_capability` and is automatically readmitted when that record is
   imported;
-- a missing, changed, or symlink-escaped input moves it to `blocked_input`;
+- an input already missing, changed, or symlink-escaped when admission checks
+  it moves to `blocked_input`; the stronger claim/use and isolated-workspace
+  guarantees belong to v3;
 - an exclusive output that overlaps a running task's input or output anywhere
   in the same project remains unclaimed and is retried after the owner
   finishes; shared input/input readers may run together;

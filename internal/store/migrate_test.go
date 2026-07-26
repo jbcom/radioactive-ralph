@@ -1,7 +1,10 @@
 package store
 
 import (
+	"context"
 	"database/sql"
+	"path/filepath"
+	"sync"
 	"testing"
 	"testing/fstest"
 )
@@ -101,6 +104,30 @@ func TestApplyMigrationSuccessBumpsVersion(t *testing.T) {
 	}
 }
 
+func TestApplyMigrationSupportedRejectsNewerSchemaInsideTransaction(t *testing.T) {
+	db := openRawSQLite(t)
+	if _, err := db.Exec("PRAGMA user_version = 4"); err != nil {
+		t.Fatalf("seed newer user_version: %v", err)
+	}
+
+	err := applyMigrationSupported(
+		db, 3, currentSchemaVersion,
+		"CREATE TABLE must_not_be_created(id INTEGER PRIMARY KEY);",
+	)
+	if err == nil {
+		t.Fatal("applyMigrationSupported: want newer-schema error, got nil")
+	}
+	var count int
+	if err := db.QueryRow(
+		`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'must_not_be_created'`,
+	).Scan(&count); err != nil {
+		t.Fatalf("inspect rejected migration: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("rejected migration created %d tables, want 0", count)
+	}
+}
+
 func TestReadUserVersionDefaultsToZero(t *testing.T) {
 	db := openRawSQLite(t)
 	v, err := readUserVersion(db)
@@ -109,5 +136,72 @@ func TestReadUserVersionDefaultsToZero(t *testing.T) {
 	}
 	if v != 0 {
 		t.Errorf("readUserVersion on a fresh DB = %d, want 0", v)
+	}
+}
+
+// TestConcurrentOpenersSerializeMigrations is the multi-process analogue
+// exercised with independent database/sql handles: every opener can observe a
+// fresh database, but the immediate transaction's in-lock user_version recheck
+// ensures each CREATE runs only once.
+func TestConcurrentOpenersSerializeMigrations(t *testing.T) {
+	ctx := context.Background()
+	dsn := DSN(filepath.Join(t.TempDir(), "concurrent-open.db"))
+	const openers = 12
+
+	start := make(chan struct{})
+	errs := make(chan error, openers)
+	stores := make(chan *Store, openers)
+	var ready sync.WaitGroup
+	ready.Add(openers)
+
+	for range openers {
+		go func() {
+			ready.Done()
+			<-start
+			store, err := Open(ctx, Options{DSN: dsn})
+			if err == nil {
+				stores <- store
+			}
+			errs <- err
+		}()
+	}
+	ready.Wait()
+	close(start)
+
+	for range openers {
+		if err := <-errs; err != nil {
+			t.Errorf("concurrent Open: %v", err)
+		}
+	}
+	close(stores)
+	for store := range stores {
+		if err := store.Close(); err != nil {
+			t.Errorf("Close: %v", err)
+		}
+	}
+
+	db, err := sql.Open("sqlite", dsn)
+	if err != nil {
+		t.Fatalf("open migrated DB: %v", err)
+	}
+	defer func() { _ = db.Close() }()
+	version, err := readUserVersion(db)
+	if err != nil {
+		t.Fatalf("readUserVersion: %v", err)
+	}
+	if version != currentSchemaVersion {
+		t.Fatalf("user_version = %d, want %d", version, currentSchemaVersion)
+	}
+	for _, table := range []string{"projects", "a2a_messages", "task_metadata"} {
+		var count int
+		if err := db.QueryRowContext(ctx,
+			`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?`,
+			table,
+		).Scan(&count); err != nil {
+			t.Fatalf("inspect table %s: %v", table, err)
+		}
+		if count != 1 {
+			t.Errorf("table %s count = %d, want 1", table, count)
+		}
 	}
 }

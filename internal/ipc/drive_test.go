@@ -225,6 +225,32 @@ func TestDrive_RejectsNewerProtocolVersion(t *testing.T) {
 	}
 }
 
+func TestDrive_RejectsProtocolOlderThanCommandMinimum(t *testing.T) {
+	h := &driveFakeHandler{}
+	sock, _, cleanup := startServer(t, h)
+	defer cleanup()
+	c := dialTest(t, sock)
+	defer func() { _ = c.Close() }()
+
+	ctx := context.Background()
+	if err := c.send(ctx, Request{
+		Cmd: CmdTaskRetry, ProtoVersion: 2,
+		Args: []byte(`{"plan_id":"p","task_id":"t"}`),
+	}); err != nil {
+		t.Fatalf("send: %v", err)
+	}
+	resp, err := c.readResponse(ctx)
+	if err != nil {
+		t.Fatalf("readResponse: %v", err)
+	}
+	if resp.Ok || resp.Code != CodeUnsupportedCommand {
+		t.Fatalf("older-version response = %+v, want unsupported_command", resp)
+	}
+	if (h.gotRetry != TaskRetryArgs{}) {
+		t.Fatalf("v2 request invoked v3 handler: %+v", h.gotRetry)
+	}
+}
+
 // TestDrive_UnknownCommand confirms a truly unknown command returns
 // unsupported_command too.
 func TestDrive_UnknownCommand(t *testing.T) {
@@ -233,9 +259,15 @@ func TestDrive_UnknownCommand(t *testing.T) {
 	c := dialTest(t, sock)
 	defer func() { _ = c.Close() }()
 
-	// Send a raw unknown command via the low-level driveCall.
-	err := c.driveCall(context.Background(), "bogus-command", struct{}{}, nil)
-	if !IsCode(err, CodeUnsupportedCommand) {
-		t.Errorf("unknown command err = %v, want CodeUnsupportedCommand", err)
+	ctx := context.Background()
+	if err := c.send(ctx, Request{Cmd: "bogus-command", ProtoVersion: 1}); err != nil {
+		t.Fatalf("send: %v", err)
+	}
+	resp, err := c.readResponse(ctx)
+	if err != nil {
+		t.Fatalf("readResponse: %v", err)
+	}
+	if resp.Ok || resp.Code != CodeUnsupportedCommand {
+		t.Errorf("unknown-command response = %+v, want CodeUnsupportedCommand", resp)
 	}
 }

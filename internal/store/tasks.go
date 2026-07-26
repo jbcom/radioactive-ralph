@@ -540,22 +540,7 @@ func (s *Store) MarkDone(ctx context.Context, planID, taskID, sessionID string, 
 	`, jsonOrEmptyObject(evidenceJSON), planID, taskID); err != nil {
 		return nil, fmt.Errorf("store: persist completion evidence: %w", err)
 	}
-	// A v2 graph converges itself once every task reached a successful terminal
-	// state. Legacy plans preserve their historical operator-owned lifecycle.
-	// Blocked and failed tasks intentionally keep the plan active and visible.
-	if _, err := tx.ExecContext(ctx, `
-		UPDATE plans
-		SET status = 'done'
-		WHERE id = ?
-		  AND EXISTS (
-		      SELECT 1 FROM task_metadata m WHERE m.plan_id = plans.id
-		  )
-		  AND NOT EXISTS (
-		      SELECT 1 FROM tasks t
-		      WHERE t.plan_id = plans.id
-		        AND t.status NOT IN ('done', 'skipped', 'decomposed')
-		  )
-	`, planID); err != nil {
+	if err := convergeV2PlanTx(ctx, tx, planID); err != nil {
 		return nil, fmt.Errorf("store: converge v2 plan: %w", err)
 	}
 
@@ -575,7 +560,10 @@ func (s *Store) MarkDone(ctx context.Context, planID, taskID, sessionID string, 
 // hard error: the stale report is correctly dropped instead of stomping the
 // current owner. Callers distinguish it via errors.Is and treat it as
 // "someone else owns this now; nothing to do."
-var ErrTaskNotOwnedRunning = errors.New("store: task not running under the reporting session (stale failure report)")
+var ErrTaskNotOwnedRunning = fmt.Errorf(
+	"%w under the reporting session (stale worker report)",
+	ErrTaskNotRunning,
+)
 
 // MarkFailed transitions a running task, owned by sessionID, to failed or
 // retries. See MarkFailedWithPayload.
@@ -658,6 +646,9 @@ func (s *Store) MarkFailedWithPayload(ctx context.Context, planID, taskID, sessi
 		VALUES (?, ?, 'task.failed_terminal', ?, 'worker', ?)
 	`, planID, taskID, sessionID, payloadJSON(payload)); err != nil {
 		return false, fmt.Errorf("store: log failed terminal: %w", err)
+	}
+	if err := convergeV2PlanTx(ctx, tx, planID); err != nil {
+		return false, fmt.Errorf("store: converge failed v2 plan: %w", err)
 	}
 	return false, tx.Commit()
 }

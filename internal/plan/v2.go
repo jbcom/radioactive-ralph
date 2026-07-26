@@ -300,6 +300,9 @@ func validateTaskPaths(metadata *TaskMetadata) error {
 	if err := uniqueTaskPaths(metadata.ID, "inputs", inputPaths(metadata.Inputs)); err != nil {
 		return err
 	}
+	if len(metadata.Outputs) == 0 {
+		return fmt.Errorf("task %s must declare at least one output", metadata.ID)
+	}
 	for _, output := range metadata.Outputs {
 		if err := validateRelativePath(output.Path); err != nil {
 			return fmt.Errorf("task %s output: %w", metadata.ID, err)

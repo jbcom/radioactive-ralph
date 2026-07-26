@@ -72,14 +72,16 @@ func TestValidateForImportRejectsV2AdversarialInputs(t *testing.T) {
 		"portable traversal": "# Wave\n\n" +
 			base("task.one", `[]`, `..\escape`),
 		"differentFrom self": "# Wave\n\n" +
-			v2Step("bad", `{"id":"task.one","after":[],"team":"design/team","binding":{"mode":"pool","alias":"","provider":"","model":"","effort":"","calibration":"","repetitions":0,"fixture":""},"requires":[],"providers":[],"differentFrom":["task.one"],"inputs":[],"outputs":[]}`),
+			v2Step("bad", `{"id":"task.one","after":[],"team":"design/team","binding":{"mode":"pool","alias":"","provider":"","model":"","effort":"","calibration":"","repetitions":0,"fixture":""},"requires":[],"providers":[],"differentFrom":["task.one"],"inputs":[],"outputs":[{"path":"out/self","mode":"exclusive"}]}`),
 		"unordered read write": "# Wave\n\n" +
 			base("task.writer", `[]`, "shared/data.json") + "\n" +
-			v2Step("reader", `{"id":"task.reader","after":[],"team":"design/team","binding":{"mode":"pool","alias":"","provider":"","model":"","effort":"","calibration":"","repetitions":0,"fixture":""},"requires":[],"providers":[],"differentFrom":[],"inputs":[{"path":"shared/data.json","sha256":"`+testSHA+`"}],"outputs":[]}`),
+			v2Step("reader", `{"id":"task.reader","after":[],"team":"design/team","binding":{"mode":"pool","alias":"","provider":"","model":"","effort":"","calibration":"","repetitions":0,"fixture":""},"requires":[],"providers":[],"differentFrom":[],"inputs":[{"path":"shared/data.json","sha256":"`+testSHA+`"}],"outputs":[{"path":"out/reader","mode":"exclusive"}]}`),
 		"calibrated without content address": "# Wave\n\n" +
-			v2Step("bad", `{"id":"task.one","after":[],"team":"design/team","binding":{"mode":"calibrated","alias":"codex-sol-xhigh","provider":"codex","model":"gpt-5.6-sol","effort":"xhigh","calibration":"","repetitions":0,"fixture":""},"requires":[],"providers":["codex"],"differentFrom":[],"inputs":[],"outputs":[]}`),
+			v2Step("bad", `{"id":"task.one","after":[],"team":"design/team","binding":{"mode":"calibrated","alias":"codex-sol-xhigh","provider":"codex","model":"gpt-5.6-sol","effort":"xhigh","calibration":"","repetitions":0,"fixture":""},"requires":[],"providers":["codex"],"differentFrom":[],"inputs":[],"outputs":[{"path":"out/calibrated","mode":"exclusive"}]}`),
 		"calibration requiring unmeasured capability": "# Wave\n\n" +
-			v2Step("bad", `{"id":"task.one","after":[],"team":"design/team","binding":{"mode":"calibration","alias":"codex-sol-xhigh","provider":"codex","model":"gpt-5.6-sol","effort":"xhigh","calibration":"","repetitions":3,"fixture":"graph-reasoning"},"requires":["quality.graph-reasoning"],"providers":["codex"],"differentFrom":[],"inputs":[],"outputs":[]}`),
+			v2Step("bad", `{"id":"task.one","after":[],"team":"design/team","binding":{"mode":"calibration","alias":"codex-sol-xhigh","provider":"codex","model":"gpt-5.6-sol","effort":"xhigh","calibration":"","repetitions":3,"fixture":"graph-reasoning"},"requires":["quality.graph-reasoning"],"providers":["codex"],"differentFrom":[],"inputs":[],"outputs":[{"path":"out/calibration","mode":"exclusive"}]}`),
+		"missing outputs": "# Wave\n\n" +
+			v2Step("bad", `{"id":"task.one","after":[],"team":"design/team","binding":{"mode":"pool","alias":"","provider":"","model":"","effort":"","calibration":"","repetitions":0,"fixture":""},"requires":[],"providers":[],"differentFrom":[],"inputs":[],"outputs":[]}`),
 	}
 	for name, md := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -109,11 +111,11 @@ func TestValidateForImportAllowsOrderedExclusiveOutputReuse(t *testing.T) {
 func TestValidateForImportRequiresOrderedProviderSeparation(t *testing.T) {
 	first := v2Step("first", `{
     "id":"task.first","after":[],"team":"design/team","binding":{"mode":"pool","alias":"","provider":"","model":"","effort":"","calibration":"","repetitions":0,"fixture":""},"requires":[],
-    "providers":[],"differentFrom":[],"inputs":[],"outputs":[]
+    "providers":[],"differentFrom":[],"inputs":[],"outputs":[{"path":"out/first","mode":"exclusive"}]
   }`)
 	second := v2Step("second", `{
     "id":"task.second","after":[],"team":"design/team","binding":{"mode":"pool","alias":"","provider":"","model":"","effort":"","calibration":"","repetitions":0,"fixture":""},"requires":[],
-    "providers":[],"differentFrom":["task.first"],"inputs":[],"outputs":[]
+    "providers":[],"differentFrom":["task.first"],"inputs":[],"outputs":[{"path":"out/second","mode":"exclusive"}]
   }`)
 	err := ValidateForImport([]byte("# Wave\n\n" + first + "\n" + second))
 	if err == nil || !strings.Contains(err.Error(), "requires an after dependency path") {

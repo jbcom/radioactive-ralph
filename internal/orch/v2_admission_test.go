@@ -49,3 +49,21 @@ func TestValidateV2FilesystemRejectsSymlinkEscape(t *testing.T) {
 		t.Fatal("output symlink escape accepted")
 	}
 }
+
+func TestPathWithinDeclaredOutputRequiresExactPathComponentsAndCase(t *testing.T) {
+	outputs := []plan.TaskOutput{{Path: "out/report", Mode: "exclusive"}}
+	for _, candidate := range []string{"out/report", "out/report/result.json"} {
+		if !pathWithinDeclaredOutput(candidate, outputs) {
+			t.Errorf("%q should lie within declared output", candidate)
+		}
+	}
+	for _, candidate := range []string{
+		"out/report-adjacent/result.json",
+		"out/other/result.json",
+		"OUT/report/result.json",
+	} {
+		if pathWithinDeclaredOutput(candidate, outputs) {
+			t.Errorf("%q must not lie within declared output", candidate)
+		}
+	}
+}

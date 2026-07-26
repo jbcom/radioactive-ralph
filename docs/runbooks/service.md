@@ -54,11 +54,12 @@ systemctl --user status radioactive_ralph-supervisor
 
 ### Bound worker concurrency
 
-Pass supervisor environment at install time. For example, to permit at
-most 16 simultaneous provider turns:
+Pass supervisor environment at install time to set an operator-chosen
+emergency ceiling for simultaneous provider turns:
 
 ```sh
-radioactive_ralph service install --env RALPH_MAX_PARALLEL=16
+# Replace N with an operator-chosen positive-integer emergency ceiling.
+radioactive_ralph service install --env RALPH_MAX_PARALLEL=N
 ```
 
 The generated service definition persists the value across login and

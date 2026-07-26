@@ -64,10 +64,13 @@ func (r *bindingBlockingRunner) Run(ctx context.Context, binding provider.Bindin
 	return provider.Result{}, ctx.Err()
 }
 
-func (r *bindingRecordingRunner) Run(_ context.Context, binding provider.Binding, _ provider.Request) (provider.Result, error) {
+func (r *bindingRecordingRunner) Run(_ context.Context, binding provider.Binding, req provider.Request) (provider.Result, error) {
 	r.mu.Lock()
 	r.bindings = append(r.bindings, binding.Name)
 	r.mu.Unlock()
+	if err := writeDeclaredV2Outputs(req); err != nil {
+		return provider.Result{}, err
+	}
 	return provider.Result{AssistantOutput: "done"}, nil
 }
 

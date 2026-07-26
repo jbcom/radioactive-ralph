@@ -44,7 +44,9 @@ func Migrate(db *sql.DB) error {
 		if err != nil {
 			return fmt.Errorf("store: read %s: %w", m.name, err)
 		}
-		if err := applyMigration(db, m.version, string(body)); err != nil {
+		if err := applyMigrationSupported(
+			db, m.version, currentSchemaVersion, string(body),
+		); err != nil {
 			return fmt.Errorf("store: apply %s: %w", m.name, err)
 		}
 	}
@@ -90,11 +92,40 @@ func listMigrations(fsys fs.FS, suffix string) ([]migration, error) {
 // applyMigration runs body inside a transaction and bumps user_version on
 // success.
 func applyMigration(db *sql.DB, version int, body string) error {
+	return applyMigrationSupported(db, version, version, body)
+}
+
+// applyMigrationSupported serializes migration application under the
+// immediate transaction supplied by the canonical DSN, then re-reads
+// user_version while holding that writer lock. Multiple processes may all
+// observe the same stale version before entering this function; only the first
+// executes the DDL, while later contenders see the committed version and skip
+// it. The in-transaction supported-version check also preserves the
+// newer-binary guard if another process upgrades the DB after Migrate's
+// initial read.
+func applyMigrationSupported(db *sql.DB, version, supportedVersion int, body string) error {
 	tx, err := db.Begin()
 	if err != nil {
 		return fmt.Errorf("begin: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
+
+	var dbVersion int
+	if err := tx.QueryRow("PRAGMA user_version").Scan(&dbVersion); err != nil {
+		return fmt.Errorf("read user_version in transaction: %w", err)
+	}
+	if dbVersion > supportedVersion {
+		return fmt.Errorf(
+			"DB schema version %d is newer than this binary supports (%d); upgrade radioactive_ralph",
+			dbVersion, supportedVersion,
+		)
+	}
+	if dbVersion >= version {
+		if err := tx.Commit(); err != nil {
+			return fmt.Errorf("commit already-applied migration: %w", err)
+		}
+		return nil
+	}
 
 	if _, err := tx.Exec(body); err != nil {
 		return fmt.Errorf("exec: %w", err)

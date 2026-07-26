@@ -102,8 +102,7 @@ The schema is embedded under schema/\*.sql and applied in lexical order by Migra
   - [func \(s \*Store\) RecordCalibrationAttempt\(ctx context.Context, attempt CalibrationAttempt\) error](<#Store.RecordCalibrationAttempt>)
   - [func \(s \*Store\) RecordSpend\(ctx context.Context, o RecordSpendOpts\) error](<#Store.RecordSpend>)
   - [func \(s \*Store\) RecordTaskExecution\(ctx context.Context, planID, taskID, alias, provider, model, effort, independenceDomain, sessionID string\) error](<#Store.RecordTaskExecution>)
-  - [func \(s \*Store\) RecordTaskProvider\(ctx context.Context, planID, taskID, provider string\) error](<#Store.RecordTaskProvider>)
-  - [func \(s \*Store\) RecordTaskProviderSession\(ctx context.Context, planID, taskID, providerSessionID string\) error](<#Store.RecordTaskProviderSession>)
+  - [func \(s \*Store\) RecordTaskProviderSession\(ctx context.Context, planID, taskID, claimingSessionID, providerSessionID string\) error](<#Store.RecordTaskProviderSession>)
   - [func \(s \*Store\) ReleaseClaim\(ctx context.Context, planID, taskID, sessionID, reason string\) error](<#Store.ReleaseClaim>)
   - [func \(s \*Store\) ResolveProject\(ctx context.Context, fps \[\]Fingerprint\) \(projectID string, found bool, err error\)](<#Store.ResolveProject>)
   - [func \(s \*Store\) RetryBlockedTask\(ctx context.Context, planID, taskID string\) \(found, changed bool, err error\)](<#Store.RetryBlockedTask>)
@@ -164,10 +163,19 @@ var ErrOutputReserved = errors.New("store: exclusive output reserved")
 var ErrPlanNotFound = errors.New("store: plan not found")
 ```
 
+<a name="ErrTaskExecutionConflict"></a>ErrTaskExecutionConflict reports a second provenance write from the current owner that disagrees with the immutable tuple already bound to its attempt.
+
+```go
+var ErrTaskExecutionConflict = errors.New("store: task execution provenance conflicts with the current owner")
+```
+
 <a name="ErrTaskNotOwnedRunning"></a>ErrTaskNotOwnedRunning is returned by MarkFailed\* when the task is no longer both running AND claimed by the reporting session — i.e. it was reclaimed by the reaper and \(possibly\) reassigned to another worker between dispatch and this failure report. It is a BENIGN outcome, not a hard error: the stale report is correctly dropped instead of stomping the current owner. Callers distinguish it via errors.Is and treat it as "someone else owns this now; nothing to do."
 
 ```go
-var ErrTaskNotOwnedRunning = errors.New("store: task not running under the reporting session (stale failure report)")
+var ErrTaskNotOwnedRunning = fmt.Errorf(
+    "%w under the reporting session (stale worker report)",
+    ErrTaskNotRunning,
+)
 ```
 
 <a name="ErrTaskNotRetryable"></a>ErrTaskNotRetryable means the task exists but is not in an operator\- recoverable blocked state. Only capability and input admission failures are retryable through this API; running, completed, failed, and approval\-gated tasks keep their existing lifecycle controls.
@@ -176,14 +184,20 @@ var ErrTaskNotOwnedRunning = errors.New("store: task not running under the repor
 var ErrTaskNotRetryable = errors.New("store: task is not blocked on input or capability")
 ```
 
-<a name="ErrTaskNotRunning"></a>ErrTaskNotRunning reports a provenance update attempted outside a live claim.
+<a name="ErrTaskNotRunning"></a>ErrTaskNotRunning reports a provenance update attempted outside a live claim. ErrTaskNotOwnedRunning wraps this sentinel for backwards\-compatible errors.Is checks while also distinguishing stale\-session writes.
 
 ```go
 var ErrTaskNotRunning = errors.New("store: task is not running")
 ```
 
+<a name="ErrTaskProviderSessionConflict"></a>ErrTaskProviderSessionConflict reports a second provider\-session write from the current owner that disagrees with the first session ID bound to the attempt.
+
+```go
+var ErrTaskProviderSessionConflict = errors.New("store: provider session conflicts with the current owner")
+```
+
 <a name="DSN"></a>
-## func [DSN](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/store.go#L58>)
+## func [DSN](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/store.go#L65>)
 
 ```go
 func DSN(dbPath string) string
@@ -423,7 +437,7 @@ type InputReservation struct {
 ```
 
 <a name="Options"></a>
-## type [Options](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/store.go#L78-L88>)
+## type [Options](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/store.go#L84-L94>)
 
 Options configures Open.
 
@@ -592,7 +606,7 @@ type StatusCounts struct {
 ```
 
 <a name="Store"></a>
-## type [Store](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/store.go#L37-L41>)
+## type [Store](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/store.go#L44-L48>)
 
 Store is the user\-level store handle. It wraps a \*sql.DB plus a deterministic clock \+ UUID provider \(test\-swappable\).
 
@@ -603,7 +617,7 @@ type Store struct {
 ```
 
 <a name="Open"></a>
-### func [Open](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/store.go#L91>)
+### func [Open](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/store.go#L97>)
 
 ```go
 func Open(ctx context.Context, opts Options) (*Store, error)
@@ -648,7 +662,7 @@ func (s *Store) ApplyProjectConfig(ctx context.Context, projectID string, upsert
 ApplyProjectConfig atomically deletes and upserts a set of DB\-resident project config keys. Deletes run before upserts, so a key present in both collections ends with the upserted value. This is the mutation primitive for replacing logical config selections whose old aliases must not survive beside their canonical key.
 
 <a name="Store.ApproveTask"></a>
-### func \(\*Store\) [ApproveTask](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/tasks.go#L831>)
+### func \(\*Store\) [ApproveTask](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/tasks.go#L822>)
 
 ```go
 func (s *Store) ApproveTask(ctx context.Context, planID, taskID string) (found, changed bool, err error)
@@ -666,7 +680,7 @@ func (s *Store) Backup(ctx context.Context, destDir string) (string, error)
 Backup writes a consistent point\-in\-time copy of the store database into destDir using SQLite's \`VACUUM INTO\`, which — unlike a raw file copy — is safe to run against a live database \(it takes a read transaction and produces a compacted, fully\-consistent snapshot even while other connections are writing under WAL\). Returns the path to the backup file.
 
 <a name="Store.BindTaskCalibration"></a>
-### func \(\*Store\) [BindTaskCalibration](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/plan_graph.go#L201-L204>)
+### func \(\*Store\) [BindTaskCalibration](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/plan_graph.go#L212-L215>)
 
 ```go
 func (s *Store) BindTaskCalibration(ctx context.Context, planID, taskID, calibrationID, capabilitySetJSON string) error
@@ -702,7 +716,7 @@ func (s *Store) ClearWorkerTask(ctx context.Context, workerID, status string) er
 ClearWorkerTask clears the active task from one worker row and marks it idle or terminated \(status defaults to "idle" when empty\).
 
 <a name="Store.Close"></a>
-### func \(\*Store\) [Close](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/store.go#L150>)
+### func \(\*Store\) [Close](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/store.go#L198>)
 
 ```go
 func (s *Store) Close() error
@@ -783,7 +797,7 @@ func (s *Store) CreateWorker(ctx context.Context, o WorkerOpts) (string, error)
 CreateWorker registers a newly\-spawned agent subprocess against a session. Returns the worker row id. Successor to plandag's CreateSessionVariant — no persona; carries the provider capability \(native\_fanout\) instead of a variant name \(§9/§10 of the design\).
 
 <a name="Store.DB"></a>
-### func \(\*Store\) [DB](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/store.go#L156>)
+### func \(\*Store\) [DB](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/store.go#L204>)
 
 ```go
 func (s *Store) DB() *sql.DB
@@ -909,7 +923,7 @@ func (s *Store) ListMessages(ctx context.Context, planID, taskID string) ([]A2AM
 ListMessages returns every message logged for one task, oldest first.
 
 <a name="Store.ListPlans"></a>
-### func \(\*Store\) [ListPlans](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/plans.go#L122>)
+### func \(\*Store\) [ListPlans](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/plans.go#L167>)
 
 ```go
 func (s *Store) ListPlans(ctx context.Context, projectID string, statuses []PlanStatus) ([]Plan, error)
@@ -963,7 +977,7 @@ func (s *Store) ListTasks(ctx context.Context, planID string, statuses []TaskSta
 ListTasks returns tasks for one plan, optionally filtered by status.
 
 <a name="Store.MarkBlocked"></a>
-### func \(\*Store\) [MarkBlocked](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/tasks.go#L702>)
+### func \(\*Store\) [MarkBlocked](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/tasks.go#L693>)
 
 ```go
 func (s *Store) MarkBlocked(ctx context.Context, planID, taskID, sessionID string, payload EventPayload) error
@@ -972,7 +986,7 @@ func (s *Store) MarkBlocked(ctx context.Context, planID, taskID, sessionID strin
 MarkBlocked releases a running task into the blocked set so an operator can later requeue or otherwise intervene.
 
 <a name="Store.MarkBlockedCapability"></a>
-### func \(\*Store\) [MarkBlockedCapability](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/plan_graph.go#L292>)
+### func \(\*Store\) [MarkBlockedCapability](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/plan_graph.go#L373>)
 
 ```go
 func (s *Store) MarkBlockedCapability(ctx context.Context, planID, taskID, reason string) error
@@ -981,7 +995,7 @@ func (s *Store) MarkBlockedCapability(ctx context.Context, planID, taskID, reaso
 MarkBlockedCapability records a fail\-closed pre\-dispatch capability block.
 
 <a name="Store.MarkBlockedInput"></a>
-### func \(\*Store\) [MarkBlockedInput](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/plan_graph.go#L297>)
+### func \(\*Store\) [MarkBlockedInput](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/plan_graph.go#L378>)
 
 ```go
 func (s *Store) MarkBlockedInput(ctx context.Context, planID, taskID, reason string) error
@@ -999,7 +1013,7 @@ func (s *Store) MarkDone(ctx context.Context, planID, taskID, sessionID string, 
 MarkDone transitions a running task to done, logs the event, and returns the set of newly\-ready downstream tasks.
 
 <a name="Store.MarkFailed"></a>
-### func \(\*Store\) [MarkFailed](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/tasks.go#L582>)
+### func \(\*Store\) [MarkFailed](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/tasks.go#L570>)
 
 ```go
 func (s *Store) MarkFailed(ctx context.Context, planID, taskID, sessionID, reason string, maxRetries int) (retried bool, err error)
@@ -1008,7 +1022,7 @@ func (s *Store) MarkFailed(ctx context.Context, planID, taskID, sessionID, reaso
 MarkFailed transitions a running task, owned by sessionID, to failed or retries. See MarkFailedWithPayload.
 
 <a name="Store.MarkFailedWithPayload"></a>
-### func \(\*Store\) [MarkFailedWithPayload](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/tasks.go#L598>)
+### func \(\*Store\) [MarkFailedWithPayload](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/tasks.go#L586>)
 
 ```go
 func (s *Store) MarkFailedWithPayload(ctx context.Context, planID, taskID, sessionID string, payload EventPayload, maxRetries int) (retried bool, err error)
@@ -1107,34 +1121,25 @@ func (s *Store) RecordSpend(ctx context.Context, o RecordSpendOpts) error
 RecordSpend appends one spend row for a completed provider turn. Used by the orchestrator to accumulate provider.Usage.CostUSD per project so spend caps \(configured per provider/variant\) can be enforced before the next dispatch.
 
 <a name="Store.RecordTaskExecution"></a>
-### func \(\*Store\) [RecordTaskExecution](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/plan_graph.go#L243-L246>)
+### func \(\*Store\) [RecordTaskExecution](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/plan_graph.go#L256-L259>)
 
 ```go
 func (s *Store) RecordTaskExecution(ctx context.Context, planID, taskID, alias, provider, model, effort, independenceDomain, sessionID string) error
 ```
 
-RecordTaskExecution binds the selected provider request and worker session to the running task.
-
-<a name="Store.RecordTaskProvider"></a>
-### func \(\*Store\) [RecordTaskProvider](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/plan_graph.go#L271>)
-
-```go
-func (s *Store) RecordTaskProvider(ctx context.Context, planID, taskID, provider string) error
-```
-
-RecordTaskProvider preserves the original provider\-only write API.
+RecordTaskExecution binds the selected provider request and worker session to the running task. The reporting session must still own the live claim so a late provenance write from a reclaimed worker cannot overwrite the current owner's immutable execution record.
 
 <a name="Store.RecordTaskProviderSession"></a>
-### func \(\*Store\) [RecordTaskProviderSession](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/plan_graph.go#L277-L280>)
+### func \(\*Store\) [RecordTaskProviderSession](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/plan_graph.go#L322-L325>)
 
 ```go
-func (s *Store) RecordTaskProviderSession(ctx context.Context, planID, taskID, providerSessionID string) error
+func (s *Store) RecordTaskProviderSession(ctx context.Context, planID, taskID, claimingSessionID, providerSessionID string) error
 ```
 
-RecordTaskProviderSession stores the session identifier returned by the provider after a turn.
+RecordTaskProviderSession stores the session identifier returned by the provider after a turn. Both the live task claim and the execution metadata must still identify claimingSessionID; otherwise this is a stale post\-run write from a reclaimed worker.
 
 <a name="Store.ReleaseClaim"></a>
-### func \(\*Store\) [ReleaseClaim](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/tasks.go#L673>)
+### func \(\*Store\) [ReleaseClaim](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/tasks.go#L664>)
 
 ```go
 func (s *Store) ReleaseClaim(ctx context.Context, planID, taskID, sessionID, reason string) error
@@ -1161,13 +1166,13 @@ func (s *Store) RetryBlockedTask(ctx context.Context, planID, taskID string) (fo
 RetryBlockedTask safely requeues a task after an operator has corrected its immutable input checkout or available provider pool. The transition is atomic and deliberately narrow: only blocked\_input and blocked\_capability become pending. Dispatch rechecks hashes, reservations, capabilities, and dependencies before a provider can run.
 
 <a name="Store.SetPlanStatus"></a>
-### func \(\*Store\) [SetPlanStatus](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/plans.go#L105>)
+### func \(\*Store\) [SetPlanStatus](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/plans.go#L108>)
 
 ```go
 func (s *Store) SetPlanStatus(ctx context.Context, id string, status PlanStatus) error
 ```
 
-SetPlanStatus updates the plan's status column.
+SetPlanStatus updates the plan's status column. Activating a v2 plan also recomputes terminal convergence in the same transaction so resuming a plan whose tasks finished while it was paused cannot leave an impossible active plan behind.
 
 <a name="Store.SetProjectConfig"></a>
 ### func \(\*Store\) [SetProjectConfig](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/config.go#L35>)

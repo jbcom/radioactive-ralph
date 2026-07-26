@@ -2,6 +2,7 @@ package orch
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -39,6 +40,12 @@ type Acceptance struct {
 	// directory (callers pass this in via VerifyOpts/AcceptanceChecker
 	// wiring — see mechanicalAcceptanceCheck).
 	Dir string `json:"dir,omitempty"`
+
+	// RequiredOutputs is populated for strict v2 tasks from every declared
+	// output path. It is deliberately an existence contract only: v2 does not
+	// provide isolated workspaces, attempt attribution, manifests, or
+	// content-addressed publication.
+	RequiredOutputs []string `json:"required_outputs,omitempty"`
 }
 
 // acceptCommandRe matches an inline acceptance-command annotation in a plan
@@ -91,7 +98,11 @@ func defaultAcceptanceJSON(step plan.Step) (string, error) {
 	return string(raw), nil
 }
 
-func strictV2AcceptanceJSON(step plan.Step, projectDir string) (string, error) {
+func strictV2AcceptanceJSON(
+	step plan.Step,
+	metadata *plan.TaskMetadata,
+	projectDir string,
+) (string, error) {
 	haystack := step.Text
 	if step.Detail != "" {
 		haystack += "\n" + step.Detail
@@ -110,7 +121,15 @@ func strictV2AcceptanceJSON(step plan.Step, projectDir string) (string, error) {
 		return "", fmt.Errorf("v2 task requires accept and/or accept-file")
 	}
 
-	var acceptance Acceptance
+	if metadata == nil || len(metadata.Outputs) == 0 {
+		return "", fmt.Errorf("v2 task requires at least one declared output")
+	}
+	acceptance := Acceptance{
+		RequiredOutputs: make([]string, len(metadata.Outputs)),
+	}
+	for i, output := range metadata.Outputs {
+		acceptance.RequiredOutputs[i] = output.Path
+	}
 	if len(commandMatches) == 1 {
 		acceptance.Command = strings.TrimSpace(commandMatches[0][1])
 		if acceptance.Command == "" {
@@ -124,6 +143,12 @@ func strictV2AcceptanceJSON(step plan.Step, projectDir string) (string, error) {
 		}
 		if _, err := secureProjectPath(projectDir, acceptance.FileExists, false); err != nil {
 			return "", fmt.Errorf("unsafe accept-file %q: %w", acceptance.FileExists, err)
+		}
+		if !pathWithinDeclaredOutput(acceptance.FileExists, metadata.Outputs) {
+			return "", fmt.Errorf(
+				"accept-file %q must lie within a declared output",
+				acceptance.FileExists,
+			)
 		}
 	}
 	raw, err := json.Marshal(acceptance)
@@ -161,6 +186,12 @@ func mechanicalAcceptanceCheck(ctx context.Context, dir string, acceptanceJSON s
 	checkDir := acc.Dir
 	if checkDir == "" {
 		checkDir = dir
+	}
+
+	for _, output := range acc.RequiredOutputs {
+		if ok, reason, err := checkFileExists(checkDir, output); err != nil || !ok {
+			return ok, reason, err
+		}
 	}
 
 	if acc.FileExists != "" {
@@ -218,9 +249,36 @@ func (o *Orchestrator) VerifyAndComplete(ctx context.Context, planID, taskID str
 	if err != nil {
 		return false, err
 	}
-	ok, reason, err := o.acceptanceCheck(ctx, dir, task.AcceptanceJSON, ev)
-	if err != nil {
-		return false, fmt.Errorf("orch: run acceptance check: %w", err)
+
+	ok := true
+	reason := ""
+	var v2Metadata *plan.TaskMetadata
+	execution, metadataErr := o.store.GetTaskExecutionMetadata(ctx, planID, taskID)
+	switch {
+	case metadataErr == nil:
+		var metadata plan.TaskMetadata
+		if err := json.Unmarshal([]byte(execution.MetadataJSON), &metadata); err != nil {
+			return false, fmt.Errorf("orch: decode v2 task contract for verification: %w", err)
+		}
+		v2Metadata = &metadata
+		if err := verifyV2CompletionFilesystem(dir, &metadata, task.AcceptanceJSON); err != nil {
+			ok = false
+			reason = "v2 contract verification failed: " + err.Error()
+		}
+	case !errors.Is(metadataErr, sql.ErrNoRows):
+		return false, fmt.Errorf("orch: load v2 task contract for verification: %w", metadataErr)
+	}
+	if ok {
+		ok, reason, err = o.acceptanceCheck(ctx, dir, task.AcceptanceJSON, ev)
+		if err != nil {
+			return false, fmt.Errorf("orch: run acceptance check: %w", err)
+		}
+	}
+	if ok && v2Metadata != nil {
+		if err := verifyV2CompletionFilesystem(dir, v2Metadata, task.AcceptanceJSON); err != nil {
+			ok = false
+			reason = "v2 contract changed during acceptance: " + err.Error()
+		}
 	}
 
 	sessionID := task.ClaimedBySession

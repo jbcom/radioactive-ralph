@@ -101,9 +101,18 @@ func (s *Store) GetPlan(ctx context.Context, id string) (*Plan, error) {
 	return &p, nil
 }
 
-// SetPlanStatus updates the plan's status column.
+// SetPlanStatus updates the plan's status column. Activating a v2 plan also
+// recomputes terminal convergence in the same transaction so resuming a plan
+// whose tasks finished while it was paused cannot leave an impossible active
+// plan behind.
 func (s *Store) SetPlanStatus(ctx context.Context, id string, status PlanStatus) error {
-	res, err := s.db.ExecContext(ctx, `UPDATE plans SET status = ? WHERE id = ?`, string(status), id)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("store: begin status update: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	res, err := tx.ExecContext(ctx, `UPDATE plans SET status = ? WHERE id = ?`, string(status), id)
 	if err != nil {
 		return fmt.Errorf("store: update status: %w", err)
 	}
@@ -114,7 +123,43 @@ func (s *Store) SetPlanStatus(ctx context.Context, id string, status PlanStatus)
 	if n == 0 {
 		return fmt.Errorf("%w: %q", ErrPlanNotFound, id)
 	}
+	if status == PlanStatusActive {
+		if err := convergeV2PlanTx(ctx, tx, id); err != nil {
+			return fmt.Errorf("store: converge activated v2 plan: %w", err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("store: commit status update: %w", err)
+	}
 	return nil
+}
+
+// convergeV2PlanTx applies terminal convergence only to an active v2 plan.
+// Lifecycle states owned by the operator (paused, abandoned, archived) are
+// deliberately outside the UPDATE predicate and therefore survive late worker
+// reports. A terminal failure wins over successful-terminal convergence.
+func convergeV2PlanTx(ctx context.Context, tx *sql.Tx, planID string) error {
+	_, err := tx.ExecContext(ctx, `
+		UPDATE plans
+		SET status = CASE
+		    WHEN EXISTS (
+		      SELECT 1 FROM tasks t
+		      WHERE t.plan_id = plans.id AND t.status = 'failed'
+		    ) THEN 'failed_partial'
+		    WHEN NOT EXISTS (
+		      SELECT 1 FROM tasks t
+		      WHERE t.plan_id = plans.id
+		        AND t.status NOT IN ('done', 'skipped', 'decomposed')
+		    ) THEN 'done'
+		    ELSE 'active'
+		  END
+		WHERE id = ?
+		  AND status = 'active'
+		  AND EXISTS (
+		    SELECT 1 FROM task_metadata m WHERE m.plan_id = plans.id
+		  )
+	`, planID)
+	return err
 }
 
 // ListPlans returns plans for a project matching filter. Empty filter →

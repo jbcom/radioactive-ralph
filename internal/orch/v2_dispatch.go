@@ -168,9 +168,8 @@ func (o *Orchestrator) resolveV2DispatchBinding(
 			calibration.IndependenceDomain,
 		), nil
 	}
-	binding, err := ValidateProviderCalibration(calibration)
-	if err != nil {
-		return v2DispatchBinding{}, err.Error(), nil
+	if snapshot.validatedBinding == nil {
+		return v2DispatchBinding{}, "validated calibration binding is missing", nil
 	}
 	if metadata.Binding.Mode == "await-calibration" {
 		if err := o.store.BindTaskCalibration(
@@ -180,7 +179,7 @@ func (o *Orchestrator) resolveV2DispatchBinding(
 		}
 	}
 	resolved.constraints = BindingConstraints{}
-	resolved.bindingOverride = &binding
+	resolved.bindingOverride = snapshot.validatedBinding
 	resolved.model = provider.Model(calibration.Model)
 	resolved.effort = calibration.Effort
 	resolved.independenceDomain = calibration.IndependenceDomain

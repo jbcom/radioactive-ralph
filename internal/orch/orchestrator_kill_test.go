@@ -2,10 +2,15 @@ package orch
 
 import (
 	"context"
+	"crypto/sha256"
+	"fmt"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/jbcom/radioactive-ralph/internal/provider"
+	"github.com/jbcom/radioactive-ralph/internal/store"
 )
 
 // blockingRunner signals when Run begins and then blocks until its context is
@@ -22,6 +27,87 @@ func (r *blockingRunner) Run(ctx context.Context, _ provider.Binding, req provid
 	}
 	<-ctx.Done()
 	return provider.Result{}, ctx.Err()
+}
+
+type staleUsageRunner struct {
+	started chan struct{}
+	release chan struct{}
+}
+
+func (r *staleUsageRunner) Run(
+	_ context.Context,
+	_ provider.Binding,
+	_ provider.Request,
+) (provider.Result, error) {
+	close(r.started)
+	<-r.release
+	return provider.Result{
+		SessionID: "provider-session-after-reclaim",
+		Usage: provider.Usage{
+			InputTokens: 11, OutputTokens: 7, CostUSD: 1.25,
+		},
+	}, nil
+}
+
+func TestStaleV2ResultStillRecordsBilledUsage(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	root := t.TempDir()
+	projectID, err := s.CreateProject(ctx, "stale-v2-spend", []store.Fingerprint{{
+		Kind: store.FingerprintKindAbsPath, Value: root,
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	input := []byte("stale owner spend contract")
+	if err := os.WriteFile(filepath.Join(root, "contract.md"), input, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	hash := fmt.Sprintf("%x", sha256.Sum256(input))
+	runner := &staleUsageRunner{
+		started: make(chan struct{}),
+		release: make(chan struct{}),
+	}
+	o := New(s,
+		WithRunnerFactory(func(provider.Binding) (provider.Runner, error) { return runner, nil }),
+		WithConstrainedBindingResolver(constrainedTestPool("claude")),
+	)
+	planID, err := o.ImportPlan(ctx, ImportPlanOpts{
+		ProjectID: projectID,
+		Slug:      "stale-v2-spend",
+		Title:     "Stale V2 Spend",
+		Markdown:  "# Stale\n\n" + v2RuntimeStep("task.stale-spend", nil, []string{"claude"}, nil, hash),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if dispatched, err := o.DispatchNext(ctx, projectID, planID); err != nil || dispatched != 1 {
+		t.Fatalf("DispatchNext = %d, %v; want 1", dispatched, err)
+	}
+	select {
+	case <-runner.started:
+	case <-time.After(3 * time.Second):
+		t.Fatal("runner never started")
+	}
+	task, err := s.GetTask(ctx, planID, "task.stale-spend")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ReleaseClaim(
+		ctx, planID, task.ID, task.ClaimedBySession, "simulate owner reclaim",
+	); err != nil {
+		t.Fatal(err)
+	}
+	close(runner.release)
+	o.Wait()
+
+	spend, err := s.ProjectSpendByProvider(ctx, projectID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := spend["claude"]; got != 1.25 {
+		t.Fatalf("recorded spend = %v, want 1.25 after stale provenance rejection", got)
+	}
 }
 
 // TestKillWorkerCancelsInFlightRun proves the process half of worker-kill: a

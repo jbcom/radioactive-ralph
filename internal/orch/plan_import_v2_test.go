@@ -27,25 +27,39 @@ func TestImportV2RejectsFilesystemAndAcceptanceBeforeAnyRows(t *testing.T) {
 		"missing acceptance": func(_ *testing.T, _ string, hash string) string {
 			return strings.Replace(
 				v2RuntimeStep("task.bad", nil, []string{"claude"}, nil, hash),
-				"  `accept-file: contract.md`\n\n", "", 1,
+				"  `accept-file: out/task.bad.json`\n\n", "", 1,
 			)
 		},
 		"duplicate acceptance": func(_ *testing.T, _ string, hash string) string {
 			return strings.Replace(
 				v2RuntimeStep("task.bad", nil, []string{"claude"}, nil, hash),
-				"`accept-file: contract.md`", "`accept-file: contract.md` `accept-file: contract.md`", 1,
+				"`accept-file: out/task.bad.json`",
+				"`accept-file: out/task.bad.json` `accept-file: out/task.bad.json`", 1,
 			)
 		},
 		"unsafe acceptance file": func(_ *testing.T, _ string, hash string) string {
 			return strings.Replace(
 				v2RuntimeStep("task.bad", nil, []string{"claude"}, nil, hash),
-				"`accept-file: contract.md`", "`accept-file: ../escape`", 1,
+				"`accept-file: out/task.bad.json`", "`accept-file: ../escape`", 1,
 			)
 		},
 		"empty acceptance": func(_ *testing.T, _ string, hash string) string {
 			return strings.Replace(
 				v2RuntimeStep("task.bad", nil, []string{"claude"}, nil, hash),
-				"`accept-file: contract.md`", "`accept-file:`", 1,
+				"`accept-file: out/task.bad.json`", "`accept-file:`", 1,
+			)
+		},
+		"acceptance outside outputs": func(_ *testing.T, _ string, hash string) string {
+			return strings.Replace(
+				v2RuntimeStep("task.bad", nil, []string{"claude"}, nil, hash),
+				"`accept-file: out/task.bad.json`", "`accept-file: contract.md`", 1,
+			)
+		},
+		"missing outputs": func(_ *testing.T, _ string, hash string) string {
+			return strings.Replace(
+				v2RuntimeStep("task.bad", nil, []string{"claude"}, nil, hash),
+				`"outputs":[{"path":"out/task.bad.json","mode":"exclusive"}]`,
+				`"outputs":[]`, 1,
 			)
 		},
 		"uncalibrated measured capability": func(_ *testing.T, _ string, hash string) string {

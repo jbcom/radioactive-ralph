@@ -189,7 +189,7 @@ ServiceEndpoint returns the local control\-plane endpoint plus its heartbeat fil
 On POSIX the endpoint is normally sessionsDir/service.sock. But a deeply nested sessionsDir — a long XDG/App Support path, a deep RALPH\_STATE\_DIR, or a macOS /var/folders/... temp root under test — can push that path past the kernel's sun\_path limit, so bind\(\) fails with EINVAL. When that would happen we fall back to a short, collision\-resistant socket path under the system temp dir keyed by a hash of sessionsDir. The heartbeat file always stays in sessionsDir \(it is a plain file, not a socket, so it has no path limit\) which keeps discovery/liveness colocated with the workspace.
 
 <a name="SocketAlive"></a>
-## func [SocketAlive](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/server.go#L650>)
+## func [SocketAlive](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/server.go#L669>)
 
 ```go
 func SocketAlive(heartbeatPath string, maxAge time.Duration) bool
@@ -326,7 +326,7 @@ func (c *Client) AttachEvents(ctx context.Context, args AttachArgs, fn func(Atta
 AttachEvents is the typed convenience over Attach: it opens the stream with the given args \(project scope \+ resume cursor\) and decodes each frame into an AttachEvent before handing it to fn. Prefer this to raw Attach for the event stream; Attach stays available for callers that want the raw frames.
 
 <a name="Client.CalibrationGet"></a>
-### func \(\*Client\) [CalibrationGet](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/client_drive.go#L112-L115>)
+### func \(\*Client\) [CalibrationGet](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/client_drive.go#L137-L140>)
 
 ```go
 func (c *Client) CalibrationGet(ctx context.Context, args CalibrationGetArgs) (CalibrationRecord, error)
@@ -335,7 +335,7 @@ func (c *Client) CalibrationGet(ctx context.Context, args CalibrationGetArgs) (C
 CalibrationGet loads one calibration by content address.
 
 <a name="Client.CalibrationList"></a>
-### func \(\*Client\) [CalibrationList](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/client_drive.go#L122>)
+### func \(\*Client\) [CalibrationList](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/client_drive.go#L147>)
 
 ```go
 func (c *Client) CalibrationList(ctx context.Context) (CalibrationListReply, error)
@@ -344,7 +344,7 @@ func (c *Client) CalibrationList(ctx context.Context) (CalibrationListReply, err
 CalibrationList returns every immutable calibration in alias order.
 
 <a name="Client.CalibrationPut"></a>
-### func \(\*Client\) [CalibrationPut](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/client_drive.go#L102-L105>)
+### func \(\*Client\) [CalibrationPut](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/client_drive.go#L127-L130>)
 
 ```go
 func (c *Client) CalibrationPut(ctx context.Context, args CalibrationPutArgs) (CalibrationPutReply, error)
@@ -371,7 +371,7 @@ func (c *Client) Enqueue(ctx context.Context, args EnqueueArgs) (EnqueueReply, e
 Enqueue pushes a task. Returns the resulting task ID \(possibly a dedup hit from FTS\) and whether the task was freshly inserted.
 
 <a name="Client.NegotiatedVersion"></a>
-### func \(\*Client\) [NegotiatedVersion](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/client_drive.go#L130>)
+### func \(\*Client\) [NegotiatedVersion](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/client_drive.go#L155>)
 
 ```go
 func (c *Client) NegotiatedVersion(ctx context.Context) (int, error)
@@ -380,7 +380,7 @@ func (c *Client) NegotiatedVersion(ctx context.Context) (int, error)
 NegotiatedVersion returns the supervisor's supported wire protocol version \(from StatusReply\). 0 means a pre\-versioned v1 supervisor.
 
 <a name="Client.PlanImport"></a>
-### func \(\*Client\) [PlanImport](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/client_drive.go#L66>)
+### func \(\*Client\) [PlanImport](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/client_drive.go#L91>)
 
 ```go
 func (c *Client) PlanImport(ctx context.Context, args PlanImportArgs) (PlanImportReply, error)
@@ -389,7 +389,7 @@ func (c *Client) PlanImport(ctx context.Context, args PlanImportArgs) (PlanImpor
 PlanImport imports a markdown plan and activates it, returning the created plan's id/slug/title.
 
 <a name="Client.PlanSetStatus"></a>
-### func \(\*Client\) [PlanSetStatus](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/client_drive.go#L73>)
+### func \(\*Client\) [PlanSetStatus](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/client_drive.go#L98>)
 
 ```go
 func (c *Client) PlanSetStatus(ctx context.Context, args PlanSetStatusArgs) (PlanSetStatusReply, error)
@@ -425,7 +425,7 @@ func (c *Client) Stop(ctx context.Context, args StopArgs) error
 Stop issues a stop request. The server closes the socket after replying; expect the returned error to be ErrClosed on the next call.
 
 <a name="Client.TaskApprove"></a>
-### func \(\*Client\) [TaskApprove](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/client_drive.go#L80>)
+### func \(\*Client\) [TaskApprove](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/client_drive.go#L105>)
 
 ```go
 func (c *Client) TaskApprove(ctx context.Context, args TaskApproveArgs) error
@@ -434,7 +434,7 @@ func (c *Client) TaskApprove(ctx context.Context, args TaskApproveArgs) error
 TaskApprove clears the approval gate on a ready\_pending\_approval task.
 
 <a name="Client.TaskList"></a>
-### func \(\*Client\) [TaskList](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/client_drive.go#L90>)
+### func \(\*Client\) [TaskList](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/client_drive.go#L115>)
 
 ```go
 func (c *Client) TaskList(ctx context.Context, args TaskListArgs) (TaskListReply, error)
@@ -443,7 +443,7 @@ func (c *Client) TaskList(ctx context.Context, args TaskListArgs) (TaskListReply
 TaskList returns complete task execution provenance for one plan.
 
 <a name="Client.TaskRetry"></a>
-### func \(\*Client\) [TaskRetry](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/client_drive.go#L85>)
+### func \(\*Client\) [TaskRetry](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/client_drive.go#L110>)
 
 ```go
 func (c *Client) TaskRetry(ctx context.Context, args TaskRetryArgs) error
@@ -452,7 +452,7 @@ func (c *Client) TaskRetry(ctx context.Context, args TaskRetryArgs) error
 TaskRetry requeues a blocked\_input or blocked\_capability task.
 
 <a name="Client.WorkerKill"></a>
-### func \(\*Client\) [WorkerKill](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/client_drive.go#L97>)
+### func \(\*Client\) [WorkerKill](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/client_drive.go#L122>)
 
 ```go
 func (c *Client) WorkerKill(ctx context.Context, args WorkerKillArgs) error
@@ -461,7 +461,7 @@ func (c *Client) WorkerKill(ctx context.Context, args WorkerKillArgs) error
 WorkerKill kills a running worker via kill\-and\-reclaim.
 
 <a name="Coded"></a>
-## type [Coded](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/server.go#L590-L592>)
+## type [Coded](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/server.go#L609-L611>)
 
 Coded is implemented by handler errors that carry a stable machine\-readable error class \(Code\* consts\). writeResult copies it into Response.Code so the client can branch on the failure kind.
 

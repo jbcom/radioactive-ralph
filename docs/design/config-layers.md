@@ -74,19 +74,19 @@ providers = ["claude", "codex", "opencode"]
 ```
 
 The plural form is not a persona list. It is an execution policy: every
-ready plan step receives its own Ralph worker and successive workers are
-distributed across the named provider capability records. Ralph
-therefore suppresses `NativeFanout` for pooled bindings; a 16-step
-unordered group remains 16 visible, independently supervised workers
-instead of collapsing into one opaque provider invocation. The plural
-key wins when both forms are present. Empty, non-string, or duplicate
-pool entries fail loudly.
+admitted plan step receives its own Ralph worker and successive workers
+are distributed across the named provider capability records. Ralph therefore
+suppresses `NativeFanout` for pooled bindings; an unordered group remains a
+set of visible, independently supervised tasks instead of collapsing into one
+opaque provider invocation. The plural key wins when both forms are present.
+Empty, non-string, or duplicate pool entries fail loudly.
 
 Process-wide concurrency is a supervisor resource limit, not project
 identity, and is configured on the service environment:
 
 ```sh
-radioactive_ralph service install --env RALPH_MAX_PARALLEL=16
+# Replace N with an operator-chosen positive-integer emergency ceiling.
+radioactive_ralph service install --env RALPH_MAX_PARALLEL=N
 ```
 
 `RALPH_MAX_PARALLEL` must be an integer from `1` through `256`. Invalid

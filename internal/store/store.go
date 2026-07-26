@@ -18,19 +18,26 @@ package store
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jonboulle/clockwork"
-	_ "modernc.org/sqlite" // pure-Go driver; FTS5 compiled in
+	sqlite "modernc.org/sqlite" // pure-Go driver; FTS5 compiled in
 )
 
 // maxDBConns caps the database/sql pool. Small enough to bound writer-lock
 // contention (see Open), large enough that a live VACUUM INTO backup or a
 // long-held reader can't starve concurrent store calls — and >1 to avoid
 // database/sql's single-connection deadlock.
-const maxDBConns = 4
+const (
+	maxDBConns              = 4
+	journalModeRetryWindow  = 5 * time.Second
+	journalModeRetryBackoff = 10 * time.Millisecond
+	sqliteBusyCode          = 5
+)
 
 // Store is the user-level store handle. It wraps a *sql.DB plus a
 // deterministic clock + UUID provider (test-swappable).
@@ -58,9 +65,8 @@ type Store struct {
 func DSN(dbPath string) string {
 	return "file:" + escapeDSNPath(dbPath) +
 		"?_txlock=immediate" +
-		"&_pragma=foreign_keys(1)" +
-		"&_pragma=journal_mode(WAL)" +
 		"&_pragma=busy_timeout(5000)" +
+		"&_pragma=foreign_keys(1)" +
 		"&_pragma=synchronous(NORMAL)"
 }
 
@@ -128,6 +134,10 @@ func Open(ctx context.Context, opts Options) (*Store, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("store: ping: %w", err)
 	}
+	if err := ensureJournalModeWAL(ctx, db); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("store: enable WAL: %w", err)
+	}
 
 	// The DSN sets foreign_keys(1) as a per-connection _pragma, so every pooled
 	// connection enforces FKs. This one-time exec is a cheap belt-and-suspenders
@@ -144,6 +154,44 @@ func Open(ctx context.Context, opts Options) (*Store, error) {
 	}
 
 	return &Store{db: db, clock: opts.Clock, uuid: opts.UUID}, nil
+}
+
+// ensureJournalModeWAL performs the one database-level journal-mode change
+// after connection setup. Putting journal_mode(WAL) in the DSN runs the
+// lock-taking pragma independently on every newly opened pooled connection;
+// concurrent first openers can then fail during Ping before migration locking
+// gets a chance to serialize them. SQLITE_BUSY from this one-time transition
+// is retried explicitly and remains bounded by both ctx and a short window.
+func ensureJournalModeWAL(ctx context.Context, db *sql.DB) error {
+	deadline := time.Now().Add(journalModeRetryWindow)
+	for {
+		var journalMode string
+		err := db.QueryRowContext(ctx, "PRAGMA journal_mode = WAL").Scan(&journalMode)
+		if err == nil {
+			if strings.EqualFold(journalMode, "wal") {
+				return nil
+			}
+			return fmt.Errorf("got journal_mode %q", journalMode)
+		}
+		if !isSQLiteBusy(err) || !time.Now().Before(deadline) {
+			return err
+		}
+
+		timer := time.NewTimer(journalModeRetryBackoff)
+		select {
+		case <-ctx.Done():
+			if !timer.Stop() {
+				<-timer.C
+			}
+			return ctx.Err()
+		case <-timer.C:
+		}
+	}
+}
+
+func isSQLiteBusy(err error) bool {
+	var sqliteErr *sqlite.Error
+	return errors.As(err, &sqliteErr) && sqliteErr.Code()&0xff == sqliteBusyCode
 }
 
 // Close releases DB resources.

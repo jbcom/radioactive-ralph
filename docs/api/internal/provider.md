@@ -18,6 +18,7 @@ Package provider adapts configured CLI backends into radioactive\_ralph's provid
 - [Constants](<#constants>)
 - [Variables](<#variables>)
 - [func CalibrationRequiredCapability\(name string\) bool](<#CalibrationRequiredCapability>)
+- [func ConfigureProcessCancellation\(cmd \*exec.Cmd\)](<#ConfigureProcessCancellation>)
 - [func DefaultWatchdogConfig\(\) agent.WatchdogConfig](<#DefaultWatchdogConfig>)
 - [func InvocationConfigHash\(binding Binding, model Model, effort string\) \(string, error\)](<#InvocationConfigHash>)
 - [func KnownCapability\(name string\) bool](<#KnownCapability>)
@@ -108,6 +109,15 @@ func CalibrationRequiredCapability(name string) bool
 ```
 
 CalibrationRequiredCapability reports capabilities that may only be granted by measured fixture evidence, never by a built\-in flag or CLI help text.
+
+<a name="ConfigureProcessCancellation"></a>
+## func [ConfigureProcessCancellation](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/procgroup.go#L10>)
+
+```go
+func ConfigureProcessCancellation(cmd *exec.Cmd)
+```
+
+ConfigureProcessCancellation applies the provider package's platform cancellation behavior to cmd. Unix kills the complete process group and bounds inherited\-pipe waits. Windows currently kills only the direct child and bounds the wait; callers that require complete descendant cleanup must fail closed there until Job Object support exists.
 
 <a name="DefaultWatchdogConfig"></a>
 ## func [DefaultWatchdogConfig](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/watchdog.go#L54>)

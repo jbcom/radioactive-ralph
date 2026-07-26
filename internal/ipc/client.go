@@ -152,7 +152,11 @@ func (c *Client) Attach(ctx context.Context, args AttachArgs, fn func(json.RawMe
 	if err != nil {
 		return fmt.Errorf("ipc: marshal attach args: %w", err)
 	}
-	if err := c.send(ctx, Request{Cmd: CmdAttach, Args: rawArgs, ProtoVersion: ProtoVersion}); err != nil {
+	protoVersion, err := commandProtoVersion(CmdAttach)
+	if err != nil {
+		return err
+	}
+	if err := c.send(ctx, Request{Cmd: CmdAttach, Args: rawArgs, ProtoVersion: protoVersion}); err != nil {
 		return err
 	}
 	// The attach stream is long-lived, so ctx cancellation (not a fixed

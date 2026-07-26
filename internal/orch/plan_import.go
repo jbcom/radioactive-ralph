@@ -53,6 +53,12 @@ func (o *Orchestrator) ImportPlan(ctx context.Context, opts ImportPlanOpts) (str
 	tasks := make([]store.GraphTaskSpec, 0, len(parsed.V2Tasks()))
 	for _, task := range parsed.V2Tasks() {
 		metadata := task.Step.Metadata
+		if len(metadata.Outputs) == 0 {
+			return "", fmt.Errorf(
+				"%w: task %s must declare at least one output",
+				ErrInvalidPlanContract, metadata.ID,
+			)
+		}
 		if err := validateV2Filesystem(projectDir, metadata); err != nil {
 			return "", fmt.Errorf("%w: task %s filesystem admission: %v", ErrInvalidPlanContract, metadata.ID, err)
 		}
@@ -60,7 +66,7 @@ func (o *Orchestrator) ImportPlan(ctx context.Context, opts ImportPlanOpts) (str
 		if err != nil {
 			return "", fmt.Errorf("orch: marshal task %s metadata: %w", metadata.ID, err)
 		}
-		acceptance, err := strictV2AcceptanceJSON(task.Step, projectDir)
+		acceptance, err := strictV2AcceptanceJSON(task.Step, metadata, projectDir)
 		if err != nil {
 			return "", fmt.Errorf("%w: task %s acceptance: %v", ErrInvalidPlanContract, metadata.ID, err)
 		}
@@ -108,6 +114,7 @@ func (o *Orchestrator) importLegacyPlan(ctx context.Context, opts ImportPlanOpts
 type resolvedTaskBinding struct {
 	calibrationID     string
 	capabilitySetJSON string
+	validatedBinding  *provider.Binding
 }
 
 func (o *Orchestrator) validateV2Bindings(
@@ -251,6 +258,7 @@ func validateTaskCalibration(
 	}
 	return resolvedTaskBinding{
 		calibrationID: calibration.ID, capabilitySetJSON: string(capabilityJSON),
+		validatedBinding: &binding,
 	}, nil
 }
 

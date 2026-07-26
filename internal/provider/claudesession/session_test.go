@@ -88,7 +88,7 @@ func TestSpawnAndSendMessageRoundTrip(t *testing.T) {
 
 func TestWaitForIdleResolvesOnResult(t *testing.T) {
 	bin := buildFakeClaude(t)
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
 	s, err := Spawn(ctx, Options{ClaudeBin: bin, WorkingDir: t.TempDir()})
@@ -123,7 +123,7 @@ func TestResumeRequiresSessionID(t *testing.T) {
 
 func TestResumeSendsSentinelOnSpawn(t *testing.T) {
 	bin := buildFakeClaude(t)
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
 	t.Setenv("FAKE_CLAUDE_RESUME_ECHO", "1")

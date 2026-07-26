@@ -7,11 +7,13 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"sync"
 	"testing"
 
+	"github.com/jbcom/radioactive-ralph/internal/plan"
 	"github.com/jbcom/radioactive-ralph/internal/provider"
 	"github.com/jbcom/radioactive-ralph/internal/store"
 )
@@ -215,6 +217,9 @@ func (r *calibratedRecordingRunner) Run(
 	req provider.Request,
 ) (provider.Result, error) {
 	r.binding, r.request = binding, req
+	if err := writeDeclaredV2Outputs(req); err != nil {
+		return provider.Result{}, err
+	}
 	invocation, err := provider.ResolveInvocation(binding, req)
 	if err != nil {
 		return provider.Result{}, err
@@ -226,6 +231,9 @@ func (r *calibratedRecordingRunner) Run(
 }
 
 func TestV2CalibratedBindingPinsExactInvocationAndProvenance(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("calibrated lanes fail closed until Windows Job Object cleanup is implemented")
+	}
 	ctx := context.Background()
 	st := newTestStore(t)
 	root := t.TempDir()
@@ -239,19 +247,15 @@ func TestV2CalibratedBindingPinsExactInvocationAndProvenance(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "contract.md"), input, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	binDir := t.TempDir()
-	binPath := filepath.Join(binDir, "claude")
-	binBytes := []byte("#!/bin/sh\nexit 0\n")
-	if err := os.WriteFile(binPath, binBytes, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("PATH", binDir)
+	binPath, binBytes := writeCalibrationTestBinary(t, "claude", "test")
+	t.Setenv("PATH", filepath.Dir(binPath))
 	alias := "claude-exact-xhigh"
 	binding, err := provider.ResolveShippedBinding("claude")
 	if err != nil {
 		t.Fatal(err)
 	}
 	binding.Name = alias
+	binding.Config.Binary = binPath
 	invocationHash, err := provider.InvocationConfigHash(
 		binding, provider.Model("claude-exact-5"), "xhigh",
 	)
@@ -301,8 +305,28 @@ func TestV2CalibratedBindingPinsExactInvocationAndProvenance(t *testing.T) {
 	}
 	o.Wait()
 	if runner.binding.Name != alias || runner.request.Model != "claude-exact-5" ||
-		runner.request.Effort != "xhigh" || !runner.request.StrictBinding {
+		runner.request.Effort != "xhigh" || !runner.request.StrictBinding ||
+		runner.binding.Config.Binary != binPath {
 		t.Fatalf("runner binding=%+v request=%+v", runner.binding, runner.request)
+	}
+	promptContract, ok := v2ContractFromPrompt(runner.request.UserPrompt)
+	if !ok {
+		t.Fatal("worker prompt omitted the canonical v2 task contract")
+	}
+	var prompted plan.TaskMetadata
+	if err := json.Unmarshal([]byte(promptContract), &prompted); err != nil {
+		t.Fatalf("decode prompted contract: %v", err)
+	}
+	if prompted.ID != "task.exact" || prompted.Team != "studio/design" ||
+		len(prompted.Inputs) != 1 || prompted.Inputs[0].Path != "contract.md" ||
+		prompted.Inputs[0].SHA256 != hash ||
+		len(prompted.Outputs) != 1 || prompted.Outputs[0].Path != "out/task.exact.json" ||
+		!strings.Contains(runner.request.UserPrompt, v2AcceptanceHead) ||
+		!strings.Contains(
+			runner.request.UserPrompt,
+			`"required_outputs":["out/task.exact.json"]`,
+		) {
+		t.Fatalf("incomplete v2 prompt contract: metadata=%+v prompt=%q", prompted, runner.request.UserPrompt)
 	}
 	metadata, err := st.GetTaskExecutionMetadata(ctx, planID, "task.exact")
 	if err != nil {
@@ -327,6 +351,9 @@ func (r *exactSequenceRunner) Run(
 	binding provider.Binding,
 	req provider.Request,
 ) (provider.Result, error) {
+	if err := writeDeclaredV2Outputs(req); err != nil {
+		return provider.Result{}, err
+	}
 	invocation, err := provider.ResolveInvocation(binding, req)
 	if err != nil {
 		return provider.Result{}, err
@@ -349,6 +376,9 @@ func (r *exactSequenceRunner) calls() []provider.Request {
 }
 
 func TestV2CalibrationBootstrapRunsEveryRepetitionThenReadmitsAwaiter(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("calibrated lanes fail closed until Windows Job Object cleanup is implemented")
+	}
 	ctx := context.Background()
 	st := newTestStore(t)
 	root := t.TempDir()
@@ -459,18 +489,14 @@ func TestV2CalibrationBootstrapRunsEveryRepetitionThenReadmitsAwaiter(t *testing
 		t.Fatalf("aggregate fixture evidence = %q, %v", fixtureMetadata.CompletionEvidenceJSON, err)
 	}
 
-	binDir := t.TempDir()
-	binPath := filepath.Join(binDir, "codex")
-	binBytes := []byte("#!/bin/sh\nexit 0\n")
-	if err := os.WriteFile(binPath, binBytes, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("PATH", binDir)
+	binPath, binBytes := writeCalibrationTestBinary(t, "codex", "test")
+	t.Setenv("PATH", filepath.Dir(binPath))
 	binding, err := provider.ResolveShippedBinding("codex")
 	if err != nil {
 		t.Fatal(err)
 	}
 	binding.Name = alias
+	binding.Config.Binary = binPath
 	invocationHash, err := provider.InvocationConfigHash(
 		binding, provider.Model(exactModel), "xhigh",
 	)
@@ -594,10 +620,49 @@ func v2RuntimeStepWithInput(
 	}
 	return fmt.Sprintf(`- execute %s
 
-  `+"`accept-file: %s`"+`
+  `+"`accept-file: out/%s.json`"+`
 
   `+"```ralph-task"+`
   {"id":%q,"after":%s,"team":"studio/design","binding":{"mode":"pool","alias":"","provider":"","model":"","effort":"","calibration":"","repetitions":0,"fixture":""},"requires":["local-agent"],"providers":%s,"differentFrom":%s,"inputs":[{"path":%q,"sha256":%q}],"outputs":[{"path":"out/%s.json","mode":"exclusive"}]}
   `+"```"+`
-`, id, inputPath, id, encode(after), encode(providers), encode(differentFrom), inputPath, hash, id)
+`, id, id, id, encode(after), encode(providers), encode(differentFrom), inputPath, hash, id)
+}
+
+func writeDeclaredV2Outputs(req provider.Request) error {
+	contractJSON, ok := v2ContractFromPrompt(req.UserPrompt)
+	if !ok {
+		return nil
+	}
+	var metadata plan.TaskMetadata
+	if err := json.Unmarshal([]byte(contractJSON), &metadata); err != nil {
+		return fmt.Errorf("decode v2 prompt contract: %w", err)
+	}
+	for _, output := range metadata.Outputs {
+		full := filepath.Join(req.WorkingDir, filepath.FromSlash(output.Path))
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			return err
+		}
+		if err := os.WriteFile(full, []byte("produced by "+metadata.ID+"\n"), 0o600); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func v2ContractFromPrompt(prompt string) (string, bool) {
+	start := strings.Index(prompt, v2ContractBegin)
+	if start < 0 {
+		return "", false
+	}
+	start += len(v2ContractBegin)
+	end := strings.Index(prompt[start:], v2ContractEnd)
+	if end < 0 {
+		return "", false
+	}
+	raw := strings.TrimSpace(prompt[start : start+end])
+	if newline := strings.IndexByte(raw, '\n'); newline >= 0 &&
+		strings.HasPrefix(raw[:newline], "Task ID: ") {
+		raw = strings.TrimSpace(raw[newline+1:])
+	}
+	return raw, true
 }

@@ -51,15 +51,18 @@ because an agent said so.
 - **Explicit DAGs when inference is not enough.** Add strict `ralph-task` JSON
   blocks to opt a plan into stable task IDs, arbitrary `after` edges,
   hierarchical teams, provider capability/independence rules, content-hashed
-  inputs, exclusive outputs, and durable provenance without breaking legacy
-  markdown plans.
+  inputs with post-turn rechecks, required output existence, exclusive
+  scheduler reservations, and durable provenance without breaking legacy
+  markdown plans. V2 is an experimental shared-checkout DAG foundation;
+  deterministic isolated execution is specified separately.
 - **Local-only providers.** `claude`, `codex`, `opencode` — the agent loop and
   tool execution run locally (hosted model inference is fine). A2A coordination
   vocabulary comes from the official [`a2aproject/a2a-go`](https://github.com/a2aproject/a2a-go).
 - **Observable multi-provider teams.** Project config can declare
   `providers = ["claude", "codex", "opencode"]`; Ralph assigns one supervised
-  worker per ready step across the pool. Set the process-wide ceiling with
-  `service install --env RALPH_MAX_PARALLEL=16`.
+  worker per admitted step across the pool. `RALPH_MAX_PARALLEL` is an
+  operator-selected emergency ceiling, not an optimal or recommended team
+  size; measured policy is work-class and domain specific.
 
 ## Install
 
@@ -96,8 +99,8 @@ credentials are configured.
 ```bash
 # 1. Start the supervisor (owns everything; user/XDG-level, directory-independent)
 radioactive_ralph --supervisor
-# Or install + start it with an explicit worker ceiling:
-radioactive_ralph service install --env RALPH_MAX_PARALLEL=16
+# Or install + start it as the user service:
+radioactive_ralph service install
 
 # 2. In a project directory, initialize it (registers the project in the user DB)
 radioactive_ralph --init
