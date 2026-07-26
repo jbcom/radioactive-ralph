@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -176,6 +177,7 @@ func TestConcurrentExactClaimsReserveOneWriterOutOfTwoHundred(t *testing.T) {
 	}
 	var successes atomic.Int64
 	var unexpected atomic.Int64
+	unexpectedErrors := make(chan error, racers)
 	start := make(chan struct{})
 	var wg sync.WaitGroup
 	for _, candidate := range candidates {
@@ -192,6 +194,7 @@ func TestConcurrentExactClaimsReserveOneWriterOutOfTwoHundred(t *testing.T) {
 			case errors.Is(err, ErrOutputReserved):
 			default:
 				unexpected.Add(1)
+				unexpectedErrors <- err
 			}
 		}(candidate)
 	}
@@ -201,7 +204,12 @@ func TestConcurrentExactClaimsReserveOneWriterOutOfTwoHundred(t *testing.T) {
 		t.Fatalf("successful claims = %d, want 1", got)
 	}
 	if got := unexpected.Load(); got != 0 {
-		t.Fatalf("unexpected claim errors = %d", got)
+		close(unexpectedErrors)
+		var details []string
+		for err := range unexpectedErrors {
+			details = append(details, err.Error())
+		}
+		t.Fatalf("unexpected claim errors = %d: %s", got, strings.Join(details, " | "))
 	}
 }
 

@@ -698,7 +698,7 @@ func (s *Store) ClaimNextReady(ctx context.Context, planID, sessionID, workerID 
 ClaimNextReady is the atomic "claim the next ready task for this worker" operation. Returns the claimed task, or ErrNoReadyTask if none. Uses BEGIN \(with \_txlock=immediate at the DSN level\) \+ UPDATE with a checked RowsAffected so two parallel workers never claim the same task.
 
 <a name="Store.ClaimReadyTask"></a>
-### func \(\*Store\) [ClaimReadyTask](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/exact_claim.go#L19-L22>)
+### func \(\*Store\) [ClaimReadyTask](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/exact_claim.go#L25-L28>)
 
 ```go
 func (s *Store) ClaimReadyTask(ctx context.Context, planID, taskID, sessionID, workerID string) (*Task, error)

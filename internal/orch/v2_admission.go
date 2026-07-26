@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	pathpkg "path"
 	"path/filepath"
 	"strings"
 
@@ -138,12 +139,10 @@ func pathContained(root, candidate string) bool {
 }
 
 func pathWithinDeclaredOutput(candidate string, outputs []plan.TaskOutput) bool {
-	candidate = filepath.Clean(candidate)
+	candidate = pathpkg.Clean(candidate)
 	for _, output := range outputs {
-		base := filepath.Clean(output.Path)
-		relative, err := filepath.Rel(base, candidate)
-		if err == nil && relative != ".." &&
-			!strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+		base := pathpkg.Clean(output.Path)
+		if candidate == base || strings.HasPrefix(candidate, base+"/") {
 			return true
 		}
 	}

@@ -7,16 +7,47 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 // ErrOutputReserved reports an exclusive output currently owned by another
 // running task in the same project.
 var ErrOutputReserved = errors.New("store: exclusive output reserved")
 
+const (
+	exactClaimBusyRetryWindow  = 5 * time.Second
+	exactClaimBusyRetryBackoff = 10 * time.Millisecond
+)
+
 // ClaimReadyTask atomically claims one named dependency-ready task. It is the
 // explicit-DAG counterpart to ClaimNextReady and never substitutes a different
 // ready task.
 func (s *Store) ClaimReadyTask(
+	ctx context.Context,
+	planID, taskID, sessionID, workerID string,
+) (*Task, error) {
+	deadline := time.Now().Add(exactClaimBusyRetryWindow)
+	for {
+		task, err := s.claimReadyTaskOnce(ctx, planID, taskID, sessionID, workerID)
+		if err == nil || !isSQLiteBusy(err) || !time.Now().Before(deadline) {
+			return task, err
+		}
+		timer := time.NewTimer(exactClaimBusyRetryBackoff)
+		select {
+		case <-ctx.Done():
+			if !timer.Stop() {
+				<-timer.C
+			}
+			return nil, ctx.Err()
+		case <-timer.C:
+		}
+	}
+}
+
+// claimReadyTaskOnce performs one complete immediate transaction. A caller
+// retries only SQLITE_BUSY: after another writer commits, every readiness and
+// reservation predicate must be evaluated again from a fresh transaction.
+func (s *Store) claimReadyTaskOnce(
 	ctx context.Context,
 	planID, taskID, sessionID, workerID string,
 ) (*Task, error) {

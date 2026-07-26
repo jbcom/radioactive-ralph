@@ -20,6 +20,7 @@ import (
 
 const (
 	calibrationVersionTimeout   = 10 * time.Second
+	calibrationVersionPipeWait  = 250 * time.Millisecond
 	calibrationVersionOutputMax = 64 << 10
 	calibrationHashTimeout      = 10 * time.Second
 	calibrationHashBufferSize   = 1 << 20
@@ -163,7 +164,15 @@ func calibratedBinaryVersionWithTimeout(binaryPath string, timeout time.Duration
 	cmd.Stdout = &output
 	cmd.Stderr = &output
 	provider.ConfigureProcessCancellation(cmd)
+	// A short-lived version command must not leave a descendant holding its
+	// inherited output pipe. os/exec does not call Cancel after the direct
+	// child has already exited, so bound that drain separately and explicitly
+	// kill the process group below on timeout or ErrWaitDelay.
+	cmd.WaitDelay = calibrationVersionPipeWait
 	err := cmd.Run()
+	if ctx.Err() != nil || errors.Is(err, exec.ErrWaitDelay) {
+		_ = provider.KillProcessTree(cmd.Process)
+	}
 	if ctx.Err() != nil {
 		return "", fmt.Errorf("version probe timed out after %s: %w", timeout, ctx.Err())
 	}

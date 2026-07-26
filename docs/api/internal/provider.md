@@ -21,6 +21,7 @@ Package provider adapts configured CLI backends into radioactive\_ralph's provid
 - [func ConfigureProcessCancellation\(cmd \*exec.Cmd\)](<#ConfigureProcessCancellation>)
 - [func DefaultWatchdogConfig\(\) agent.WatchdogConfig](<#DefaultWatchdogConfig>)
 - [func InvocationConfigHash\(binding Binding, model Model, effort string\) \(string, error\)](<#InvocationConfigHash>)
+- [func KillProcessTree\(process \*os.Process\) error](<#KillProcessTree>)
 - [func KnownCapability\(name string\) bool](<#KnownCapability>)
 - [func StreamJSONWatchdogConfig\(\) agent.WatchdogConfig](<#StreamJSONWatchdogConfig>)
 - [func ValidateBinding\(binding Binding\) error](<#ValidateBinding>)
@@ -111,7 +112,7 @@ func CalibrationRequiredCapability(name string) bool
 CalibrationRequiredCapability reports capabilities that may only be granted by measured fixture evidence, never by a built\-in flag or CLI help text.
 
 <a name="ConfigureProcessCancellation"></a>
-## func [ConfigureProcessCancellation](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/procgroup.go#L10>)
+## func [ConfigureProcessCancellation](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/procgroup.go#L13>)
 
 ```go
 func ConfigureProcessCancellation(cmd *exec.Cmd)
@@ -136,6 +137,15 @@ func InvocationConfigHash(binding Binding, model Model, effort string) (string, 
 ```
 
 InvocationConfigHash fingerprints every binding configuration value that can alter the command line, plus the exact requested model/effort.
+
+<a name="KillProcessTree"></a>
+## func [KillProcessTree](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/procgroup.go#L21>)
+
+```go
+func KillProcessTree(process *os.Process) error
+```
+
+KillProcessTree performs the provider package's platform cleanup for an already\-started command. On Unix this kills the complete process group, including a descendant that still owns an inherited output pipe after the direct child exits. Windows callers get direct\-process cleanup only.
 
 <a name="KnownCapability"></a>
 ## func [KnownCapability](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/capabilities.go#L41>)

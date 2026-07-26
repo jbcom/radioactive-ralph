@@ -152,7 +152,7 @@ func (p *Plan) StepIDs() []string
 StepIDs returns every step's stable identity in document order. Legacy steps use their positional StepRef ID; v2 steps use their explicit metadata ID so progress and durable task state share the same key.
 
 <a name="Plan.V2Tasks"></a>
-### func \(\*Plan\) [V2Tasks](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plan/v2.go#L73>)
+### func \(\*Plan\) [V2Tasks](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plan/v2.go#L74>)
 
 ```go
 func (p *Plan) V2Tasks() []V2Task
@@ -251,7 +251,7 @@ func (r StepRef) ID() string
 ID returns a stable, deterministic string key for this step, suitable for use in a done\-set. It is derived purely from position in the plan tree \(e.g. "0.1.2"\), not from step text, so it stays stable across re\-parses of the same document and is independent of wording edits that don't change structure.
 
 <a name="TaskBinding"></a>
-## type [TaskBinding](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plan/v2.go#L42-L51>)
+## type [TaskBinding](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plan/v2.go#L43-L52>)
 
 TaskBinding either leaves every field empty for configured\-pool selection, or pins an immutable calibrated execution lane.
 
@@ -269,7 +269,7 @@ type TaskBinding struct {
 ```
 
 <a name="TaskInput"></a>
-## type [TaskInput](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plan/v2.go#L54-L57>)
+## type [TaskInput](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plan/v2.go#L55-L58>)
 
 TaskInput pins one project\-relative file to its exact content hash.
 
@@ -281,7 +281,7 @@ type TaskInput struct {
 ```
 
 <a name="TaskMetadata"></a>
-## type [TaskMetadata](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plan/v2.go#L28-L38>)
+## type [TaskMetadata](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plan/v2.go#L29-L39>)
 
 TaskMetadata is the additive ralph.plan/v2 contract embedded in a list item as one strict JSON fenced block labelled ralph\-task.
 
@@ -300,7 +300,7 @@ type TaskMetadata struct {
 ```
 
 <a name="TaskOutput"></a>
-## type [TaskOutput](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plan/v2.go#L60-L63>)
+## type [TaskOutput](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plan/v2.go#L61-L64>)
 
 TaskOutput declares one project\-relative exclusive output reservation.
 
@@ -312,7 +312,7 @@ type TaskOutput struct {
 ```
 
 <a name="V2Task"></a>
-## type [V2Task](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plan/v2.go#L66-L70>)
+## type [V2Task](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plan/v2.go#L67-L71>)
 
 V2Task pairs a task with its hierarchy and document order.
 

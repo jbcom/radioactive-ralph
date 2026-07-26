@@ -106,7 +106,7 @@ HandleWatchdogSignal reacts to one agent.Signal from agent.Watch per the control
 Returns true if the caller should kill a and release the task claim \(via HandleContextEnd or an equivalent MarkFailed/MarkBlocked call\).
 
 <a name="ValidateProviderCalibration"></a>
-## func [ValidateProviderCalibration](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/orch/calibration_admission.go#L32>)
+## func [ValidateProviderCalibration](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/orch/calibration_admission.go#L33>)
 
 ```go
 func ValidateProviderCalibration(calibration store.ProviderCalibration) (provider.Binding, error)
