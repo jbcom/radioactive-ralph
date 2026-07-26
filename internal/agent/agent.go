@@ -4,26 +4,57 @@
 package agent
 
 import (
-	"bufio"
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"runtime"
 	"sync"
+	"time"
 
 	"github.com/creack/pty"
 )
 
-// ErrPTYUnsupported is returned by Start on platforms where creack/pty
-// cannot allocate a pseudo-terminal — in practice, native Windows, where
-// pty.Start returns pty.ErrUnsupported because there is no ConPTY-backed
-// implementation. Ralph's control model requires owning the agent's pty, so
-// on Windows operators run Ralph under WSL. Callers can match this with
-// errors.Is to distinguish "this host can't host agents" from a transient
-// spawn failure.
+// ErrPTYUnsupported is returned by Start on platforms where creack/pty cannot
+// allocate a pseudo-terminal. Native Windows operators run Ralph under WSL.
 var ErrPTYUnsupported = fmt.Errorf("agent: pty allocation is unsupported on %s; run radioactive-ralph under WSL on Windows", runtime.GOOS)
+
+// ErrProcessExitObservationUnsupported reports a host on which Ralph cannot
+// observe child exit without reaping it.
+var ErrProcessExitObservationUnsupported = fmt.Errorf(
+	"agent: non-reaping process-exit observation is unsupported on %s",
+	runtime.GOOS,
+)
+
+// ErrProcessExitObservation is a static boundary for a failed kernel exit
+// observer. Ralph explicitly terminates and reaps the child before returning
+// this failure whenever direct-child termination succeeds.
+var ErrProcessExitObservation = errors.New("agent: process-exit observation failed")
+
+// ErrProcessSessionCleanup means the direct child reached a terminal outcome
+// but Ralph could not prove that every member of the PTY's original process
+// session was reclaimed. A descendant that creates another session with
+// setsid(2) is outside this boundary and cannot be discovered portably.
+var ErrProcessSessionCleanup = errors.New("agent: process-session cleanup failed")
+
+// ErrProcessTreeCleanup is the compatibility name retained for callers of the
+// v5 process-group contract. It matches ErrProcessSessionCleanup with
+// errors.Is.
+var ErrProcessTreeCleanup = ErrProcessSessionCleanup
+
+// ErrProcessTermination means neither group termination nor the stable direct
+// process handle could prove termination. The Agent releases its own control
+// goroutines and returns this explicit failure instead of blocking forever or
+// claiming that the child was reaped.
+var ErrProcessTermination = errors.New("agent: direct-child termination failed")
+
+// ErrOneShotInputClosed reports an attempted interactive write after Start
+// attached a finite one-shot input stream. That stream is closed at EOF by
+// os/exec so protocols that terminate on stdin closure can exit naturally.
+var ErrOneShotInputClosed = errors.New("agent: one-shot input is already closed to interactive writes")
 
 // Options configures one agent subprocess.
 type Options struct {
@@ -33,237 +64,366 @@ type Options struct {
 	Env        []string
 	ResultPath string // file the CLI is told to write its structured result to
 
+	// MaxOutputRetentionBytes bounds the aggregate provider-output bytes retained
+	// inside the reader/watch pipeline. Zero selects
+	// DefaultMaxOutputRetentionBytes. The line-retention threshold is derived
+	// from this single budget; it is not a provider protocol-size assertion.
+	MaxOutputRetentionBytes int
+
+	// MaxObservedOutputBytes bounds cumulative raw bytes read from the pty,
+	// including bytes in partial or discarded oversized lines. Zero disables
+	// this work/liveness ceiling.
+	MaxObservedOutputBytes int64
+
+	// OversizeOutputPolicy chooses whether a line larger than the derived
+	// retention threshold terminates the agent or is drained and discarded.
+	OversizeOutputPolicy OversizeOutputPolicy
+
 	// DisableEcho turns OFF the pty's terminal echo before the child starts.
-	// Providers that drive the CLI over stdin (claude/opencode stream-json)
-	// MUST set this: otherwise the pty echoes every stdin line back onto the
-	// output stream, where the never-block watchdog pattern-matches the
-	// operator's OWN prompt text ("do you want to…", "approve", …) as an
-	// interactive prompt and kills the turn. Disabling echo removes the
-	// echoed line at the source. No effect on native Windows (no pty there).
 	DisableEcho bool
+
+	// OneShotInput, when non-nil, is delivered through a dedicated stdin pipe
+	// that closes at EOF while stdout/stderr remain attached to the observed
+	// PTY. This is the finite ingress path for one-turn protocols. WriteInput
+	// returns ErrOneShotInputClosed for such an Agent.
+	OneShotInput []byte
+
+	// Package-private lifecycle boundaries let deterministic tests inject
+	// permanent kernel-observer and termination failures before any goroutine
+	// starts. Production callers cannot set these fields.
+	waitExitedForTest    func(func() (bool, error), <-chan struct{}) error
+	probeExitedForTest   func(*os.Process) (bool, error)
+	terminateTreeForTest func(*os.Process) terminationOutcome
+	cleanupTreeForTest   func(*os.Process) error
+	onWriteBlockForTest  func()
+}
+
+type interruptiblePTY interface {
+	io.Reader
+	WriteAll(context.Context, []byte) error
 }
 
 // Agent is a pty-owned agent subprocess.
 type Agent struct {
+	ctx  context.Context
 	cmd  *exec.Cmd
 	ptmx *os.File
-	out  chan []byte
-	done chan struct{}
+	pty  interruptiblePTY
 	opts Options
 
-	// closeOnce guards ptmx.Close so the readLoop's natural-exit close and
-	// a caller's Kill can't double-close (which would return os.ErrClosed).
+	out       chan []byte
+	discarded chan []byte
+	activity  chan time.Time
+	// terminal closes after either successful cmd.Wait ownership or an explicit
+	// unrecoverable termination failure. It is independent of output delivery.
+	terminal     chan struct{}
+	terminalOnce sync.Once
+	done         chan struct{}
+
+	maxRetainedLineBytes int
+
 	closeOnce sync.Once
+	killOnce  sync.Once
+	killed    chan struct{}
 
-	// killed is closed by Kill so the readLoop's output send can abandon a
-	// blocked-or-dead consumer instead of either dropping lines silently
-	// (which could drop a provider's terminal result frame and force a false
-	// stall) or blocking the reader forever (violating the never-block
-	// invariant). A live consumer drains a.out; a killed agent unblocks here.
-	killOnce sync.Once
-	killed   chan struct{}
+	abandonOnce   sync.Once
+	abandonOutput chan struct{}
 
-	// cmdCancel cancels the command's private context. Kill calls it to
-	// terminate the process: exec.Cmd's Cancel (group-kill, via
-	// setCancelKillsGroup) + WaitDelay coordinate the kill with exec's own
-	// Process.Wait, so a signal can never land on an already-reaped/recycled
-	// PID — unlike a direct killProcessTree(cmd.Process) from Kill, which would
-	// race readLoop's cmd.Wait(). Idempotent (context.CancelFunc).
-	cmdCancel context.CancelFunc
+	lifecycle  processLifecycle
+	goroutines sync.WaitGroup
 
-	// ctx is the caller's context, observed by readLoop's blocking send so a
-	// consumer that stops reading after ctx cancellation (e.g. a runner that
-	// returned on ctx.Done before the process fully exits) doesn't leak the
-	// reader on a[.out send that no one will ever drain.
-	ctx context.Context
+	controlMu  sync.Mutex
+	controlErr error
+	outputMu   sync.Mutex
+	outputErr  error
+	writeMu    sync.Mutex
 
-	// exitErr records cmd.Wait()'s result — the process's exit status. It is
-	// written once by readLoop (the sole Wait) and read via ExitErr() after
-	// Done() closes. exitMu guards the cross-goroutine handoff. A nonzero exit
-	// (auth failure, model error, mid-run crash) surfaces here so a runner
-	// WITHOUT a terminal-frame gate (codex) can fail the turn instead of
-	// laundering a failed CLI's partial output into a successful result.
-	exitMu  sync.Mutex
-	exitErr error
+	// Injectable OS boundaries support deterministic lifecycle failure tests.
+	// Production initializes all four to the platform implementations.
+	waitExited    func(func() (bool, error), <-chan struct{}) error
+	probeExited   func(*os.Process) (bool, error)
+	terminateTree func(*os.Process) terminationOutcome
+	cleanupTree   func(*os.Process) error
 }
 
 // Start launches opts.Command under a pty and begins streaming its output.
 func Start(ctx context.Context, opts Options) (*Agent, error) {
-	// Give the command a PRIVATE cancelable context (child of the caller's) so
-	// Kill can terminate the process by cancelling it. Routing the kill through
-	// exec.Cmd's own Cancel→Wait machinery — rather than calling
-	// killProcessTree(cmd.Process) directly — is the only race-free option: exec
-	// coordinates the group-kill with its internal Process.Wait, so a signal can
-	// NEVER land after the PID was reaped (and possibly recycled by the kernel).
-	// A direct kill from Kill() would race readLoop's own cmd.Wait() reaping.
-	cmdCtx, cmdCancel := context.WithCancel(ctx)
-	cmd := exec.CommandContext(cmdCtx, opts.Command, opts.Args...) //nolint:gosec // G204: launching the configured agent CLI is this package's entire purpose; opts.Command/Args come from caller-controlled provider config, not untrusted external input
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if !processExitObservationSupported {
+		return nil, ErrProcessExitObservationUnsupported
+	}
+	lineRetentionBytes, err := normalizeOutputRetention(&opts)
+	if err != nil {
+		return nil, err
+	}
+	if opts.MaxObservedOutputBytes < 0 {
+		return nil, ErrInvalidObservedOutputLimit
+	}
+
+	// Ralph, not exec.CommandContext, owns termination and reaping.
+	cmd := exec.Command(opts.Command, opts.Args...) //nolint:gosec // configured provider CLI is intentionally launched
 	cmd.Dir = opts.Dir
 	if opts.Env != nil {
 		cmd.Env = opts.Env
 	}
-	// Route the automatic ctx-cancel kill through the whole process group, not
-	// just the direct child (exec.CommandContext's default) — so a turn cancelled
-	// by KillWorker / shutdown / stall-timeout / Kill reaps grandchildren too.
-	// This also sets cmd.WaitDelay, bounding how long exec waits after Cancel
-	// before force-killing so Wait returns promptly and a child ignoring the
-	// group SIGKILL can't wedge the reaper.
-	setCancelKillsGroup(cmd)
-	ptmx, err := pty.Start(cmd)
+	if opts.OneShotInput != nil {
+		cmd.Stdin = bytes.NewReader(bytes.Clone(opts.OneShotInput))
+	}
+	ptmx, err := startPTY(cmd, opts.OneShotInput != nil)
 	if err != nil {
-		cmdCancel() // nothing started; release the private context
 		if errors.Is(err, pty.ErrUnsupported) {
 			return nil, ErrPTYUnsupported
 		}
 		return nil, err
 	}
 	if opts.DisableEcho {
-		// Ordered correctly: providers write to stdin only AFTER Start
-		// returns, and echo is a line-discipline property applied to those
-		// later writes — so disabling it here removes the echo of every
-		// stdin line the caller subsequently sends.
 		if err := disablePTYEcho(ptmx); err != nil {
-			_ = ptmx.Close()
-			cmdCancel() // triggers exec's group-kill of the just-started child
-			// Reap the killed child — readLoop (the only other Wait) hasn't
-			// started yet on this early-return path, so without this Wait the
-			// process would be left a zombie.
-			_ = cmd.Wait()
-			return nil, fmt.Errorf("agent: disable pty echo: %w", err)
+			return nil, abortStartedProcess(
+				cmd,
+				ptmx,
+				fmt.Errorf("agent: disable pty echo: %w", err),
+				terminateProcessTree,
+			)
 		}
 	}
-	a := &Agent{
-		ctx:       ctx,
-		cmd:       cmd,
-		cmdCancel: cmdCancel,
-		ptmx:      ptmx,
-		out:       make(chan []byte, 256),
-		done:      make(chan struct{}),
-		killed:    make(chan struct{}),
-		opts:      opts,
+	killed := make(chan struct{})
+	terminal := make(chan struct{})
+	ptyIO, err := newInterruptiblePTY(ptmx, killed, terminal, opts.onWriteBlockForTest)
+	if err != nil {
+		return nil, abortStartedProcess(
+			cmd,
+			ptmx,
+			fmt.Errorf("agent: configure interruptible pty reader: %w", err),
+			terminateProcessTree,
+		)
 	}
-	go a.readLoop()
+
+	a := &Agent{
+		ctx:                  ctx,
+		cmd:                  cmd,
+		ptmx:                 ptmx,
+		pty:                  ptyIO,
+		opts:                 opts,
+		out:                  make(chan []byte),
+		discarded:            make(chan []byte),
+		activity:             make(chan time.Time, 1),
+		terminal:             terminal,
+		done:                 make(chan struct{}),
+		maxRetainedLineBytes: lineRetentionBytes,
+		killed:               killed,
+		abandonOutput:        make(chan struct{}),
+		waitExited:           waitProcessExited,
+		probeExited:          processAlreadyExited,
+		terminateTree:        terminateProcessTree,
+		cleanupTree:          cleanupExitedProcessTree,
+	}
+	if opts.waitExitedForTest != nil {
+		a.waitExited = opts.waitExitedForTest
+	}
+	if opts.probeExitedForTest != nil {
+		a.probeExited = opts.probeExitedForTest
+	}
+	if opts.terminateTreeForTest != nil {
+		a.terminateTree = opts.terminateTreeForTest
+	}
+	if opts.cleanupTreeForTest != nil {
+		a.cleanupTree = opts.cleanupTreeForTest
+	}
+	a.goroutines.Add(3)
+	go func() {
+		defer a.goroutines.Done()
+		a.readLoop()
+	}()
+	go func() {
+		defer a.goroutines.Done()
+		a.observeProcessExit()
+	}()
+	go func() {
+		defer a.goroutines.Done()
+		a.cancelOnContext()
+	}()
 	return a, nil
 }
 
-func (a *Agent) readLoop() {
-	// Reap the process and release the pty on EVERY exit path (natural EOF or
-	// the killed-consumer abandon below), so neither leaks a zombie nor a fd.
-	defer close(a.out)
-	defer close(a.done)
-	defer a.closePTY()
-	defer func() {
-		// exec.Cmd.Wait() reaps the child. It coordinates with cmd.Cancel (from
-		// Kill via cmdCancel) internally, so the group-kill never races this
-		// reap — no PID-recycle hazard here.
-		err := a.cmd.Wait()
-		// Release the private command context on EVERY exit (natural or killed),
-		// so it doesn't leak once the process is gone. Idempotent with Kill's
-		// call.
-		a.cmdCancel()
-		a.exitMu.Lock()
-		a.exitErr = err
-		a.exitMu.Unlock()
-	}()
-	scanner := bufio.NewScanner(a.ptmx)
-	scanner.Buffer(make([]byte, 0, 64*1024), 1<<20)
-	for scanner.Scan() {
-		line := append([]byte(nil), scanner.Bytes()...)
-		line = append(line, '\n')
-		// Block until the consumer takes the line OR the agent is killed —
-		// never silently drop (a dropped terminal result frame forces a
-		// false stall) and never block forever (a killed agent unblocks via
-		// a.killed, honoring the never-block invariant). A live consumer
-		// keeps a.out draining, so this rarely blocks in practice.
-		select {
-		case a.out <- line:
-		case <-a.killed:
-			return
-		case <-a.ctx.Done():
-			// The caller cancelled: a consumer that returned on ctx.Done
-			// will never drain a.out, so stop rather than block forever.
-			return
-		}
+// abortStartedProcess handles failures after pty.Start but before Agent
+// goroutines exist. A successful termination is synchronously reaped. An
+// impossible direct-handle kill returns its explicit error without calling
+// cmd.Wait on a possibly-live child.
+func abortStartedProcess(
+	cmd *exec.Cmd,
+	ptmx *os.File,
+	primary error,
+	terminate func(*os.Process) terminationOutcome,
+) error {
+	outcome := terminate(cmd.Process)
+	_ = ptmx.Close()
+	if outcome.terminationErr != nil {
+		return errors.Join(primary, outcome.cleanupErr, outcome.terminationErr)
+	}
+	return errors.Join(primary, outcome.cleanupErr, cmd.Wait())
+}
+
+func (a *Agent) cancelOnContext() {
+	select {
+	case <-a.ctx.Done():
+		_ = a.terminateProcess()
+	case <-a.terminal:
 	}
 }
 
-// closePTY closes the pty exactly once, whether from the readLoop's
-// natural exit or from Kill.
+func (a *Agent) observeProcessExit() {
+	err := a.waitExited(
+		func() (bool, error) {
+			return a.lifecycle.observe(func() (bool, error) {
+				return a.probeExited(a.cmd.Process)
+			})
+		},
+		a.terminal,
+	)
+	if errors.Is(err, errProcessExitObservationStopped) {
+		return
+	}
+	if err != nil {
+		a.addControlError(errors.Join(ErrProcessExitObservation, err))
+		// Observer failure is terminal for the turn, but not for control:
+		// explicit termination owns its own cmd.Wait convergence.
+		_ = a.terminateProcess()
+		return
+	}
+	_ = a.reapNatural()
+}
+
+func (a *Agent) reapNatural() error {
+	claimed, cleanupErr := a.lifecycle.claimNatural(func() error {
+		return a.cleanupTree(a.cmd.Process)
+	})
+	if !claimed {
+		<-a.terminal
+		return a.controlError()
+	}
+	if cleanupErr != nil {
+		a.addControlError(errors.Join(ErrProcessTreeCleanup, cleanupErr))
+	}
+	a.lifecycle.finish(a.cmd.Wait())
+	a.publishTerminal()
+	return a.controlError()
+}
+
+// terminateProcess takes explicit forced ownership. A successful signal moves
+// the lifecycle to reaping while holding the same mutex, then this goroutine
+// calls cmd.Wait directly; observer health and Output consumers are irrelevant.
+func (a *Agent) terminateProcess() error {
+	claim := a.lifecycle.claimTermination(
+		func() (bool, error) { return a.probeExited(a.cmd.Process) },
+		func() terminationOutcome { return a.terminateTree(a.cmd.Process) },
+	)
+	if claim.observationErr != nil {
+		a.addControlError(errors.Join(ErrProcessExitObservation, claim.observationErr))
+	}
+	if claim.cleanupErr != nil {
+		a.addControlError(claim.cleanupErr)
+	}
+	if claim.natural {
+		return a.reapNatural()
+	}
+	if claim.terminationErr != nil {
+		a.addControlError(claim.terminationErr)
+		a.releaseOutput()
+		a.publishTerminal()
+		return a.controlError()
+	}
+	if !claim.claimed {
+		<-a.terminal
+		return a.controlError()
+	}
+
+	a.releaseOutput()
+	a.lifecycle.finish(a.cmd.Wait())
+	a.publishTerminal()
+	return a.controlError()
+}
+
+func (a *Agent) releaseOutput() {
+	a.killOnce.Do(func() { close(a.killed) })
+	a.closePTY()
+}
+
+func (a *Agent) publishTerminal() {
+	a.terminalOnce.Do(func() { close(a.terminal) })
+}
+
+func (a *Agent) addControlError(err error) {
+	if err == nil {
+		return
+	}
+	a.controlMu.Lock()
+	a.controlErr = errors.Join(a.controlErr, err)
+	a.controlMu.Unlock()
+}
+
+func (a *Agent) controlError() error {
+	a.controlMu.Lock()
+	defer a.controlMu.Unlock()
+	return a.controlErr
+}
+
 func (a *Agent) closePTY() {
 	a.closeOnce.Do(func() { _ = a.ptmx.Close() })
 }
 
-// Output is the line-oriented output stream; closed when the process exits.
+// Output is the unbuffered line-oriented output stream. PTY EOF ends output
+// collection but does not close this channel until process control reaches a
+// natural or explicit terminal result.
 func (a *Agent) Output() <-chan []byte { return a.out }
 
-// WriteInput writes raw bytes to the agent's pty stdin. Per spec §1, agents
-// run non-interactively and need little/no input; this exists for the
-// providers that drive a CLI's stdin-based protocol (e.g. `claude -p
-// --input-format stream-json`, which reads one JSON-line user message per
-// turn) rather than passing the whole prompt as an argv/file. Direct
-// Write() to the ptmx, per spec §2.
+// WriteInput delivers the complete byte slice to the PTY or returns an error.
+// The PTY is nonblocking so lifecycle failure can interrupt reads; writes
+// therefore retry short/EAGAIN results behind readiness polling and honor
+// caller cancellation or a terminal process result.
 func (a *Agent) WriteInput(b []byte) error {
-	_, err := a.ptmx.Write(b)
-	return err
+	if a.opts.OneShotInput != nil {
+		return ErrOneShotInputClosed
+	}
+	a.writeMu.Lock()
+	defer a.writeMu.Unlock()
+	return a.pty.WriteAll(a.ctx, b)
 }
 
-// Done is closed when the process exits.
+// Done closes after Output and all reader-side resources are released. A
+// direct-child termination failure also closes Done, but Wait returns
+// ErrProcessTermination and does not claim the process was reclaimed.
 func (a *Agent) Done() <-chan struct{} { return a.done }
 
-// Kill terminates the process immediately and releases the pty. Killing an
-// agent that already exited on its own is a no-op success — a normal
-// shutdown that races an agent finishing its task must not surface a
-// spurious "already closed" error.
-func (a *Agent) Kill() error {
-	// Unblock a readLoop that may be parked on a full a.out (dead/slow
-	// consumer) so it can exit instead of leaking the reader goroutine.
-	a.killOnce.Do(func() { close(a.killed) })
+// Kill explicitly terminates and reaps the child when termination succeeds.
+// Prefer TerminateAndWait at provider boundaries so reader/observer goroutines
+// are also joined and cleanup errors cannot be ignored.
+func (a *Agent) Kill() error { return a.terminateProcess() }
 
-	// Terminate the process by cancelling its private context. exec.Cmd's Cancel
-	// (setCancelKillsGroup → group SIGKILL) + WaitDelay coordinate the kill with
-	// exec's own Process.Wait, so the signal is guaranteed NOT to land on an
-	// already-reaped (and possibly kernel-recycled) PID — the race a direct
-	// killProcessTree(a.cmd.Process) here could not avoid, because readLoop's
-	// cmd.Wait() may have reaped the child inside Process.Wait even though Wait
-	// itself has not yet returned. cmdCancel is idempotent, so racing/repeated
-	// Kills are safe. A no-op if the process already exited (Cancel on a
-	// finished cmd does nothing).
-	if a.cmdCancel != nil {
-		a.cmdCancel()
-	}
-
-	// closePTY unblocks a scanner still parked on the ptmx so the reaper can
-	// finish; idempotent with readLoop's own close.
-	a.closePTY()
-	return nil
+// TerminateAndWait is the provider cleanup boundary. It takes explicit
+// termination ownership, abandons unread output, and joins every Agent-owned
+// goroutine. It never reports success unless reclamation was proven.
+func (a *Agent) TerminateAndWait() error {
+	_ = a.terminateProcess()
+	return a.Wait()
 }
 
-// Wait blocks until the process exits.
-func (a *Agent) Wait() error { <-a.done; return nil }
-
-// ExitErr returns the subprocess's exit status once it has exited on its own
-// (nil if it exited 0). It returns nil while the process is still running and
-// nil when the process was KILLED by this Agent (a signal-death from Kill /
-// ctx-cancel / a stall-or-prompt watchdog kill is not a real failure — the
-// caller already knows it forced the exit). Call only after Output() closes /
-// Done() fires. This lets a runner without a structured terminal frame (codex)
-// distinguish a clean completion from a failed CLI exit, rather than treating
-// any exit as success.
-func (a *Agent) ExitErr() error {
-	select {
-	case <-a.killed:
-		return nil // we forced the exit; the signal error is not a turn failure
-	default:
-	}
-	a.exitMu.Lock()
-	defer a.exitMu.Unlock()
-	return a.exitErr
+// Wait abandons unread Output and joins Agent-owned goroutines after a natural
+// or explicit terminal-control result. It is passive: PTY EOF alone never
+// authorizes termination. Observer, tree-cleanup, termination, and output
+// failures are joined in its return value.
+func (a *Agent) Wait() error {
+	a.abandonOnce.Do(func() { close(a.abandonOutput) })
+	<-a.done
+	a.goroutines.Wait()
+	return errors.Join(a.controlError(), a.OutputErr())
 }
 
-// PID returns the subprocess PID (0 before start / after release).
-func (a *Agent) PID() int {
-	if a.cmd.Process == nil {
-		return 0
-	}
-	return a.cmd.Process.Pid
-}
+// ExitErr returns only a naturally exited child's cmd.Wait status. Forced or
+// unrecoverable termination paths return nil because their cause is reported
+// by Kill, TerminateAndWait, or Wait.
+func (a *Agent) ExitErr() error { return a.lifecycle.exitError() }
+
+// PID returns the direct child's PID only while its lifecycle is running.
+func (a *Agent) PID() int { return a.lifecycle.pid(a.cmd.Process) }

@@ -4,8 +4,9 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
-	"os"
+	"math"
 
 	"github.com/jbcom/radioactive-ralph/internal/agent"
 )
@@ -26,12 +27,30 @@ import (
 //
 // Like ClaudeRunner, there is no CLI-native result-file flag, so
 // ResultPath is Ralph-side: the runner tees recognized JSON frames from
-// the pty's Output() into the ResultPath file as they arrive, then parses
-// the accumulated file for the terminal step_finish frame's usage.
+// the pty's Output() into a bounded ResultPath evidence file while parsing
+// every text and step_finish frame. It consumes until the CLI exits naturally
+// after session idle, then validates the final step reason.
 type OpencodeRunner struct{}
 
+// ErrOpencodeReportedError is returned for a type=error session event. The
+// provider's nested name/message deliberately never crosses this boundary.
+var ErrOpencodeReportedError = errors.New("provider: opencode reported a session error")
+
+// ErrOpencodeFinalReason means the final step was not stop or length.
+var ErrOpencodeFinalReason = errors.New("provider: opencode exited without a final stop or length step")
+
+// ErrOpencodeMissingFinish means the natural stream ended without any
+// step_finish event.
+var ErrOpencodeMissingFinish = errors.New("provider: opencode exited without a step_finish frame")
+
+// ErrOpencodeInvalidUsage is returned for negative, non-finite, or overflowing
+// aggregate usage.
+var ErrOpencodeInvalidUsage = errors.New("provider: opencode reported invalid usage")
+
 // Run spawns `opencode run <prompt> --format json` and blocks until the
-// step_finish frame (or process exit) closes the turn.
+// CLI exits naturally. A step_finish with reason=tool-calls is an
+// intermediate model step; OpenCode 1.18.3 closes the actual run only after
+// session.status becomes idle, so Ralph must consume the complete stream.
 func (OpencodeRunner) Run(ctx context.Context, binding Binding, req Request) (Result, error) {
 	resultPath, cleanup, err := newResultFile("opencode-result-*.jsonl")
 	if err != nil {
@@ -56,23 +75,30 @@ func (OpencodeRunner) Run(ctx context.Context, binding Binding, req Request) (Re
 		Args:       args,
 		Dir:        req.WorkingDir,
 		ResultPath: resultPath,
+		// Count raw PTY reads so discarded/partial/non-JSON progress cannot
+		// refresh the watchdog indefinitely without consuming a hard budget.
+		MaxObservedOutputBytes: maxStructuredEvidenceBytes,
 	}
 	a, err := agent.Start(ctx, opts)
 	if err != nil {
 		return Result{}, fmt.Errorf("provider: start opencode agent: %w", err)
 	}
-	defer func() { _ = a.Kill() }()
 
-	resultFile, err := os.Create(resultPath) //nolint:gosec // Ralph-owned temp file
+	resultFile, err := newBoundedEvidenceFile(resultPath)
 	if err != nil {
-		return Result{}, fmt.Errorf("provider: create result file: %w", err)
+		return Result{}, errors.Join(
+			fmt.Errorf("provider: create result file: %w", err),
+			a.TerminateAndWait(),
+		)
 	}
-	defer func() { _ = resultFile.Close() }()
 
-	var assistant bytes.Buffer
+	var assistant boundedResultBuffer
 	var sessionID string
 	var usage Usage
 	var sawFinish bool
+	var finalReason string
+	var sawError bool
+	var ingestErr error
 
 	// As in ClaudeRunner, every line is routed through superviseAgent so a
 	// hung/prompting opencode CLI is killed per the control invariant
@@ -82,26 +108,68 @@ func (OpencodeRunner) Run(ctx context.Context, binding Binding, req Request) (Re
 		if !ok {
 			return false // pty echo / non-JSON pane noise
 		}
-		_, _ = resultFile.Write(line)
+		if err := resultFile.writeFrame(line); err != nil {
+			ingestErr = err
+			return true
+		}
 		if ev.SessionID != "" {
+			if len(ev.SessionID) > maxAuthoritativeResultBytes-assistant.n {
+				ingestErr = ErrAuthoritativeResultTooLarge
+				return true
+			}
 			sessionID = ev.SessionID
 		}
 		switch ev.Type {
 		case "text":
-			assistant.WriteString(ev.Part.Text)
+			if err := assistant.writeStringReserved(
+				ev.Part.Text,
+				len(sessionID),
+			); err != nil {
+				ingestErr = err
+				return true
+			}
 		case "step_finish":
-			usage = ev.Part.usage()
+			if err := addOpencodeUsage(&usage, ev.Part.usage()); err != nil {
+				ingestErr = err
+				return true
+			}
 			sawFinish = true
-			return true // terminal frame seen; stop supervising this turn
+			finalReason = ev.Part.Reason
+		case "error":
+			sawError = true
+			return true
 		}
 		return false
 	}
 
-	if err := superviseAgent(ctx, a, StreamJSONWatchdogConfig(), onLine); err != nil {
-		return Result{}, fmt.Errorf("provider: opencode run: %w", err)
+	runErr := superviseAgent(ctx, a, StreamJSONWatchdogConfig(), onLine)
+	closeErr := resultFile.close()
+	if runErr != nil {
+		runErr = fmt.Errorf("provider: opencode run: %w", runErr)
+		if errors.Is(runErr, agent.ErrObservedOutputTooLarge) {
+			runErr = errors.Join(runErr, ErrStructuredEvidenceTooLarge)
+		}
+	}
+	if ingestErr != nil || runErr != nil || closeErr != nil {
+		return Result{}, errors.Join(ingestErr, runErr, closeErr)
+	}
+
+	exitErr := a.ExitErr()
+	if sawError || exitErr != nil {
+		var classified error
+		if sawError {
+			classified = ErrOpencodeReportedError
+		}
+		if exitErr != nil {
+			exitErr = fmt.Errorf("provider: opencode exited nonzero: %w", exitErr)
+		}
+		return Result{}, errors.Join(classified, exitErr)
 	}
 	if !sawFinish {
-		return Result{}, fmt.Errorf("provider: opencode exited without a step_finish frame")
+		return Result{}, ErrOpencodeMissingFinish
+	}
+	if finalReason != "stop" && finalReason != "length" {
+		return Result{}, ErrOpencodeFinalReason
 	}
 
 	return Result{
@@ -122,6 +190,7 @@ type opencodeEvent struct {
 // a given event type are left zero.
 type opencodePart struct {
 	Text   string `json:"text"`
+	Reason string `json:"reason"`
 	Tokens struct {
 		Total     int `json:"total"`
 		Input     int `json:"input"`
@@ -142,6 +211,26 @@ func (p opencodePart) usage() Usage {
 		CachedInputTokens: p.Tokens.Cache.Read,
 		CostUSD:           p.Cost,
 	}
+}
+
+func addOpencodeUsage(total *Usage, step Usage) error {
+	if step.InputTokens < 0 || step.OutputTokens < 0 ||
+		step.CachedInputTokens < 0 || step.CostUSD < 0 ||
+		math.IsNaN(step.CostUSD) || math.IsInf(step.CostUSD, 0) {
+		return ErrOpencodeInvalidUsage
+	}
+	maxInt := int(^uint(0) >> 1)
+	if step.InputTokens > maxInt-total.InputTokens ||
+		step.OutputTokens > maxInt-total.OutputTokens ||
+		step.CachedInputTokens > maxInt-total.CachedInputTokens ||
+		total.CostUSD > math.MaxFloat64-step.CostUSD {
+		return ErrOpencodeInvalidUsage
+	}
+	total.InputTokens += step.InputTokens
+	total.OutputTokens += step.OutputTokens
+	total.CachedInputTokens += step.CachedInputTokens
+	total.CostUSD += step.CostUSD
+	return nil
 }
 
 // parseOpencodeEvent parses one line of opencode's --format json stream.

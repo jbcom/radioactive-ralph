@@ -1,9 +1,9 @@
 package provider
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -13,30 +13,44 @@ import (
 )
 
 // ClaudeRunner executes a single `claude -p` turn under Ralph's own pty via
-// internal/agent, per spec §2/§3: Ralph owns the pty (agent.Start), the
-// pane/output stream is for human/watchdog observation, and the
-// structured result is read back from a file Ralph passes to the CLI —
-// never scraped from the rendered pane.
+// internal/agent, per spec §2/§3: Ralph owns the pty-backed output
+// (agent.Start), the pane/output stream is for human/watchdog observation,
+// and the structured stream is framed before being accepted as result data.
 //
 // claude has no native "write result to a file" flag (verified against
-// `claude --help` on the installed 2.1.211 CLI: --output-format
+// `claude --help` on the installed 2.1.218 CLI: --output-format
 // json/stream-json both write to stdout only). So the ResultPath file here
 // is Ralph-side, not CLI-native: the runner tees every stdout line (which
 // IS the stream-json frames — the same content a human pane would show)
-// into req's ResultPath file as it arrives, then parses that file's
-// accumulated content for the terminal result frame. This keeps the
+// into req's bounded ResultPath evidence file while parsing the same bounded
+// frames for assistant text and the terminal result. This keeps the
 // "never scrape the rendered pane for data" invariant: ResultPath holds
 // the same raw JSON lines the CLI emitted, not a re-rendered terminal.
 type ClaudeRunner struct{}
 
+// ErrClaudeResultFailed is the static failure for is_error results and
+// non-success subtypes not assigned a narrower category.
+var ErrClaudeResultFailed = errors.New("provider: claude reported an unsuccessful result")
+
+// ErrClaudeMaximumTurns is the static category for error_max_turns.
+var ErrClaudeMaximumTurns = errors.New("provider: claude maximum-turn limit reached")
+
+// ErrClaudeMissingResult means Claude exited cleanly without its required
+// authoritative result frame.
+var ErrClaudeMissingResult = errors.New("provider: claude exited without a result frame")
+
 // Run spawns `claude -p --input-format stream-json --output-format
-// stream-json` under agent.Start, feeds req.UserPrompt on stdin via a
-// one-shot input file (claude in --input-format stream-json mode reads a
-// JSON-line user message from stdin), tees stdout into a ResultPath file,
-// and parses the terminal result frame from that file for Usage.
+// stream-json` under agent.Start, feeds req.UserPrompt through a finite stdin
+// pipe (claude in --input-format stream-json mode reads a JSON-line user
+// message from stdin), tees stdout into a bounded ResultPath evidence file,
+// and parses the terminal result frame for Usage.
 func (ClaudeRunner) Run(ctx context.Context, binding Binding, req Request) (Result, error) {
 	model := resolveModel(binding.Config, req.Model)
 	effort := resolveEffort(binding.Config, req.Effort)
+	input, err := streamJSONInput(req.UserPrompt)
+	if err != nil {
+		return Result{}, fmt.Errorf("provider: encode claude input: %w", err)
+	}
 
 	resultPath, cleanup, err := newResultFile("claude-result-*.jsonl")
 	if err != nil {
@@ -71,30 +85,37 @@ func (ClaudeRunner) Run(ctx context.Context, binding Binding, req Request) (Resu
 		Args:       args,
 		Dir:        req.WorkingDir,
 		ResultPath: resultPath,
+		// Bound every PTY byte, including partial/oversized/non-JSON records
+		// that never reach the structured callback.
+		MaxObservedOutputBytes: maxStructuredEvidenceBytes,
 		// claude is driven over stdin (stream-json). Disable pty echo so our
 		// own prompt text isn't reflected back and pattern-matched by the
 		// watchdog as an interactive prompt (which would kill the turn).
 		DisableEcho: true,
+		// Claude's one-turn stream-json protocol exits on stdin EOF. A finite
+		// pipe provides that EOF without closing the PTY output channel, so
+		// Ralph can still observe natural exit and preserve a later nonzero
+		// process status.
+		OneShotInput: input,
 	}
 	a, err := agent.Start(ctx, opts)
 	if err != nil {
 		return Result{}, fmt.Errorf("provider: start claude agent: %w", err)
 	}
-	defer func() { _ = a.Kill() }()
 
-	if err := sendStreamJSONInput(a, req.UserPrompt); err != nil {
-		return Result{}, fmt.Errorf("provider: send claude input: %w", err)
-	}
-
-	resultFile, err := os.Create(resultPath) //nolint:gosec // Ralph-owned temp file
+	resultFile, err := newBoundedEvidenceFile(resultPath)
 	if err != nil {
-		return Result{}, fmt.Errorf("provider: create result file: %w", err)
+		return Result{}, errors.Join(
+			fmt.Errorf("provider: create result file: %w", err),
+			a.TerminateAndWait(),
+		)
 	}
-	defer func() { _ = resultFile.Close() }()
 
-	var assistant bytes.Buffer
+	var assistant boundedResultBuffer
 	var sawResult bool
 	var frame claudeResultFrame
+	var ingestErr error
+	var resultErr error
 
 	// Every line first passes through superviseAgent, which runs
 	// agent.Watch concurrently over a.Output() per the control invariant
@@ -117,24 +138,55 @@ func (ClaudeRunner) Run(ctx context.Context, binding Binding, req Request) (Resu
 		// Tee the raw pane line into ResultPath — this is the structured
 		// -data path; the same bytes remain available to a.Output()
 		// consumers (pane/watchdog) for observation.
-		_, _ = resultFile.Write(line)
+		if err := resultFile.writeFrame(line); err != nil {
+			ingestErr = err
+			return true
+		}
 
 		if text != "" {
-			assistant.WriteString(text)
+			if err := assistant.writeString(text); err != nil {
+				ingestErr = err
+				return true
+			}
 		}
 		if isResult {
 			sawResult = true
 			frame = f
-			return true // terminal frame seen; stop supervising this turn
+			resultErr = f.failure()
+			// A successful result frame is only a candidate success. Let
+			// Claude exit naturally so a subsequent nonzero process status
+			// cannot be laundered by an earlier success frame. An
+			// authoritative failure frame may terminate immediately because
+			// no later process status can turn that failed result into
+			// success.
+			return resultErr != nil
 		}
 		return false
 	}
 
-	if err := superviseAgent(ctx, a, StreamJSONWatchdogConfig(), onLine); err != nil {
-		return Result{}, fmt.Errorf("provider: claude run: %w", err)
+	runErr := superviseAgent(ctx, a, StreamJSONWatchdogConfig(), onLine)
+	closeErr := resultFile.close()
+	if runErr != nil {
+		runErr = fmt.Errorf("provider: claude run: %w", runErr)
+		if errors.Is(runErr, agent.ErrObservedOutputTooLarge) {
+			// For a structured-stream provider the raw PTY ceiling is also an
+			// upper bound on evidence. Preserve both sentinels: callers that
+			// handled the v6 evidence ceiling remain compatible while the raw
+			// transport cause stays inspectable.
+			runErr = errors.Join(runErr, ErrStructuredEvidenceTooLarge)
+		}
+	}
+	if ingestErr != nil || resultErr != nil {
+		return Result{}, errors.Join(ingestErr, resultErr, runErr, closeErr)
+	}
+	if runErr != nil || closeErr != nil {
+		return Result{}, errors.Join(runErr, closeErr)
+	}
+	if exitErr := a.ExitErr(); exitErr != nil {
+		return Result{}, fmt.Errorf("provider: claude exited nonzero: %w", exitErr)
 	}
 	if !sawResult {
-		return Result{}, fmt.Errorf("provider: claude exited without a result frame")
+		return Result{}, ErrClaudeMissingResult
 	}
 
 	return Result{
@@ -144,12 +196,9 @@ func (ClaudeRunner) Run(ctx context.Context, binding Binding, req Request) (Resu
 	}, nil
 }
 
-// sendStreamJSONInput writes one Outbound-shaped user message as a JSON
-// line to the agent's pty stdin via agent.Agent.WriteInput, matching what
-// claudesession.Session sends over a direct pipe today. claude reads
-// stream-json input and processes turns as lines arrive, so one write is
-// sufficient to drive this one-shot turn.
-func sendStreamJSONInput(a *agent.Agent, userPrompt string) error {
+// streamJSONInput encodes one Outbound-shaped user message as a JSON line,
+// matching what claudesession.Session sends over a direct pipe today.
+func streamJSONInput(userPrompt string) ([]byte, error) {
 	type outboundInner struct {
 		Role    string `json:"role"`
 		Content []struct {
@@ -168,21 +217,32 @@ func sendStreamJSONInput(a *agent.Agent, userPrompt string) error {
 	}{Type: "text", Text: userPrompt})
 	b, err := json.Marshal(msg)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	b = append(b, '\n')
-	return a.WriteInput(b)
+	return append(b, '\n'), nil
 }
 
 // claudeResultFrame is the terminal `type=result` stream-json frame.
 type claudeResultFrame struct {
 	TotalCostUSD float64 `json:"total_cost_usd"`
+	Subtype      string  `json:"subtype"`
+	IsError      bool    `json:"is_error"`
 	Usage        struct {
 		InputTokens              int `json:"input_tokens"`
 		OutputTokens             int `json:"output_tokens"`
 		CacheReadInputTokens     int `json:"cache_read_input_tokens"`
 		CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
 	} `json:"usage"`
+}
+
+func (f claudeResultFrame) failure() error {
+	if !f.IsError && f.Subtype == "success" {
+		return nil
+	}
+	if f.Subtype == "error_max_turns" {
+		return ErrClaudeMaximumTurns
+	}
+	return ErrClaudeResultFailed
 }
 
 func (f claudeResultFrame) usage() Usage {
@@ -196,8 +256,8 @@ func (f claudeResultFrame) usage() Usage {
 
 // parseClaudeStreamLine parses one stream-json line. kind is the frame's
 // "type" field, or "" if line is not a recognized stream-json frame at all
-// (pty stdin echo, banner text, blank lines) — callers use kind=="" to
-// discard pane noise before it reaches a structured-result sink. For a
+// (banner text, terminal noise, blank lines) — callers use kind=="" to discard
+// pane noise before it reaches a structured-result sink. For a
 // `type=result` line, isResult is true and frame carries the parsed usage.
 func parseClaudeStreamLine(line []byte) (kind, assistantText string, isResult bool, frame claudeResultFrame) {
 	var envelope struct {

@@ -18,7 +18,7 @@ func TestOpencodeRunnerParsesStreamJSON(t *testing.T) {
 	bin := writeFakeCLI(t, "fake-opencode.sh", `#!/bin/sh
 printf '%s\n' '{"type":"step_start","sessionID":"ses_fake123","part":{"id":"prt_1","type":"step-start"}}'
 printf '%s\n' '{"type":"text","sessionID":"ses_fake123","part":{"id":"prt_2","type":"text","text":"pong"}}'
-printf '%s\n' '{"type":"step_finish","sessionID":"ses_fake123","part":{"id":"prt_3","type":"step-finish","tokens":{"total":110,"input":100,"output":10,"reasoning":0,"cache":{"write":0,"read":40}},"cost":0.0012}}'
+printf '%s\n' '{"type":"step_finish","sessionID":"ses_fake123","part":{"id":"prt_3","type":"step-finish","reason":"stop","tokens":{"total":110,"input":100,"output":10,"reasoning":0,"cache":{"write":0,"read":40}},"cost":0.0012}}'
 `)
 	result, err := OpencodeRunner{}.Run(context.Background(), Binding{
 		Name:   "opencode",

@@ -20,9 +20,10 @@ func TestSuperviseAgentKillsOnPromptAndReturnsErrAgentBlocked(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("shell-script fake CLI is Unix-only")
 	}
+	const promptSecret = "WATCHDOG-PROMPT-SECRET-DO-NOT-LEAK"
 	bin := writeFakeCLI(t, "fake-prompting-cli.sh", `#!/bin/sh
 printf 'working...\n'
-printf 'Do you want to proceed? (y/n)\n'
+printf 'Do you want to proceed? (y/n) `+promptSecret+`\n'
 sleep 300
 `)
 	a, err := agent.Start(context.Background(), agent.Options{Command: bin})
@@ -46,6 +47,12 @@ sleep 300
 		}
 		if !strings.Contains(err.Error(), "prompt") {
 			t.Errorf("error %q should mention the prompt detection", err.Error())
+		}
+		if strings.Contains(err.Error(), promptSecret) {
+			t.Errorf("watchdog error surfaced raw prompt content %q: %q", promptSecret, err)
+		}
+		if !strings.HasSuffix(err.Error(), "interactive prompt detected") {
+			t.Errorf("watchdog error = %q, want fixed prompt reason", err)
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("superviseAgent did not return promptly after a permission prompt — the agent was left to hang, violating the never-block control invariant")
@@ -91,6 +98,46 @@ sleep 300
 	}
 }
 
+func TestSuperviseAgentSurfacesOutputContractErrorPromptly(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell-script fake CLI is Unix-only")
+	}
+	requirePython3(t)
+	bin := writeFakeCLI(t, "fake-over-limit-cli.sh", `#!/bin/sh
+python3 -c 'import sys,time; sys.stdout.write("x" * 1025); sys.stdout.flush(); time.sleep(300)'
+`)
+	a, err := agent.Start(context.Background(), agent.Options{
+		Command:                 bin,
+		MaxOutputRetentionBytes: agent.RetentionBudgetForLineBytes(1024),
+	})
+	if err != nil {
+		t.Fatalf("agent.Start: %v", err)
+	}
+	defer func() { _ = a.Kill() }()
+
+	start := time.Now()
+	err = superviseAgent(context.Background(), a, agent.WatchdogConfig{
+		StallTimeout: 5 * time.Second,
+	}, nil)
+	if !errors.Is(err, agent.ErrOutputLineTooLong) {
+		t.Fatalf("superviseAgent error = %v, want wrapping ErrOutputLineTooLong", err)
+	}
+	if errors.Is(err, ErrAgentBlocked) {
+		t.Fatalf("superviseAgent laundered output-contract failure into watchdog stall: %v", err)
+	}
+	if elapsed := time.Since(start); elapsed > 3*time.Second {
+		t.Fatalf("output-contract failure surfaced after %s, want prompt termination", elapsed)
+	}
+	select {
+	case <-a.Done():
+	case <-time.After(2 * time.Second):
+		t.Fatal("output-contract failure did not reap agent")
+	}
+	if err := a.ExitErr(); err != nil {
+		t.Fatalf("ExitErr = %v, want nil killed semantics after output-contract failure", err)
+	}
+}
+
 // TestSuperviseAgentOnLineStopsSupervision proves onLine returning true
 // (the caller saw its terminal frame) makes superviseAgent kill the agent
 // and return nil promptly, rather than waiting for a.Output() to close on
@@ -131,6 +178,53 @@ sleep 300
 	}
 	if !sawLine {
 		t.Error("onLine never observed the fake CLI's output line")
+	}
+}
+
+func TestSuperviseAgentNeverLaundersTerminalFrameCleanupFailure(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell-script fake CLI is Unix-only")
+	}
+	bin := writeFakeCLI(t, "fake-terminal-frame-cleanup-failure.sh", `#!/bin/sh
+printf 'result-line\n'
+sleep 300
+`)
+	injectedErr := errors.New("injected descendant cleanup failure")
+
+	for iteration := range 10 {
+		a, err := agent.Start(context.Background(), agent.Options{Command: bin})
+		if err != nil {
+			t.Fatalf("iteration %d agent.Start: %v", iteration, err)
+		}
+		defaultConvergence := defaultAgentConvergence()
+		convergence := defaultConvergence
+		convergence.terminateAndWait = func(a *agent.Agent) error {
+			return errors.Join(
+				defaultConvergence.terminateAndWait(a),
+				agent.ErrProcessTreeCleanup,
+				injectedErr,
+			)
+		}
+
+		err = superviseAgentWithConvergence(
+			context.Background(),
+			a,
+			agent.WatchdogConfig{StallTimeout: time.Minute},
+			func(line []byte) bool {
+				return strings.Contains(string(line), "result-line")
+			},
+			convergence,
+		)
+		if !errors.Is(err, agent.ErrProcessTreeCleanup) ||
+			!errors.Is(err, injectedErr) {
+			t.Fatalf("iteration %d superviseAgent = %v, want cleanup failure",
+				iteration, err)
+		}
+		select {
+		case <-a.Done():
+		case <-time.After(2 * time.Second):
+			t.Fatalf("iteration %d terminal-frame cleanup did not join Agent", iteration)
+		}
 	}
 }
 
@@ -286,6 +380,7 @@ func TestCodexRunnerKilledByWatchdogOnPrompt(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("shell-script fake CLI is Unix-only")
 	}
+	const promptSecret = "CODEX-RAW-PROMPT-SECRET-DO-NOT-LEAK"
 	bin := writeFakeCLI(t, "fake-codex-prompting.sh", `#!/bin/sh
 out=""
 while [ "$#" -gt 0 ]; do
@@ -303,7 +398,7 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 printf 'thinking...\n'
-printf 'Do you want to proceed? (y/n)\n'
+printf 'Do you want to proceed? (y/n) `+promptSecret+`\n'
 sleep 300
 `)
 
@@ -320,6 +415,12 @@ sleep 300
 
 	if !errors.Is(err, ErrAgentBlocked) {
 		t.Fatalf("CodexRunner.Run error = %v, want wrapping ErrAgentBlocked", err)
+	}
+	if strings.Contains(err.Error(), promptSecret) {
+		t.Errorf("CodexRunner.Run error surfaced raw prompt content %q: %q", promptSecret, err)
+	}
+	if !strings.Contains(err.Error(), "interactive prompt detected") {
+		t.Errorf("CodexRunner.Run error = %q, want fixed prompt category", err)
 	}
 	if elapsed > 10*time.Second {
 		t.Fatalf("CodexRunner.Run took %s, want well under the fake CLI's 300s sleep — the watchdog must kill it, not wait it out", elapsed)
