@@ -466,6 +466,8 @@ func TestReleaseHelpersRequireNamedTokenAuthorities(t *testing.T) {
 
 	rollback := readRepositoryFile(t, "scripts/ci/rollback_package_manifests.sh")
 	requireContains(t, rollback, "PKGS_GH_TOKEN is required", "scripts/ci/rollback_package_manifests.sh")
+	requireContains(t, rollback, `(umask 0077 && printf`, "scripts/ci/rollback_package_manifests.sh")
+	requireContains(t, rollback, `"$PKGS_GH_TOKEN" > "$ASKPASS")`, "scripts/ci/rollback_package_manifests.sh")
 	requireNotContains(t, rollback, "RELEASE_GH_TOKEN", "scripts/ci/rollback_package_manifests.sh")
 
 	publisher := readRepositoryFile(t, "packaging/publish-cli-manifests.sh")

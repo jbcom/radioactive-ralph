@@ -153,7 +153,8 @@ if ! target_files_still_failed; then
 fi
 
 ASKPASS="$WORK/askpass.sh"
-printf '#!/bin/sh\nprintf "%%s" "%s"\n' "$PKGS_GH_TOKEN" > "$ASKPASS"
+(umask 0077 && printf '#!/bin/sh\nprintf "%%s" "%s"\n' \
+  "$PKGS_GH_TOKEN" > "$ASKPASS")
 chmod 0700 "$ASKPASS"
 export GIT_ASKPASS="$ASKPASS" GIT_TERMINAL_PROMPT=0
 git clone "$PKGS_CLONE_URL" "$WORK/pkgs"
