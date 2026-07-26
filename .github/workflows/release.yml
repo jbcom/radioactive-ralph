@@ -17,12 +17,16 @@ jobs:
       state: ${{ steps.release_state.outputs.state }}
     runs-on: ubuntu-latest
     permissions:
+      # Admission never mutates anything. It reads the tag commit and the
+      # Release Please draft, so the built-in token stays read-only and no step
+      # in this job holds a write-capable credential.
       contents: read
     steps:
       # Each non-built-in credential has a fixed call-site purpose:
       # PKGS_GITHUB_TOKEN mutates jbcom/pkgs; the Doppler-synced
-      # CI_GITHUB_TOKEN reads this repository's immutable-release setting.
-      # Release reads and writes continue to use the built-in token.
+      # CI_GITHUB_TOKEN reads this repository's immutable-release setting and
+      # the Release Please draft (GitHub hides drafts from tokens without
+      # repository push access, which the read-only built-in token lacks).
       - name: Verify release secrets are set
         env:
           PKGS_TOKEN_SET: ${{ secrets.PKGS_GITHUB_TOKEN != '' }}
@@ -51,6 +55,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       # The repository's active tag ruleset makes v* tags admin-created and
       # immutable. Still prove the event is the checked-out tag commit on main
@@ -86,10 +91,13 @@ jobs:
       # `force-tag-creation` creates the tag before Release Please creates its
       # draft. The tag event can therefore start this workflow first; wait for
       # the handoff instead of racing GoReleaser into creating a second draft.
+      # Draft reads use CI_GITHUB_TOKEN: GitHub hides drafts from tokens without
+      # repository push access, and admission deliberately holds no write-capable
+      # built-in token. Both reads below are non-mutating.
       - name: Require exact Release Please release state
         id: release_state
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.CI_GITHUB_TOKEN }}
           TAG_COMMIT: ${{ steps.tag_provenance.outputs.commit }}
         run: |
           for attempt in {1..12}; do

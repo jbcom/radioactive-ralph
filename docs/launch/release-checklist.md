@@ -104,7 +104,15 @@ Do not create or move a release tag manually.
       non-prerelease draft.
 - [ ] `release-admission` binds tag, event SHA, draft target, manifest version,
       `origin/main`, the dedicated package secret, and the live immutable-release
-      repository setting before any publisher runs.
+      repository setting before any publisher runs. Its built-in token is
+      `contents: read`, so no step in the job holds a write-capable credential.
+      GitHub only exposes private draft releases to principals with push access,
+      so the draft-state read uses `CI_GITHUB_TOKEN` — the same named authority
+      that reads the immutable-release setting. Checkout uses
+      `persist-credentials: false`. The command contract is enforced as an
+      allowlist over the job's actual `gh` invocations (only `gh release view`,
+      and no `--method`/`-X`/field flags), not as a blocklist of literal flag
+      spellings that reordering could evade.
 - [ ] A public prerelease is rejected. There is no public staging state.
 
 ## 5. Draft rendezvous and seal

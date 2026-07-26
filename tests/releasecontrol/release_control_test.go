@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 	"testing"
 )
@@ -36,6 +37,104 @@ func requireNotContains(t *testing.T, content, fragment, path string) {
 	if strings.Contains(content, fragment) {
 		t.Errorf("%s must not contain %q", path, fragment)
 	}
+}
+
+// admissionAllowedGitHubCommands is the exhaustive set of `gh` subcommand paths
+// release-admission may invoke. Anything else -- a release mutation, or any
+// write-capable API call -- fails the contract regardless of how its flags are
+// spelled or ordered.
+var admissionAllowedGitHubCommands = map[string]bool{
+	"release view": true,
+}
+
+// requireAdmissionGitHubCommandsAllowed enforces the admission command boundary
+// as an allowlist over the actual `gh` invocations in the job, rather than as a
+// blocklist of literal flag spellings. A blocklist is defeated by reordering
+// flags ("gh api -f x=1 --method PATCH"), by passing fields separately, or by
+// any mutating subcommand nobody thought to enumerate.
+func requireAdmissionGitHubCommandsAllowed(t *testing.T, job, path string) {
+	t.Helper()
+
+	for _, invocation := range extractGitHubInvocations(job) {
+		// Any explicit method override or field argument makes the call
+		// write-capable in gh's own semantics (fields imply POST).
+		for _, writeFlag := range []string{"--method", "-X", "-f", "-F", "--field", "--raw-field", "--input"} {
+			for _, tok := range invocation.args {
+				if tok == writeFlag {
+					t.Errorf("%s release-admission must not issue write-capable gh call %q (flag %q)",
+						path, invocation.line, writeFlag)
+				}
+			}
+		}
+		if !admissionAllowedGitHubCommands[invocation.subcommand] {
+			t.Errorf("%s release-admission gh subcommand %q is not in the admission allowlist %v (line %q)",
+				path, invocation.subcommand, keysOf(admissionAllowedGitHubCommands), invocation.line)
+		}
+	}
+}
+
+type githubInvocation struct {
+	subcommand string
+	args       []string
+	line       string
+}
+
+// extractGitHubInvocations finds each `gh` call in a workflow job body and
+// returns its two-word subcommand path plus its argument tokens. Line
+// continuations are joined so a call split across lines is still analyzed whole.
+func extractGitHubInvocations(job string) []githubInvocation {
+	joined := strings.ReplaceAll(job, "\\\n", " ")
+	var out []githubInvocation
+	for _, raw := range strings.Split(joined, "\n") {
+		line := strings.TrimSpace(raw)
+		if strings.HasPrefix(line, "#") {
+			continue
+		}
+		for _, seg := range splitShellSegments(line) {
+			fields := strings.Fields(seg)
+			idx := -1
+			for i, f := range fields {
+				// Match the gh binary itself, including VAR=x gh ... and $(gh ...
+				trimmed := strings.TrimLeft(f, "\"'$(`")
+				if trimmed == "gh" {
+					idx = i
+					break
+				}
+			}
+			if idx == -1 || idx+1 >= len(fields) {
+				continue
+			}
+			rest := fields[idx+1:]
+			var words []string
+			for _, r := range rest {
+				if !strings.HasPrefix(r, "-") {
+					words = append(words, strings.Trim(r, `"'`))
+				}
+				if len(words) == 2 {
+					break
+				}
+			}
+			sub := strings.Join(words, " ")
+			out = append(out, githubInvocation{subcommand: sub, args: rest, line: strings.TrimSpace(seg)})
+		}
+	}
+	return out
+}
+
+// splitShellSegments breaks a shell line on pipes, logical operators, and
+// command substitution so each `gh` call is inspected independently.
+func splitShellSegments(line string) []string {
+	replacer := strings.NewReplacer("|", "\n", "&&", "\n", "||", "\n", ";", "\n", "$(", "\n", "`", "\n")
+	return strings.Split(replacer.Replace(line), "\n")
+}
+
+func keysOf(m map[string]bool) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
 }
 
 func workflowJob(workflow, name string) (string, bool) {
@@ -192,7 +291,14 @@ func TestStableAdmissionPrecedesAllPublishers(t *testing.T) {
 
 	admission := requireWorkflowJob(t, workflow, "release-admission", path)
 	requireContains(t, admission, `^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$`, path)
+	// Admission is read-only. The built-in token never carries write access here,
+	// so no step in this job can mutate a release even if a helper tried to. The
+	// Release Please draft is read with CI_GITHUB_TOKEN, because GitHub hides
+	// drafts from tokens lacking repository push access.
 	requireContains(t, admission, "contents: read", path)
+	requireNotContains(t, admission, "contents: write", path)
+	requireContains(t, admission, "persist-credentials: false", path)
+	requireAdmissionGitHubCommandsAllowed(t, admission, path)
 	requireContains(t, admission, "fetch-depth: 0", path)
 	requireContains(t, admission, `+refs/heads/main:refs/remotes/origin/main`, path)
 	requireContains(t, admission, `git rev-parse "${GITHUB_REF_NAME}^{commit}"`, path)
@@ -201,6 +307,15 @@ func TestStableAdmissionPrecedesAllPublishers(t *testing.T) {
 	requireContains(t, admission, `jq -er '."."' .release-please-manifest.json`, path)
 	requireContains(t, admission, `"v${manifest_version}" != "$GITHUB_REF_NAME"`, path)
 	requireContains(t, admission, "--json isDraft,isPrerelease,tagName,targetCommitish", path)
+	// No write-capable built-in token is exposed anywhere in admission. Because
+	// the job is contents: read, github.token cannot mutate; assert it is not
+	// wired in at all so a future permissions bump cannot silently re-grant it.
+	if got := strings.Count(admission, "GH_TOKEN: ${{ github.token }}"); got != 0 {
+		t.Errorf("%s built-in token mapping count = %d, want 0", path, got)
+	}
+	requireContains(t, admission,
+		"- name: Require exact Release Please release state\n        id: release_state\n        env:\n          GH_TOKEN: ${{ secrets.CI_GITHUB_TOKEN }}",
+		path)
 	requireContains(t, admission, `"$tag_name" != "$GITHUB_REF_NAME" || "$target_commitish" != "$TAG_COMMIT"`, path)
 	requireContains(t, admission, `"$is_draft" == "true" && "$is_prerelease" == "false"`, path)
 	requireContains(t, admission, "public prerelease or ambiguous release state is invalid", path)
@@ -451,8 +566,11 @@ func TestReleaseToolingIsPinnedAndPermissionsAreLeastPrivilege(t *testing.T) {
 	signer := requireWorkflowJob(t, workflow, "sign-gui-checksums", path)
 	requireContains(t, signer, "contents: write", path)
 	requireContains(t, signer, "id-token: write", path)
-	if got := strings.Count(workflow, "secrets.CI_GITHUB_TOKEN"); got != 4 {
-		t.Errorf("%s CI_GITHUB_TOKEN secret references = %d, want 4", path, got)
+	// 5 references: the admission presence check, the three immutable-release
+	// gates, and the admission draft read (which uses CI_GITHUB_TOKEN because the
+	// built-in token is contents: read and cannot see draft releases).
+	if got := strings.Count(workflow, "secrets.CI_GITHUB_TOKEN"); got != 5 {
+		t.Errorf("%s CI_GITHUB_TOKEN secret references = %d, want 5", path, got)
 	}
 	requireNotContains(t, workflow, "\nenv:\n  CI_GITHUB_TOKEN:", path)
 
