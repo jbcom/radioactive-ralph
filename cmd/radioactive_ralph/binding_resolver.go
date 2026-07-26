@@ -27,6 +27,11 @@ const providerConfigKey = "provider"
 // including NativeFanout.
 const providersConfigKey = "providers"
 
+const (
+	turnTimeoutConfigKey  = "turn_timeout"
+	stallTimeoutConfigKey = "stall_timeout"
+)
+
 // storeBindingResolver returns an orch.BindingResolver that selects the
 // provider from stored virtual config for the dispatch's project, instead of
 // the orchestrator's built-in always-claude default. It resolves the
@@ -72,8 +77,50 @@ func storeBindingResolver(st *store.Store) orch.BindingResolver {
 		if pooled {
 			binding.Config.NativeFanout = false
 		}
+		turnTimeout, stallTimeout, err := resolveProviderTimeouts(ctx, st, projectID)
+		if err != nil {
+			return provider.Binding{}, err
+		}
+		binding.Config.TurnTimeout = turnTimeout
+		binding.Config.StallTimeout = stallTimeout
 		return binding, nil
 	}
+}
+
+func resolveProviderTimeouts(ctx context.Context, st *store.Store, projectID string) (string, string, error) {
+	userCfg, err := vconfig.ResolveUser(ctx, st, "", "")
+	if err != nil {
+		return "", "", fmt.Errorf("resolve user provider timeouts: %w", err)
+	}
+	projectCfg, err := vconfig.ResolveProjects(ctx, st, userCfg, projectID)
+	if err != nil {
+		return "", "", fmt.Errorf("resolve project provider timeouts: %w", err)
+	}
+	turnTimeout, err := layeredTimeoutValue(turnTimeoutConfigKey, userCfg.Values, projectCfg.Values)
+	if err != nil {
+		return "", "", err
+	}
+	stallTimeout, err := layeredTimeoutValue(stallTimeoutConfigKey, userCfg.Values, projectCfg.Values)
+	if err != nil {
+		return "", "", err
+	}
+	return turnTimeout, stallTimeout, nil
+}
+
+func layeredTimeoutValue(key string, layers ...map[string]any) (string, error) {
+	var resolved string
+	for _, layer := range layers {
+		value, exists := layer[key]
+		if !exists {
+			continue
+		}
+		timeout, ok := stringValue(value)
+		if !ok {
+			return "", fmt.Errorf("%s must be a non-empty duration string", key)
+		}
+		resolved = timeout
+	}
+	return resolved, nil
 }
 
 // resolveProviderNames reads the effective provider selection in source

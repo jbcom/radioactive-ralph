@@ -35,6 +35,17 @@ type boundedResultBuffer struct {
 	n   int
 }
 
+// ValidateEvidenceBounds refuses provider-controlled assistant output that is
+// too large to cross Ralph's durable evidence boundary. Built-in runners apply
+// the same ceiling while parsing; the orchestrator calls this again so custom
+// and declarative runners cannot bypass it.
+func ValidateEvidenceBounds(output string) error {
+	if len(output) > maxAuthoritativeResultBytes {
+		return ErrAuthoritativeResultTooLarge
+	}
+	return nil
+}
+
 func (b *boundedResultBuffer) writeString(value string) error {
 	return b.writeStringReserved(value, 0)
 }

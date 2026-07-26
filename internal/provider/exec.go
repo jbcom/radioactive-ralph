@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 func combinePrompt(req Request) string {
@@ -25,7 +26,13 @@ func combinePrompt(req Request) string {
 }
 
 func runCommand(ctx context.Context, dir, bin string, args []string) (string, error) {
-	cmd := exec.CommandContext(ctx, bin, args...) //nolint:gosec // argv is runtime-controlled
+	return runCommandWithStall(ctx, DefaultStallTimeout, dir, bin, args)
+}
+
+func runCommandWithStall(ctx context.Context, stallTimeout time.Duration, dir, bin string, args []string) (string, error) {
+	stallCtx, progress, cancelStall := withProgressLease(ctx, stallTimeout)
+	defer cancelStall()
+	cmd := exec.CommandContext(stallCtx, bin, args...) //nolint:gosec // argv is runtime-controlled
 	cmd.Dir = dir
 	setProcessGroupKill(cmd) // ctx-cancel must reap the whole tree, not just the CLI
 	// Capture stdout and stderr separately so on the success path, some
@@ -33,10 +40,13 @@ func runCommand(ctx context.Context, dir, bin string, args []string) (string, er
 	// On failure we surface stderr in the wrapped error so operators can
 	// see why the CLI exited non-zero.
 	var stdout, stderr strings.Builder
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
+	cmd.Stdout = progressWriter{Writer: &stdout, progress: progress}
+	cmd.Stderr = progressWriter{Writer: &stderr, progress: progress}
 	err := cmd.Run()
 	if err != nil {
+		if cause := context.Cause(stallCtx); cause != nil {
+			return "", cause
+		}
 		msg := strings.TrimSpace(stderr.String())
 		if msg == "" {
 			msg = strings.TrimSpace(stdout.String())

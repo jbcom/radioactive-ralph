@@ -134,7 +134,7 @@ printf '%s' '{"outcome":"done","summary":"large event consumed","evidence":[]}' 
 python3 -c 'import sys; sys.stdout.write("{\"type\":\"item.completed\",\"item\":{\"type\":\"command_execution\",\"aggregated_output\":\"" + "\\n" * (1 << 20) + "\"}}\\n"); sys.stdout.flush()'
 `)
 	originalStall := DefaultStallTimeout
-	DefaultStallTimeout = 200 * time.Millisecond
+	DefaultStallTimeout = 2 * time.Second
 	defer func() { DefaultStallTimeout = originalStall }()
 
 	result, err := CodexRunner{}.Run(context.Background(), Binding{

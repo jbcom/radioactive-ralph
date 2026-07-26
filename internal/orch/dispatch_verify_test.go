@@ -2,6 +2,8 @@ package orch
 
 import (
 	"context"
+	"errors"
+	"strings"
 	"testing"
 
 	"github.com/jbcom/radioactive-ralph/internal/provider"
@@ -104,3 +106,74 @@ type boomError struct{}
 func (boomError) Error() string { return "boom" }
 
 var errRunnerBoom = boomError{}
+
+func TestDispatchPersistsOnlyClassifiedProviderFailure(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	projectID := mustCreateTestProject(t, s, "private-failure-project")
+	planID := mustCreateTestPlan(t, s, projectID, "private-failure-plan", "Ship", twoStepSequentialPlan)
+	const secret = "SECRET-PROVIDER-DIAGNOSTIC"
+	runner := &fakeRunner{errs: []error{errors.Join(provider.ErrProviderStalled, errors.New(secret))}}
+	o := New(s,
+		WithRunnerFactory(func(provider.Binding) (provider.Runner, error) { return runner, nil }),
+		WithBindingResolver(fakeBindingResolver("claude", false)),
+	)
+	if dispatched, err := o.DispatchNext(ctx, projectID, planID); err != nil || dispatched != 1 {
+		t.Fatalf("DispatchNext = %d, %v", dispatched, err)
+	}
+	o.Wait()
+
+	messages, err := s.ListMessages(ctx, planID, "0.0")
+	if err != nil {
+		t.Fatalf("ListMessages: %v", err)
+	}
+	if len(messages) != 1 {
+		t.Fatalf("messages = %d, want 1", len(messages))
+	}
+	if strings.Contains(messages[0].ContentJSON, secret) {
+		t.Fatal("raw provider diagnostic leaked into evidence")
+	}
+	if !strings.Contains(messages[0].ContentJSON, `"failure_category":"stall_timeout"`) {
+		t.Fatalf("classified evidence missing category: %s", messages[0].ContentJSON)
+	}
+
+	events, err := s.ListTaskEvents(ctx, planID, "0.0", 10)
+	if err != nil {
+		t.Fatalf("ListTaskEvents: %v", err)
+	}
+	for _, event := range events {
+		if strings.Contains(event.PayloadJSON, secret) {
+			t.Fatalf("raw provider diagnostic leaked into event %s", event.Kind)
+		}
+	}
+}
+
+func TestDispatchRejectsOversizedProviderEvidenceBeforePersistence(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	projectID := mustCreateTestProject(t, s, "bounded-evidence-project")
+	planID := mustCreateTestPlan(t, s, projectID, "bounded-evidence-plan", "Ship", twoStepSequentialPlan)
+	runner := &fakeRunner{results: []provider.Result{{AssistantOutput: strings.Repeat("x", 17<<20)}}}
+	o := New(s,
+		WithRunnerFactory(func(provider.Binding) (provider.Runner, error) { return runner, nil }),
+		WithBindingResolver(fakeBindingResolver("claude", false)),
+	)
+	if dispatched, err := o.DispatchNext(ctx, projectID, planID); err != nil || dispatched != 1 {
+		t.Fatalf("DispatchNext = %d, %v", dispatched, err)
+	}
+	o.Wait()
+
+	messages, err := s.ListMessages(ctx, planID, "0.0")
+	if err != nil {
+		t.Fatalf("ListMessages: %v", err)
+	}
+	if len(messages) != 1 {
+		t.Fatalf("messages = %d, want 1", len(messages))
+	}
+	if len(messages[0].ContentJSON) > 1024 {
+		t.Fatalf("persisted evidence bytes = %d, want only bounded failure metadata", len(messages[0].ContentJSON))
+	}
+	if !strings.Contains(messages[0].ContentJSON, `"failure_category":"output_limit"`) {
+		t.Fatalf("oversized evidence missing output_limit category: %s", messages[0].ContentJSON)
+	}
+}

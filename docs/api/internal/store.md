@@ -211,7 +211,7 @@ type CreatePlanOpts struct {
 ```
 
 <a name="CreateTaskOpts"></a>
-## type [CreateTaskOpts](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/tasks.go#L65-L80>)
+## type [CreateTaskOpts](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/tasks.go#L66-L81>)
 
 CreateTaskOpts configures task creation.
 
@@ -271,7 +271,7 @@ type Event struct {
 ```
 
 <a name="EventPayload"></a>
-## type [EventPayload](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/tasks.go#L51-L62>)
+## type [EventPayload](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/tasks.go#L51-L63>)
 
 EventPayload keeps event payloads structured so the CLI, TUI, and tests can reason about approvals, handoffs, retries, and provider context without string scraping.
 
@@ -286,6 +286,7 @@ type EventPayload struct {
     ApprovalRequired  bool     `json:"approval_required,omitempty"`
     Provider          string   `json:"provider,omitempty"`
     ProviderSessionID string   `json:"provider_session_id,omitempty"`
+    FailureCategory   string   `json:"failure_category,omitempty"`
     OperatorAction    string   `json:"operator_action,omitempty"`
 }
 ```
@@ -421,7 +422,7 @@ type SessionOpts struct {
 ```
 
 <a name="StatusCounts"></a>
-## type [StatusCounts](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/tasks.go#L205-L212>)
+## type [StatusCounts](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/tasks.go#L206-L213>)
 
 StatusCounts is the aggregate view the status reply exposes: how many active plans exist and how many tasks sit in each status a client surfaces. Sourced from one pass over the store so \`status\` reports real numbers rather than the zeros the reply carried before \(the task/plan counters were never populated\).
 
@@ -457,7 +458,7 @@ func Open(ctx context.Context, opts Options) (*Store, error)
 Open returns a migrated, ready\-to\-use Store.
 
 <a name="Store.AddDep"></a>
-### func \(\*Store\) [AddDep](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/tasks.go#L137>)
+### func \(\*Store\) [AddDep](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/tasks.go#L138>)
 
 ```go
 func (s *Store) AddDep(ctx context.Context, planID, taskID, dependsOn string) error
@@ -493,7 +494,7 @@ func (s *Store) ApplyProjectConfig(ctx context.Context, projectID string, upsert
 ApplyProjectConfig atomically deletes and upserts a set of DB\-resident project config keys. Deletes run before upserts, so a key present in both collections ends with the upserted value. This is the mutation primitive for replacing logical config selections whose old aliases must not survive beside their canonical key.
 
 <a name="Store.ApproveTask"></a>
-### func \(\*Store\) [ApproveTask](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/tasks.go#L779>)
+### func \(\*Store\) [ApproveTask](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/tasks.go#L781>)
 
 ```go
 func (s *Store) ApproveTask(ctx context.Context, planID, taskID string) (found, changed bool, err error)
@@ -511,7 +512,7 @@ func (s *Store) Backup(ctx context.Context, destDir string) (string, error)
 Backup writes a consistent point\-in\-time copy of the store database into destDir using SQLite's \`VACUUM INTO\`, which — unlike a raw file copy — is safe to run against a live database \(it takes a read transaction and produces a compacted, fully\-consistent snapshot even while other connections are writing under WAL\). Returns the path to the backup file.
 
 <a name="Store.ClaimNextReady"></a>
-### func \(\*Store\) [ClaimNextReady](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/tasks.go#L296>)
+### func \(\*Store\) [ClaimNextReady](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/tasks.go#L297>)
 
 ```go
 func (s *Store) ClaimNextReady(ctx context.Context, planID, sessionID, workerID string) (*Task, error)
@@ -583,7 +584,7 @@ func (s *Store) CreateSession(ctx context.Context, o SessionOpts) (string, error
 CreateSession inserts a session row. Returns the session id. The row lifetime matches one supervisor or client process attached to this DB.
 
 <a name="Store.CreateTask"></a>
-### func \(\*Store\) [CreateTask](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/tasks.go#L93>)
+### func \(\*Store\) [CreateTask](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/tasks.go#L94>)
 
 ```go
 func (s *Store) CreateTask(ctx context.Context, o CreateTaskOpts) error
@@ -646,7 +647,7 @@ func (s *Store) GetProjectConfig(ctx context.Context, projectID string) (map[str
 GetProjectConfig returns all DB\-resident config key/value pairs for a project. Values are stored as JSON\-encoded scalars/arrays/objects \(the caller decodes\); this layer treats them as opaque strings.
 
 <a name="Store.GetTask"></a>
-### func \(\*Store\) [GetTask](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/tasks.go#L377>)
+### func \(\*Store\) [GetTask](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/tasks.go#L378>)
 
 ```go
 func (s *Store) GetTask(ctx context.Context, planID, id string) (*Task, error)
@@ -718,7 +719,7 @@ func (s *Store) ListRunningWorkers(ctx context.Context) ([]RunningWorker, error)
 ListRunningWorkers returns every worker row currently status='running', with the worker id and its current plan/task. It is the read backing the status reply's per\-worker detail so a client \(the GUI\) can name a specific worker to kill. Workers with no assigned task are still listed \(PlanID/TaskID empty\).
 
 <a name="Store.ListTaskEvents"></a>
-### func \(\*Store\) [ListTaskEvents](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/tasks.go#L439>)
+### func \(\*Store\) [ListTaskEvents](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/tasks.go#L440>)
 
 ```go
 func (s *Store) ListTaskEvents(ctx context.Context, planID, taskID string, limit int) ([]Event, error)
@@ -727,7 +728,7 @@ func (s *Store) ListTaskEvents(ctx context.Context, planID, taskID string, limit
 ListTaskEvents returns the most recent events for one task first.
 
 <a name="Store.ListTasks"></a>
-### func \(\*Store\) [ListTasks](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/tasks.go#L398>)
+### func \(\*Store\) [ListTasks](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/tasks.go#L399>)
 
 ```go
 func (s *Store) ListTasks(ctx context.Context, planID string, statuses []TaskStatus) ([]Task, error)
@@ -736,7 +737,7 @@ func (s *Store) ListTasks(ctx context.Context, planID string, statuses []TaskSta
 ListTasks returns tasks for one plan, optionally filtered by status.
 
 <a name="Store.MarkBlocked"></a>
-### func \(\*Store\) [MarkBlocked](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/tasks.go#L650>)
+### func \(\*Store\) [MarkBlocked](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/tasks.go#L651>)
 
 ```go
 func (s *Store) MarkBlocked(ctx context.Context, planID, taskID, sessionID string, payload EventPayload) error
@@ -745,7 +746,7 @@ func (s *Store) MarkBlocked(ctx context.Context, planID, taskID, sessionID strin
 MarkBlocked releases a running task into the blocked set so an operator can later requeue or otherwise intervene.
 
 <a name="Store.MarkDone"></a>
-### func \(\*Store\) [MarkDone](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/tasks.go#L469>)
+### func \(\*Store\) [MarkDone](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/tasks.go#L470>)
 
 ```go
 func (s *Store) MarkDone(ctx context.Context, planID, taskID, sessionID string, evidenceJSON string) ([]Task, error)
@@ -754,7 +755,7 @@ func (s *Store) MarkDone(ctx context.Context, planID, taskID, sessionID string, 
 MarkDone transitions a running task to done, logs the event, and returns the set of newly\-ready downstream tasks.
 
 <a name="Store.MarkFailed"></a>
-### func \(\*Store\) [MarkFailed](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/tasks.go#L530>)
+### func \(\*Store\) [MarkFailed](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/tasks.go#L531>)
 
 ```go
 func (s *Store) MarkFailed(ctx context.Context, planID, taskID, sessionID, reason string, maxRetries int) (retried bool, err error)
@@ -763,7 +764,7 @@ func (s *Store) MarkFailed(ctx context.Context, planID, taskID, sessionID, reaso
 MarkFailed transitions a running task, owned by sessionID, to failed or retries. See MarkFailedWithPayload.
 
 <a name="Store.MarkFailedWithPayload"></a>
-### func \(\*Store\) [MarkFailedWithPayload](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/tasks.go#L546>)
+### func \(\*Store\) [MarkFailedWithPayload](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/tasks.go#L547>)
 
 ```go
 func (s *Store) MarkFailedWithPayload(ctx context.Context, planID, taskID, sessionID string, payload EventPayload, maxRetries int) (retried bool, err error)
@@ -803,7 +804,7 @@ func (s *Store) ProjectSpendByProvider(ctx context.Context, projectID string) (m
 ProjectSpendByProvider sums cost\_usd for one project, grouped by provider. Used to enforce a per\-provider spend cap before dispatch.
 
 <a name="Store.Ready"></a>
-### func \(\*Store\) [Ready](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/tasks.go#L263>)
+### func \(\*Store\) [Ready](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/tasks.go#L264>)
 
 ```go
 func (s *Store) Ready(ctx context.Context, planID string) ([]Task, error)
@@ -844,7 +845,7 @@ func (s *Store) RecordSpend(ctx context.Context, o RecordSpendOpts) error
 RecordSpend appends one spend row for a completed provider turn. Used by the orchestrator to accumulate provider.Usage.CostUSD per project so spend caps \(configured per provider/variant\) can be enforced before the next dispatch.
 
 <a name="Store.ReleaseClaim"></a>
-### func \(\*Store\) [ReleaseClaim](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/tasks.go#L621>)
+### func \(\*Store\) [ReleaseClaim](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/tasks.go#L622>)
 
 ```go
 func (s *Store) ReleaseClaim(ctx context.Context, planID, taskID, sessionID, reason string) error
@@ -889,7 +890,7 @@ func (s *Store) SetWorkerTask(ctx context.Context, workerID, planID, taskID stri
 SetWorkerTask updates the currently assigned plan/task for one worker row and refreshes its heartbeat.
 
 <a name="Store.StatusCounts"></a>
-### func \(\*Store\) [StatusCounts](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/tasks.go#L217>)
+### func \(\*Store\) [StatusCounts](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/tasks.go#L218>)
 
 ```go
 func (s *Store) StatusCounts(ctx context.Context) (StatusCounts, error)

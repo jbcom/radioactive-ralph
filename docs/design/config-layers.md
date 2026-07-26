@@ -81,6 +81,36 @@ set of visible, independently supervised tasks instead of collapsing into one
 opaque provider invocation. The plural key wins when both forms are present.
 Empty, non-string, or duplicate pool entries fail loudly.
 
+## Provider turn and stall bounds
+
+Provider execution has two independent bounds:
+
+- `turn_timeout` is the absolute wall-clock ceiling for the complete
+  `Runner.Run`, including declarative retries. Its default is 30 minutes and
+  its hard maximum is 24 hours.
+- `stall_timeout` is the renewable no-progress lease. Any provider stdout or
+  stderr bytes renew it, including partial structured records, but progress
+  never changes `turn_timeout`. Its default is 3 minutes and hard maximum is
+  1 hour.
+
+Both values use Go duration strings and must be positive:
+
+```toml
+turn_timeout = "45m"
+stall_timeout = "4m"
+
+[projects."PROJECT_ID"]
+turn_timeout = "90m"
+stall_timeout = "8m"
+```
+
+The virtual USER value is the default for every provider. A project value
+overrides it for that project's selected provider or pool. A typed
+`provider.Request` override is task-local and has highest precedence. Omitted
+keys retain the bounded defaults; zero, negative, malformed, and over-maximum
+values fail before dispatch. The stall value is never reused as the total turn
+deadline.
+
 Process-wide concurrency is a supervisor resource limit, not project
 identity. Set it on the environment of the supervisor process, using the
 platform-specific form below.

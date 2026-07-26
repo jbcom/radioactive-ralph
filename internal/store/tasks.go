@@ -58,6 +58,7 @@ type EventPayload struct {
 	ApprovalRequired  bool     `json:"approval_required,omitempty"`
 	Provider          string   `json:"provider,omitempty"`
 	ProviderSessionID string   `json:"provider_session_id,omitempty"`
+	FailureCategory   string   `json:"failure_category,omitempty"`
 	OperatorAction    string   `json:"operator_action,omitempty"`
 }
 
@@ -734,6 +735,7 @@ func isZeroPayload(payload EventPayload) bool {
 		!payload.ApprovalRequired &&
 		payload.Provider == "" &&
 		payload.ProviderSessionID == "" &&
+		payload.FailureCategory == "" &&
 		payload.OperatorAction == ""
 }
 

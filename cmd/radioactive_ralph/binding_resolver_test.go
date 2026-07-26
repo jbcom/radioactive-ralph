@@ -6,8 +6,10 @@ import (
 	"path/filepath"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/jbcom/radioactive-ralph/internal/orch"
+	"github.com/jbcom/radioactive-ralph/internal/provider"
 	"github.com/jbcom/radioactive-ralph/internal/store"
 	"github.com/jbcom/radioactive-ralph/internal/vconfig"
 )
@@ -22,6 +24,63 @@ func openBindingTestStore(t *testing.T) *store.Store {
 	}
 	t.Cleanup(func() { _ = st.Close() })
 	return st
+}
+
+func TestStoreBindingResolverAppliesProjectTimeoutsOverUserDefaults(t *testing.T) {
+	ctx := context.Background()
+	st := openBindingTestStore(t)
+	userID, err := vconfig.UserScopeProjectID(ctx, st)
+	if err != nil {
+		t.Fatalf("UserScopeProjectID: %v", err)
+	}
+	if err := st.SetProjectConfig(ctx, userID, turnTimeoutConfigKey, `"45m"`); err != nil {
+		t.Fatalf("set user turn timeout: %v", err)
+	}
+	if err := st.SetProjectConfig(ctx, userID, stallTimeoutConfigKey, `"4m"`); err != nil {
+		t.Fatalf("set user stall timeout: %v", err)
+	}
+	projectID, err := st.CreateProject(ctx, "timeout-project", []store.Fingerprint{
+		{Kind: store.FingerprintKindAbsPath, Value: t.TempDir()},
+	})
+	if err != nil {
+		t.Fatalf("CreateProject: %v", err)
+	}
+	if err := st.SetProjectConfig(ctx, projectID, stallTimeoutConfigKey, `"90s"`); err != nil {
+		t.Fatalf("set project stall timeout: %v", err)
+	}
+	projectOverlay := fmt.Sprintf(`{"%s":{"stall_timeout":"75s"}}`, projectID)
+	if err := st.SetProjectConfig(ctx, userID, "projects", projectOverlay); err != nil {
+		t.Fatalf("set user project timeout overlay: %v", err)
+	}
+
+	binding, err := storeBindingResolver(st)(ctx, projectID, false, orch.BindingDispatch)
+	if err != nil {
+		t.Fatalf("resolve binding: %v", err)
+	}
+	limits, err := provider.ResolveTurnLimits(binding, provider.Request{})
+	if err != nil {
+		t.Fatalf("ResolveTurnLimits: %v", err)
+	}
+	if limits.TurnTimeout != 45*time.Minute || limits.StallTimeout != 75*time.Second {
+		t.Fatalf("limits = %+v, want user turn plus highest-precedence project-stanza stall", limits)
+	}
+}
+
+func TestStoreBindingResolverRejectsNonStringTimeout(t *testing.T) {
+	ctx := context.Background()
+	st := openBindingTestStore(t)
+	projectID, err := st.CreateProject(ctx, "invalid-timeout-project", []store.Fingerprint{
+		{Kind: store.FingerprintKindAbsPath, Value: t.TempDir()},
+	})
+	if err != nil {
+		t.Fatalf("CreateProject: %v", err)
+	}
+	if err := st.SetProjectConfig(ctx, projectID, turnTimeoutConfigKey, `300`); err != nil {
+		t.Fatalf("set invalid timeout: %v", err)
+	}
+	if _, err := storeBindingResolver(st)(ctx, projectID, false, orch.BindingDispatch); err == nil {
+		t.Fatal("resolver accepted numeric timeout instead of a duration string")
+	}
 }
 
 // TestStoreBindingResolverHonorsProjectConfig proves stored virtual config
