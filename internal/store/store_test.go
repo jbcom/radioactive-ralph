@@ -23,6 +23,76 @@ func TestOpenCapsConnectionPool(t *testing.T) {
 	}
 }
 
+// TestOpenSetsWALJournalMode pins the durability mode the rest of this suite
+// assumes. journal_mode is deliberately NOT a DSN _pragma (setting it takes a
+// database lock, so a DSN pragma would re-run it on every newly opened pooled
+// connection); Open sets it once via ensureJournalModeWAL. Nothing else asserts
+// the resulting mode, so a regression to the DSN form — or a silent failure to
+// apply it — would otherwise only surface as lock flakiness under load.
+func TestOpenSetsWALJournalMode(t *testing.T) {
+	s := openTestStore(t)
+	var mode string
+	if err := s.DB().QueryRow("PRAGMA journal_mode").Scan(&mode); err != nil {
+		t.Fatalf("read journal_mode: %v", err)
+	}
+	if !strings.EqualFold(mode, "wal") {
+		t.Fatalf("journal_mode = %q, want wal", mode)
+	}
+}
+
+// TestDSNOmitsJournalMode guards the specific regression: journal_mode as a DSN
+// _pragma runs the lock-taking pragma on every pooled connection.
+func TestDSNOmitsJournalMode(t *testing.T) {
+	dsn := DSN(filepath.Join(t.TempDir(), "store.db"))
+	if strings.Contains(strings.ToLower(dsn), "journal_mode") {
+		t.Fatalf("DSN must not set journal_mode as a per-connection pragma: %s", dsn)
+	}
+	// The pragmas that ARE safe per-connection must remain.
+	for _, want := range []string{"_txlock=immediate", "foreign_keys(1)", "busy_timeout(5000)", "synchronous(NORMAL)"} {
+		if !strings.Contains(dsn, want) {
+			t.Errorf("DSN missing %q: %s", want, dsn)
+		}
+	}
+}
+
+// TestConcurrentOpenersOfFreshDBAllSucceed covers the race the DSN form made
+// worse: several processes opening the same brand-new database at once each try
+// to switch it to WAL, and only one can hold the database lock to do it. Every
+// opener must still end up with a usable WAL store rather than a SQLITE_BUSY
+// failure from connection setup.
+func TestConcurrentOpenersOfFreshDBAllSucceed(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "store.db")
+	const openers = 8
+
+	var wg sync.WaitGroup
+	errs := make([]error, openers)
+	modes := make([]string, openers)
+	for i := range openers {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			s, err := Open(context.Background(), Options{DSN: DSN(dbPath)})
+			if err != nil {
+				errs[i] = err
+				return
+			}
+			defer func() { _ = s.Close() }()
+			errs[i] = s.DB().QueryRow("PRAGMA journal_mode").Scan(&modes[i])
+		}(i)
+	}
+	wg.Wait()
+
+	for i, err := range errs {
+		if err != nil {
+			t.Errorf("opener %d: %v", i, err)
+			continue
+		}
+		if !strings.EqualFold(modes[i], "wal") {
+			t.Errorf("opener %d journal_mode = %q, want wal", i, modes[i])
+		}
+	}
+}
+
 // TestConcurrentWritersDoNotLock exercises many goroutines writing concurrently
 // through the bounded pool and asserts none hits "database is locked": WAL +
 // _txlock=immediate + busy_timeout serialize the single writer cleanly instead

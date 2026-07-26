@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/jbcom/radioactive-ralph/internal/store/schema"
 )
@@ -14,6 +15,15 @@ import (
 // currentSchemaVersion is bumped whenever a new NNNN_*.up.sql ships.
 // The binary refuses to open a DB whose user_version exceeds this.
 const currentSchemaVersion = 2
+
+// migrationBusyAttempts and migrationBusyBackoff bound how long a losing
+// concurrent opener waits for the winner's DDL to commit. Each retry re-reads
+// user_version inside its own transaction, so the wait ends as soon as the
+// winner commits rather than running the full budget.
+const (
+	migrationBusyAttempts = 20
+	migrationBusyBackoff  = 25 * time.Millisecond
+)
 
 // Migrate brings db up to currentSchemaVersion by applying any pending
 // *.up.sql migrations in lexical order.
@@ -44,7 +54,11 @@ func Migrate(db *sql.DB) error {
 		if err != nil {
 			return fmt.Errorf("store: read %s: %w", m.name, err)
 		}
-		if err := applyMigration(db, m.version, string(body)); err != nil {
+		// A concurrent first-opener may hold the write lock. _txlock=immediate
+		// plus busy_timeout absorbs most of that wait, but a slow DDL under a
+		// loaded runner can still exhaust it, and losing a race we are about to
+		// no-op on must not fail the open.
+		if err := applyMigrationWithRetry(db, m.version, string(body)); err != nil {
 			return fmt.Errorf("store: apply %s: %w", m.name, err)
 		}
 	}
@@ -87,14 +101,53 @@ func listMigrations(fsys fs.FS, suffix string) ([]migration, error) {
 	return out, nil
 }
 
+// applyMigrationWithRetry applies one migration, retrying while the database is
+// locked by a concurrent opener. Each attempt re-reads user_version inside its
+// transaction, so a retry that finds the migration already applied returns
+// successfully rather than re-running the DDL.
+func applyMigrationWithRetry(db *sql.DB, version int, body string) error {
+	var lastErr error
+	for attempt := range migrationBusyAttempts {
+		err := applyMigration(db, version, body)
+		if err == nil {
+			return nil
+		}
+		if !isSQLiteBusy(err) {
+			return err
+		}
+		lastErr = err
+		time.Sleep(migrationBusyBackoff * time.Duration(attempt+1))
+	}
+	return fmt.Errorf("still busy after %d attempts: %w", migrationBusyAttempts, lastErr)
+}
+
 // applyMigration runs body inside a transaction and bumps user_version on
 // success.
+//
+// The version is re-read INSIDE the transaction, which is what makes concurrent
+// first-openers safe. Migrate's outer read happens before any lock is held, so
+// several processes opening the same fresh database can all conclude "version 0,
+// apply 0001". The DSN sets _txlock=immediate, so Begin here takes SQLite's
+// write lock up front and exactly one writer reaches the DDL; every other
+// writer re-reads the now-bumped version and skips. Without this second read
+// the losers execute the same CREATE TABLE and fail with "table already
+// exists", turning a routine concurrent start into a hard open failure.
 func applyMigration(db *sql.DB, version int, body string) error {
 	tx, err := db.Begin()
 	if err != nil {
 		return fmt.Errorf("begin: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
+
+	var current int
+	if err := tx.QueryRow("PRAGMA user_version").Scan(&current); err != nil {
+		return fmt.Errorf("read user_version in tx: %w", err)
+	}
+	if current >= version {
+		// Another opener applied this migration while we waited for the lock.
+		// Its DDL and version bump committed together, so there is nothing to do.
+		return nil
+	}
 
 	if _, err := tx.Exec(body); err != nil {
 		return fmt.Errorf("exec: %w", err)

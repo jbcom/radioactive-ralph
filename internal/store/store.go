@@ -18,11 +18,14 @@ package store
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jonboulle/clockwork"
+	"modernc.org/sqlite"
 	_ "modernc.org/sqlite" // pure-Go driver; FTS5 compiled in
 )
 
@@ -55,11 +58,16 @@ type Store struct {
 // The path is percent-encoded per the SQLite file: URI rules so a dbPath
 // containing '?', '#', or '%' is not misparsed as URI syntax and pointed at
 // the wrong database.
+// journal_mode is deliberately NOT a DSN _pragma. It is a database-wide,
+// persistent setting, but a DSN _pragma runs on every newly opened pooled
+// connection, and setting journal_mode takes a lock on the database. With a
+// pool, that turns each new connection into a lock acquisition that can lose to
+// a concurrent writer and fail the open with SQLITE_BUSY. Open sets it once,
+// after Ping, via ensureJournalModeWAL.
 func DSN(dbPath string) string {
 	return "file:" + escapeDSNPath(dbPath) +
 		"?_txlock=immediate" +
 		"&_pragma=foreign_keys(1)" +
-		"&_pragma=journal_mode(WAL)" +
 		"&_pragma=busy_timeout(5000)" +
 		"&_pragma=synchronous(NORMAL)"
 }
@@ -138,12 +146,96 @@ func Open(ctx context.Context, opts Options) (*Store, error) {
 		return nil, fmt.Errorf("store: enable FK: %w", err)
 	}
 
+	if err := ensureJournalModeWAL(ctx, db); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+
 	if err := Migrate(db); err != nil {
 		_ = db.Close()
 		return nil, err
 	}
 
 	return &Store{db: db, clock: opts.Clock, uuid: opts.UUID}, nil
+}
+
+// journalModeWALAttempts and journalModeWALBackoff bound the retry window for
+// the one-time WAL switch. Concurrent first-openers of the same fresh database
+// can race here: whoever loses sees SQLITE_BUSY while the winner holds the
+// database lock. The winner's switch is persistent, so a loser only needs to
+// wait long enough to observe the mode it wanted, which is why the wait is
+// short and finite rather than an unbounded block.
+const (
+	journalModeWALAttempts = 20
+	journalModeWALBackoff  = 25 * time.Millisecond
+
+	// SQLite primary result codes for the two retryable lock conditions.
+	sqlite3BusyCode   = 5
+	sqlite3LockedCode = 6
+)
+
+// ensureJournalModeWAL sets the database-wide WAL journal mode exactly once per
+// Open, after the pool is live. journal_mode cannot be a DSN _pragma: it would
+// re-run on every newly opened pooled connection, and because setting it takes
+// a database lock, a pool under load would turn routine connection creation
+// into a lock acquisition that can fail with SQLITE_BUSY.
+//
+// The pragma returns the resulting mode, so success is verified by reading it
+// back rather than by trusting a nil error. A database already in WAL is the
+// common case on reopen and returns "wal" immediately.
+func ensureJournalModeWAL(ctx context.Context, db *sql.DB) error {
+	var lastErr error
+	for attempt := range journalModeWALAttempts {
+		var mode string
+		// PRAGMA journal_mode returns the mode it settled on.
+		err := db.QueryRowContext(ctx, "PRAGMA journal_mode = WAL").Scan(&mode)
+		if err == nil {
+			if strings.EqualFold(mode, "wal") {
+				return nil
+			}
+			// A non-WAL result with no error means something else owns the
+			// mode (an in-memory or temp database cannot be WAL). Report the
+			// mode instead of silently continuing on the wrong durability.
+			return fmt.Errorf("store: journal_mode = %q, want wal", mode)
+		}
+		lastErr = err
+		if !isSQLiteBusy(err) {
+			return fmt.Errorf("store: set journal_mode=WAL: %w", err)
+		}
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("store: set journal_mode=WAL: %w", ctx.Err())
+		case <-time.After(journalModeWALBackoff * time.Duration(attempt+1)):
+		}
+	}
+	return fmt.Errorf(
+		"store: set journal_mode=WAL: still busy after %d attempts: %w",
+		journalModeWALAttempts, lastErr)
+}
+
+// isSQLiteBusy reports whether err is a SQLITE_BUSY/SQLITE_LOCKED condition,
+// which is retryable, as opposed to a structural failure that is not.
+//
+// modernc.org/sqlite reports these through *sqlite.Error with the SQLite
+// primary result code, so match on the code. Bare substring matching on the
+// message is deliberately avoided: the driver's text varies by call site, and
+// matching loose fragments risks retrying a non-busy error forever.
+func isSQLiteBusy(err error) bool {
+	if err == nil {
+		return false
+	}
+	var serr *sqlite.Error
+	if errors.As(err, &serr) {
+		// Primary result codes; extended codes share the low byte.
+		switch serr.Code() & 0xff {
+		case sqlite3BusyCode, sqlite3LockedCode:
+			return true
+		}
+	}
+	// Fallback for errors that lost their type crossing a boundary.
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "database is locked") ||
+		strings.Contains(msg, "database table is locked")
 }
 
 // Close releases DB resources.
