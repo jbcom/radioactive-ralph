@@ -70,7 +70,7 @@ func processAlreadyExited(process *os.Process) (bool, error) {
 		return n > 0 && poll[0].Revents&(unix.POLLIN|unix.POLLHUP) != 0, nil
 	}
 	// Match waitProcessExited's older-kernel path. WNOHANG makes this safe
-	// inside lifecycle.force's mutex; WNOWAIT preserves the zombie so the
+	// inside claimTermination's mutex; WNOWAIT preserves the zombie so the
 	// caller can perform group cleanup before cmd.Wait reaps it.
 	var info unix.Siginfo
 	err = retryInterruptedSyscall(func() error {

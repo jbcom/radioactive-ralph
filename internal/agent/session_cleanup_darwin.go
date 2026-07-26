@@ -50,11 +50,18 @@ func cleanupOriginalProcessSession(
 			if sessionErr != nil || candidateSession != sessionID {
 				continue
 			}
-			if int(candidate.Eproc.Pgid) != process.Pid || !originalGroupSignaled {
+			if int(candidate.Eproc.Pgid) != process.Pid {
 				return fmt.Errorf(
-					"agent: Darwin cannot safely signal PTY session member %d in process group %d",
+					"agent: Darwin cannot safely signal escaped PTY session member %d in process group %d",
 					pid,
 					candidate.Eproc.Pgid,
+				)
+			}
+			if !originalGroupSignaled {
+				return fmt.Errorf(
+					"agent: original PTY process group %d was not signaled; live member %d remains",
+					process.Pid,
+					pid,
 				)
 			}
 			ordinaryGroupMembers = append(ordinaryGroupMembers, pid)

@@ -298,9 +298,10 @@ terminates immediately, and Codex `turn.failed` dominates exit zero and the
 last-message file even after diagnostic exhaustion. Codex records are fully
 retained through a measured 4 MiB inspection threshold (1 MiB Darwin arm64
 `ARG_MAX`, common quote/backslash JSON expansion, and envelope headroom).
-Complete event objects require one case-sensitive, first top-level `type`;
-reordered or duplicate discriminators fail closed, while valid retained objects
-without that exact key remain pane noise. Beyond 4 MiB, records cross only a
+Complete event objects accept one case-sensitive top-level `type` in any key
+position because JSON object order is not semantic; duplicate discriminators
+fail closed, while valid retained objects without that exact key remain pane
+noise. Beyond 4 MiB, records cross only a
 bounded, unbuffered prefix framing seam: an immediate top-level
 `type=turn.failed` remains authoritative, while every other structured or
 all-whitespace/inconclusive prefix fails closed because later reordering or

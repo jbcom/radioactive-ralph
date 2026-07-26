@@ -3,16 +3,25 @@ package provider
 import (
 	"context"
 	"errors"
+	"os/exec"
 	"runtime"
 	"strings"
 	"testing"
 	"time"
 )
 
+func requirePython3(t *testing.T) {
+	t.Helper()
+	if _, err := exec.LookPath("python3"); err != nil {
+		t.Skipf("python3 unavailable: %v", err)
+	}
+}
+
 func TestCodexRunnerRejectsStructuredRecordBeyondInspectionBound(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("shell-script fake CLI is Unix-only")
 	}
+	requirePython3(t)
 	bin := writeFakeCLI(t, "fake-codex-six-megabyte-jsonl.sh", `#!/bin/sh
 out=""
 previous=""
@@ -45,6 +54,7 @@ func TestCodexRunnerAcceptsOfficial0145CommandEventWithinInspectionBound(t *test
 	if runtime.GOOS == "windows" {
 		t.Skip("shell-script fake CLI is Unix-only")
 	}
+	requirePython3(t)
 	bin := writeFakeCLI(t, "fake-codex-official-command-event.sh", `#!/bin/sh
 out=""
 previous=""
@@ -74,6 +84,7 @@ func TestCodexRunnerPreservesSmallFailureAfterLargeRetainedOfficialEvent(t *test
 	if runtime.GOOS == "windows" {
 		t.Skip("shell-script fake CLI is Unix-only")
 	}
+	requirePython3(t)
 	bin := writeFakeCLI(t, "fake-codex-large-then-error.sh", `#!/bin/sh
 python3 -c 'import json,sys; event={"type":"item.completed","item":{"id":"item-1","type":"command_execution","command":"c"*(70<<10),"aggregated_output":"\x00"*(512<<10),"exit_code":0,"status":"completed"}}; json.dump(event,sys.stdout,separators=(",",":")); sys.stdout.write("\n"); sys.stdout.write("{\"type\":\"error\",\"message\":\"quota exhausted AFTER-LARGE-SECRET\"}\n"); sys.stdout.flush()'
 exit 19
@@ -98,6 +109,7 @@ func TestCodexRunnerEndlessNoNewlineOutputHonorsCallerCancellation(t *testing.T)
 	if runtime.GOOS == "windows" {
 		t.Skip("shell-script fake CLI is Unix-only")
 	}
+	requirePython3(t)
 	bin := writeFakeCLI(t, "fake-codex-endless-line.sh", `#!/bin/sh
 python3 -u -c 'import sys
 chunk=b"x"*(64<<10)

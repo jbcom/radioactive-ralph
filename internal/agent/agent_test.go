@@ -12,6 +12,7 @@ import (
 	"errors"
 	"io"
 	"os"
+	"os/exec"
 	"strconv"
 	"strings"
 	"sync"
@@ -143,6 +144,9 @@ done:
 }
 
 func TestAgentConfiguredLargeLineIsDrained(t *testing.T) {
+	if _, err := exec.LookPath("python3"); err != nil {
+		t.Skipf("python3 unavailable: %v", err)
+	}
 	const payloadBytes = 2 << 20
 	a, err := Start(context.Background(), Options{
 		Command:                 "python3",
@@ -520,6 +524,23 @@ func TestReadOutputLineContracts(t *testing.T) {
 		}
 		if discarded {
 			t.Fatal("exact-limit line was discarded")
+		}
+		if got := string(line); got != payload+"\n" {
+			t.Fatalf("line = %q, want normalized newline", got)
+		}
+	})
+
+	t.Run("exact limit and bare CR at EOF", func(t *testing.T) {
+		const payload = "123456789012345"
+		line, discarded, err := newOutputLineReader(
+			strings.NewReader(payload+"\r"),
+			nil,
+		).nextLine(
+			len(payload),
+			RejectOversizeOutput,
+		)
+		if err != nil || discarded {
+			t.Fatalf("bare-CR result = (%q, %v, %v), want accepted line", line, discarded, err)
 		}
 		if got := string(line); got != payload+"\n" {
 			t.Fatalf("line = %q, want normalized newline", got)

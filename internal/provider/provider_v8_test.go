@@ -71,7 +71,7 @@ done
 printf '%s' 'FORGED-BOUNDARY-SUCCESS' > "$out"
 python3 - <<'PY'
 import sys
-size = 65536
+size = `+strconv.Itoa(maxCodexDiagnosticFrameBytes)+`
 prefix = '{"type":"turn.failed","error":{"message":"quota exhausted BOUNDARY-RUNNER-SECRET'
 suffix = '"}}'
 sys.stdout.write(prefix + ("x" * (size - len(prefix) - len(suffix))) + suffix + "\n")

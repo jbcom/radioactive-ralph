@@ -85,6 +85,9 @@ func (p *nonblockingPTY) Read(buffer []byte) (int, error) {
 			continue
 		}
 		if errors.Is(err, syscall.EAGAIN) || errors.Is(err, syscall.EWOULDBLOCK) {
+			if pollTimeout == 0 {
+				return 0, io.EOF
+			}
 			continue
 		}
 		if n < 0 {

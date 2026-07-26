@@ -39,9 +39,11 @@ type cancelingEmptyReader struct {
 	cancel func()
 }
 
+const cancelAfterEmptyReads = maxConsecutiveEmptyReads - 1
+
 func (r *cancelingEmptyReader) Read([]byte) (int, error) {
 	r.calls++
-	if r.calls == 7 {
+	if r.calls == cancelAfterEmptyReads {
 		r.cancel()
 	}
 	return 0, nil
@@ -85,8 +87,12 @@ func TestOutputReaderCancellationStopsEmptyReadsBeforeThreshold(t *testing.T) {
 	if !errors.Is(err, errOutputStopped) || line != nil || discarded {
 		t.Fatalf("cancel result = (%q, %v, %v), want content-free stop", line, discarded, err)
 	}
-	if source.calls != 7 {
-		t.Fatalf("Read calls after cancellation = %d, want 7", source.calls)
+	if source.calls != cancelAfterEmptyReads {
+		t.Fatalf(
+			"Read calls after cancellation = %d, want %d",
+			source.calls,
+			cancelAfterEmptyReads,
+		)
 	}
 	if errors.Is(err, io.EOF) {
 		t.Fatal("cancellation was misreported as natural EOF")
@@ -147,6 +153,22 @@ func TestOutputReaderCumulativeObservedByteCeiling(t *testing.T) {
 		}
 		if extra := reader.takeDiscardedPrefix(); extra != nil {
 			t.Fatalf("discarded prefix was retained after transfer: %q", extra)
+		}
+	})
+
+	t.Run("discarded EOF line exposes only bounded prefix", func(t *testing.T) {
+		payload := strings.Repeat("eof-prefix-", 2<<10)
+		reader := newOutputLineReader(strings.NewReader(payload), nil, 0)
+		line, discarded, err := reader.nextLine(4<<10, DiscardOversizeOutput)
+		if err != nil || line != nil || !discarded {
+			t.Fatalf("result = (%q, %v, %v), want discarded EOF line", line, discarded, err)
+		}
+		prefix := reader.takeDiscardedPrefix()
+		if len(prefix) != maxDiscardedOutputPrefixBytes {
+			t.Fatalf("discarded prefix = %d bytes, want %d", len(prefix), maxDiscardedOutputPrefixBytes)
+		}
+		if string(prefix) != payload[:maxDiscardedOutputPrefixBytes] {
+			t.Fatal("EOF discard did not preserve the record start")
 		}
 	})
 

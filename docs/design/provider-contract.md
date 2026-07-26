@@ -118,17 +118,19 @@ subsequent diagnostic payloads before doing more work.
 `turn.failed` is authoritative process state rather than optional diagnostic
 text. Ralph continues recognizing that bounded event after diagnostic
 classification is exhausted, and it dominates an exit code of zero and any
-last-message file. A failed turn therefore cannot be laundered by a misleading
-process status or partial result.
+last-message file. A retained `turn.failed` frame terminates an otherwise
+endless tail immediately, matching the discarded-prefix path. A failed turn
+therefore cannot be laundered by a misleading process status or partial result.
 
 Codex fully retains and validates observational frames through 4 MiB. A
-complete object containing a case-sensitive top-level `type` key must put it
-first and contain it only once; a reordered or duplicate discriminator fails
-closed with a static schema error. A valid object with no exact `type` key, or
-with a non-string value, remains non-authoritative pane noise. The
-complete-frame walk validates JSON and inspects syntax without copying or
-decoding arbitrary values. A `type`-first command/item frame inside this bound
-remains observational even if nested text contains terminal-looking literals.
+complete object may put its case-sensitive top-level `type` key anywhere
+because JSON object order is not semantic, but it must contain that key only
+once; duplicate discriminators fail closed with a static schema error. A valid
+object with no exact `type` key, or with a non-string value, remains
+non-authoritative pane noise. The complete-frame walk validates JSON and
+inspects syntax without copying or decoding arbitrary values. A command/item
+frame inside this bound remains observational even if nested text contains
+terminal-looking literals.
 
 For a line discarded above that threshold, Agent exposes only a 4 KiB prefix
 on a separate, unbuffered framing channel. An immediately recognizable

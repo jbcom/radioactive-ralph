@@ -116,7 +116,7 @@ func (CodexRunner) Run(ctx context.Context, binding Binding, req Request) (Resul
 		codexWatchdogConfig(),
 		func(line []byte) bool {
 			diagnostics.consume(line)
-			return false
+			return diagnostics.failed()
 		},
 		diagnostics.consumeDiscardedPrefix,
 	); err != nil {

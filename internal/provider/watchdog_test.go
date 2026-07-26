@@ -102,6 +102,7 @@ func TestSuperviseAgentSurfacesOutputContractErrorPromptly(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("shell-script fake CLI is Unix-only")
 	}
+	requirePython3(t)
 	bin := writeFakeCLI(t, "fake-over-limit-cli.sh", `#!/bin/sh
 python3 -c 'import sys,time; sys.stdout.write("x" * 1025); sys.stdout.flush(); time.sleep(300)'
 `)

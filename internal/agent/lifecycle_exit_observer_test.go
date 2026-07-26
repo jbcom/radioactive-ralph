@@ -17,6 +17,7 @@ func TestNaturalExitReapedWhileFinalOutputAdmissionIsBlocked(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}
+	t.Cleanup(func() { _ = a.TerminateAndWait() })
 
 	// Deliberately leave Output unread. The unbuffered final-line admission is
 	// blocked, but the kernel observer must still reap and capture status.

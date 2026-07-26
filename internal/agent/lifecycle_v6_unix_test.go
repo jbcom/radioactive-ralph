@@ -226,6 +226,15 @@ wait
 			t.Fatalf("iteration %d no ready line", iteration)
 		}
 		processGroup := a.PID()
+		if processGroup <= 1 {
+			cleanupErr := a.TerminateAndWait()
+			t.Fatalf(
+				"iteration %d PID = %d before termination, want live leader; cleanup: %v",
+				iteration,
+				processGroup,
+				cleanupErr,
+			)
+		}
 		if err := a.TerminateAndWait(); err != nil {
 			t.Fatalf("iteration %d TerminateAndWait: %v", iteration, err)
 		}

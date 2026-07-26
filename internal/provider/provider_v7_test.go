@@ -250,6 +250,48 @@ func TestCodexRunnerTurnFailedDominatesExitZeroAndLastMessage(t *testing.T) {
 	}
 }
 
+func TestCodexRunnerTurnFailedTerminatesEndlessTail(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell-script fake CLI is Unix-only")
+	}
+	bin := writeFakeCLI(t, "fake-codex-turn-failed-endless-tail.sh", `#!/bin/sh
+out=""
+previous=""
+for arg in "$@"; do
+  if [ "$previous" = "--output-last-message" ]; then out="$arg"; fi
+  previous="$arg"
+done
+printf '%s' 'FORGED-ENDLESS-SUCCESS' > "$out"
+printf '%s\n' '{"type":"turn.failed","error":{"message":"quota exhausted ENDLESS-FAILURE-SECRET"}}'
+sleep 300
+`)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	started := time.Now()
+	result, err := CodexRunner{}.Run(ctx, Binding{
+		Name:            "codex",
+		BinaryFromLocal: true,
+		Config:          BindingConfig{Type: "codex", Binary: bin},
+	}, Request{WorkingDir: t.TempDir()})
+	if !errors.Is(err, ErrCodexTurnFailed) {
+		t.Fatalf("Run error = %v, want ErrCodexTurnFailed", err)
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("turn.failed did not terminate the endless tail: %v", err)
+	}
+	if elapsed := time.Since(started); elapsed > 3*time.Second {
+		t.Fatalf("turn.failed convergence took %s, want bounded return", elapsed)
+	}
+	if result != (Result{}) {
+		t.Fatalf("failed result = %+v, want no forged result", result)
+	}
+	for _, secret := range []string{"FORGED-ENDLESS-SUCCESS", "ENDLESS-FAILURE-SECRET"} {
+		if strings.Contains(err.Error(), secret) {
+			t.Fatalf("error surfaced provider payload %q: %v", secret, err)
+		}
+	}
+}
+
 func TestCodexRunnerOversizedTurnFailedDominatesExitZeroAndLastMessage(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("shell-script fake CLI is Unix-only")
@@ -302,6 +344,7 @@ printf '%s' 'oversized command accepted' > "$out"
 python3 - <<'PY'
 import json, sys
 event = {
+    "padding": "reordered benign event",
     "type": "item.completed",
     "item": {
         "type": "command_execution",
@@ -325,7 +368,7 @@ PY
 	}
 }
 
-func TestCodexRunnerLargeRetainedReorderedEventFailsClosed(t *testing.T) {
+func TestCodexRunnerLargeRetainedReorderedFailureRemainsAuthoritative(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("shell-script fake CLI is Unix-only")
 	}
@@ -353,8 +396,8 @@ PY
 		BinaryFromLocal: true,
 		Config:          BindingConfig{Type: "codex", Binary: bin},
 	}, Request{WorkingDir: t.TempDir()})
-	if !errors.Is(err, ErrCodexOversizeSchema) {
-		t.Fatalf("Run error = %v, want ErrCodexOversizeSchema", err)
+	if !errors.Is(err, ErrCodexTurnFailed) {
+		t.Fatalf("Run error = %v, want ErrCodexTurnFailed", err)
 	}
 	if result != (Result{}) {
 		t.Fatalf("failed result = %+v, want no forged last-message result", result)
@@ -478,6 +521,33 @@ func TestReadBoundedAuthoritativeResultRejectsPathIdentitySwap(t *testing.T) {
 	}
 	if raw != nil {
 		t.Fatalf("identity-swapped read returned %q, want no bytes", raw)
+	}
+}
+
+func TestReadBoundedAuthoritativeResultOpenFailureIsStatic(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "result")
+	if err := os.WriteFile(path, []byte("original"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	const secretPath = "AUTHORITATIVE-RESULT-PATH-SECRET"
+	raw, err := readBoundedAuthoritativeResultWithOpener(
+		path,
+		func(string) (*os.File, error) {
+			return nil, &os.PathError{
+				Op:   "open",
+				Path: secretPath,
+				Err:  os.ErrPermission,
+			}
+		},
+	)
+	if err != ErrAuthoritativeResultUnsafe {
+		t.Fatalf("open failure = %v, want exact ErrAuthoritativeResultUnsafe", err)
+	}
+	if strings.Contains(err.Error(), secretPath) {
+		t.Fatalf("open failure surfaced path: %v", err)
+	}
+	if raw != nil {
+		t.Fatalf("open failure returned %q, want no bytes", raw)
 	}
 }
 

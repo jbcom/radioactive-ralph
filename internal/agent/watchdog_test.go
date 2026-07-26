@@ -7,6 +7,7 @@ package agent
 import (
 	"bytes"
 	"context"
+	"os/exec"
 	"regexp"
 	"runtime"
 	"testing"
@@ -46,7 +47,8 @@ func TestDiscardedPrefixPipelineHasThreeConcurrentOwners(t *testing.T) {
 	senderDone := make(chan struct{})
 	go func() {
 		defer close(senderDone)
-		for _, marker := range []byte{'A', 'B', 'C'} {
+		for markerIndex := range discardedPrefixRetentionSlots {
+			marker := byte('A' + markerIndex)
 			// This is readLoop's ownership boundary: allocate one independent
 			// prefix, then offer it through Agent's unbuffered channel.
 			prefix := bytes.Repeat([]byte{marker}, maxDiscardedOutputPrefixBytes)
@@ -68,9 +70,9 @@ func TestDiscardedPrefixPipelineHasThreeConcurrentOwners(t *testing.T) {
 		t.Fatal("provider callback did not receive the first discarded prefix")
 	}
 
-	// A is still owned by the blocked callback. Reaching C proves readLoop's
-	// unbuffered B handoff completed, so Watch owns B while readLoop has already
-	// allocated C. Those are the three owners reserved by the aggregate budget.
+	// A is still owned by the blocked callback. Reaching the final configured
+	// marker proves every earlier unbuffered handoff completed, so all owner
+	// slots reserved by the aggregate budget are simultaneously represented.
 	for allocation := 1; allocation <= discardedPrefixRetentionSlots; allocation++ {
 		select {
 		case <-prefixAllocated:
@@ -143,10 +145,16 @@ func TestWatchdogDetectsStall(t *testing.T) {
 }
 
 func TestWatchdogUsesUnderlyingReadActivityForTrickledPartialLine(t *testing.T) {
+	if _, err := exec.LookPath("python3"); err != nil {
+		t.Skipf("python3 unavailable: %v", err)
+	}
 	a, err := Start(context.Background(), Options{
 		Command: "python3",
 		Args: []string{"-u", "-c", `import sys,time
-for _ in range(5):
+sys.stdout.write("x")
+sys.stdout.flush()
+time.sleep(0.15)
+for _ in range(4):
  sys.stdout.write("x")
  sys.stdout.flush()
  time.sleep(0.04)
@@ -157,15 +165,20 @@ time.sleep(300)`},
 	}
 	defer func() { _ = a.Kill() }()
 
+	select {
+	case <-a.activity:
+	case <-time.After(3 * time.Second):
+		t.Fatal("agent did not report the first underlying byte read")
+	}
 	start := time.Now()
-	sigs := Watch(context.Background(), a, WatchdogConfig{StallTimeout: 100 * time.Millisecond})
+	sigs := Watch(context.Background(), a, WatchdogConfig{StallTimeout: 250 * time.Millisecond})
 	select {
 	case sig := <-sigs:
 		if sig.Kind != Stall {
 			t.Fatalf("first signal = %v, want Stall only after trickle stops", sig.Kind)
 		}
-		if elapsed := time.Since(start); elapsed < 180*time.Millisecond {
-			t.Fatalf("watchdog stalled after %s; underlying 40ms byte reads should reset the 100ms timer", elapsed)
+		if elapsed := time.Since(start); elapsed < 300*time.Millisecond {
+			t.Fatalf("watchdog stalled after %s; underlying 40ms byte reads should reset the 250ms timer", elapsed)
 		}
 	case <-time.After(time.Second):
 		t.Fatal("watchdog did not stall after trickled bytes stopped")

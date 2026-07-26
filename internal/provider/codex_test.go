@@ -244,8 +244,11 @@ func TestCodexDiagnosticCollectorWorkBudgetsFailClosed(t *testing.T) {
 		var diagnostics codexDiagnosticCollector
 		frame := []byte(`{"type":"thread.started","padding":"` +
 			secret + strings.Repeat("x", 40<<10) + `"}`)
-		for !diagnostics.full {
+		for attempt := 0; attempt <= maxCodexDiagnosticFrames && !diagnostics.full; attempt++ {
 			diagnostics.consume(frame)
+		}
+		if !diagnostics.full {
+			t.Fatal("diagnostic byte budget did not converge within the frame bound")
 		}
 		assertGenericExhausted(t, &diagnostics, secret)
 		if diagnostics.bytesInspected > maxCodexDiagnosticInspectedBytes {

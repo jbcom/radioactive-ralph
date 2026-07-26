@@ -73,7 +73,7 @@ type codexDiagnosticCollector struct {
 func (c *codexDiagnosticCollector) consume(line []byte) {
 	frame := codexFrameWithoutRecordDelimiter(line)
 	inspection := inspectCodexTopLevelType(frame)
-	if inspection.duplicate || inspection.reordered {
+	if inspection.duplicate {
 		c.oversizeSchema = true
 		c.failClosed()
 		return
@@ -201,10 +201,8 @@ func codexTopLevelTypeFromPrefix(prefix []byte) (kind string, object, typeFirst 
 
 type codexTopLevelTypeInspection struct {
 	kind      string
-	keys      int
 	typeKeys  int
 	duplicate bool
-	reordered bool
 }
 
 func codexFrameWithoutRecordDelimiter(line []byte) []byte {
@@ -235,13 +233,11 @@ func inspectCodexTopLevelType(frame []byte) codexTopLevelTypeInspection {
 		case '"':
 			end := jsonStringEnd(frame, i)
 			if depth == 1 && expectKey {
-				inspection.keys++
 				if jsonStringEqualASCII(frame[i:end], "type") {
 					inspection.typeKeys++
 					if inspection.typeKeys > 1 {
 						inspection.duplicate = true
 					} else {
-						inspection.reordered = inspection.keys != 1
 						inspection.kind = codexTopLevelStringValue(frame, end)
 					}
 				}

@@ -105,7 +105,7 @@ func readBoundedAuthoritativeResultWithOpener(
 ) ([]byte, error) {
 	pathInfo, err := snapshotAuthoritativeResultInfo(path)
 	if err != nil {
-		return nil, err
+		return nil, ErrAuthoritativeResultUnsafe
 	}
 	if !pathInfo.Mode().IsRegular() {
 		return nil, ErrAuthoritativeResultUnsafe
@@ -119,13 +119,13 @@ func readBoundedAuthoritativeResultWithOpener(
 	// regular-file swap in the identity-snapshot-to-open window.
 	file, err := openFile(path)
 	if err != nil {
-		return nil, errors.Join(ErrAuthoritativeResultUnsafe, err)
+		return nil, ErrAuthoritativeResultUnsafe
 	}
 	defer func() { _ = file.Close() }()
 
 	info, err := file.Stat()
 	if err != nil {
-		return nil, err
+		return nil, ErrAuthoritativeResultUnsafe
 	}
 	if !info.Mode().IsRegular() || !os.SameFile(pathInfo, info) {
 		return nil, ErrAuthoritativeResultUnsafe

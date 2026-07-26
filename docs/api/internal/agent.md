@@ -162,7 +162,7 @@ func Start(ctx context.Context, opts Options) (*Agent, error)
 Start launches opts.Command under a pty and begins streaming its output.
 
 <a name="Agent.Activity"></a>
-### func \(\*Agent\) [Activity](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/agent/output.go#L377>)
+### func \(\*Agent\) [Activity](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/agent/output.go#L387>)
 
 ```go
 func (a *Agent) Activity() <-chan time.Time
@@ -171,7 +171,7 @@ func (a *Agent) Activity() <-chan time.Time
 Activity is a content\-free liveness stream. Its timestamp records when the underlying pty read returned bytes, including while a partial or discarded line is still being drained. The timestamp prevents downstream backpressure from turning an old queued pulse into a fresh stall\-timeout lease.
 
 <a name="Agent.DiscardedOutput"></a>
-### func \(\*Agent\) [DiscardedOutput](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/agent/output.go#L383>)
+### func \(\*Agent\) [DiscardedOutput](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/agent/output.go#L393>)
 
 ```go
 func (a *Agent) DiscardedOutput() <-chan []byte
@@ -216,7 +216,7 @@ func (a *Agent) Output() <-chan []byte
 Output is the unbuffered line\-oriented output stream. PTY EOF ends output collection but does not close this channel until process control reaches a natural or explicit terminal result.
 
 <a name="Agent.OutputErr"></a>
-### func \(\*Agent\) [OutputErr](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/agent/output.go#L388>)
+### func \(\*Agent\) [OutputErr](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/agent/output.go#L398>)
 
 ```go
 func (a *Agent) OutputErr() error

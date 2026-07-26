@@ -176,11 +176,19 @@ func superviseAgentWithCallbacks(
 		// Cancellation can race the terminal frame or occur inside a slow
 		// convergence implementation. Recheck only after the process has
 		// converged so neither race can be laundered into success.
-		return errors.Join(primary, convergenceErr, ctx.Err())
+		contextErr := ctx.Err()
+		if contextErr != nil && errors.Is(primary, contextErr) {
+			contextErr = nil
+		}
+		return errors.Join(primary, convergenceErr, contextErr)
 	}
 	wait := func(primary error) error {
 		convergenceErr := convergence.wait(a)
-		return errors.Join(primary, convergenceErr, ctx.Err())
+		contextErr := ctx.Err()
+		if contextErr != nil && errors.Is(primary, contextErr) {
+			contextErr = nil
+		}
+		return errors.Join(primary, convergenceErr, contextErr)
 	}
 	for {
 		select {

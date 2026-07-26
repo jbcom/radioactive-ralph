@@ -167,8 +167,18 @@ func (r *outputLineReader) nextLine(
 						r.discardedPrefix = discardedPrefix
 						return nil, true, nil
 					}
+					if len(line) > 0 && line[len(line)-1] == '\r' {
+						line = line[:len(line)-1]
+					}
 					if len(line) > retainedLineBytes {
-						return oversizeLine(policy)
+						result, wasDiscarded, resultErr := oversizeLine(policy)
+						if wasDiscarded {
+							r.discardedPrefix = append(
+								[]byte(nil),
+								line[:min(len(line), maxDiscardedOutputPrefixBytes)]...,
+							)
+						}
+						return result, wasDiscarded, resultErr
 					}
 					line, _ = appendWithinCap(line, []byte{'\n'}, retainCap)
 					return line, false, nil

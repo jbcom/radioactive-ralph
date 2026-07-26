@@ -3,7 +3,6 @@
 package provider
 
 import (
-	"errors"
 	"os"
 
 	"golang.org/x/sys/windows"
@@ -16,7 +15,7 @@ import (
 func snapshotAuthoritativeResultInfo(path string) (os.FileInfo, error) {
 	file, err := openAuthoritativeResultFile(path)
 	if err != nil {
-		return nil, errors.Join(ErrAuthoritativeResultUnsafe, err)
+		return nil, err
 	}
 	defer func() { _ = file.Close() }()
 	return file.Stat()
