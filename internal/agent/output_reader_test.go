@@ -20,6 +20,19 @@ type resetEmptyReader struct {
 	calls int
 }
 
+type oneByteReader struct {
+	data []byte
+}
+
+func (r *oneByteReader) Read(p []byte) (int, error) {
+	if len(r.data) == 0 {
+		return 0, io.EOF
+	}
+	p[0] = r.data[0]
+	r.data = r.data[1:]
+	return 1, nil
+}
+
 func (r *resetEmptyReader) Read(p []byte) (int, error) {
 	r.calls++
 	switch r.calls {
@@ -96,6 +109,22 @@ func TestOutputReaderCancellationStopsEmptyReadsBeforeThreshold(t *testing.T) {
 	}
 	if errors.Is(err, io.EOF) {
 		t.Fatal("cancellation was misreported as natural EOF")
+	}
+}
+
+func TestOutputReaderReportsEveryPositiveUnderlyingRead(t *testing.T) {
+	source := &oneByteReader{data: []byte("xxxx\n")}
+	readActivity := 0
+	reader := newOutputLineReader(source, func() {
+		readActivity++
+	})
+
+	line, discarded, err := reader.nextLine(64, RejectOversizeOutput)
+	if err != nil || discarded || string(line) != "xxxx\n" {
+		t.Fatalf("result = (%q, %v, %v), want complete line", line, discarded, err)
+	}
+	if readActivity != 5 {
+		t.Fatalf("read activity callbacks = %d, want one for each of 5 positive reads", readActivity)
 	}
 }
 

@@ -200,6 +200,7 @@ time.sleep(300)
 
 func TestGroupSignalConvergesBeforeReturning(t *testing.T) {
 	for iteration := range 10 {
+		var convergenceErr error
 		a, err := Start(context.Background(), Options{
 			Command: "sh",
 			Args: []string{"-c", `
@@ -211,6 +212,16 @@ done
 printf 'ready\n'
 wait
 `},
+			terminateTreeForTest: func(process *os.Process) terminationOutcome {
+				outcome := terminateProcessTree(process)
+				if outcome.terminationErr == nil {
+					convergenceErr = errors.Join(
+						convergenceErr,
+						verifyNoLiveOriginalSessionDescendants(process),
+					)
+				}
+				return outcome
+			},
 		})
 		if err != nil {
 			t.Fatalf("iteration %d Start: %v", iteration, err)
@@ -238,13 +249,11 @@ wait
 		if err := a.TerminateAndWait(); err != nil {
 			t.Fatalf("iteration %d TerminateAndWait: %v", iteration, err)
 		}
-		if err := syscall.Kill(-processGroup, 0); err == nil {
-			_ = syscall.Kill(-processGroup, syscall.SIGKILL)
-			t.Fatalf(
-				"iteration %d process group %d still live after convergence",
-				iteration,
-				processGroup,
-			)
+		if convergenceErr != nil {
+			t.Fatalf("iteration %d process session convergence: %v", iteration, convergenceErr)
+		}
+		if got := a.PID(); got != 0 {
+			t.Fatalf("iteration %d PID after convergence = %d, want 0", iteration, got)
 		}
 	}
 }

@@ -7,7 +7,6 @@ package agent
 import (
 	"bytes"
 	"context"
-	"os/exec"
 	"regexp"
 	"runtime"
 	"testing"
@@ -144,44 +143,61 @@ func TestWatchdogDetectsStall(t *testing.T) {
 	}
 }
 
-func TestWatchdogUsesUnderlyingReadActivityForTrickledPartialLine(t *testing.T) {
-	if _, err := exec.LookPath("python3"); err != nil {
-		t.Skipf("python3 unavailable: %v", err)
+func TestWatchdogUsesReadActivityTimestampForTrickledPartialLine(t *testing.T) {
+	const (
+		stallTimeout = 250 * time.Millisecond
+		readInterval = 40 * time.Millisecond
+		readCount    = 4
+		earlyMargin  = 25 * time.Millisecond
+	)
+	a := &Agent{
+		out:      make(chan []byte),
+		activity: make(chan time.Time, 1),
 	}
-	a, err := Start(context.Background(), Options{
-		Command: "python3",
-		Args: []string{"-u", "-c", `import sys,time
-sys.stdout.write("x")
-sys.stdout.flush()
-time.sleep(0.15)
-for _ in range(4):
- sys.stdout.write("x")
- sys.stdout.flush()
- time.sleep(0.04)
-time.sleep(300)`},
-	})
-	if err != nil {
-		t.Fatalf("Start: %v", err)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	sigs := Watch(ctx, a, WatchdogConfig{StallTimeout: stallTimeout})
+
+	// Synchronize Watch startup before measuring the read-activity extension.
+	// The initial line is only a handshake; the partial reads below never reach
+	// Output and must carry liveness through Activity alone.
+	go func() {
+		a.out <- []byte("watch-ready\n")
+	}()
+	select {
+	case sig := <-sigs:
+		if sig.Kind != Progress {
+			t.Fatalf("startup signal = %v, want Progress", sig.Kind)
+		}
+	case <-time.After(stallTimeout):
+		t.Fatal("watchdog did not admit the startup handshake")
 	}
-	defer func() { _ = a.Kill() }()
+
+	// Model readLoop observing partial-line bytes. No line reaches Output, but
+	// each underlying read advances the watchdog from its actual timestamp.
+	for range readCount {
+		time.Sleep(readInterval)
+		a.noteOutputActivity()
+	}
+	quietSince := time.Now()
 
 	select {
-	case <-a.activity:
-	case <-time.After(3 * time.Second):
-		t.Fatal("agent did not report the first underlying byte read")
+	case sig := <-sigs:
+		t.Fatalf(
+			"watchdog emitted %v after %s of quiet; read activity should reset the %s timer",
+			sig.Kind,
+			time.Since(quietSince),
+			stallTimeout,
+		)
+	case <-time.After(stallTimeout - earlyMargin):
 	}
-	start := time.Now()
-	sigs := Watch(context.Background(), a, WatchdogConfig{StallTimeout: 250 * time.Millisecond})
 	select {
 	case sig := <-sigs:
 		if sig.Kind != Stall {
 			t.Fatalf("first signal = %v, want Stall only after trickle stops", sig.Kind)
 		}
-		if elapsed := time.Since(start); elapsed < 300*time.Millisecond {
-			t.Fatalf("watchdog stalled after %s; underlying 40ms byte reads should reset the 250ms timer", elapsed)
-		}
-	case <-time.After(time.Second):
-		t.Fatal("watchdog did not stall after trickled bytes stopped")
+	case <-time.After(earlyMargin + stallTimeout):
+		t.Fatal("watchdog did not stall after trickled read activity stopped")
 	}
 }
 

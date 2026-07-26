@@ -10,9 +10,9 @@ import (
 )
 
 // cleanupExitedProcessTree kills any descendants that remain in the PTY
-// session after the leader's natural exit. ESRCH is success: no process group
-// remains. The caller holds processLifecycle.mu while the unreaped leader keeps
-// its PID/PGID reserved.
+// session after the leader's natural exit. ESRCH is success: no live session
+// member remains. The caller holds processLifecycle.mu while the unreaped
+// leader keeps its PID/PGID reserved.
 func cleanupExitedProcessTree(process *os.Process) error {
 	if process == nil || process.Pid <= 1 {
 		return nil
