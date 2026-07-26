@@ -192,7 +192,17 @@ func TestStableAdmissionPrecedesAllPublishers(t *testing.T) {
 
 	admission := requireWorkflowJob(t, workflow, "release-admission", path)
 	requireContains(t, admission, `^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$`, path)
-	requireContains(t, admission, "contents: read", path)
+	requireContains(t, admission, "contents: write", path)
+	for _, mutation := range []string{
+		"gh release create",
+		"gh release delete",
+		"gh release edit",
+		"gh release upload",
+		"gh api --method",
+		"gh api -X",
+	} {
+		requireNotContains(t, admission, mutation, path)
+	}
 	requireContains(t, admission, "fetch-depth: 0", path)
 	requireContains(t, admission, `+refs/heads/main:refs/remotes/origin/main`, path)
 	requireContains(t, admission, `git rev-parse "${GITHUB_REF_NAME}^{commit}"`, path)

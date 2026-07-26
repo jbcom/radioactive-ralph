@@ -17,7 +17,9 @@ jobs:
       state: ${{ steps.release_state.outputs.state }}
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      # GitHub hides draft releases from tokens without repository push access.
+      # This job only reads release state; tests reject mutating release commands.
+      contents: write
     steps:
       # Each non-built-in credential has a fixed call-site purpose:
       # PKGS_GITHUB_TOKEN mutates jbcom/pkgs; the Doppler-synced
