@@ -57,7 +57,7 @@ func TestInitMode_ProjectConfigConflictDefaultsToAutoRemove(t *testing.T) {
 
 	// First --init establishes "model" = "stored-model" as the baseline.
 	firstConfig := writeProjectConfigFile(t, t.TempDir(), "stored-model")
-	cmd1 := newRootCmd(context.Background())
+	cmd1 := newTestRootCmd(context.Background())
 	cmd1.SetArgs([]string{"--init", "--project-config-file", firstConfig})
 	if err := cmd1.Execute(); err != nil {
 		t.Fatalf("first --init: %v", err)
@@ -66,7 +66,7 @@ func TestInitMode_ProjectConfigConflictDefaultsToAutoRemove(t *testing.T) {
 	// Second --init tries to change "model" to a conflicting value, with
 	// no --force-override: the conflicting key must be skipped.
 	secondConfig := writeProjectConfigFile(t, t.TempDir(), "incoming-model")
-	cmd2 := newRootCmd(context.Background())
+	cmd2 := newTestRootCmd(context.Background())
 	cmd2.SetArgs([]string{"--init", "--project-config-file", secondConfig})
 	out := captureStdout(t, func() {
 		if err := cmd2.Execute(); err != nil {
@@ -92,14 +92,14 @@ func TestInitMode_ProjectConfigConflictForceOverrideApplies(t *testing.T) {
 	chdir(t, projectDir)
 
 	firstConfig := writeProjectConfigFile(t, t.TempDir(), "stored-model")
-	cmd1 := newRootCmd(context.Background())
+	cmd1 := newTestRootCmd(context.Background())
 	cmd1.SetArgs([]string{"--init", "--project-config-file", firstConfig})
 	if err := cmd1.Execute(); err != nil {
 		t.Fatalf("first --init: %v", err)
 	}
 
 	secondConfig := writeProjectConfigFile(t, t.TempDir(), "incoming-model")
-	cmd2 := newRootCmd(context.Background())
+	cmd2 := newTestRootCmd(context.Background())
 	cmd2.SetArgs([]string{"--init", "--project-config-file", secondConfig, "--force-override"})
 	out := captureStdout(t, func() {
 		if err := cmd2.Execute(); err != nil {

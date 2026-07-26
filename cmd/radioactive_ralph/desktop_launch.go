@@ -21,10 +21,10 @@ import (
 // draw into, so the GUI is the right surface. A bare launch from an actual
 // terminal keeps both TTYs and falls through (handled=false) to the client
 // path, preserving the CLI's existing behavior.
-func maybeLaunchDesktopGUI(ctx context.Context, cmd *cobra.Command) (handled bool, err error) {
+func maybeLaunchDesktopGUI(ctx context.Context, _ *cobra.Command) (handled bool, err error) {
 	stdinTTY := isatty.IsTerminal(os.Stdin.Fd()) || isatty.IsCygwinTerminal(os.Stdin.Fd())
 	stdoutTTY := isatty.IsTerminal(os.Stdout.Fd()) || isatty.IsCygwinTerminal(os.Stdout.Fd())
-	if stdinTTY || stdoutTTY {
+	if !shouldLaunchDesktopGUI(stdinTTY, stdoutTTY) {
 		return false, nil // launched from a terminal — use the CLI/TUI path
 	}
 
@@ -58,4 +58,12 @@ func maybeLaunchDesktopGUI(ctx context.Context, cmd *cobra.Command) (handled boo
 
 	ctrl := gui.NewLiveController(stateRoot, st, projectID)
 	return true, gui.Run(ctx, gui.Opts{Controller: ctrl, ProjectID: projectID})
+}
+
+// shouldLaunchDesktopGUI is the complete production auto-launch predicate.
+// Cobra calls maybeLaunchDesktopGUI only for the bare root command, so the only
+// remaining signal is the controlling-terminal state: exactly as before, the
+// GUI handles the invocation only when neither stdin nor stdout is a TTY.
+func shouldLaunchDesktopGUI(stdinTTY, stdoutTTY bool) bool {
+	return !stdinTTY && !stdoutTTY
 }

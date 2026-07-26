@@ -23,7 +23,7 @@ func writeRawProjectConfig(t *testing.T, content string) string {
 
 func runProjectInit(t *testing.T, configPath string) error {
 	t.Helper()
-	cmd := newRootCmd(context.Background())
+	cmd := newTestRootCmd(context.Background())
 	cmd.SetArgs([]string{"--init", "--project-config-file", configPath})
 	return cmd.Execute()
 }

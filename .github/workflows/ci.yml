@@ -344,7 +344,7 @@ jobs:
         # NOT in our code (the test passes on macOS, which uses CoreText). Point
         # FYNE_FONT at DejaVu Sans, which that shaper processes without crashing.
         run: sudo apt-get install -y fonts-dejavu-core
-      - name: Test GUI package (headless test driver)
+      - name: Test GUI-enabled repository (headless test driver)
         env:
           CGO_ENABLED: '1'
           # A well-formed locale so Fyne's BCP-47 parse is valid (the OS locale is
@@ -355,7 +355,10 @@ jobs:
           # install step's comment) instead of Fyne's bundled default, which
           # panics that shaper on Linux.
           FYNE_FONT: /usr/share/fonts/truetype/dejavu/DejaVuSans.ttf
-        run: go test -tags gui ./internal/gui/... -timeout 5m
+        # Run the complete tagged tree, not only internal/gui. The root command
+        # owns the non-TTY desktop-dispatch boundary, and its GUI-tagged tests
+        # must remain part of the protected regression gate.
+        run: go test -tags gui ./... -timeout 5m
 
   build-targets:
     name: Build (${{ matrix.goos }}/${{ matrix.goarch }})

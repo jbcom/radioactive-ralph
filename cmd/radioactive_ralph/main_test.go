@@ -10,7 +10,18 @@ import (
 
 	"github.com/jbcom/radioactive-ralph/internal/store"
 	"github.com/jbcom/radioactive-ralph/internal/supervisor"
+	"github.com/spf13/cobra"
 )
+
+// newTestRootCmd explicitly disables desktop auto-launch for CLI/root unit
+// tests. GUI-enabled test binaries do not have a controlling TTY, which is a
+// real desktop-launch signal in production; the test harness must own that
+// decision instead of relying on test-binary name or runtime detection.
+func newTestRootCmd(ctx context.Context) *cobra.Command {
+	return newRootCmd(ctx, func(context.Context, *cobra.Command) (bool, error) {
+		return false, nil
+	})
+}
 
 // chdir temporarily changes the working directory for the duration of a
 // test, restoring it on cleanup. Several of dispatchRoot's paths resolve
@@ -28,7 +39,7 @@ func chdir(t *testing.T, dir string) {
 }
 
 func TestRootHelpDescribesUserLevelSupervisor(t *testing.T) {
-	cmd := newRootCmd(context.Background())
+	cmd := newTestRootCmd(context.Background())
 	const want = "User-level supervised-execution runtime for local AI-agent CLIs"
 	if cmd.Short != want {
 		t.Fatalf("root short help = %q, want %q", cmd.Short, want)
@@ -42,7 +53,7 @@ func TestInitMode_CreatesProject(t *testing.T) {
 	projectDir := t.TempDir()
 	chdir(t, projectDir)
 
-	cmd := newRootCmd(context.Background())
+	cmd := newTestRootCmd(context.Background())
 	cmd.SetArgs([]string{"--init"})
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("--init: %v", err)
@@ -50,7 +61,7 @@ func TestInitMode_CreatesProject(t *testing.T) {
 
 	// A second --init on the same directory must be idempotent (re-resolve
 	// the existing project rather than erroring or duplicating it).
-	cmd2 := newRootCmd(context.Background())
+	cmd2 := newTestRootCmd(context.Background())
 	cmd2.SetArgs([]string{"--init"})
 	if err := cmd2.Execute(); err != nil {
 		t.Fatalf("second --init: %v", err)
@@ -96,7 +107,7 @@ func TestClientMode_NoSupervisorFailsClearly(t *testing.T) {
 	projectDir := t.TempDir()
 	chdir(t, projectDir)
 
-	cmd := newRootCmd(context.Background())
+	cmd := newTestRootCmd(context.Background())
 	cmd.SetArgs(nil)
 	err := cmd.Execute()
 	if err == nil {
@@ -147,7 +158,7 @@ func TestClientMode_FindsRunningSupervisor(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 
-	cmd := newRootCmd(context.Background())
+	cmd := newTestRootCmd(context.Background())
 	cmd.SetArgs(nil)
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("client mode with a live supervisor: %v", err)
