@@ -197,7 +197,7 @@ var ErrTaskProviderSessionConflict = errors.New("store: provider session conflic
 ```
 
 <a name="DSN"></a>
-## func [DSN](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/store.go#L65>)
+## func [DSN](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/store.go#L66>)
 
 ```go
 func DSN(dbPath string) string
@@ -437,7 +437,7 @@ type InputReservation struct {
 ```
 
 <a name="Options"></a>
-## type [Options](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/store.go#L84-L94>)
+## type [Options](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/store.go#L85-L95>)
 
 Options configures Open.
 
@@ -606,7 +606,7 @@ type StatusCounts struct {
 ```
 
 <a name="Store"></a>
-## type [Store](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/store.go#L44-L48>)
+## type [Store](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/store.go#L44-L49>)
 
 Store is the user\-level store handle. It wraps a \*sql.DB plus a deterministic clock \+ UUID provider \(test\-swappable\).
 
@@ -617,7 +617,7 @@ type Store struct {
 ```
 
 <a name="Open"></a>
-### func [Open](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/store.go#L97>)
+### func [Open](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/store.go#L98>)
 
 ```go
 func Open(ctx context.Context, opts Options) (*Store, error)
@@ -716,7 +716,7 @@ func (s *Store) ClearWorkerTask(ctx context.Context, workerID, status string) er
 ClearWorkerTask clears the active task from one worker row and marks it idle or terminated \(status defaults to "idle" when empty\).
 
 <a name="Store.Close"></a>
-### func \(\*Store\) [Close](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/store.go#L198>)
+### func \(\*Store\) [Close](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/store.go#L202>)
 
 ```go
 func (s *Store) Close() error
@@ -797,7 +797,7 @@ func (s *Store) CreateWorker(ctx context.Context, o WorkerOpts) (string, error)
 CreateWorker registers a newly\-spawned agent subprocess against a session. Returns the worker row id. Successor to plandag's CreateSessionVariant — no persona; carries the provider capability \(native\_fanout\) instead of a variant name \(§9/§10 of the design\).
 
 <a name="Store.DB"></a>
-### func \(\*Store\) [DB](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/store.go#L204>)
+### func \(\*Store\) [DB](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/store.go#L208>)
 
 ```go
 func (s *Store) DB() *sql.DB
