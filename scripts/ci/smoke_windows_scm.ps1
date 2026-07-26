@@ -525,7 +525,7 @@ func main() {
       -SourceIdentifier $startSourceIdentifier
     $stopSubscription = Register-CimIndicationEvent `
       -Namespace "root/cimv2" `
-      -Query "SELECT * FROM Win32_ProcessStopTrace WHERE ProcessName = '$ralphProcessName'" `
+      -Query "SELECT * FROM Win32_ProcessStopTrace" `
       -SourceIdentifier $stopSourceIdentifier
 
     $startOutput = @(& sc.exe start $serviceName 2>&1)
@@ -538,13 +538,50 @@ func main() {
     if ($guardProcessID -eq 0) {
       throw "SCM process-start event reported PID 0"
     }
+    $guardProcessStartTraceTime = [uint64]$launchEvent.SourceEventArgs.NewEvent.TIME_CREATED
 
-    $stopEvent = Wait-Event -SourceIdentifier $stopSourceIdentifier -Timeout 15
-    if ($null -eq $stopEvent) {
+    # Windows Server 2025 did not reliably deliver a provider-filtered
+    # ProcessStopTrace even though the matching process had exited. Subscribe
+    # to the full stop stream before launch, then consume events until the
+    # exact start-trace PID appears. Removing every non-matching event prevents
+    # Wait-Event from returning the same busy-runner process repeatedly.
+    $stopEventFound = $false
+    $stoppedProcessID = [uint32]0
+    $guardProcessExit = [uint32]0
+    $stopDeadline = (Get-Date).AddSeconds(15)
+    while (-not $stopEventFound -and (Get-Date) -lt $stopDeadline) {
+      $remainingSeconds = [Math]::Max(
+        1,
+        [int][Math]::Ceiling(($stopDeadline - (Get-Date)).TotalSeconds)
+      )
+      $candidate = Wait-Event `
+        -SourceIdentifier $stopSourceIdentifier `
+        -Timeout $remainingSeconds
+      if ($null -eq $candidate) {
+        continue
+      }
+      try {
+        $candidateProcessID = [uint32]$candidate.SourceEventArgs.NewEvent.ProcessID
+        $candidateProcessName = [string]$candidate.SourceEventArgs.NewEvent.ProcessName
+        $candidateTraceTime = [uint64]$candidate.SourceEventArgs.NewEvent.TIME_CREATED
+        if ($candidateProcessID -eq $guardProcessID -and
+            [string]::Equals(
+              $candidateProcessName,
+              $ralphProcessName,
+              [StringComparison]::OrdinalIgnoreCase
+            ) -and
+            $candidateTraceTime -ge $guardProcessStartTraceTime) {
+          $stoppedProcessID = $candidateProcessID
+          $guardProcessExit = [uint32]$candidate.SourceEventArgs.NewEvent.ExitStatus
+          $stopEventFound = $true
+        }
+      } finally {
+        Remove-Event -EventIdentifier $candidate.EventIdentifier -ErrorAction SilentlyContinue
+      }
+    }
+    if (-not $stopEventFound) {
       throw "SCM child process $guardProcessID did not produce a process-stop event"
     }
-    $stoppedProcessID = [uint32]$stopEvent.SourceEventArgs.NewEvent.ProcessID
-    $guardProcessExit = [uint32]$stopEvent.SourceEventArgs.NewEvent.ExitStatus
     if ($stoppedProcessID -ne $guardProcessID) {
       throw "SCM process trace PID mismatch: start $guardProcessID, stop $stoppedProcessID"
     }

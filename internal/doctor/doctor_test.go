@@ -70,8 +70,15 @@ func TestRunAllGreen(t *testing.T) {
 	if !r.Passed() {
 		t.Errorf("expected pass, got %d failures", r.FailCount)
 	}
-	if r.WarnCount != 0 {
-		t.Errorf("expected 0 warnings, got %d: %+v", r.WarnCount, r.Checks)
+	wantWarnings := 0
+	if runtime.GOOS == "windows" {
+		// Native Windows intentionally reports the foreground-only/WSL2
+		// service-platform boundary as a warning even when every dependency,
+		// credential, and state check is green.
+		wantWarnings = 1
+	}
+	if r.WarnCount != wantWarnings {
+		t.Errorf("expected %d warnings, got %d: %+v", wantWarnings, r.WarnCount, r.Checks)
 	}
 }
 
