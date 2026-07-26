@@ -13,6 +13,13 @@ shipped. That means historical sections may still mention MCP, plugins,
 supervisors, or the archived Python implementation even though those are no
 longer part of the live contract.
 
+## [0.22.1](https://github.com/jbcom/radioactive-ralph/compare/v0.22.0...v0.22.1) (2026-07-26)
+
+
+### Bug Fixes
+
+* **release:** isolate immutable settings authority ([#206](https://github.com/jbcom/radioactive-ralph/issues/206)) ([66c3ee5](https://github.com/jbcom/radioactive-ralph/commit/66c3ee528ce39b25e76e0c03483bf82c4dd7fd24))
+
 ## [0.22.0](https://github.com/jbcom/radioactive-ralph/compare/v0.21.6...v0.22.0) (2026-07-26)
 
 ### Windows support boundary
