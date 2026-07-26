@@ -110,12 +110,16 @@ func TestCodexRunnerEndlessNoNewlineOutputHonorsCallerCancellation(t *testing.T)
 		t.Skip("shell-script fake CLI is Unix-only")
 	}
 	requirePython3(t)
+	// Throttle far below the 16 MiB observed-output ceiling so this test
+	// isolates caller cancellation. The separate bounds regression exercises
+	// the ceiling with an unthrottled endless stream.
 	bin := writeFakeCLI(t, "fake-codex-endless-line.sh", `#!/bin/sh
-python3 -u -c 'import sys
-chunk=b"x"*(64<<10)
+python3 -u -c 'import sys,time
+chunk=b"x"*(4<<10)
 while True:
  sys.stdout.buffer.write(chunk)
- sys.stdout.buffer.flush()'
+ sys.stdout.buffer.flush()
+ time.sleep(0.01)'
 `)
 	ctx, cancel := context.WithTimeout(context.Background(), 250*time.Millisecond)
 	defer cancel()
