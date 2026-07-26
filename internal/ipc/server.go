@@ -104,6 +104,9 @@ type Server struct {
 	wg                sync.WaitGroup
 	stopCh            chan struct{}
 	heartbeatCh       chan struct{}
+	acceptDone        chan struct{}
+	stopOnce          sync.Once
+	stopErr           error
 
 	// conns tracks every accepted connection so Stop can close them all,
 	// unblocking any handler parked in a read/write immediately — so shutdown
@@ -171,6 +174,7 @@ func NewServer(opts ServerOptions) (*Server, error) {
 		heartbeatInterval: interval,
 		stopCh:            make(chan struct{}),
 		heartbeatCh:       make(chan struct{}),
+		acceptDone:        make(chan struct{}),
 		conns:             make(map[net.Conn]struct{}),
 	}, nil
 }
@@ -239,23 +243,37 @@ func (s *Server) Start() error {
 
 // Stop shuts the server down and waits for goroutines to exit.
 func (s *Server) Stop() error {
+	s.stopOnce.Do(func() {
+		s.stopErr = s.stop()
+	})
+	return s.stopErr
+}
+
+func (s *Server) stop() error {
 	select {
 	case <-s.stopCh:
 		// already stopped
 	default:
 		close(s.stopCh)
 	}
-	if s.listener != nil {
-		_ = s.listener.Close()
-	}
 	// Close every live connection so any handler parked in a read/write returns
 	// at once — otherwise wg.Wait would block until each stuck conn hit its own
 	// deadline (or forever, before deadlines existed). This is what makes Stop
 	// drain promptly even against a half-open or non-reading client.
 	s.closeConns()
-	s.wg.Wait()
-	_ = cleanupEndpoint(s.socketPath)
-	return nil
+	var errs []error
+	if s.listener != nil {
+		if err := closeEndpointListener(s.listener, s.socketPath, s.acceptDone); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	if err := waitForServerDrain(&s.wg); err != nil {
+		errs = append(errs, err)
+	}
+	if err := cleanupEndpoint(s.socketPath); err != nil && !os.IsNotExist(err) {
+		errs = append(errs, err)
+	}
+	return errors.Join(errs...)
 }
 
 func (s *Server) heartbeatLoop(interval time.Duration) {
@@ -281,7 +299,15 @@ func (s *Server) heartbeatLoop(interval time.Duration) {
 
 func (s *Server) acceptLoop() {
 	defer s.wg.Done()
+	if s.acceptDone != nil {
+		defer close(s.acceptDone)
+	}
 	for {
+		select {
+		case <-s.stopCh:
+			return
+		default:
+		}
 		conn, err := s.listener.Accept()
 		if err != nil {
 			select {
@@ -307,6 +333,16 @@ func (s *Server) acceptLoop() {
 			case <-time.After(acceptRetryDelay):
 			}
 			continue
+		}
+		// Windows named-pipe shutdown wakes a pending Accept with one local
+		// connection before closing the underlying winio listener. If Stop has
+		// already started, close that wake connection and exit without spawning
+		// a request handler or entering another Accept.
+		select {
+		case <-s.stopCh:
+			_ = conn.Close()
+			return
+		default:
 		}
 		s.wg.Add(1)
 		go func() {

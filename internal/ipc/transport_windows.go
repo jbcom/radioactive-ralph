@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"sync"
 	"time"
 
 	"github.com/Microsoft/go-winio"
@@ -49,6 +50,56 @@ func pipeSecurityDescriptorForSID(userSID string, localSystem bool) string {
 
 func cleanupEndpoint(_ string) error {
 	return nil
+}
+
+// go-winio v0.6.2 can block forever in win32PipeListener.Close while an
+// overlapped ConnectNamedPipe is pending (microsoft/go-winio#357). Wake the
+// server's outstanding Accept first, wait for our accept loop to leave, and
+// still bound both the dependency Close and Ralph's own goroutine drain. A
+// pathological kernel/dependency state may leak the stuck dependency goroutine
+// until process exit, but it can never make supervisor shutdown unbounded.
+func closeEndpointListener(listener net.Listener, endpoint string, acceptDone <-chan struct{}) error {
+	select {
+	case <-acceptDone:
+		// The accept loop observed stop before entering another Accept.
+	default:
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		conn, err := dialEndpoint(ctx, endpoint, time.Second)
+		cancel()
+		if err == nil {
+			_ = conn.Close()
+		}
+		select {
+		case <-acceptDone:
+		case <-time.After(2 * time.Second):
+			return fmt.Errorf("ipc: timed out waking Windows named-pipe accept loop")
+		}
+	}
+
+	closed := make(chan error, 1)
+	go func() {
+		closed <- listener.Close()
+	}()
+	select {
+	case err := <-closed:
+		return err
+	case <-time.After(2 * time.Second):
+		return fmt.Errorf("ipc: timed out closing Windows named-pipe listener")
+	}
+}
+
+func waitForServerDrain(wg *sync.WaitGroup) error {
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+		return nil
+	case <-time.After(5 * time.Second):
+		return fmt.Errorf("ipc: timed out draining Windows server goroutines")
+	}
 }
 
 func dialEndpoint(ctx context.Context, endpoint string, timeout time.Duration) (net.Conn, error) {

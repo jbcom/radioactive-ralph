@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -123,6 +124,15 @@ func verifySecureDir(dir string) error {
 
 func cleanupEndpoint(endpoint string) error {
 	return os.Remove(endpoint)
+}
+
+func closeEndpointListener(listener net.Listener, _ string, _ <-chan struct{}) error {
+	return listener.Close()
+}
+
+func waitForServerDrain(wg *sync.WaitGroup) error {
+	wg.Wait()
+	return nil
 }
 
 func dialEndpoint(ctx context.Context, endpoint string, timeout time.Duration) (net.Conn, error) {

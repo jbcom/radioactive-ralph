@@ -124,6 +124,13 @@ Windows named pipes are per-session objects; they don't persist across
 reboots. This is normal — the installed service recreates the pipe on
 start.
 
+Ralph also treats listener shutdown as a bounded operation. The supervisor
+first stops admission, wakes any outstanding named-pipe `Accept`, drains its
+own accept loop, and then closes the underlying listener. This is a downstream
+guard for the unresolved `go-winio` v0.6.2 close hang tracked as
+`microsoft/go-winio#357`; shutdown must report a timeout rather than park the
+service forever if the Windows kernel/dependency path still fails to drain.
+
 ### Windows Defender / SmartScreen
 
 First run may trigger a SmartScreen warning. Fix: right-click the binary
@@ -141,8 +148,10 @@ supervisor lifecycle on a GitHub-hosted runner. It's sensitive to:
 - Long-running workers that exceed the default job timeout — keep
   integration tests under 2 minutes
 
-If a Windows CI flake doesn't reproduce on a real Windows machine,
-suspect hosted-runner instability and rerun before investigating.
+If a Windows CI failure doesn't reproduce on a real Windows machine, retain the
+hosted-runner log and investigate the exact blocked syscall or goroutine before
+rerunning. A passing rerun is evidence about frequency, not proof that a
+shutdown race is safe.
 
 ## WSL2
 
