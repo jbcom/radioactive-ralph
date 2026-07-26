@@ -596,9 +596,16 @@ func main() {
         $candidateSessionID = [uint32]$candidate.SourceEventArgs.NewEvent.SessionID
         $candidateSID = Convert-TraceSID $candidate.SourceEventArgs.NewEvent.Sid
         $candidateTraceTime = [uint64]$candidate.SourceEventArgs.NewEvent.TIME_CREATED
+        $candidateSIDState = if ([string]::IsNullOrEmpty($candidateSID)) {
+          "unavailable"
+        } elseif ($candidateSID -eq $guardSID) {
+          "match"
+        } else {
+          "mismatch"
+        }
         if ($candidateProcessID -eq $guardProcessID) {
           $guardPIDStopCandidates.Add(
-            "name='$candidateProcessName' parent=$candidateParentProcessID session=$candidateSessionID time=$candidateTraceTime exit=$([uint32]$candidate.SourceEventArgs.NewEvent.ExitStatus)"
+            "name='$candidateProcessName' parent=$candidateParentProcessID session=$candidateSessionID sid=$candidateSIDState time=$candidateTraceTime exit=$([uint32]$candidate.SourceEventArgs.NewEvent.ExitStatus)"
           )
         }
         $candidateNameMatches = [string]::Equals(
@@ -610,10 +617,25 @@ func main() {
           $guardStopTraceName,
           [StringComparison]::OrdinalIgnoreCase
         )
+        $candidateParentMatches = (
+          $candidateParentProcessID -eq 0 -or
+          $candidateParentProcessID -eq $guardParentProcessID
+        )
+        $candidateSessionMatches = (
+          $candidateSessionID -eq 0 -or
+          $candidateSessionID -eq $guardSessionID
+        )
+        $candidateSIDMatches = (
+          [string]::IsNullOrEmpty($candidateSID) -or
+          $candidateSID -eq $guardSID
+        )
+        # The kernel trace provider reports parent/session as zero and may omit
+        # SID on process-stop events. When present, every optional identity
+        # field must still match the paired start event.
         if ($candidateProcessID -eq $guardProcessID -and
-            $candidateParentProcessID -eq $guardParentProcessID -and
-            $candidateSessionID -eq $guardSessionID -and
-            $candidateSID -eq $guardSID -and
+            $candidateParentMatches -and
+            $candidateSessionMatches -and
+            $candidateSIDMatches -and
             $candidateNameMatches -and
             $candidateTraceTime -ge $guardProcessStartTraceTime) {
           $stoppedProcessID = $candidateProcessID
