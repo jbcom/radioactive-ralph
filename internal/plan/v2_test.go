@@ -108,6 +108,37 @@ func TestValidateForImportAllowsOrderedExclusiveOutputReuse(t *testing.T) {
 	}
 }
 
+func TestValidateRelativePathUsesOnePortableCanonicalSpelling(t *testing.T) {
+	for _, valid := range []string{
+		"docs/story.md",
+		".qfc/packets/story.json",
+	} {
+		t.Run("valid-"+valid, func(t *testing.T) {
+			if err := validateRelativePath(valid); err != nil {
+				t.Fatalf("validateRelativePath(%q): %v", valid, err)
+			}
+		})
+	}
+	for _, invalid := range []string{
+		"",
+		"/absolute",
+		`\\server\share`,
+		`C:/secret`,
+		`foo\bar`,
+		"../escape",
+		"foo/../escape",
+		"./relative",
+		"foo//bar",
+		"foo/./bar",
+	} {
+		t.Run("invalid-"+invalid, func(t *testing.T) {
+			if err := validateRelativePath(invalid); err == nil {
+				t.Fatalf("validateRelativePath(%q) succeeded", invalid)
+			}
+		})
+	}
+}
+
 func TestValidateForImportRequiresOrderedProviderSeparation(t *testing.T) {
 	first := v2Step("first", `{
     "id":"task.first","after":[],"team":"design/team","binding":{"mode":"pool","alias":"","provider":"","model":"","effort":"","calibration":"","repetitions":0,"fixture":""},"requires":[],

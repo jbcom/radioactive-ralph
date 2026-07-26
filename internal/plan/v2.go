@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	pathpkg "path"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -317,13 +318,22 @@ func validateTaskPaths(metadata *TaskMetadata) error {
 	return nil
 }
 
-func validateRelativePath(path string) error {
-	if path == "" || filepath.IsAbs(path) || strings.Contains(path, `\`) {
-		return fmt.Errorf("path %q must be non-empty and relative", path)
+func validateRelativePath(relativePath string) error {
+	if relativePath == "" ||
+		pathpkg.IsAbs(relativePath) ||
+		filepath.IsAbs(relativePath) ||
+		strings.ContainsAny(relativePath, `\:`) {
+		return fmt.Errorf("path %q must be non-empty, portable, and relative", relativePath)
 	}
-	clean := filepath.Clean(path)
-	if clean == "." || clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
-		return fmt.Errorf("path %q traverses outside the project", path)
+	// Task contracts are portable, forward-slash manifests. Reject rather than
+	// normalize dot or duplicate components so path equality, overlap checks,
+	// and reservations have one cross-platform spelling.
+	clean := pathpkg.Clean(relativePath)
+	if clean != relativePath ||
+		clean == "." ||
+		clean == ".." ||
+		strings.HasPrefix(clean, "../") {
+		return fmt.Errorf("path %q is not a canonical project-relative path", relativePath)
 	}
 	return nil
 }
