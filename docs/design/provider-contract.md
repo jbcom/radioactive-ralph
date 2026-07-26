@@ -88,9 +88,12 @@ ignore it.
 The Codex binding invokes `codex exec --json --color never`. A clean exit reads
 only the temporary `--output-last-message` file as `AssistantOutput`; terminal
 events are never mixed into a successful result. The path must remain the same
-regular-file identity across `lstat`, a platform no-follow/nonblocking open, and
-the opened-file `fstat`; FIFO, symlink/reparse-point, device, and identity-swap
-substitutions fail closed. A limited read then enforces the 16 MiB
+regular-file identity across a pre-open identity snapshot, a platform
+no-follow/nonblocking open, and the opened-file `fstat`; Unix snapshots the
+eager `lstat` device/inode while Windows snapshots through a stable no-follow
+handle because its path `FileInfo` loads file IDs lazily. FIFO,
+symlink/reparse-point, device, and identity-swap substitutions fail closed. A
+limited read then enforces the 16 MiB
 authoritative-result ceiling even if the regular file grows.
 
 On a nonzero exit, the last-message file is treated as potentially partial and
@@ -150,7 +153,10 @@ success only when `subtype` is exactly `success` and `is_error` is false.
 or unknown result shape fails closed behind a generic static Claude error.
 Provider result text never enters an error. A success frame remains provisional
 until Claude exits naturally, so a subsequent nonzero exit status still fails
-the turn.
+the turn. Ralph supplies the single stream-JSON user message through a finite
+stdin pipe that closes at EOF while keeping stdout/stderr on the observed PTY.
+This gives Claude's one-turn protocol its required shutdown signal without
+closing the output channel or relying on terminal control characters.
 
 OpenCode is verified against CLI 1.18.3. `opencode run --format json` may emit
 several model steps before the session becomes idle. Ralph therefore consumes
@@ -253,8 +259,10 @@ process was reclaimed.
 The final natural/forced classification comes from the status actually returned
 by `cmd.Wait`, not merely from a requested signal. If a child exits normally in
 the probe-to-signal gap, its real exit status remains natural. On Windows,
-`Process.Kill` returning `os.ErrProcessDone` explicitly transfers to natural
-reaping rather than marking the earlier termination request as forced.
+Ralph requires both a requested termination and `TerminateProcess`'s concrete
+exit code 1 before suppressing the wait status as forced. `Process.Kill`
+returning `os.ErrProcessDone` explicitly transfers to natural reaping rather
+than marking the earlier termination request as forced.
 
 On Linux, cleanup enumerates the original PTY session, opens and revalidates a
 pidfd for each regrouped member, signals it, and repeats with a fixed bound until
@@ -266,11 +274,12 @@ that deliberately calls `setsid(2)` is outside the portable original-session
 boundary; it cannot wedge Ralph, but full kernel containment remains future
 cgroup-v2 work on Linux and Job Object work on native Windows.
 
-Observer backend errors are not retried forever. They are wrapped by
+Linux retries only `EINTR` around pidfd acquisition/polling and the `waitid`
+fallback. Every other observer backend error is wrapped by
 `ErrProcessExitObservation`, followed by explicit termination and independent
 reaping convergence. If that termination works, the turn fails honestly and
-all resources are reclaimed; if it does not, the joined termination error
-still releases Ralph's control path. Hosts outside the release matrix
+all resources are reclaimed; if it does not, the joined termination error still
+releases Ralph's control path. Hosts outside the release matrix
 (currently AIX, DragonFly BSD, FreeBSD, NetBSD, OpenBSD, and Solaris) are
 rejected by `Start` until they have an equally strong observer.
 
@@ -281,9 +290,11 @@ nonblocking readiness polling so even an impossible direct-kill failure can
 interrupt it. Once process control reaches a terminal state it drains bytes
 already ready in the kernel, then stops instead of waiting on a PTY slave
 inherited by an out-of-session descendant. Because `O_NONBLOCK` applies to both
-sides of the PTY,
-`WriteInput` provides a full-write contract with short-write/EAGAIN polling,
-caller-cancellation, and terminal-result checks.
+sides of the PTY, `WriteInput` provides a full-write contract with
+short-write/EAGAIN polling, caller-cancellation, and terminal-result checks.
+Finite one-turn protocols instead use `Options.OneShotInput`: Agent clones the
+bytes, attaches an EOF-capable stdin pipe, leaves stdout/stderr on the PTY, and
+rejects later interactive writes with `ErrOneShotInputClosed`.
 
 `Output` is deliberately unbuffered and lossless during normal supervision.
 It closes immediately before `Done`, but only after natural reaping or an

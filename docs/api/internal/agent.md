@@ -78,6 +78,12 @@ var (
 )
 ```
 
+<a name="ErrOneShotInputClosed"></a>ErrOneShotInputClosed reports an attempted interactive write after Start attached a finite one\-shot input stream. That stream is closed at EOF by os/exec so protocols that terminate on stdin closure can exit naturally.
+
+```go
+var ErrOneShotInputClosed = errors.New("agent: one-shot input is already closed to interactive writes")
+```
+
 <a name="ErrPTYUnsupported"></a>ErrPTYUnsupported is returned by Start on platforms where creack/pty cannot allocate a pseudo\-terminal. Native Windows operators run Ralph under WSL.
 
 ```go
@@ -136,7 +142,7 @@ func Watch(ctx context.Context, a *Agent, cfg WatchdogConfig) <-chan Signal
 Watch observes an agent and emits Signals. It NEVER blocks waiting on the agent: a prompt pattern or a stall is surfaced immediately so the caller can kill\-and\-reclaim. The channel closes when the agent exits.
 
 <a name="Agent"></a>
-## type [Agent](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/agent/agent.go#L95-L135>)
+## type [Agent](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/agent/agent.go#L107-L147>)
 
 Agent is a pty\-owned agent subprocess.
 
@@ -147,7 +153,7 @@ type Agent struct {
 ```
 
 <a name="Start"></a>
-### func [Start](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/agent/agent.go#L138>)
+### func [Start](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/agent/agent.go#L150>)
 
 ```go
 func Start(ctx context.Context, opts Options) (*Agent, error)
@@ -174,7 +180,7 @@ func (a *Agent) DiscardedOutput() <-chan []byte
 DiscardedOutput is an unbuffered stream of bounded prefixes from records drained under DiscardOversizeOutput. Prefixes are intended only for provider\-specific top\-level framing classification. They are never pane output, never prompt\-matched, and close before Output.
 
 <a name="Agent.Done"></a>
-### func \(\*Agent\) [Done](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/agent/agent.go#L379>)
+### func \(\*Agent\) [Done](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/agent/agent.go#L397>)
 
 ```go
 func (a *Agent) Done() <-chan struct{}
@@ -183,7 +189,7 @@ func (a *Agent) Done() <-chan struct{}
 Done closes after Output and all reader\-side resources are released. A direct\-child termination failure also closes Done, but Wait returns ErrProcessTermination and does not claim the process was reclaimed.
 
 <a name="Agent.ExitErr"></a>
-### func \(\*Agent\) [ExitErr](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/agent/agent.go#L408>)
+### func \(\*Agent\) [ExitErr](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/agent/agent.go#L426>)
 
 ```go
 func (a *Agent) ExitErr() error
@@ -192,7 +198,7 @@ func (a *Agent) ExitErr() error
 ExitErr returns only a naturally exited child's cmd.Wait status. Forced or unrecoverable termination paths return nil because their cause is reported by Kill, TerminateAndWait, or Wait.
 
 <a name="Agent.Kill"></a>
-### func \(\*Agent\) [Kill](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/agent/agent.go#L384>)
+### func \(\*Agent\) [Kill](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/agent/agent.go#L402>)
 
 ```go
 func (a *Agent) Kill() error
@@ -201,7 +207,7 @@ func (a *Agent) Kill() error
 Kill explicitly terminates and reaps the child when termination succeeds. Prefer TerminateAndWait at provider boundaries so reader/observer goroutines are also joined and cleanup errors cannot be ignored.
 
 <a name="Agent.Output"></a>
-### func \(\*Agent\) [Output](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/agent/agent.go#L364>)
+### func \(\*Agent\) [Output](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/agent/agent.go#L379>)
 
 ```go
 func (a *Agent) Output() <-chan []byte
@@ -219,7 +225,7 @@ func (a *Agent) OutputErr() error
 OutputErr returns a bounded\-reader or process\-tree cleanup failure, if one occurred. It never includes terminal contents. Callers may read it once Output closes; the mutex also makes earlier diagnostic reads safe.
 
 <a name="Agent.PID"></a>
-### func \(\*Agent\) [PID](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/agent/agent.go#L411>)
+### func \(\*Agent\) [PID](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/agent/agent.go#L429>)
 
 ```go
 func (a *Agent) PID() int
@@ -228,7 +234,7 @@ func (a *Agent) PID() int
 PID returns the direct child's PID only while its lifecycle is running.
 
 <a name="Agent.TerminateAndWait"></a>
-### func \(\*Agent\) [TerminateAndWait](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/agent/agent.go#L389>)
+### func \(\*Agent\) [TerminateAndWait](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/agent/agent.go#L407>)
 
 ```go
 func (a *Agent) TerminateAndWait() error
@@ -237,7 +243,7 @@ func (a *Agent) TerminateAndWait() error
 TerminateAndWait is the provider cleanup boundary. It takes explicit termination ownership, abandons unread output, and joins every Agent\-owned goroutine. It never reports success unless reclamation was proven.
 
 <a name="Agent.Wait"></a>
-### func \(\*Agent\) [Wait](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/agent/agent.go#L398>)
+### func \(\*Agent\) [Wait](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/agent/agent.go#L416>)
 
 ```go
 func (a *Agent) Wait() error
@@ -246,7 +252,7 @@ func (a *Agent) Wait() error
 Wait abandons unread Output and joins Agent\-owned goroutines after a natural or explicit terminal\-control result. It is passive: PTY EOF alone never authorizes termination. Observer, tree\-cleanup, termination, and output failures are joined in its return value.
 
 <a name="Agent.WriteInput"></a>
-### func \(\*Agent\) [WriteInput](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/agent/agent.go#L370>)
+### func \(\*Agent\) [WriteInput](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/agent/agent.go#L385>)
 
 ```go
 func (a *Agent) WriteInput(b []byte) error
@@ -255,7 +261,7 @@ func (a *Agent) WriteInput(b []byte) error
 WriteInput delivers the complete byte slice to the PTY or returns an error. The PTY is nonblocking so lifecycle failure can interrupt reads; writes therefore retry short/EAGAIN results behind readiness polling and honor caller cancellation or a terminal process result.
 
 <a name="Options"></a>
-## type [Options](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/agent/agent.go#L54-L87>)
+## type [Options](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/agent/agent.go#L60-L99>)
 
 Options configures one agent subprocess.
 
@@ -284,6 +290,12 @@ type Options struct {
 
     // DisableEcho turns OFF the pty's terminal echo before the child starts.
     DisableEcho bool
+
+    // OneShotInput, when non-nil, is delivered through a dedicated stdin pipe
+    // that closes at EOF while stdout/stderr remain attached to the observed
+    // PTY. This is the finite ingress path for one-turn protocols. WriteInput
+    // returns ErrOneShotInputClosed for such an Agent.
+    OneShotInput []byte
     // contains filtered or unexported fields
 }
 ```

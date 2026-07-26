@@ -3,6 +3,7 @@
 package agent
 
 import (
+	"errors"
 	"os/exec"
 	"sync/atomic"
 	"testing"
@@ -54,5 +55,29 @@ func TestWindowsStableHandleObservesNaturalExitBeforeLateForce(t *testing.T) {
 	lifecycle.finish(cmd.Wait())
 	if lifecycle.exitError() == nil {
 		t.Fatal("natural Windows exit status 23 was suppressed")
+	}
+}
+
+func TestWindowsForcedWaitStatusUsesTerminateProcessExitCode(t *testing.T) {
+	cmd := exec.Command(
+		"powershell.exe",
+		"-NoProfile",
+		"-NonInteractive",
+		"-Command",
+		"Start-Sleep -Seconds 30",
+	)
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if err := cmd.Process.Kill(); err != nil {
+		_ = cmd.Wait()
+		t.Fatalf("Kill: %v", err)
+	}
+	waitErr := cmd.Wait()
+	if !processWaitWasForced(waitErr, true) {
+		t.Fatalf("processWaitWasForced(%v, true) = false, want true", waitErr)
+	}
+	if processWaitWasForced(errors.New("synthetic wait failure"), true) {
+		t.Fatal("unclassified synthetic wait failure was suppressed as forced")
 	}
 }

@@ -3,6 +3,7 @@
 package agent
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"time"
@@ -41,12 +42,22 @@ func waitProcessExited(
 }
 
 func processAlreadyExited(process *os.Process) (bool, error) {
-	fd, err := unix.PidfdOpen(process.Pid, 0)
+	var fd int
+	err := retryInterruptedSyscall(func() error {
+		var openErr error
+		fd, openErr = unix.PidfdOpen(process.Pid, 0)
+		return openErr
+	})
 	if err == nil {
 		defer func() { _ = unix.Close(fd) }()
 		pollFD := int32(fd) //nolint:gosec // kernel file descriptors fit pollfd.fd
 		poll := []unix.PollFd{{Fd: pollFD, Events: unix.POLLIN}}
-		n, err := unix.Poll(poll, 0)
+		var n int
+		err := retryInterruptedSyscall(func() error {
+			var pollErr error
+			n, pollErr = unix.Poll(poll, 0)
+			return pollErr
+		})
 		if err != nil {
 			return false, err
 		}
@@ -62,15 +73,27 @@ func processAlreadyExited(process *os.Process) (bool, error) {
 	// inside lifecycle.force's mutex; WNOWAIT preserves the zombie so the
 	// caller can perform group cleanup before cmd.Wait reaps it.
 	var info unix.Siginfo
-	err = unix.Waitid(
-		unix.P_PID,
-		process.Pid,
-		&info,
-		unix.WEXITED|unix.WNOWAIT|unix.WNOHANG,
-		nil,
-	)
+	err = retryInterruptedSyscall(func() error {
+		info = unix.Siginfo{}
+		return unix.Waitid(
+			unix.P_PID,
+			process.Pid,
+			&info,
+			unix.WEXITED|unix.WNOWAIT|unix.WNOHANG,
+			nil,
+		)
+	})
 	if err != nil {
 		return false, err
 	}
 	return info.Signo != 0, nil
+}
+
+func retryInterruptedSyscall(operation func() error) error {
+	for {
+		err := operation()
+		if !errors.Is(err, unix.EINTR) {
+			return err
+		}
+	}
 }

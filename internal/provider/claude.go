@@ -13,9 +13,9 @@ import (
 )
 
 // ClaudeRunner executes a single `claude -p` turn under Ralph's own pty via
-// internal/agent, per spec §2/§3: Ralph owns the pty (agent.Start), the
-// pane/output stream is for human/watchdog observation, and the
-// structured stream is framed before being accepted as result data.
+// internal/agent, per spec §2/§3: Ralph owns the pty-backed output
+// (agent.Start), the pane/output stream is for human/watchdog observation,
+// and the structured stream is framed before being accepted as result data.
 //
 // claude has no native "write result to a file" flag (verified against
 // `claude --help` on the installed 2.1.218 CLI: --output-format
@@ -40,13 +40,17 @@ var ErrClaudeMaximumTurns = errors.New("provider: claude maximum-turn limit reac
 var ErrClaudeMissingResult = errors.New("provider: claude exited without a result frame")
 
 // Run spawns `claude -p --input-format stream-json --output-format
-// stream-json` under agent.Start, feeds req.UserPrompt on stdin via a
-// one-shot input file (claude in --input-format stream-json mode reads a
-// JSON-line user message from stdin), tees stdout into a bounded ResultPath
-// evidence file, and parses the terminal result frame for Usage.
+// stream-json` under agent.Start, feeds req.UserPrompt through a finite stdin
+// pipe (claude in --input-format stream-json mode reads a JSON-line user
+// message from stdin), tees stdout into a bounded ResultPath evidence file,
+// and parses the terminal result frame for Usage.
 func (ClaudeRunner) Run(ctx context.Context, binding Binding, req Request) (Result, error) {
 	model := resolveModel(binding.Config, req.Model)
 	effort := resolveEffort(binding.Config, req.Effort)
+	input, err := streamJSONInput(req.UserPrompt)
+	if err != nil {
+		return Result{}, fmt.Errorf("provider: encode claude input: %w", err)
+	}
 
 	resultPath, cleanup, err := newResultFile("claude-result-*.jsonl")
 	if err != nil {
@@ -88,17 +92,15 @@ func (ClaudeRunner) Run(ctx context.Context, binding Binding, req Request) (Resu
 		// own prompt text isn't reflected back and pattern-matched by the
 		// watchdog as an interactive prompt (which would kill the turn).
 		DisableEcho: true,
+		// Claude's one-turn stream-json protocol exits on stdin EOF. A finite
+		// pipe provides that EOF without closing the PTY output channel, so
+		// Ralph can still observe natural exit and preserve a later nonzero
+		// process status.
+		OneShotInput: input,
 	}
 	a, err := agent.Start(ctx, opts)
 	if err != nil {
 		return Result{}, fmt.Errorf("provider: start claude agent: %w", err)
-	}
-
-	if err := sendStreamJSONInput(a, req.UserPrompt); err != nil {
-		return Result{}, errors.Join(
-			fmt.Errorf("provider: send claude input: %w", err),
-			a.TerminateAndWait(),
-		)
 	}
 
 	resultFile, err := newBoundedEvidenceFile(resultPath)
@@ -194,12 +196,9 @@ func (ClaudeRunner) Run(ctx context.Context, binding Binding, req Request) (Resu
 	}, nil
 }
 
-// sendStreamJSONInput writes one Outbound-shaped user message as a JSON
-// line to the agent's pty stdin via agent.Agent.WriteInput, matching what
-// claudesession.Session sends over a direct pipe today. claude reads
-// stream-json input and processes turns as lines arrive, so one write is
-// sufficient to drive this one-shot turn.
-func sendStreamJSONInput(a *agent.Agent, userPrompt string) error {
+// streamJSONInput encodes one Outbound-shaped user message as a JSON line,
+// matching what claudesession.Session sends over a direct pipe today.
+func streamJSONInput(userPrompt string) ([]byte, error) {
 	type outboundInner struct {
 		Role    string `json:"role"`
 		Content []struct {
@@ -218,10 +217,9 @@ func sendStreamJSONInput(a *agent.Agent, userPrompt string) error {
 	}{Type: "text", Text: userPrompt})
 	b, err := json.Marshal(msg)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	b = append(b, '\n')
-	return a.WriteInput(b)
+	return append(b, '\n'), nil
 }
 
 // claudeResultFrame is the terminal `type=result` stream-json frame.
@@ -258,8 +256,8 @@ func (f claudeResultFrame) usage() Usage {
 
 // parseClaudeStreamLine parses one stream-json line. kind is the frame's
 // "type" field, or "" if line is not a recognized stream-json frame at all
-// (pty stdin echo, banner text, blank lines) — callers use kind=="" to
-// discard pane noise before it reaches a structured-result sink. For a
+// (banner text, terminal noise, blank lines) — callers use kind=="" to discard
+// pane noise before it reaches a structured-result sink. For a
 // `type=result` line, isResult is true and frame carries the parsed usage.
 func parseClaudeStreamLine(line []byte) (kind, assistantText string, isResult bool, frame claudeResultFrame) {
 	var envelope struct {

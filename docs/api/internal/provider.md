@@ -260,7 +260,7 @@ type BindingConfig struct {
 <a name="ClaudeRunner"></a>
 ## type [ClaudeRunner](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/claude.go#L29>)
 
-ClaudeRunner executes a single \`claude \-p\` turn under Ralph's own pty via internal/agent, per spec §2/§3: Ralph owns the pty \(agent.Start\), the pane/output stream is for human/watchdog observation, and the structured stream is framed before being accepted as result data.
+ClaudeRunner executes a single \`claude \-p\` turn under Ralph's own pty via internal/agent, per spec §2/§3: Ralph owns the pty\-backed output \(agent.Start\), the pane/output stream is for human/watchdog observation, and the structured stream is framed before being accepted as result data.
 
 claude has no native "write result to a file" flag \(verified against \`claude \-\-help\` on the installed 2.1.218 CLI: \-\-output\-format json/stream\-json both write to stdout only\). So the ResultPath file here is Ralph\-side, not CLI\-native: the runner tees every stdout line \(which IS the stream\-json frames — the same content a human pane would show\) into req's bounded ResultPath evidence file while parsing the same bounded frames for assistant text and the terminal result. This keeps the "never scrape the rendered pane for data" invariant: ResultPath holds the same raw JSON lines the CLI emitted, not a re\-rendered terminal.
 
@@ -275,7 +275,7 @@ type ClaudeRunner struct{}
 func (ClaudeRunner) Run(ctx context.Context, binding Binding, req Request) (Result, error)
 ```
 
-Run spawns \`claude \-p \-\-input\-format stream\-json \-\-output\-format stream\-json\` under agent.Start, feeds req.UserPrompt on stdin via a one\-shot input file \(claude in \-\-input\-format stream\-json mode reads a JSON\-line user message from stdin\), tees stdout into a bounded ResultPath evidence file, and parses the terminal result frame for Usage.
+Run spawns \`claude \-p \-\-input\-format stream\-json \-\-output\-format stream\-json\` under agent.Start, feeds req.UserPrompt through a finite stdin pipe \(claude in \-\-input\-format stream\-json mode reads a JSON\-line user message from stdin\), tees stdout into a bounded ResultPath evidence file, and parses the terminal result frame for Usage.
 
 <a name="CodexRunner"></a>
 ## type [CodexRunner](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/codex.go#L23>)

@@ -4,6 +4,7 @@
 package agent
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -50,6 +51,11 @@ var ErrProcessTreeCleanup = ErrProcessSessionCleanup
 // claiming that the child was reaped.
 var ErrProcessTermination = errors.New("agent: direct-child termination failed")
 
+// ErrOneShotInputClosed reports an attempted interactive write after Start
+// attached a finite one-shot input stream. That stream is closed at EOF by
+// os/exec so protocols that terminate on stdin closure can exit naturally.
+var ErrOneShotInputClosed = errors.New("agent: one-shot input is already closed to interactive writes")
+
 // Options configures one agent subprocess.
 type Options struct {
 	Command    string
@@ -75,6 +81,12 @@ type Options struct {
 
 	// DisableEcho turns OFF the pty's terminal echo before the child starts.
 	DisableEcho bool
+
+	// OneShotInput, when non-nil, is delivered through a dedicated stdin pipe
+	// that closes at EOF while stdout/stderr remain attached to the observed
+	// PTY. This is the finite ingress path for one-turn protocols. WriteInput
+	// returns ErrOneShotInputClosed for such an Agent.
+	OneShotInput []byte
 
 	// Package-private lifecycle boundaries let deterministic tests inject
 	// permanent kernel-observer and termination failures before any goroutine
@@ -156,7 +168,10 @@ func Start(ctx context.Context, opts Options) (*Agent, error) {
 	if opts.Env != nil {
 		cmd.Env = opts.Env
 	}
-	ptmx, err := pty.Start(cmd)
+	if opts.OneShotInput != nil {
+		cmd.Stdin = bytes.NewReader(bytes.Clone(opts.OneShotInput))
+	}
+	ptmx, err := startPTY(cmd, opts.OneShotInput != nil)
 	if err != nil {
 		if errors.Is(err, pty.ErrUnsupported) {
 			return nil, ErrPTYUnsupported
@@ -368,6 +383,9 @@ func (a *Agent) Output() <-chan []byte { return a.out }
 // therefore retry short/EAGAIN results behind readiness polling and honor
 // caller cancellation or a terminal process result.
 func (a *Agent) WriteInput(b []byte) error {
+	if a.opts.OneShotInput != nil {
+		return ErrOneShotInputClosed
+	}
 	a.writeMu.Lock()
 	defer a.writeMu.Unlock()
 	return a.pty.WriteAll(a.ctx, b)

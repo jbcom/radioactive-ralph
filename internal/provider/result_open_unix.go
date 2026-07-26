@@ -8,6 +8,10 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+func snapshotAuthoritativeResultInfo(path string) (os.FileInfo, error) {
+	return os.Lstat(path)
+}
+
 func openAuthoritativeResultFile(path string) (*os.File, error) {
 	fd, err := unix.Open(
 		path,

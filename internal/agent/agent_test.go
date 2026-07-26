@@ -653,6 +653,46 @@ done:
 	}
 }
 
+func TestAgentOneShotInputClosesStdinWithoutClosingPTYOutput(t *testing.T) {
+	a, err := Start(context.Background(), Options{
+		Command:      "sh",
+		Args:         []string{"-c", "payload=$(cat); printf 'got:%s\\n' \"$payload\""},
+		OneShotInput: []byte("finite-input\n"),
+	})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if err := a.WriteInput([]byte("late-input\n")); !errors.Is(err, ErrOneShotInputClosed) {
+		_ = a.TerminateAndWait()
+		t.Fatalf("WriteInput error = %v, want ErrOneShotInputClosed", err)
+	}
+
+	var got strings.Builder
+	timeout := time.After(5 * time.Second)
+	for {
+		select {
+		case line, ok := <-a.Output():
+			if !ok {
+				goto done
+			}
+			got.Write(line)
+		case <-timeout:
+			_ = a.TerminateAndWait()
+			t.Fatal("one-shot stdin did not reach EOF")
+		}
+	}
+done:
+	if err := a.Wait(); err != nil {
+		t.Fatalf("Wait: %v", err)
+	}
+	if err := a.ExitErr(); err != nil {
+		t.Fatalf("ExitErr: %v", err)
+	}
+	if !strings.Contains(got.String(), "got:finite-input") {
+		t.Fatalf("output = %q, want finite input after EOF", got.String())
+	}
+}
+
 func TestAgentKillTerminates(t *testing.T) {
 	a, err := Start(context.Background(), Options{Command: "sh", Args: []string{"-c", "while true; do sleep 1; done"}})
 	if err != nil {

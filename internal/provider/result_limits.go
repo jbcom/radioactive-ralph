@@ -103,7 +103,7 @@ func readBoundedAuthoritativeResultWithOpener(
 	path string,
 	openFile authoritativeResultOpener,
 ) ([]byte, error) {
-	pathInfo, err := os.Lstat(path)
+	pathInfo, err := snapshotAuthoritativeResultInfo(path)
 	if err != nil {
 		return nil, err
 	}
@@ -116,7 +116,7 @@ func readBoundedAuthoritativeResultWithOpener(
 
 	// Platform openers reject final-component symlinks and cannot block on a
 	// FIFO/device substitution. The pre/post identity comparison rejects a
-	// regular-file swap in the Lstat-to-open window.
+	// regular-file swap in the identity-snapshot-to-open window.
 	file, err := openFile(path)
 	if err != nil {
 		return nil, errors.Join(ErrAuthoritativeResultUnsafe, err)

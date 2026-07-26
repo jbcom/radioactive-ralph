@@ -21,6 +21,9 @@ func TestClaudeRunnerNaturalNonzeroDominatesSuccessFrame(t *testing.T) {
 IFS= read -r _
 printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"text","text":"PARTIAL-CLAUDE-SUCCESS-SECRET"}]}}'
 printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"result":"RESULT-SECRET"}'
+if IFS= read -r _; then
+  exit 28
+fi
 exit 27
 `)
 	result, err := ClaudeRunner{}.Run(context.Background(), Binding{
@@ -37,6 +40,35 @@ exit 27
 		if strings.Contains(err.Error(), secret) {
 			t.Fatalf("error surfaced provider payload %q: %v", secret, err)
 		}
+	}
+}
+
+func TestClaudeRunnerClosesOneShotInputBeforeAwaitingNaturalExit(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell-script fake CLI is Unix-only")
+	}
+	bin := writeFakeCLI(t, "fake-claude-waits-for-eof.sh", `#!/bin/sh
+count=0
+while IFS= read -r _; do
+  count=$((count + 1))
+done
+if [ "$count" -ne 1 ]; then
+  exit 29
+fi
+printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"text","text":"EOF-DELIVERED"}]}}'
+printf '%s\n' '{"type":"result","subtype":"success","is_error":false}'
+`)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	result, err := ClaudeRunner{}.Run(ctx, Binding{
+		Name:   "claude",
+		Config: BindingConfig{Type: "claude", Binary: bin},
+	}, Request{WorkingDir: t.TempDir(), UserPrompt: "hi"})
+	if err != nil {
+		t.Fatalf("Run error = %v, want natural success after stdin EOF", err)
+	}
+	if result.AssistantOutput != "EOF-DELIVERED" {
+		t.Fatalf("AssistantOutput = %q, want EOF-DELIVERED", result.AssistantOutput)
 	}
 }
 
