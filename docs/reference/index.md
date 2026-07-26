@@ -1,6 +1,6 @@
 ---
 title: Reference
-lastUpdated: 2026-07-16
+lastUpdated: 2026-07-26
 ---
 
 # Reference
@@ -11,7 +11,8 @@ lastUpdated: 2026-07-16
 | [State](./state.md) | What's live today, what changed from the earlier design, what remains |
 | [Testing](./testing.md) | The two-layer E2E strategy, CI checks, live-provider opt-in |
 | [API Reference](../api/index.md) | Generated Go package documentation from `cmd/` and `internal/` |
-| [Architecture design (authoritative)](../superpowers/specs/2026-07-16-supervisor-architecture-design.md) | The full design spec this reference tracks |
+| [Architecture design](../superpowers/specs/2026-07-16-supervisor-architecture-design.md) | The core authoritative design; its historical native Windows clauses are overridden below |
+| [Windows SCM safety contract](../superpowers/specs/2026-07-26-windows-scm-safety-disable-design.md) | Authoritative v0.22 native Windows fail-closed boundary and re-enable gates |
 
 ```{toctree}
 :hidden:
@@ -19,4 +20,5 @@ lastUpdated: 2026-07-16
 architecture
 state
 testing
+../superpowers/specs/2026-07-26-windows-scm-safety-disable-design
 ```

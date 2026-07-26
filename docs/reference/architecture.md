@@ -1,6 +1,6 @@
 ---
 title: Architecture
-lastUpdated: 2026-07-24
+lastUpdated: 2026-07-26
 ---
 
 # Architecture
@@ -19,9 +19,12 @@ lastUpdated: 2026-07-24
 - **`radioactive_ralph --init`** — explicitly registers or re-registers
   the current directory as a project.
 - **`radioactive_ralph service {install,uninstall,status}`** — manages
-  the supervisor as a per-user OS service (launchd/systemd/Windows SCM)
-  so it survives logout/reboot/crash. `service install` installs or
-  reloads the definition and starts it immediately.
+  the supervisor as a per-user OS service on macOS and Linux
+  (launchd/systemd) so it survives logout/reboot/crash. `service install`
+  installs or reloads the definition and starts it immediately. Native
+  Windows SCM install/start is intentionally disabled in v0.22; status and
+  uninstall remain remediation operations for prior development
+  registrations.
 - **`radioactive_ralph doctor`** — environment checks (git, provider
   CLIs, service manager).
 
@@ -53,6 +56,25 @@ Single-instance is enforced by an exclusive flock on a PID lockfile, not
 by the socket bind — the PID lock plus heartbeat file distinguish a live
 supervisor from a stale socket left by a crashed one (dead PID → the next
 supervisor reclaims: remove the stale socket, take over).
+
+### Native Windows execution boundary
+
+Native Windows supports foreground `radioactive_ralph --supervisor` under the
+interactive user's identity as a limited control-plane path. Provider workers
+remain unsupported because the pty layer returns `ErrPTYUnsupported`; WSL2 is
+the supported functional Windows route. Native Windows does not support SCM
+persistence in v0.22.
+The rejected service defaulted to `LocalSystem` while consuming user-scoped
+state, credentials, repositories, binary/config paths, and a pipe writable by
+the broad interactive-user SID. That violates both the one-user authority
+model and the local privilege boundary.
+
+SCM support remains disabled until a new design binds the service to one
+explicit user SID, secures every service-consumed filesystem path and the
+control pipe to that identity, provides a real native worker pty, proves a
+provider-backed repository turn under the service token, and passes a clean
+native lifecycle end-to-end. The complete superseding contract is
+[Native Windows SCM safety disable](../superpowers/specs/2026-07-26-windows-scm-safety-disable-design.md).
 
 ## State: one user-level database, clean repos
 

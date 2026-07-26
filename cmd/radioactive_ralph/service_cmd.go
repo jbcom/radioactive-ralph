@@ -19,11 +19,16 @@ var waitSupervisorServiceReady = waitSupervisorReachable
 
 // newServiceCmd wires internal/service's per-user auto-restart definition
 // as `radioactive_ralph service install|uninstall|status`. Installing
-// registers the platform-native service host (launchd/systemd/Windows SCM)
+// registers the supported platform-native service host (launchd/systemd)
 // to run `radioactive_ralph --supervisor` as a long-lived, auto-restarting
 // background process, so the supervisor survives logout/reboot/crash
-// without an operator remembering to relaunch it by hand.
+// without an operator remembering to relaunch it by hand. Native Windows SCM
+// install/start is fail-closed; status/uninstall remain for remediation.
 func newServiceCmd() *cobra.Command {
+	return newServiceCmdForPlatform(runtime.GOOS)
+}
+
+func newServiceCmdForPlatform(goos string) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:          "service",
 		Short:        "Manage the per-user supervisor auto-restart service definition",
@@ -32,7 +37,41 @@ func newServiceCmd() *cobra.Command {
 	cmd.AddCommand(newServiceInstallCmd())
 	cmd.AddCommand(newServiceUninstallCmd())
 	cmd.AddCommand(newServiceStatusCmd())
+	applyServiceHelpForPlatform(cmd, goos)
 	return cmd
+}
+
+func applyServiceHelpForPlatform(cmd *cobra.Command, goos string) {
+	if goos != "windows" {
+		return
+	}
+
+	cmd.Short = "Inspect or remove legacy Windows SCM state; install/start is unsupported"
+	cmd.Long = "Native Windows SCM install/start is unsupported. Run `radioactive_ralph --supervisor` as a foreground control plane and `radioactive_ralph` as its client. The status and uninstall commands exist only to inspect and remove legacy SCM registrations. Use WSL2 for the functional per-user service and provider-backed execution path."
+
+	help := map[string]struct {
+		short string
+		long  string
+	}{
+		"install": {
+			short: "Unsupported on native Windows; use the foreground control plane or WSL2",
+			long:  "Native Windows SCM install/start is unsupported. Run `radioactive_ralph --supervisor` in a foreground terminal and `radioactive_ralph` as its client. Use WSL2 for the functional Linux per-user service and provider-backed execution path.",
+		},
+		"uninstall": {
+			short: "Stop and remove a legacy native Windows SCM registration",
+			long:  "Native Windows uninstall is a remediation command: it stops and removes a legacy SCM registration. It does not enable a supported native service path. Use WSL2 for the functional per-user service and provider-backed execution path.",
+		},
+		"status": {
+			short: "Inspect a legacy native Windows SCM registration for remediation",
+			long:  "Native Windows status reports legacy SCM registration state for remediation. Native SCM install/start remains unsupported; run the control plane in the foreground or use WSL2 for the functional per-user service and provider-backed execution path.",
+		},
+	}
+	for _, child := range cmd.Commands() {
+		if guidance, ok := help[child.Name()]; ok {
+			child.Short = guidance.short
+			child.Long = guidance.long
+		}
+	}
 }
 
 func newServiceInstallCmd() *cobra.Command {
@@ -101,16 +140,13 @@ func newServiceInstallCmd() *cobra.Command {
 // provider CLIs; systemd user-manager PATHs have the same shell-vs-service
 // drift. The Ralph binary's directory is considered first. Duplicate,
 // relative, missing, and non-directory entries are removed. Unix additionally
-// rejects paths with symlinked or ownership/mode-untrusted components. Windows
-// SCM does not inherit the installing user's PATH because installer and
-// service identities can differ. An operator who intentionally needs a
-// different trust policy can pass an explicit --env PATH=... value.
+// rejects paths with symlinked or ownership/mode-untrusted components. Native
+// Windows SCM installation is disabled, so no installer PATH is inferred.
 func serviceExecutionPath(ralphBin, current string) string {
 	if runtime.GOOS == "windows" {
-		// The SCM service identity can differ from the installing
-		// administrator, so none of the administrator's user PATH is safe to
-		// infer across that boundary. Leave PATH absent and inherit SCM's
-		// service environment.
+		// Keep this helper reductive even though service.Install rejects the
+		// operation: no caller may convert the installer's PATH into dormant
+		// SCM configuration.
 		return ""
 	}
 

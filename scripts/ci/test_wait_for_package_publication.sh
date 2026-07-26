@@ -3,12 +3,18 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+# shellcheck source=scripts/ci/package_guidance_contract.sh
+source "$ROOT/scripts/ci/package_guidance_contract.sh"
+export RALPH_GUIDANCE_HELPER="$ROOT/scripts/ci/package_guidance_contract.sh"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
 cat > "$TMP/gh" <<'FAKEGH'
 #!/usr/bin/env bash
 set -euo pipefail
+
+# shellcheck source=/dev/null
+source "${RALPH_GUIDANCE_HELPER:?}"
 
 command_name="${1:?}"
 shift
@@ -137,18 +143,31 @@ if [[ "$command_name" == "api" ]]; then
   fi
   if [[ "$request" == "repos/jbcom/radioactive-ralph/releases/tags/v${FAKE_VERSION:?}" ]]; then
     published_at="2026-07-26T04:00:00Z"
+    release_body="$(
+      printf '# Changelog\n\n- Release fixture.\n\n%s' \
+        "$RALPH_GORELEASER_FOOTER_CONTRACT"
+    )"
     if [[ "${FAKE_MISSING_PUBLISHED_AT:-0}" == "1" ]]; then
       published_at=""
     elif [[ "${FAKE_INVALID_PUBLISHED_AT:-0}" == "1" ]]; then
       published_at="not-a-timestamp"
     fi
-    jq -cn --arg tag "v${FAKE_VERSION}" --arg published "$published_at" \
+    if [[ "${FAKE_UNSAFE_RELEASE_FOOTER:-0}" == "1" ]]; then
+      disabled_runtime='Native Windows SCM install/start and provider-backed workers are disabled.'
+      enabled_runtime='Native Windows SCM install/start and provider-backed workers are supported.'
+      release_body="${release_body/"$disabled_runtime"/"$enabled_runtime"}"
+    fi
+    jq -cn \
+      --arg tag "v${FAKE_VERSION}" \
+      --arg published "$published_at" \
+      --arg body "$release_body" \
       '{
         draft: false,
         prerelease: false,
         immutable: true,
         tag_name: $tag,
-        published_at: $published
+        published_at: $published,
+        body: $body
       }'
     exit 0
   fi
@@ -425,6 +444,8 @@ CASK
         --arg version "$scoop_version" \
         --arg url "${release_host}/releases/download/v${scoop_version}/${scoop_artifact}" \
         --arg sha "$scoop_sha" \
+        --arg description "$RALPH_NATIVE_WINDOWS_PACKAGE_SHORT_DESCRIPTION_CONTRACT" \
+        --argjson post_install "$RALPH_SCOOP_POST_INSTALL_CONTRACT_JSON" \
         '{
           version: $version,
           architecture: {
@@ -436,14 +457,34 @@ CASK
           },
           homepage: "https://github.com/jbcom/radioactive-ralph",
           license: "MIT",
-          description: "Supervised-execution runtime for local AI-agent CLIs",
-          post_install: [
-            "Write-Host \u0027Next step — start the supervisor, then register a project:\u0027",
-            "Write-Host \u0027  radioactive_ralph service install\u0027",
-            "Write-Host \u0027  radioactive_ralph --init\u0027",
-            "Write-Host \u0027See https://jonbogaty.com/radioactive-ralph/getting-started/ for the full setup flow.\u0027"
-          ]
+          description: $description,
+          post_install: $post_install
         }')"
+      if [[ "${FAKE_UNSAFE_SCOOP_DESCRIPTION:-0}" == "1" ]]; then
+        scoop="$(jq -c \
+          '.description = "Supervised-execution runtime for local AI-agent CLIs"' \
+          <<< "$scoop")"
+      fi
+      if [[ "${FAKE_UNSAFE_SCOOP_GUIDANCE:-0}" == "1" ]]; then
+        scoop="$(jq -c \
+          '.post_install += ["Write-Host \u0027  radioactive_ralph service install\u0027"]' \
+          <<< "$scoop")"
+      fi
+      if [[ "${FAKE_UNSAFE_SCOOP_SC_START:-0}" == "1" ]]; then
+        scoop="$(jq -c \
+          '.post_install += ["Write-Host \u0027Run sc.exe start radioactive_ralph-supervisor\u0027"]' \
+          <<< "$scoop")"
+      fi
+      if [[ "${FAKE_UNSAFE_SCOOP_START_SERVICE:-0}" == "1" ]]; then
+        scoop="$(jq -c \
+          '.post_install += ["Write-Host \u0027Run Start-Service radioactive_ralph-supervisor\u0027"]' \
+          <<< "$scoop")"
+      fi
+      if [[ "${FAKE_UNSAFE_SCOOP_NATIVE_PROVIDERS:-0}" == "1" ]]; then
+        scoop="$(jq -c \
+          '.post_install += ["Write-Host \u0027Native Windows provider workers are supported.\u0027"]' \
+          <<< "$scoop")"
+      fi
       if [[ "${FAKE_SCOOP_PRE_INSTALL:-0}" == "1" ]]; then
         scoop="$(jq -c '. + {pre_install: ["Write-Host owned"]}' <<< "$scoop")"
       elif [[ "${FAKE_SCOOP_INSTALLER:-0}" == "1" ]]; then
@@ -776,6 +817,14 @@ grep -Fx \
   "package_release_merge_oid=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" \
   "$TMP/historical-attempts.out" >/dev/null
 
+if FAKE_ALREADY_MERGED=1 FAKE_MULTIPLE_ATTEMPTS=1 \
+  FAKE_UNSAFE_RELEASE_FOOTER=1 PACKAGE_GATE_MODE=resolve-historical \
+  bash "$ROOT/scripts/ci/wait_for_package_publication.sh" 1.2.3 \
+  >/dev/null 2>&1; then
+  echo "expected contradictory immutable release footer to fail production validation" >&2
+  exit 1
+fi
+
 if FAKE_ALREADY_MERGED=1 FAKE_AMBIGUOUS_WINNER=1 \
   PACKAGE_GATE_MODE=resolve-historical \
   bash "$ROOT/scripts/ci/wait_for_package_publication.sh" 1.2.3 \
@@ -1010,6 +1059,46 @@ mkdir -p "$FAKE_STATE_DIR"
 if FAKE_SCOOP_INSTALLER=1 \
   bash "$ROOT/scripts/ci/wait_for_package_publication.sh" 1.2.3 >/dev/null 2>&1; then
   echo "expected injected Scoop installer script to fail exact schema validation" >&2
+  exit 1
+fi
+
+rm -rf "$FAKE_STATE_DIR"
+mkdir -p "$FAKE_STATE_DIR"
+if FAKE_UNSAFE_SCOOP_DESCRIPTION=1 \
+  bash "$ROOT/scripts/ci/wait_for_package_publication.sh" 1.2.3 >/dev/null 2>&1; then
+  echo "expected misleading full-runtime Scoop description to fail release-side validation" >&2
+  exit 1
+fi
+
+rm -rf "$FAKE_STATE_DIR"
+mkdir -p "$FAKE_STATE_DIR"
+if FAKE_UNSAFE_SCOOP_GUIDANCE=1 \
+  bash "$ROOT/scripts/ci/wait_for_package_publication.sh" 1.2.3 >/dev/null 2>&1; then
+  echo "expected native Windows service-install guidance to fail release-side validation" >&2
+  exit 1
+fi
+
+rm -rf "$FAKE_STATE_DIR"
+mkdir -p "$FAKE_STATE_DIR"
+if FAKE_UNSAFE_SCOOP_SC_START=1 \
+  bash "$ROOT/scripts/ci/wait_for_package_publication.sh" 1.2.3 >/dev/null 2>&1; then
+  echo "expected native Windows sc.exe start guidance to fail release-side validation" >&2
+  exit 1
+fi
+
+rm -rf "$FAKE_STATE_DIR"
+mkdir -p "$FAKE_STATE_DIR"
+if FAKE_UNSAFE_SCOOP_START_SERVICE=1 \
+  bash "$ROOT/scripts/ci/wait_for_package_publication.sh" 1.2.3 >/dev/null 2>&1; then
+  echo "expected native Windows Start-Service guidance to fail release-side validation" >&2
+  exit 1
+fi
+
+rm -rf "$FAKE_STATE_DIR"
+mkdir -p "$FAKE_STATE_DIR"
+if FAKE_UNSAFE_SCOOP_NATIVE_PROVIDERS=1 \
+  bash "$ROOT/scripts/ci/wait_for_package_publication.sh" 1.2.3 >/dev/null 2>&1; then
+  echo "expected native Windows provider-worker guidance to fail release-side validation" >&2
   exit 1
 fi
 

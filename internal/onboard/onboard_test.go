@@ -123,6 +123,34 @@ func TestRun_DeclineInstallChooseForeground(t *testing.T) {
 	_ = out
 }
 
+func TestRun_DisabledServiceSkipsInstallOffer(t *testing.T) {
+	prompt := &scriptedPrompter{answers: []any{true}} // foreground only
+	d, out := baseDeps(prompt)
+	d.Plan.ServiceUnit = ""
+	d.Plan.ServiceUnitPath = ""
+	d.Plan.ServiceDisabled = true
+	d.Plan.ServiceDisabledGuide = "native Windows SCM disabled; use WSL2"
+	called := false
+	d.InstallService = func() error { called = true; return nil }
+
+	outcome, err := Run(d)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if called {
+		t.Fatal("disabled service platform offered or invoked installation")
+	}
+	if prompt.i != 1 {
+		t.Fatalf("prompt count = %d, want only the foreground prompt", prompt.i)
+	}
+	if outcome != PrintedForegroundHint {
+		t.Fatalf("outcome = %v, want PrintedForegroundHint", outcome)
+	}
+	if !strings.Contains(out.String(), d.Plan.ServiceDisabledGuide) {
+		t.Fatalf("output missing disabled-service guidance: %q", out.String())
+	}
+}
+
 func TestRun_QuitAtFirstPromptPrintsManual(t *testing.T) {
 	d, out := baseDeps(&scriptedPrompter{answers: []any{ErrQuit}})
 	outcome, err := Run(d)

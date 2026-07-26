@@ -1,6 +1,6 @@
 ---
 title: Testing
-lastUpdated: 2026-07-16
+lastUpdated: 2026-07-26
 ---
 
 # Testing — radioactive-ralph
@@ -12,7 +12,7 @@ lastUpdated: 2026-07-16
 | Unit | Package-local logic and schema rules | Always on |
 | E2E Layer 1 (teatest) | The TUI's `tea.Model` driven through `teatest.NewTestModel` with real `tea.KeyMsg` keystrokes against a `FakeDataSource`, asserting on rendered terminal output | CI-feasible, deterministic |
 | E2E Layer 2 (real-binary pty) | A real `--supervisor` process, a real `--init` against a fixture project, a real non-tty client status check, and a real client TUI driven under an actual pty (`creack/pty`) with literal keystroke bytes | CI-feasible, real OS processes |
-| Live/manual | Real provider CLI turns against a hosted model, real launchd/systemd/SCM install | Manual / opt-in workflow_dispatch |
+| Live/manual | Real provider CLI turns, real launchd/systemd-user install, native Windows limited control-plane lifecycle | Manual / opt-in workflow_dispatch |
 
 Layer 1 (`internal/tui/e2e_test.go`) proves the model logic renders drill
 navigation correctly without needing a real supervisor. Layer 2
@@ -58,12 +58,16 @@ prebuild in one shot.
 CI is intentionally strong on hermetic coverage and weaker on host-manager
 integration and live provider behavior:
 
-- live launchd/systemd-user/Windows SCM install/start/stop on a real host
+- live launchd/systemd-user install/start/stop on a real host
+- native Windows foreground supervisor/client behavior and
+  `ErrPTYUnsupported` worker refusal on a real host
 - live provider turns against a real hosted model
 
 `.github/workflows/service-managers.yml` covers the first, opt-in via
 `workflow_dispatch` because it needs real host-manager capabilities.
-`.github/workflows/provider-live.yml` covers the second, opt-in and
+The native Windows item remains manual real-host release evidence; ordinary
+hosted-runner unit and fail-closed SCM smokes are not a substitute.
+`.github/workflows/provider-live.yml` covers the third, opt-in and
 credentialed:
 
 - `ANTHROPIC_API_KEY` for Claude live smoke
@@ -72,6 +76,17 @@ credentialed:
 
 `gemini` was removed as a shipped provider on 2026-06-18, so there is no
 live Gemini smoke step.
+
+There is no WSL2-specific workflow. Until one exists, a real provider turn
+through the Linux build and `systemd --user` inside WSL2 is manual release
+evidence.
+
+Native Windows SCM unit/config tests and any prior service-manager smoke are
+not release authority for service installation. SCM install/start is disabled
+in v0.22, and foreground mode does not execute provider workers.
+Re-enablement requires a real native pty provider turn plus the clean
+identity-bound lifecycle in the
+[Windows SCM safety contract](../superpowers/specs/2026-07-26-windows-scm-safety-disable-design.md).
 
 ## Conventions
 

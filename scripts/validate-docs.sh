@@ -4,6 +4,8 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
+# shellcheck source=scripts/ci/package_guidance_contract.sh
+source "$ROOT/scripts/ci/package_guidance_contract.sh"
 
 LIVE_DOCS=(
   README.md
@@ -58,6 +60,12 @@ search_o() {
 }
 
 [[ -x docs/install.sh ]] || fail "docs/install.sh must exist and be executable"
+ralph_validate_goreleaser_release_footer "$ROOT/.goreleaser.yaml" ||
+  fail "GoReleaser footer violates the platform-specific first-run contract"
+ralph_validate_winget_config_contract "$ROOT/.goreleaser.yaml" ||
+  fail "Winget metadata violates the native Windows package contract"
+ralph_validate_chocolatey_config_contract "$ROOT/.goreleaser.chocolatey.yaml" ||
+  fail "Chocolatey metadata violates the native Windows package contract"
 
 for path in "${RETIRED_INSTALL_SURFACES[@]}"; do
   [[ ! -e "$path" && ! -L "$path" ]] || fail "retired install surface returned: $path"

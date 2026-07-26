@@ -205,19 +205,30 @@ func checkGhAuth(ctx context.Context, cfg RunOptions) Check {
 // checkServicePlatform reports whether the current platform supports the
 // durable repo service contract.
 func checkServicePlatform(_ context.Context, _ RunOptions) Check {
-	switch runtime.GOOS {
+	return checkServicePlatformFor(runtime.GOOS)
+}
+
+func checkServicePlatformFor(goos string) Check {
+	switch goos {
 	case "darwin":
 		return Check{Name: "service platform", Severity: OK, Detail: "macOS launchd + Unix sockets supported"}
 	case "linux":
 		return Check{Name: "service platform", Severity: OK, Detail: "Linux systemd-user + Unix sockets supported"}
 	case "windows":
-		return Check{Name: "service platform", Severity: OK, Detail: "native Windows SCM + named pipes supported"}
+		return Check{
+			Name:     "service platform",
+			Severity: WARN,
+			Detail: "native Windows supports the foreground control plane and SID-bound named pipes; " +
+				"SCM install/start and provider PTYs are unsupported",
+			Remediate: "run `radioactive_ralph --supervisor` for the native control plane, " +
+				"or use WSL2 with `systemd --user` for provider-backed execution",
+		}
 	default:
 		return Check{
 			Name:      "service platform",
 			Severity:  FAIL,
-			Detail:    fmt.Sprintf("%s is not a supported durable-service platform", runtime.GOOS),
-			Remediate: "use macOS, Linux, or native Windows for the full repo-service runtime",
+			Detail:    fmt.Sprintf("%s is not a supported durable-service platform", goos),
+			Remediate: "use macOS or Linux for the full repo-service runtime",
 		}
 	}
 }

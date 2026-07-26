@@ -1,7 +1,7 @@
 ---
 title: Install + first run
 description: Install the radioactive_ralph binary, start the supervisor, and run the client.
-lastUpdated: 2026-07-16
+lastUpdated: 2026-07-26
 ---
 
 This is the canonical first-time flow. Use the package-manager path
@@ -70,16 +70,19 @@ Expected OK lines: `git`, a provider CLI (`claude`, `codex`, or
 radioactive_ralph --supervisor
 ```
 
-Runs the supervisor in the foreground. For daily use, install it as an
-OS service instead (see [Service runbook](./service.md)):
+Runs the supervisor in the foreground. On macOS and Linux, install it as an OS
+service for daily use (see [Service runbook](./service.md)):
 
 ```sh
 radioactive_ralph service install
 radioactive_ralph service status
 ```
 
-For a first run, keep it in the foreground so you can see the logs
-directly.
+For a first run, keep it in the foreground so you can see the logs directly.
+Native Windows has only a limited foreground supervisor/client control plane
+in v0.22; worker startup returns `ErrPTYUnsupported`. Do not elevate or retry
+`service install`. Use WSL2 and the Linux `systemd --user` path for functional
+provider-backed execution.
 
 ## 4. Register a project
 

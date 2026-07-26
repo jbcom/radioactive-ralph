@@ -1,13 +1,14 @@
 ---
 title: Platform notes
-description: macOS launchd, Linux systemd-user, and Windows SCM + named-pipe caveats.
-lastUpdated: 2026-07-16
+description: macOS launchd, Linux systemd-user, and native Windows foreground and named-pipe caveats.
+lastUpdated: 2026-07-26
 ---
 
 The supervisor is a single Go binary, but the OS integration surface
 differs per platform. This page collects the caveats that bite in
-practice. There is exactly one supervisor service per user per machine —
-not one per repo.
+practice. macOS and Linux have exactly one supervisor service per user per
+machine — not one per repo. Native Windows offers only a limited foreground
+control plane in v0.22; WSL2 is the functional provider-backed route.
 
 ## macOS (launchd)
 
@@ -97,31 +98,39 @@ On Windows the discovery endpoint is a named pipe, not a Unix socket:
 \\.\pipe\radioactive_ralph-<token>-service
 ```
 
-`<token>` is a short hash of the state-root path, not a repo slug — there
-is one supervisor per machine, so the token disambiguates only across
-distinct `RALPH_STATE_DIR` overrides (tests, multiple accounts), not
-across repos. Pipes are scoped to the current user's session:
+`<token>` is a short hash of the state-root path, not a repo slug. Each user
+account has one supervisor by default, so the token disambiguates distinct
+per-user `RALPH_STATE_DIR` overrides (including tests), not repos. A foreground
+supervisor running as the normal user creates a pipe bound to that user's SID.
 
-- A service installed under `LocalSystem` (SCM) creates a pipe that
-  interactive users can connect to (the DACL explicitly grants
-  `GenericRead+GenericWrite` to `WinInteractiveSid`; see
-  `internal/ipc/transport_windows.go`)
-- A service installed under your normal user account creates a pipe that
-  only that user can connect to (`GenericAll` to the user's SID only)
+The rejected SCM design ran as `LocalSystem` and granted
+`GenericRead+GenericWrite` to broad `WinInteractiveSid` so an interactive
+client could reach it. That authorization is unsafe for Ralph's mutating
+control API and is one reason native SCM support is disabled.
 
-### SCM install requires admin
+### SCM install/start is disabled
 
 ```powershell
-# Elevated PowerShell required
-radioactive_ralph service install
+radioactive_ralph --supervisor
 ```
 
-Non-elevated terminals get `access denied` and no service is registered.
+v0.22 supports native Windows foreground supervisor/client control-plane
+execution, not provider workers or SCM persistence. Worker startup returns
+`ErrPTYUnsupported`. `service install` and service start fail closed before
+mutation even from an elevated terminal. `service status` and
+`service uninstall` exist only to inspect and remove a prior development
+registration. Do not start it.
+
+SCM support can return only with an identity-bound per-user service, secure
+binary/config/state ACLs, a pipe authorized to the exact user SID, a real
+native worker pty and provider-backed repository turn under that identity, and
+clean native install/start/status/uninstall end-to-end proof. See the
+[accepted safety contract](../superpowers/specs/2026-07-26-windows-scm-safety-disable-design.md).
 
 ### Pipes die on reboot
 
 Windows named pipes are per-session objects; they don't persist across
-reboots. This is normal — the installed service recreates the pipe on
+reboots. This is normal — the foreground supervisor recreates the pipe on
 start.
 
 ### Windows Defender / SmartScreen
@@ -131,8 +140,10 @@ First run may trigger a SmartScreen warning. Fix: right-click the binary
 
 ### Windows CI vs. native Windows
 
-The CI smoke test (`.github/workflows/ci.yml`, Windows job) runs the
-supervisor lifecycle on a GitHub-hosted runner. It's sensitive to:
+The CI smoke test (`.github/workflows/ci.yml`, Windows job) runs the limited
+foreground supervisor/client lifecycle on a GitHub-hosted runner and asserts
+the unsupported worker boundary. It does not prove SCM safety or native
+provider execution. It's sensitive to:
 
 - Process exit races — poll `HasExited`, not `Wait-Process` (which
   throws when the PID is already gone)
@@ -141,8 +152,10 @@ supervisor lifecycle on a GitHub-hosted runner. It's sensitive to:
 - Long-running workers that exceed the default job timeout — keep
   integration tests under 2 minutes
 
-If a Windows CI flake doesn't reproduce on a real Windows machine,
-suspect hosted-runner instability and rerun before investigating.
+If a Windows CI flake doesn't reproduce on a real Windows machine, compare
+native evidence before classifying it. Hosted-runner unit and foreground
+smokes are not substitutes for the native pty/provider and clean SCM
+end-to-end required to re-enable service support.
 
 ## WSL2
 
@@ -157,5 +170,6 @@ Linux tarball, run the Linux systemd integration. Two caveats:
 ## Docker / containers
 
 Untested in v1. The binary runs in Alpine + glibc containers, but the
-OS-service integration (launchd/systemd/SCM) doesn't — use
-`radioactive_ralph --supervisor` in the foreground instead.
+OS-service integration (launchd/systemd; native Windows SCM is disabled)
+doesn't. Native Windows foreground remains control-plane-only; use WSL2 for
+functional provider-backed execution.

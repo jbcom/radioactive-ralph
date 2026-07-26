@@ -1,7 +1,7 @@
 ---
 title: Troubleshooting
 description: Failure modes you'll hit in practice and the fix for each.
-lastUpdated: 2026-07-16
+lastUpdated: 2026-07-26
 ---
 
 This is the triage guide. Match your symptom, apply the fix, then
@@ -74,9 +74,11 @@ radioactive_ralph --supervisor
 radioactive_ralph --supervisor
 ```
 
-On Windows, named pipes are killed by reboot even with an installed
-service. That's normal — the service wrapper recreates the pipe on
-start.
+On Windows, named pipes are killed when the foreground supervisor exits and
+at reboot. That's normal — run `radioactive_ralph --supervisor` again as the
+same interactive user for the limited control plane. Native provider workers
+remain unsupported and SCM start is intentionally disabled in v0.22; use WSL2
+for functional execution.
 
 ## Provider CLI missing or unauthenticated
 
@@ -147,16 +149,29 @@ loginctl enable-linger $USER     # keep the user bus alive across sessions
 
 Then re-run `service install`.
 
-### Symptom (Windows)
+### Symptom (native Windows)
 
 ```
-service install failed: access denied
+service install failed: native Windows SCM service installation is disabled
 ```
 
-### Fix (Windows)
+### Fix (native Windows)
 
-Registering an SCM service requires admin privileges. Open PowerShell
-**as administrator** and re-run `radioactive_ralph service install`.
+Do not elevate and retry. For limited native control-plane inspection, run the
+supervisor in the foreground:
+
+```powershell
+radioactive_ralph --supervisor
+```
+
+Native provider worker startup still returns `ErrPTYUnsupported`; use WSL2 with
+the Linux `systemd --user` service for functional execution. If
+`radioactive_ralph service status` reports an SCM registration left by an
+earlier development build, do not start it; remove it with
+`radioactive_ralph service uninstall`. The
+[Windows SCM safety contract](../superpowers/specs/2026-07-26-windows-scm-safety-disable-design.md)
+explains the identity and ACL proof required before native service support can
+return.
 
 ## Worker stuck / no progress
 

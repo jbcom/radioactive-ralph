@@ -65,17 +65,23 @@ chocolateys:
     title: Radioactive Ralph
     authors: Jon B <jon@jonbogaty.com>
     project_url: https://github.com/jbcom/radioactive-ralph
+    # This config intentionally disables the release pipe because the primary
+    # GoReleaser job already published the immutable GitHub release. Pin the
+    # package download explicitly so Chocolatey generation never depends on a
+    # disabled pipe's implicit release URL.
+    url_template: "https://github.com/jbcom/radioactive-ralph/releases/download/{{ .Tag }}/{{ .ArtifactName }}"
     license_url: https://github.com/jbcom/radioactive-ralph/blob/main/LICENSE
     project_source_url: https://github.com/jbcom/radioactive-ralph
     package_source_url: https://github.com/jbcom/pkgs
     docs_url: https://github.com/jbcom/radioactive-ralph#readme
     bug_tracker_url: https://github.com/jbcom/radioactive-ralph/issues
-    summary: Supervised-execution runtime for local AI-agent CLIs
+    summary: Native Windows foreground supervisor/client control plane only
     description: |
-      Radioactive Ralph supervises local Claude, Codex, and OpenCode workers
-      against a durable SQLite plan DAG. One per-user supervisor coordinates
-      registered projects with explicit approvals, budgets, and operator
-      controls; there are no persona variants.
+      This native Windows package provides only Radioactive Ralph's foreground
+      supervisor/client control plane through radioactive_ralph --supervisor.
+      Native Windows SCM install/start and provider-backed workers are disabled.
+      Use the Linux build inside WSL2 with systemd --user for functional Claude,
+      Codex, and OpenCode worker execution.
     tags: "ai runtime automation cli development"
     release_notes: "https://github.com/jbcom/radioactive-ralph/releases/tag/v{{ .Version }}"
     api_key: "{{ .Env.CHOCOLATEY_API_KEY }}"

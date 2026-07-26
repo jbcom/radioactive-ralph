@@ -11,7 +11,7 @@ description: Go API reference for the onboard package.
 import "github.com/jbcom/radioactive-ralph/internal/onboard"
 ```
 
-Package onboard implements the guided first\-run wizard: when a user runs the client cold on an interactive terminal and no supervisor is reachable, it OFFERS \(with explicit consent\) to install and start the background service, falling back to a foreground supervisor or the plain print\-the\-commands path. See docs/superpowers/specs/2026\-07\-17\-guided\-first\-run\-onboarding\-design.md.
+Package onboard implements the guided first\-run wizard. On platforms with a supported durable\-service backend, a cold interactive client OFFERS \(with explicit consent\) to install and start the background service, falling back to a foreground supervisor or the plain print\-the\-commands path. On a service\-disabled platform, the wizard explains that boundary, skips the install prompt, and routes directly to the foreground/manual choices. See docs/superpowers/specs/2026\-07\-17\-guided\-first\-run\-onboarding\-design.md.
 
 The wizard is pure orchestration: every side effect \(prompting, installing the service, discovering the supervisor\) is an injected dependency, so the whole decision tree is unit\-testable without touching the real system.
 
@@ -37,7 +37,7 @@ var ErrQuit = errors.New("onboard: user quit")
 ```
 
 <a name="Deps"></a>
-## type [Deps](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/onboard/onboard.go#L55-L72>)
+## type [Deps](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/onboard/onboard.go#L58-L75>)
 
 Deps are the injected dependencies. Every field is required.
 
@@ -63,7 +63,7 @@ type Deps struct {
 ```
 
 <a name="Outcome"></a>
-## type [Outcome](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/onboard/onboard.go#L22>)
+## type [Outcome](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/onboard/onboard.go#L23>)
 
 Outcome reports how the wizard ended so the caller knows whether to proceed to the TUI.
 
@@ -87,7 +87,7 @@ const (
 ```
 
 <a name="Run"></a>
-### func [Run](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/onboard/onboard.go#L81>)
+### func [Run](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/onboard/onboard.go#L84>)
 
 ```go
 func Run(d Deps) (Outcome, error)
@@ -96,21 +96,23 @@ func Run(d Deps) (Outcome, error)
 Run drives the first\-run flow. It assumes the caller already confirmed the session is interactive and no supervisor is currently reachable.
 
 <a name="Plan"></a>
-## type [Plan](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/onboard/onboard.go#L37-L42>)
+## type [Plan](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/onboard/onboard.go#L38-L45>)
 
 Plan is the "what will be created" summary shown before any outward\-facing action, so the user consents to concrete paths, not a vague promise.
 
 ```go
 type Plan struct {
-    StateDir        string
-    DBPath          string
-    ServiceUnit     string
-    ServiceUnitPath string
+    StateDir             string
+    DBPath               string
+    ServiceUnit          string
+    ServiceUnitPath      string
+    ServiceDisabled      bool
+    ServiceDisabledGuide string
 }
 ```
 
 <a name="Prompter"></a>
-## type [Prompter](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/onboard/onboard.go#L47-L49>)
+## type [Prompter](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/onboard/onboard.go#L50-L52>)
 
 Prompter asks the user a yes/no question. Confirm returns \(true, nil\) for yes, \(false, nil\) for no, and a non\-nil error to abort the whole wizard \(e.g. the user typed 'q' to quit, or stdin closed\).
 

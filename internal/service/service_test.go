@@ -1,12 +1,10 @@
 package service
 
 import (
-	"encoding/json"
 	"errors"
 	"os"
 	"path"
 	"path/filepath"
-	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -56,49 +54,6 @@ func TestUnitPathWindows(t *testing.T) {
 func TestUnitPathUnsupported(t *testing.T) {
 	if got := UnitPath(BackendUnsupported, "/tmp/home"); got != "" {
 		t.Errorf("UnitPath(unsupported) = %q, want empty", got)
-	}
-}
-
-func TestMarshalWindowsServiceConfigRoundTrip(t *testing.T) {
-	opts := InstallOptions{
-		ExtraEnv: map[string]string{
-			"FOO": "bar",
-			"BAZ": "qux",
-		},
-	}
-	raw, err := MarshalWindowsServiceConfig(opts)
-	if err != nil {
-		t.Fatalf("MarshalWindowsServiceConfig: %v", err)
-	}
-	var onDisk map[string]any
-	if err := json.Unmarshal(raw, &onDisk); err != nil {
-		t.Fatalf("json.Unmarshal: %v", err)
-	}
-	cfg, err := ParseWindowsServiceConfig(raw)
-	if err != nil {
-		t.Fatalf("ParseWindowsServiceConfig: %v", err)
-	}
-	if !reflect.DeepEqual(cfg.ExtraEnv, opts.ExtraEnv) {
-		t.Fatalf("ExtraEnv = %#v, want %#v", cfg.ExtraEnv, opts.ExtraEnv)
-	}
-}
-
-func TestBuildWindowsServiceConfigClonesEnv(t *testing.T) {
-	opts := InstallOptions{
-		ExtraEnv: map[string]string{"FOO": "bar"},
-	}
-	cfg := BuildWindowsServiceConfig(opts)
-	opts.ExtraEnv["FOO"] = "mutated"
-	if cfg.ExtraEnv["FOO"] != "bar" {
-		t.Fatalf("BuildWindowsServiceConfig did not clone ExtraEnv: %#v", cfg.ExtraEnv)
-	}
-}
-
-func TestWindowsServiceArgs(t *testing.T) {
-	got := WindowsServiceArgs()
-	want := []string{"--supervisor"}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("WindowsServiceArgs() = %#v, want %#v", got, want)
 	}
 }
 
@@ -207,8 +162,78 @@ func TestInstallSystemdQuotesExecutableAndEnvironment(t *testing.T) {
 }
 
 func TestInstallMissingFields(t *testing.T) {
-	if _, err := Install(InstallOptions{}); err != ErrMissingRalphBin {
+	if _, err := Install(InstallOptions{Backend: BackendLaunchd}); err != ErrMissingRalphBin {
 		t.Errorf("expected ErrMissingRalphBin, got %v", err)
+	}
+}
+
+func TestWindowsSCMDisabledErrorIsStableAndActionable(t *testing.T) {
+	home := filepath.Join(t.TempDir(), "must-not-be-created")
+	_, err := Install(InstallOptions{
+		Backend: BackendWindowsSCM,
+		HomeDir: home,
+		// The disabled backend must win before validation of the unsafe
+		// definition, including a missing executable and malformed environment.
+		ExtraEnv: map[string]string{"INVALID NAME": "line one\nline two"},
+	})
+	if !errors.Is(err, ErrWindowsSCMDisabled) {
+		t.Fatalf("Install(windows-scm) error = %v, want ErrWindowsSCMDisabled", err)
+	}
+	var typed *WindowsSCMDisabledError
+	if !errors.As(err, &typed) {
+		t.Fatalf("Install(windows-scm) error type = %T, want *WindowsSCMDisabledError", err)
+	}
+	if typed.Operation != WindowsSCMOperationInstall {
+		t.Fatalf("Install operation = %q, want %q", typed.Operation, WindowsSCMOperationInstall)
+	}
+	for _, clause := range []string{
+		"native Windows SCM service installation is disabled",
+		"radioactive_ralph --supervisor",
+		"WSL2",
+		"systemd --user",
+	} {
+		if !strings.Contains(err.Error(), clause) {
+			t.Fatalf("Install(windows-scm) error %q missing %q", err, clause)
+		}
+	}
+	if _, statErr := os.Stat(home); !os.IsNotExist(statErr) {
+		t.Fatalf("Install(windows-scm) mutated %s: %v", home, statErr)
+	}
+
+	err = Start(InstallOptions{Backend: BackendWindowsSCM, HomeDir: home})
+	if !errors.Is(err, ErrWindowsSCMDisabled) {
+		t.Fatalf("Start(windows-scm) error = %v, want ErrWindowsSCMDisabled", err)
+	}
+	if !errors.As(err, &typed) || typed.Operation != WindowsSCMOperationStart {
+		t.Fatalf("Start(windows-scm) typed error = %#v (%v)", typed, err)
+	}
+}
+
+func TestWindowsSCMDeletionPendingErrorIsStableAndActionable(t *testing.T) {
+	err := &WindowsSCMDeletionPendingError{
+		ServiceName: UnitName(BackendWindowsSCM),
+		Operation:   "uninstall",
+	}
+	if !errors.Is(err, ErrWindowsSCMDeletionPending) {
+		t.Fatalf("error = %v, want ErrWindowsSCMDeletionPending", err)
+	}
+	var typed *WindowsSCMDeletionPendingError
+	if !errors.As(err, &typed) {
+		t.Fatalf("error type = %T, want *WindowsSCMDeletionPendingError", err)
+	}
+	if typed.ServiceName != UnitName(BackendWindowsSCM) || typed.Operation != "uninstall" {
+		t.Fatalf("typed error = %#v", typed)
+	}
+	for _, clause := range []string{
+		"marked for deletion",
+		"process and registration may still exist",
+		"wait for SCM deletion to finish",
+		"reboot Windows",
+		"retry",
+	} {
+		if !strings.Contains(err.Error(), clause) {
+			t.Fatalf("deletion-pending error %q missing %q", err, clause)
+		}
 	}
 }
 
@@ -254,10 +279,7 @@ func TestAbsoluteServicePathUsesTargetBackendGrammar(t *testing.T) {
 	}{
 		{name: "launchd POSIX", backend: BackendLaunchd, value: "/usr/local/bin/radioactive_ralph", want: true},
 		{name: "systemd POSIX", backend: BackendSystemdUser, value: "/opt/Ralph Studio/bin/radioactive_ralph", want: true},
-		{name: "Windows drive", backend: BackendWindowsSCM, value: `C:\Program Files\radioactive-ralph\radioactive_ralph.exe`, want: true},
-		{name: "Windows UNC", backend: BackendWindowsSCM, value: `\\server\share\radioactive_ralph.exe`, want: true},
 		{name: "POSIX rejects Windows", backend: BackendLaunchd, value: `C:\radioactive_ralph.exe`, want: false},
-		{name: "Windows rejects POSIX", backend: BackendWindowsSCM, value: "/usr/local/bin/radioactive_ralph", want: false},
 		{name: "relative", backend: BackendSystemdUser, value: "radioactive_ralph", want: false},
 	}
 	for _, tt := range tests {

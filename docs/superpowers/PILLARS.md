@@ -40,6 +40,16 @@ SCM unit, started), then `--init`, then the TUI. Never prompts on non-TTY/CI
 StdinPrompter), `service.Start`, client.go wiring, unit tests + a real-pty E2E.
 Merged PR #85 (80daad9).
 
+The native Windows SCM portion of that historical shipment is superseded for
+v0.22 by the
+[Windows SCM safety contract](./specs/2026-07-26-windows-scm-safety-disable-design.md):
+install/start is disabled before mutation. Native foreground `--supervisor`
+remains only a limited supervisor/client control plane because worker startup
+returns `ErrPTYUnsupported`; WSL2 is the supported functional Windows route.
+Any re-enable requires an identity-bound user SID, secure filesystem ACLs, an
+exact-SID control pipe, a real native pty/provider turn, and a clean native
+lifecycle end-to-end.
+
 ## Versioned IPC drive+observe API
 
 Extended the read-only-TUI IPC into a versioned drive+observe surface so the GUI

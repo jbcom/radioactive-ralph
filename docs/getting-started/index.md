@@ -1,6 +1,6 @@
 ---
 title: Getting started
-lastUpdated: 2026-07-25
+lastUpdated: 2026-07-26
 ---
 
 # Get started
@@ -42,14 +42,19 @@ directory.
 radioactive_ralph --supervisor
 ```
 
-This blocks in the foreground. For daily use, install it as an OS service
-instead so it survives logout/reboot/crash — see the
-[service runbook](../runbooks/service.md):
+This blocks in the foreground. On macOS and Linux, install it as an OS service
+for daily use so it survives logout/reboot/crash:
 
 ```bash
 radioactive_ralph service install
 radioactive_ralph service status
 ```
+
+See the [service runbook](../runbooks/service.md). Native Windows has only a
+limited foreground control plane in v0.22: keep using
+`radioactive_ralph --supervisor`, because provider workers return
+`ErrPTYUnsupported` and SCM install/start is disabled. WSL2 with the Linux
+build and `systemd --user` is the supported functional Windows route.
 
 ## Initialize a project
 

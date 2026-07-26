@@ -167,13 +167,14 @@ scoops:
           branch: main
     directory: bucket
     homepage: https://github.com/jbcom/radioactive-ralph
-    description: Supervised-execution runtime for local AI-agent CLIs
+    description: Native Windows foreground supervisor/client control plane only
     license: MIT
     post_install:
-      - "Write-Host 'Next step — start the supervisor, then register a project:'"
-      - "Write-Host '  radioactive_ralph service install'"
-      - "Write-Host '  radioactive_ralph --init'"
-      - "Write-Host 'See https://jonbogaty.com/radioactive-ralph/getting-started/ for the full setup flow.'"
+      - "Write-Host 'Native Windows provides only the foreground supervisor/client control plane:'"
+      - "Write-Host '  radioactive_ralph --supervisor'"
+      - "Write-Host 'Native Windows SCM install/start and provider-backed workers are disabled.'"
+      - "Write-Host 'For provider-backed execution, install the Linux build inside WSL2 and use systemd --user.'"
+      - "Write-Host 'See https://jonbogaty.com/radioactive-ralph/getting-started/ for the full platform-specific setup flow.'"
 
 # winget manifests (Windows Package Manager) are generated under dist only.
 # Upload is deliberately disabled: there is no tested staging or submission
@@ -186,11 +187,13 @@ winget:
     publisher_url: https://github.com/jbcom
     package_identifier: jbcom.radioactive-ralph
     homepage: https://github.com/jbcom/radioactive-ralph
-    short_description: Supervised-execution runtime for local AI-agent CLIs
+    short_description: Native Windows foreground supervisor/client control plane only
     description: |
-      radioactive-ralph is a supervised-execution runtime for local AI-agent
-      CLIs: Claude, Codex, and OpenCode run non-interactively under Ralph's own
-      pty and can never block the system.
+      This native Windows package provides only Radioactive Ralph's foreground
+      supervisor/client control plane through radioactive_ralph --supervisor.
+      Native Windows SCM install/start and provider-backed workers are disabled.
+      Use the Linux build inside WSL2 with systemd --user for functional Claude,
+      Codex, and OpenCode worker execution.
     license: MIT
     license_url: https://github.com/jbcom/radioactive-ralph/blob/main/LICENSE
     release_notes_url: https://github.com/jbcom/radioactive-ralph/releases/tag/v{{ .Version }}
@@ -243,9 +246,17 @@ release:
     curl -sSL https://jonbogaty.com/radioactive-ralph/install.sh | sh
     ```
 
-    First run:
+    First run (macOS, Linux, or the Linux build inside WSL2):
     ```
     radioactive_ralph service install
     radioactive_ralph --init
     radioactive_ralph
     ```
+
+    Native Windows provides only the foreground supervisor/client control
+    plane:
+    ```
+    radioactive_ralph --supervisor
+    ```
+    Native Windows SCM install/start and provider-backed workers are disabled.
+    Use the Linux build inside WSL2 for functional provider-backed execution.

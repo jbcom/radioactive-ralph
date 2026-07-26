@@ -1,26 +1,35 @@
 ---
 title: Supervisor service install, start, stop, recover
-description: Manage the supervisor as a per-user OS service on macOS, Linux, and Windows.
-lastUpdated: 2026-07-24
+description: Manage the supervisor as a per-user OS service on macOS and Linux.
+lastUpdated: 2026-07-26
 ---
 
 `radioactive_ralph service ...` manages the supervisor
 (`radioactive_ralph --supervisor`) as a per-user auto-restarting OS
-service. The supervisor is the one long-lived process on the machine —
-there is one per user, not one per repo.
+service on macOS and Linux. The supervisor is the one long-lived process on
+the machine — there is one per user, not one per repo.
+
+> [!IMPORTANT]
+> v0.22 intentionally disables native Windows SCM install/start. `LocalSystem`
+> cannot safely represent Ralph's user-scoped state and credentials, and the
+> prior filesystem and broad interactive-user pipe model is not an acceptable
+> privilege boundary. Native foreground `radioactive_ralph --supervisor` is a
+> limited control-plane path because provider worker ptys are unsupported; use
+> WSL2 with `systemd --user` for functional execution. See the
+> [Windows SCM safety contract](../superpowers/specs/2026-07-26-windows-scm-safety-disable-design.md).
 
 ## service install vs. running --supervisor directly
 
 | Command | What it does | When to use |
 |---------|--------------|-------------|
 | `radioactive_ralph --supervisor` | Runs the supervisor **in the foreground** | First-run debugging, CI smoke tests, watching logs directly |
-| `radioactive_ralph service install` | Installs or reloads the definition and starts the supervisor now | Daily use; the supervisor auto-starts at login and auto-restarts on crash |
+| `radioactive_ralph service install` | Installs or reloads the macOS/Linux definition and starts the supervisor now | Daily use on macOS/Linux; the supervisor auto-starts at login and auto-restarts on crash |
 
 ## 1. Install as an OS service
 
 There is exactly one service definition per user per machine — not one
 per repo — named `jbcom.radioactive-ralph.supervisor` (launchd) or
-`radioactive_ralph-supervisor` (systemd / Windows SCM).
+`radioactive_ralph-supervisor` (systemd).
 
 ### macOS (launchd)
 
@@ -107,26 +116,32 @@ radioactive_ralph service install \
   --env PATH=/opt/homebrew/opt/node@24/bin:/opt/homebrew/bin:/usr/bin:/bin
 ```
 
-### Windows (Service Control Manager)
+### Native Windows (SCM intentionally disabled)
 
-Ralph never infers the elevated installer's `PATH` for Windows SCM because the
-installer and service identities may differ. A newly created service uses
-SCM's default `LocalSystem` identity; reconciliation preserves an existing
-administrator-configured service account. SCM supplies that identity's service
-environment. Supplying `--env PATH=...` is an explicit administrator override
-whose directories must be safe for the configured service identity.
+Do not elevate and retry `service install`. v0.22 rejects native Windows SCM
+installation and service start before changing the service definition or
+writing its configuration.
 
-```powershell
-radioactive_ralph service install
-```
-
-Registers or updates the service via SCM, applies its persisted environment,
-starts it, and waits for the supervisor endpoint. Requires an elevated
-terminal. Verify:
+For native control-plane inspection, run the supervisor as the interactive
+user:
 
 ```powershell
-Get-Service radioactive_ralph-supervisor
+radioactive_ralph --supervisor
 ```
+
+That foreground process uses the same user's Ralph state and SID-bound named
+pipe, but provider worker dispatch fails with `ErrPTYUnsupported`. It is not a
+functional native agent runtime. For provider-backed operation on a Windows
+machine, use WSL2 and the Linux `systemd --user` instructions.
+
+`service status` and `service uninstall` remain remediation operations only
+for a registration matching Ralph's historical executable, marker arguments,
+service metadata, and exact AppData `UnitPath` for the resolved user home. An
+unknown service using the same name is reported as an ownership error and is
+never stopped or deleted. Do not start a prior Ralph service. The
+[accepted safety contract](../superpowers/specs/2026-07-26-windows-scm-safety-disable-design.md#re-enable-gate)
+lists the identity, ACL, pipe authorization, provider-access, and clean native
+end-to-end proof required before SCM support can return.
 
 ## 2. Status, list, uninstall
 
@@ -135,16 +150,18 @@ radioactive_ralph service status      # report this machine's installed-service 
 radioactive_ralph service uninstall   # stop the service, then remove its definition
 ```
 
-`service status` reports the resolved backend (launchd/systemd/SCM) and
-whether it's installed, plus the unit path. Uninstalling first stops the
-managed supervisor, then removes the OS-service registration; the binary
-and the user-level database are untouched.
+`service status` reports the resolved backend and whether it is installed,
+plus the unit path. On native Windows it is inspection-only and identifies a
+prior unsafe Ralph registration only after validating its historical
+ImagePath; an unknown same-name registration returns an error. Uninstalling
+first stops the validated supervisor, re-validates ImagePath, then removes the
+OS-service registration; the binary and the user-level database are untouched.
 
 > [!WARNING]
 > Re-running `service install` reconciles the definition by restarting the
-> one machine-wide supervisor. A restart terminates supervisor-owned provider
-> processes and interrupts in-flight workers. Pause or finish active plans
-> before changing the service binary or environment.
+> invoking user's single supervisor. A restart terminates supervisor-owned
+> provider processes and interrupts in-flight workers. Pause or finish active
+> plans before changing the service binary or environment.
 
 ## 3. Logs
 
@@ -163,8 +180,8 @@ event — easier to grep/assert on than free-form text; `--log-format text`
 - macOS launchd: `launchctl list` for status; logs land wherever the
   generated plist directs stdout/stderr (check the plist for the path).
 - Linux systemd: `journalctl --user -u radioactive-ralph -f`
-- Windows SCM: Event Viewer → Windows Logs → Application, filter source
-  `radioactive-ralph`
+- Native Windows foreground: keep the terminal open or redirect stderr with
+  `--log-format json`. Native SCM execution is disabled.
 
 ## 4. Stale state recovery
 
@@ -197,13 +214,14 @@ rm -f "${XDG_STATE_HOME:-$HOME/.local/state}/radioactive-ralph/service.sock"
 rm -f "${XDG_STATE_HOME:-$HOME/.local/state}/radioactive-ralph/service.sock.alive"
 ```
 
-On Windows, named pipes are cleaned by reboot; if a reboot is
-impractical, restart the SCM service instead.
+On Windows, named pipes are cleaned when the foreground process exits or at
+reboot. Start `radioactive_ralph --supervisor` again as the same interactive
+user; do not start a prior SCM registration.
 
-Then `radioactive_ralph --supervisor` (or the OS service manager) will
-succeed again — a fresh supervisor also self-reclaims a stale socket
-automatically at startup if the recorded PID is dead, so manual removal
-is a fallback, not the primary recovery path.
+Then `radioactive_ralph --supervisor` (or the supported macOS/Linux service
+manager) will succeed again — a fresh supervisor also self-reclaims a stale
+socket automatically at startup if the recorded PID is dead, so manual
+removal is a fallback, not the primary recovery path.
 
 ## When something goes wrong
 

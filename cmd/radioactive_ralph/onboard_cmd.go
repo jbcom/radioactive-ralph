@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"runtime"
 	"time"
 
 	"github.com/jbcom/radioactive-ralph/internal/onboard"
@@ -19,12 +20,31 @@ import (
 // paths return the identical error.
 var errNoSupervisorListening = errors.New("no supervisor listening")
 
-// noSupervisorMessage is the exact non-interactive message (unchanged from
-// before the wizard existed): a pipe/CI/go-test invocation prints this and
-// exits non-zero, and tests assert on it.
-const noSupervisorMessage = "radioactive_ralph: no supervisor is running.\n" +
+const unixNoSupervisorMessage = "radioactive_ralph: no supervisor is running.\n" +
 	"Install the durable background service:  radioactive_ralph service install\n" +
 	"or run one in the foreground (dies with this terminal):  radioactive_ralph --supervisor"
+
+const windowsNoSupervisorMessage = "radioactive_ralph: no supervisor is running.\n" +
+	"Run the native foreground control plane:  radioactive_ralph --supervisor\n" +
+	"Native Windows SCM install/start and provider PTYs are unsupported; use WSL2 with systemd --user for provider-backed execution."
+
+func noSupervisorMessage() string {
+	return noSupervisorMessageFor(runtime.GOOS)
+}
+
+func noSupervisorMessageFor(goos string) string {
+	if goos == "windows" {
+		return windowsNoSupervisorMessage
+	}
+	return unixNoSupervisorMessage
+}
+
+func supervisorStartHint() string {
+	if runtime.GOOS == "windows" {
+		return "radioactive_ralph --supervisor (native control plane only; use WSL2 with systemd --user for provider PTYs)"
+	}
+	return "radioactive_ralph service install   (or: radioactive_ralph --supervisor)"
+}
 
 // onboardingInteractive reports whether BOTH stdin and stdout are real
 // terminals — the wizard reads keystrokes from stdin and renders prompts to
@@ -54,7 +74,7 @@ func runFirstRunWizard(ctx context.Context, stateRoot string) (supervisorReady b
 			return waitSupervisorReachable(ctx, stateRoot, timeout)
 		},
 		ForegroundCmd:  "radioactive_ralph --supervisor",
-		ManualCommands: noSupervisorMessage,
+		ManualCommands: noSupervisorMessage(),
 	}
 
 	outcome, err := onboard.Run(deps)
@@ -71,6 +91,12 @@ func buildOnboardPlan(stateRoot string) (onboard.Plan, error) {
 	plan := onboard.Plan{
 		StateDir: stateRoot,
 		DBPath:   storeDBPath(stateRoot),
+	}
+	if backend == service.BackendWindowsSCM {
+		plan.ServiceDisabled = true
+		plan.ServiceDisabledGuide = "native Windows SCM install/start is disabled; " +
+			"provider PTYs are unsupported natively, so use WSL2 with systemd --user for the full runtime"
+		return plan, nil
 	}
 	if backend != service.BackendUnsupported {
 		home, err := os.UserHomeDir()

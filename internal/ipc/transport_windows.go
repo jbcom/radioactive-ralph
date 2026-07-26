@@ -30,9 +30,11 @@ func namedPipeConfig() (*winio.PipeConfig, error) {
 		return nil, fmt.Errorf("current token user: %w", err)
 	}
 	return &winio.PipeConfig{
-		// Restrict the pipe to the current user for normal attached/service-start
-		// flows. When the runtime is hosted by Windows SCM as LocalSystem, allow
-		// interactive users to connect so status/attach/stop still work.
+		// Restrict the pipe to the exact current user for ordinary foreground
+		// operation. Native SCM execution is disabled; retain a defense-in-depth
+		// LocalSystem branch that authorizes only SYSTEM and Administrators so a
+		// legacy invocation can never expose Ralph's mutating API to the broad
+		// interactive-user SID.
 		SecurityDescriptor: pipeSecurityDescriptorForSID(
 			tokenUser.User.Sid.String(),
 			tokenUser.User.Sid.IsWellKnown(windows.WinLocalSystemSid),
@@ -42,7 +44,7 @@ func namedPipeConfig() (*winio.PipeConfig, error) {
 
 func pipeSecurityDescriptorForSID(userSID string, localSystem bool) string {
 	if localSystem {
-		return "D:P(A;;GA;;;SY)(A;;GA;;;BA)(A;;GRGW;;;IU)"
+		return "D:P(A;;GA;;;SY)(A;;GA;;;BA)"
 	}
 	return fmt.Sprintf("D:P(A;;GA;;;SY)(A;;GA;;;BA)(A;;GRGW;;;%s)", userSID)
 }

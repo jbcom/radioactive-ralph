@@ -1,12 +1,14 @@
 ---
 title: AGENTS.md — radioactive-ralph
-lastUpdated: 2026-07-16
+lastUpdated: 2026-07-26
 ---
 
 # Extended Agent Protocols — radioactive-ralph
 
 Read `CLAUDE.md` first for the core shape, and the authoritative design at
-`docs/superpowers/specs/2026-07-16-supervisor-architecture-design.md`.
+`docs/superpowers/specs/2026-07-16-supervisor-architecture-design.md`. Its
+native Windows pty and service clauses are superseded by
+`docs/superpowers/specs/2026-07-26-windows-scm-safety-disable-design.md`.
 
 ## Product contract
 
@@ -18,6 +20,10 @@ radioactive-ralph is one binary that runs in two modes:
 2. **`radioactive_ralph`** (no flag) — the **dumb client**: discovers the
    supervisor via its socket, initializes project config, and renders a
    read-only view. It refuses to run without a supervisor.
+
+Native Windows supports only the foreground supervisor/client control plane:
+SCM install/start and provider-backed worker ptys are disabled. WSL2 with the
+Linux build and `systemd --user` is the functional Windows provider route.
 
 Do not describe the product as a Claude plugin, an MCP server, or a family of
 slash-command skills. There are **no variants/personas** — that model was

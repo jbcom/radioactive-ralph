@@ -8,6 +8,14 @@ commands and exiting.
 **Status:** design. Author: agent (under the full-autonomy onboarding mandate,
 2026-07-17). Follows the merged supervisor architecture (AGENTS.md).
 
+> **Native Windows override (2026-07-26):** The
+> [Windows SCM safety contract](./2026-07-26-windows-scm-safety-disable-design.md)
+> supersedes this historical design's native Windows SCM path. On native
+> Windows the wizard skips service installation and offers only the limited
+> foreground supervisor/client control plane; provider-backed execution uses
+> the Linux build in WSL2. The service-install flow below applies to supported
+> macOS and Linux service backends.
+
 ## Problem
 
 Today a cold `radioactive_ralph` invocation:

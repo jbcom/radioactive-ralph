@@ -135,7 +135,7 @@ func runPlanImport(ctx context.Context, cmd *cobra.Command, planPath, slug strin
 	// hasn't — tell the operator how to start the supervisor if none is up.
 	if client, err := supervisor.Find(stateRoot); err != nil {
 		fmt.Fprintln(os.Stderr, "note: no supervisor is running, so the plan is queued but not yet being driven.")
-		fmt.Fprintln(os.Stderr, "      start one with:  radioactive_ralph service install   (or: radioactive_ralph --supervisor)")
+		fmt.Fprintln(os.Stderr, "      start one with: "+supervisorStartHint())
 	} else {
 		_ = client.Close()
 	}

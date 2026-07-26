@@ -5,6 +5,10 @@
 
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=scripts/ci/package_guidance_contract.sh
+source "$SCRIPT_DIR/package_guidance_contract.sh"
+
 VERSION="${1:?usage: wait_for_package_publication.sh <version>}"
 PKGS_REPO="${PKGS_REPO:-jbcom/pkgs}"
 RELEASE_REPO="${RELEASE_REPO:-jbcom/radioactive-ralph}"
@@ -160,6 +164,7 @@ cli_is_current_at_ref() {
   [[ "$(sed -nE 's/^[[:space:]]*version "([^"]+)".*/\1/p' <<< "$cask" |
       head -n 1)" == "$VERSION" ]] || return 1
   [[ "$(jq -er '.version' <<< "$scoop")" == "$VERSION" ]] || return 1
+  ralph_validate_scoop_manifest_contract <<< "$scoop"
 }
 
 gui_is_current_at_ref() {
@@ -549,7 +554,7 @@ resolve_winning_release_merge() {
 }
 
 resolve_historical_release_merge() {
-  local release published_at published_epoch
+  local release release_body published_at published_epoch
   local prs candidates count index pr oid head_oid check_runs
   local merged_at merged_epoch latest_epoch=-1 latest_oid=""
   ensure_release_integrity || return 1
@@ -563,6 +568,18 @@ resolve_historical_release_merge() {
     echo "package publication: immutable release publication time is missing" >&2
     return 1
   }
+  release_body="$(jq -er --arg tag "v${VERSION}" \
+    'select(
+      .draft == false and .prerelease == false and .immutable == true and
+      .tag_name == $tag
+    ) | .body | strings' <<<"$release")" || {
+    echo "package publication: immutable release body is missing" >&2
+    return 1
+  }
+  if ! ralph_validate_release_body_footer <<<"$release_body"; then
+    echo "package publication: immutable release body violates the exact platform footer contract" >&2
+    return 1
+  fi
   published_epoch="$(jq -en --arg timestamp "$published_at" \
     '$timestamp | fromdateiso8601')" || {
     echo "package publication: immutable release publication time is invalid" >&2
