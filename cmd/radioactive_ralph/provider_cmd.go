@@ -8,8 +8,6 @@ import (
 	"os"
 
 	"github.com/jbcom/radioactive-ralph/internal/ipc"
-	"github.com/jbcom/radioactive-ralph/internal/orch"
-	"github.com/jbcom/radioactive-ralph/internal/store"
 	"github.com/jbcom/radioactive-ralph/internal/supervisor"
 	"github.com/jbcom/radioactive-ralph/internal/xdg"
 	"github.com/spf13/cobra"
@@ -103,21 +101,13 @@ func putCalibration(ctx context.Context, record ipc.CalibrationRecord) (string, 
 	if err != nil {
 		return "", err
 	}
-	if client, err := supervisor.Find(stateRoot); err == nil {
-		defer func() { _ = client.Close() }()
-		reply, err := client.CalibrationPut(ctx, ipc.CalibrationPutArgs{Calibration: record})
-		return reply.ID, err
-	}
-	value := calibrationRecordToStore(record)
-	if _, err := orch.ValidateProviderCalibration(value); err != nil {
-		return "", fmt.Errorf("validate calibration: %w", err)
-	}
-	st, err := store.Open(ctx, store.Options{DSN: store.DSN(storeDBPath(stateRoot))})
+	client, err := supervisor.Find(stateRoot)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("connect to supervisor for calibration import: %w", err)
 	}
-	defer func() { _ = st.Close() }()
-	return st.PutProviderCalibration(ctx, value)
+	defer func() { _ = client.Close() }()
+	reply, err := client.CalibrationPut(ctx, ipc.CalibrationPutArgs{Calibration: record})
+	return reply.ID, err
 }
 
 func getCalibrations(ctx context.Context, id string) ([]ipc.CalibrationRecord, error) {
@@ -125,33 +115,17 @@ func getCalibrations(ctx context.Context, id string) ([]ipc.CalibrationRecord, e
 	if err != nil {
 		return nil, err
 	}
-	if client, err := supervisor.Find(stateRoot); err == nil {
-		defer func() { _ = client.Close() }()
-		if id != "" {
-			record, err := client.CalibrationGet(ctx, ipc.CalibrationGetArgs{ID: id})
-			return []ipc.CalibrationRecord{record}, err
-		}
-		reply, err := client.CalibrationList(ctx)
-		return reply.Calibrations, err
-	}
-	st, err := store.Open(ctx, store.Options{DSN: store.DSN(storeDBPath(stateRoot))})
+	client, err := supervisor.Find(stateRoot)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("connect to supervisor for calibration query: %w", err)
 	}
-	defer func() { _ = st.Close() }()
+	defer func() { _ = client.Close() }()
 	if id != "" {
-		value, err := st.GetProviderCalibration(ctx, id)
-		return []ipc.CalibrationRecord{calibrationStoreToRecord(value)}, err
+		record, err := client.CalibrationGet(ctx, ipc.CalibrationGetArgs{ID: id})
+		return []ipc.CalibrationRecord{record}, err
 	}
-	values, err := st.ListProviderCalibrations(ctx)
-	if err != nil {
-		return nil, err
-	}
-	records := make([]ipc.CalibrationRecord, 0, len(values))
-	for _, value := range values {
-		records = append(records, calibrationStoreToRecord(value))
-	}
-	return records, nil
+	reply, err := client.CalibrationList(ctx)
+	return reply.Calibrations, err
 }
 
 func writeJSON(writer io.Writer, value any) error {
