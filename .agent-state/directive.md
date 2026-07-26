@@ -1,9 +1,11 @@
 # radioactive-ralph — supervisor-architecture rewrite directive
 
-**Status:** RELEASED — the user ended the session ("finish up and wrap up",
-2026-07-17). The perpetual-shipping loop (directive 0) is stopped: the scheduled
-wakeup is cancelled and the CI monitors are stopped. All in-flight work landed;
-main is green. Re-arm by flipping Status back to ACTIVE on the next explicit go.
+**Status:** ACTIVE — re-armed 2026-07-26 on an explicit user go: orchestrate the
+backlog, dogfood Ralph on itself, and finish reconciling what other repo agents
+contributed. Landing/reconciliation runs through Claude Code workflows with
+per-agent model selection, NOT through Ralph (user, 2026-07-26: "you dont need
+ralph for landing all of this and reconciling it"). Dogfooding is a goal, gated
+on #205 + #204 landing, not the mechanism for getting there.
 
 ## Directive 0 — the perpetual-shipping loop (ALWAYS ACTIVE, never checked off)
 
@@ -107,13 +109,60 @@ behind any load-bearing call.
 
 ## Concrete queue (current)
 
-Kept CURRENT each tick (do NOT commit this file onto feature branches — the
-branch-switch churn keeps resurrecting a stale version; this baseline is synced
-periodically via a chore/directive-sync PR, of which THIS is one).
+Worktree/branch reconciliation is DONE (2026-07-26): 18 worktrees -> 5, 17 local
+branches -> 5, remote heads -> 2. Method note for future passes: `git cherry`
+and three-dot diffs BOTH give false positives here (squash-merge changes
+patch-ids; branch-behind-main inflates diffs). The decisive test is
+`git merge-tree --write-tree origin/main <branch>` compared against main's tree
+— a no-op merge proves full absorption. Never-reviewed branches were archived as
+tags before deletion: `archive/plan-v2-dag`, `archive/release-022-recovery-scratch`,
+`archive/release-v0220-manual-recovery` (all pushed to github).
 
-(The never-block arc — #127/#129/#131/#132 — is in the Shipped ledger above.
-#131 merged; #132 green. This directive-sync PR itself is the current in-flight
-concrete item.)
+- [x] PR #208 admission token boundary — CodeRabbit was right and my first
+      counter was wrong: `persist-credentials: false` does NOT scope a token to a
+      step; GITHUB_TOKEN stays available to every step via
+      `secrets.GITHUB_TOKEN`/`github.token`, so job-level `contents: write` was a
+      job-wide write capability and the "only step receives the write token"
+      comment was false. Fixed by REMOVING the capability rather than relocating
+      it (the reviewer proposed a second write job): built-in token drops to
+      `contents: read` and the draft read uses the existing CI_GITHUB_TOKEN. Also
+      replaced the admission command blocklist with a structural allowlist —
+      `gh api -f x=1 --method PATCH` evaded the old literal `gh api --method`
+      check; proven by a negative test. Both threads resolved.
+- [ ] PR #209 (issue #205) — turn deadlines separated from stall detection +
+      Darwin process-tree containment. CI in flight. The branch was based on
+      v0.22.0 and would have DELETED PR #206's three release-authority files and
+      reverted the released 0.22.1 CHANGELOG heading; rebased onto f99cb44 so the
+      diff is now purely the fix. A second real defect was found and fixed during
+      review: the cleanup path guarded on `errors.Is(err, syscall.ESRCH)` but
+      `auditTokenForPID` never wraps ESRCH (`task_name_for_pid` reports a dead PID
+      as KERN_FAILURE / Mach code 5), so the guard could never fire and an
+      ordinary teardown race failed the whole cleanup — the exact false-cleanup
+      failure #205 exists to eliminate. Fixed via an `errDarwinProcessGone`
+      sentinel; regression test verified to fail without the mapping.
+- [ ] Issue #204 (feat/operator-observability-a2a) — NEEDS_WORK, do not PR yet.
+      The query/control plane, projection service, and IPC v3 surface are strong
+      and privacy on the NEW path is airtight. Blockers: 2 e2e tests fail that
+      pass on main (TUI lost `Description`, dropped by observe.Task on purpose);
+      `init_cmd.go` + `client.go` still open the store directly (untouched by the
+      branch); `plan_cmd.go` runPlanLs still opens the store and has no `--json`;
+      legacy `StatusReply.RepoPath`/`PID`/`WorkerSummary.ProviderSessionID` remain
+      in the live CmdStatus wire contract; Claude auth-failure classification not
+      implemented (internal/provider untouched — only Codex has a classifier).
+- [ ] DAG integration (feat/plan-v2-reland) — see the two decisions recorded
+      2026-07-27. Central verified finding: **main already has the DAG store
+      layer.** `task_deps` ships in 0001_initial with cycle prevention in
+      `AddDep`; `Ready`/`ClaimNextReady` already walk the edges. The gap is
+      confined to the orchestrator — `DispatchNext` re-parses markdown and derives
+      readiness POSITIONALLY, and `internal/orch` has zero `AddDep` calls. Work =
+      grammar expresses edges -> persist into the existing table at import ->
+      dispatch walks the graph. 12 ordered increments in
+      `scratchpad/dag-integration-design.md`. Hard discards: `plan_graph.go`
+      (duplicates CreatePlan+CreateTask+AddDep AND bypasses the cycle check),
+      `graph_validate.go`, the `Task` metadata widening + `task_metadata_view.go`,
+      `Plan.V2` and every `parsed.V2` fork, the 18-arg Codex expansion, and the
+      double filesystem verification in `VerifyAndComplete`. CWE-22 located in
+      `secureProjectPath` with a fix specified — must land fixed.
 
 ## Rolling improvement queue (directive 0 appends here)
 
