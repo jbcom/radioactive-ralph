@@ -637,6 +637,37 @@ func TestPrependEvent_IDLessFramesNotDeduped(t *testing.T) {
 	}
 }
 
+func TestAttachPresentationIgnoresLegacyContentFields(t *testing.T) {
+	raw := json.RawMessage(`{
+		"id": 11,
+		"kind": "worker.failed",
+		"task_id": "task-1",
+		"actor": "secret actor",
+		"payload": {"provider_output": "secret output"},
+		"failure": {
+			"category": "dispatch",
+			"summary": "worker dispatch failed",
+			"retryable": true
+		}
+	}`)
+	ev, ok := decodeEvent(raw)
+	if !ok {
+		t.Fatal("decodeEvent rejected compatible legacy frame")
+	}
+	rendered := renderEvent(ev)
+	if rendered != "worker.failed task=task-1 failure=dispatch" {
+		t.Fatalf("renderEvent = %q", rendered)
+	}
+	if strings.Contains(rendered, "secret") {
+		t.Fatalf("renderEvent surfaced legacy content: %q", rendered)
+	}
+
+	row := prependEvent(nil, ev)[0]
+	if row.Actor != "" || row.PayloadJSON != "" {
+		t.Fatalf("prependEvent retained legacy content: %+v", row)
+	}
+}
+
 func TestMergeEventTail_IDLessRowsNotDeduped(t *testing.T) {
 	live := []store.Event{{ID: 0, Kind: "a"}, {ID: 0, Kind: "b"}}
 	poll := []store.Event{{ID: 3, Kind: "c"}}

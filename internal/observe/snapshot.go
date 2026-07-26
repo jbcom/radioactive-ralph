@@ -648,17 +648,24 @@ func eventsFromStore(page store.OperatorEventPage) EventPage {
 		NextBeforeID: page.NextBeforeID,
 	}
 	for _, item := range page.Items {
-		out.Items = append(out.Items, Event{
-			ID:         item.ID,
-			PlanID:     item.PlanID,
-			TaskID:     item.TaskID,
-			Kind:       item.Kind,
-			Stream:     item.Stream,
-			OccurredAt: item.OccurredAt,
-			Failure:    failureForEvent(item.Kind),
-		})
+		out.Items = append(out.Items, EventFromMetadata(item))
 	}
 	return out
+}
+
+// EventFromMetadata projects one already-scoped safe store event into the
+// public event shape. Live Attach uses this same function as snapshot backlog,
+// so their privacy and failure-taxonomy contracts cannot drift.
+func EventFromMetadata(item store.OperatorEvent) Event {
+	return Event{
+		ID:         item.ID,
+		PlanID:     item.PlanID,
+		TaskID:     item.TaskID,
+		Kind:       item.Kind,
+		Stream:     item.Stream,
+		OccurredAt: item.OccurredAt,
+		Failure:    failureForEvent(item.Kind),
+	}
 }
 
 // StateForTask maps durable Ralph status onto the official A2A v2.3.1 task

@@ -26,13 +26,21 @@ import (
 	"encoding/json"
 	"fmt"
 	"time"
+
+	"github.com/jbcom/radioactive-ralph/internal/observe"
 )
 
 // ProtoVersion is the wire protocol version this build speaks. The original
 // read-only-TUI surface (status/attach/enqueue/stop/reload-config) is v1; the
-// drive commands (plan-import/plan-set-status/task-approve/worker-kill) are v2.
-// A client omitting Request.ProtoVersion is treated as v1 for back-compat.
-const ProtoVersion = 2
+// drive commands (plan-import/plan-set-status/task-approve/worker-kill) are v2;
+// safe project-scoped snapshot/message queries are v3. A client omitting
+// Request.ProtoVersion is treated as v1 for back-compat.
+const (
+	ProtoVersion       = 3
+	DriveProtoVersion  = 2
+	QueryProtoVersion  = 3
+	AttachProtoVersion = 3
+)
 
 // Command names for the JSON-line protocol.
 const (
@@ -48,6 +56,10 @@ const (
 	CmdPlanSetStatus = "plan-set-status"
 	CmdTaskApprove   = "task-approve"
 	CmdWorkerKill    = "worker-kill"
+
+	// v3 — project-scoped, content-safe query surface.
+	CmdObserveSnapshot = "observe-snapshot"
+	CmdObserveMessages = "observe-messages"
 )
 
 // Stable machine-readable error classes carried in Response.Code so a client
@@ -145,20 +157,17 @@ type AttachArgs struct {
 	AfterID   int64  `json:"after_id,omitempty"`
 }
 
-// AttachEvent is one event streamed over an Attach connection: the public,
-// versioned shape of an events-table row. It is deliberately NOT the raw store
-// row — Payload is the kind-specific JSON passed through verbatim, so adding a
-// new event kind never requires a transport change. ID lets a client persist
-// its resume cursor for reconnects.
+// AttachEvent is one safe event streamed over an Attach connection. It contains
+// metadata and the fixed Failure summary only. JSON decoders ignore the legacy
+// actor/payload fields from older frames rather than retaining raw content.
 type AttachEvent struct {
-	ID         int64           `json:"id"`
-	Kind       string          `json:"kind"`
-	Stream     string          `json:"stream,omitempty"`
-	PlanID     string          `json:"plan_id,omitempty"`
-	TaskID     string          `json:"task_id,omitempty"`
-	Actor      string          `json:"actor,omitempty"`
-	Payload    json.RawMessage `json:"payload,omitempty"`
-	OccurredAt time.Time       `json:"occurred_at"`
+	ID         int64                   `json:"id"`
+	Kind       string                  `json:"kind"`
+	Stream     string                  `json:"stream,omitempty"`
+	PlanID     string                  `json:"plan_id,omitempty"`
+	TaskID     string                  `json:"task_id,omitempty"`
+	OccurredAt time.Time               `json:"occurred_at"`
+	Failure    *observe.FailureSummary `json:"failure,omitempty"`
 }
 
 // StopArgs controls the termination mode for CmdStop.
@@ -217,6 +226,19 @@ type WorkerKillArgs struct {
 type OKReply struct {
 	OK bool `json:"ok"`
 }
+
+// ObserveSnapshotArgs aliases the transport-neutral safe snapshot query so IPC
+// framing cannot silently drift from the CLI/other client DTO.
+type ObserveSnapshotArgs = observe.SnapshotQuery
+
+// ObserveSnapshotReply is the versioned, content-safe snapshot response.
+type ObserveSnapshotReply = observe.Snapshot
+
+// ObserveMessagesArgs aliases the transport-neutral message metadata query.
+type ObserveMessagesArgs = observe.MessageQuery
+
+// ObserveMessagesReply is one versioned, content-free message metadata page.
+type ObserveMessagesReply = observe.MessagePage
 
 // encode writes v as JSON followed by a newline to buf.
 func encodeJSONLine(v any) ([]byte, error) {

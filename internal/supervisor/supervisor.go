@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/jbcom/radioactive-ralph/internal/ipc"
+	"github.com/jbcom/radioactive-ralph/internal/observe"
 	"github.com/jbcom/radioactive-ralph/internal/orch"
 	"github.com/jbcom/radioactive-ralph/internal/store"
 )
@@ -525,22 +526,25 @@ func isTransientStoreErr(err error) bool {
 		strings.Contains(msg, "database table is locked")
 }
 
-// attachEventFrame maps a store event row to the public wire shape. Payload is
-// the row's payload_json passed through verbatim as raw JSON — the stream stays
-// kind-agnostic so a new event kind needs no transport change.
+// attachEventFrame maps a raw store event to the same content-safe metadata and
+// fixed failure taxonomy used by snapshot backlog. Actor and payload are
+// deliberately ignored.
 func attachEventFrame(ev store.Event) ipc.AttachEvent {
-	var payload json.RawMessage
-	if ev.PayloadJSON != "" {
-		payload = json.RawMessage(ev.PayloadJSON)
-	}
-	return ipc.AttachEvent{
+	safe := observe.EventFromMetadata(store.OperatorEvent{
 		ID:         ev.ID,
-		Kind:       ev.Kind,
-		Stream:     ev.Stream,
 		PlanID:     ev.PlanID,
 		TaskID:     ev.TaskID,
-		Actor:      ev.Actor,
-		Payload:    payload,
+		Kind:       ev.Kind,
+		Stream:     ev.Stream,
 		OccurredAt: ev.OccurredAt,
+	})
+	return ipc.AttachEvent{
+		ID:         safe.ID,
+		Kind:       safe.Kind,
+		Stream:     safe.Stream,
+		PlanID:     safe.PlanID,
+		TaskID:     safe.TaskID,
+		OccurredAt: safe.OccurredAt,
+		Failure:    safe.Failure,
 	}
 }

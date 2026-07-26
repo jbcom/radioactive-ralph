@@ -733,10 +733,14 @@ func decodeEvent(raw json.RawMessage) (ipc.AttachEvent, bool) {
 
 // renderEvent formats one live event for the micro-view tail.
 func renderEvent(ev ipc.AttachEvent) string {
+	line := ev.Kind
 	if ev.TaskID != "" {
-		return ev.Kind + " task=" + ev.TaskID + " actor=" + ev.Actor
+		line += " task=" + ev.TaskID
 	}
-	return ev.Kind + " actor=" + ev.Actor
+	if ev.Failure != nil {
+		line += " failure=" + string(ev.Failure.Category)
+	}
+	return line
 }
 
 // taskDeltaStatus maps an event kind to the task status it implies, or "" if
@@ -793,8 +797,7 @@ func prependEvent(tail []store.Event, ev ipc.AttachEvent) []store.Event {
 	}
 	row := store.Event{
 		ID: ev.ID, PlanID: ev.PlanID, TaskID: ev.TaskID,
-		Kind: ev.Kind, Stream: ev.Stream, Actor: ev.Actor,
-		PayloadJSON: string(ev.Payload), OccurredAt: at,
+		Kind: ev.Kind, Stream: ev.Stream, OccurredAt: at,
 	}
 	tail = append([]store.Event{row}, tail...)
 	if len(tail) > macroEventCap {

@@ -35,15 +35,32 @@ func IsCode(err error, code string) bool {
 	return errors.As(err, &c) && c.Code() == code
 }
 
-// driveCall sends a drive command with JSON-encoded args and decodes the reply
-// into out (out may be nil for OK-only commands). A !Ok response becomes a
-// *CodedError carrying the response Code.
+// driveCall sends one v2 drive command. It deliberately uses the command's
+// minimum protocol rather than this binary's maximum version so a rolling v3
+// client can still drive an otherwise-compatible v2 supervisor.
 func (c *Client) driveCall(ctx context.Context, cmd string, args any, out any) error {
+	return c.versionedCall(ctx, DriveProtoVersion, cmd, args, out)
+}
+
+// versionedCall sends a command-scoped protocol version with JSON-encoded args
+// and decodes the reply into out (out may be nil for OK-only commands). A !Ok
+// response becomes a *CodedError carrying the response Code.
+func (c *Client) versionedCall(
+	ctx context.Context,
+	protoVersion int,
+	cmd string,
+	args any,
+	out any,
+) error {
 	body, err := json.Marshal(args)
 	if err != nil {
 		return fmt.Errorf("ipc: marshal %s args: %w", cmd, err)
 	}
-	if err := c.send(ctx, Request{Cmd: cmd, Args: body, ProtoVersion: ProtoVersion}); err != nil {
+	if err := c.send(ctx, Request{
+		Cmd:          cmd,
+		Args:         body,
+		ProtoVersion: protoVersion,
+	}); err != nil {
 		return err
 	}
 	resp, err := c.readResponse(ctx)

@@ -73,8 +73,12 @@ func TestE2E_SupervisorInitClientTUIFlow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("client status: %v\n%s", err, statusOut)
 	}
-	if !strings.Contains(statusOut, "supervisor is up") {
+	if !strings.Contains(statusOut, "project=") ||
+		!strings.Contains(statusOut, "active_workers=0") {
 		t.Fatalf("client status output unexpected:\n%s", statusOut)
+	}
+	if strings.Contains(statusOut, "pid") {
+		t.Fatalf("client status exposed process details:\n%s", statusOut)
 	}
 
 	// --- seed a plan directly into the shared store. ---

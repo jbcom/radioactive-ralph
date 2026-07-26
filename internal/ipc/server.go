@@ -86,6 +86,21 @@ type DriveHandler interface {
 	HandleWorkerKill(ctx context.Context, args WorkerKillArgs) error
 }
 
+// QueryHandler is the OPTIONAL v3 content-safe query surface. Keeping it
+// separate preserves source and wire compatibility with v1/v2 handlers: a
+// rolling old supervisor answers query commands with unsupported_command
+// instead of returning an unsafe fallback.
+type QueryHandler interface {
+	HandleObserveSnapshot(
+		ctx context.Context,
+		args ObserveSnapshotArgs,
+	) (*ObserveSnapshotReply, error)
+	HandleObserveMessages(
+		ctx context.Context,
+		args ObserveMessagesArgs,
+	) (*ObserveMessagesReply, error)
+}
+
 // Server is the repo-service IPC server. One instance per repo service.
 type Server struct {
 	socketPath        string
@@ -456,12 +471,66 @@ func (s *Server) handleConn(conn net.Conn) {
 	case CmdPlanImport, CmdPlanSetStatus, CmdTaskApprove, CmdWorkerKill:
 		s.dispatchDrive(ctx, conn, req)
 
+	case CmdObserveSnapshot, CmdObserveMessages:
+		s.dispatchQuery(ctx, conn, req)
+
 	default:
 		s.writeResponse(conn, Response{
 			Ok:    false,
 			Error: fmt.Sprintf("unknown command: %q", req.Cmd),
 			Code:  CodeUnsupportedCommand,
 		})
+	}
+}
+
+// dispatchQuery routes v3 safe-query commands. A lower-version request is
+// rejected even if it guessed the command name: v3 is the first version that
+// defines these payload and privacy semantics.
+func (s *Server) dispatchQuery(
+	ctx context.Context,
+	conn net.Conn,
+	req Request,
+) {
+	if req.ProtoVersion < QueryProtoVersion {
+		s.writeResponse(conn, Response{
+			Ok: false,
+			Error: fmt.Sprintf(
+				"query command %q requires protocol v%d",
+				req.Cmd,
+				QueryProtoVersion,
+			),
+			Code: CodeUnsupportedCommand,
+		})
+		return
+	}
+	qh, ok := s.handler.(QueryHandler)
+	if !ok {
+		s.writeResponse(conn, Response{
+			Ok: false,
+			Error: fmt.Sprintf(
+				"query command %q not supported by this supervisor",
+				req.Cmd,
+			),
+			Code: CodeUnsupportedCommand,
+		})
+		return
+	}
+
+	switch req.Cmd {
+	case CmdObserveSnapshot:
+		var args ObserveSnapshotArgs
+		if !s.decodeArgs(conn, req.Args, &args) {
+			return
+		}
+		reply, err := qh.HandleObserveSnapshot(ctx, args)
+		s.writeResult(conn, reply, err)
+	case CmdObserveMessages:
+		var args ObserveMessagesArgs
+		if !s.decodeArgs(conn, req.Args, &args) {
+			return
+		}
+		reply, err := qh.HandleObserveMessages(ctx, args)
+		s.writeResult(conn, reply, err)
 	}
 }
 
