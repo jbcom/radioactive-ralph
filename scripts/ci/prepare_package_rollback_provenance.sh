@@ -7,6 +7,9 @@ set -euo pipefail
 VERSION="${1:?usage: prepare_package_rollback_provenance.sh <version>}"
 PKGS_REPO="${PKGS_REPO:-jbcom/pkgs}"
 RELEASE_REPO="${RELEASE_REPO:-jbcom/radioactive-ralph}"
+RELEASE_ID="${RELEASE_ID:-}"
+RELEASE_SOURCE_COMMIT="${RELEASE_SOURCE_COMMIT:-}"
+RELEASE_WORKFLOW_COMMIT="${RELEASE_WORKFLOW_COMMIT:-}"
 PKGS_GH_TOKEN="${PKGS_GH_TOKEN:-}"
 RELEASE_GH_TOKEN="${RELEASE_GH_TOKEN:-}"
 GH_BIN="${GH_BIN:-gh}"
@@ -21,6 +24,8 @@ FILES=(
 )
 
 [[ "$VERSION" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
+[[ "$RELEASE_SOURCE_COMMIT" =~ ^[0-9a-f]{40,64}$ ]]
+[[ "$RELEASE_WORKFLOW_COMMIT" =~ ^[0-9a-f]{40}$ ]]
 [[ -n "$PKGS_GH_TOKEN" ]] || {
   echo "package rollback provenance: PKGS_GH_TOKEN is required" >&2
   exit 1
@@ -36,13 +41,18 @@ pkgs_gh() {
 release_gh() {
   GH_TOKEN="$RELEASE_GH_TOKEN" "$GH_BIN" "$@"
 }
+# shellcheck source=scripts/ci/release_by_id.sh
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/release_by_id.sh"
+ralph_release_by_id "v${VERSION}" "$RELEASE_SOURCE_COMMIT" draft >/dev/null
 sha256_file() {
   sha256sum "$1" | awk '{print $1}'
 }
 
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
-identity="https://github.com/${RELEASE_REPO}/.github/workflows/release.yml@refs/tags/v${VERSION}"
+# shellcheck source=scripts/ci/release_workflow_identity.sh
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/release_workflow_identity.sh"
+identity="$(ralph_release_workflow_identity "$RELEASE_REPO" "$VERSION")"
 issuer="https://token.actions.githubusercontent.com"
 
 validate_archive() {
@@ -112,37 +122,36 @@ validate_archive() {
   }
 }
 
-mapfile -t existing < <(release_gh release view "v${VERSION}" \
-  --repo "$RELEASE_REPO" --json assets --jq '.assets[].name')
+mapfile -t existing < <(ralph_release_assets_by_id | jq -r '.[].name')
 has_archive=false
 has_bundle=false
 printf '%s\n' "${existing[@]}" | grep -Fxq "$ARCHIVE" && has_archive=true
 printf '%s\n' "${existing[@]}" | grep -Fxq "$BUNDLE" && has_bundle=true
 
-if [[ "$has_archive" == true || "$has_bundle" == true ]]; then
-  [[ "$has_archive" == true && "$has_bundle" == true ]] || {
-    echo "package provenance: partial prior provenance asset set" >&2
-    exit 1
-  }
-  release_gh release download "v${VERSION}" --repo "$RELEASE_REPO" \
-    --pattern "$ARCHIVE" --output "$work/$ARCHIVE"
-  release_gh release download "v${VERSION}" --repo "$RELEASE_REPO" \
-    --pattern "$BUNDLE" --output "$work/$BUNDLE"
-  "$COSIGN_BIN" verify-blob "$work/$ARCHIVE" \
-    --bundle "$work/$BUNDLE" \
-    --certificate-identity "$identity" \
-    --certificate-oidc-issuer "$issuer" >/dev/null
-  validate_archive "$work/$ARCHIVE"
-  echo "package provenance: reused signed original rollback bytes"
-  exit 0
+if [[ "$has_bundle" == true && "$has_archive" == false ]]; then
+  echo "package provenance: orphaned signature bundle; quarantine required" >&2
+  exit 1
+fi
+resume_archive=false
+if [[ "$has_archive" == true ]]; then
+  ralph_release_download_asset "v${VERSION}" "$RELEASE_SOURCE_COMMIT" draft \
+    "$ARCHIVE" "$work/$ARCHIVE"
+  if [[ "$has_bundle" == true ]]; then
+    ralph_release_download_asset "v${VERSION}" "$RELEASE_SOURCE_COMMIT" draft \
+      "$BUNDLE" "$work/$BUNDLE"
+    "$COSIGN_BIN" verify-blob "$work/$ARCHIVE" \
+      --bundle "$work/$BUNDLE" \
+      --certificate-identity "$identity" \
+      --certificate-oidc-issuer "$issuer" \
+      --certificate-github-workflow-sha "$RELEASE_WORKFLOW_COMMIT" >/dev/null
+    validate_archive "$work/$ARCHIVE"
+    echo "package provenance: reused signed original rollback bytes"
+    exit 0
+  fi
+  resume_archive=true
 fi
 
-release="$(release_gh api \
-  "repos/${RELEASE_REPO}/releases/tags/v${VERSION}")"
-jq -e \
-  --arg tag "v${VERSION}" \
-  '.draft == true and .prerelease == false and .tag_name == $tag' \
-  <<<"$release" >/dev/null
+ralph_release_by_id "v${VERSION}" "$RELEASE_SOURCE_COMMIT" draft >/dev/null
 prior_main_oid="$(pkgs_gh api --jq '.object.sha' \
   "repos/${PKGS_REPO}/git/ref/heads/main")"
 [[ "$prior_main_oid" =~ ^[0-9a-f]{40,64}$ ]]
@@ -180,11 +189,26 @@ jq -n \
   > "$work/payload/provenance.json"
 
 "$TAR_BIN" --sort=name --mtime='@0' --owner=0 --group=0 --numeric-owner \
-  -czf "$work/$ARCHIVE" -C "$work/payload" \
+  -czf "$work/$ARCHIVE.candidate" -C "$work/payload" \
   "${archive_members[@]}"
+validate_archive "$work/$ARCHIVE.candidate"
+if [[ "$resume_archive" == true ]]; then
+  cmp -s "$work/$ARCHIVE.candidate" "$work/$ARCHIVE" || {
+    echo "package provenance: partial archive differs from current original package bytes" >&2
+    exit 1
+  }
+  "$COSIGN_BIN" sign-blob "$work/$ARCHIVE" \
+    --bundle "$work/$BUNDLE" --yes
+  ralph_release_upload_asset "v${VERSION}" "$RELEASE_SOURCE_COMMIT" \
+    "$work/$BUNDLE" >/dev/null
+  echo "package provenance: resumed missing signature bundle"
+  exit 0
+fi
+mv "$work/$ARCHIVE.candidate" "$work/$ARCHIVE"
 "$COSIGN_BIN" sign-blob "$work/$ARCHIVE" \
   --bundle "$work/$BUNDLE" --yes
-validate_archive "$work/$ARCHIVE"
-release_gh release upload "v${VERSION}" --repo "$RELEASE_REPO" \
-  "$work/$ARCHIVE" "$work/$BUNDLE"
+ralph_release_upload_asset "v${VERSION}" "$RELEASE_SOURCE_COMMIT" \
+  "$work/$ARCHIVE" >/dev/null
+ralph_release_upload_asset "v${VERSION}" "$RELEASE_SOURCE_COMMIT" \
+  "$work/$BUNDLE" >/dev/null
 echo "package provenance: captured and signed original package main $prior_main_oid"

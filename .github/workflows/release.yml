@@ -3,22 +3,72 @@ name: Release
 on:
   push:
     tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      phase:
+        description: Prepare and attest, or publish after a successful prepare run
+        required: true
+        type: choice
+        options: [prepare, publish]
+      tag:
+        description: Exact existing Release Please tag (recovery is limited to v0.22.0)
+        required: true
+        type: string
+      source_commit:
+        description: Exact commit currently referenced by the existing tag
+        required: true
+        type: string
+      workflow_commit:
+        description: Exact main commit containing this reviewed recovery workflow
+        required: true
+        type: string
+      release_id:
+        description: Exact numeric Release Please draft ID
+        required: true
+        type: string
+      prepared_run_id:
+        description: Successful prepare run containing signed readiness evidence
+        required: true
+        default: "0"
+        type: string
+      immutable_releases_preflight:
+        description: JSON evidence emitted by dispatch_release_recovery.sh
+        required: true
+        type: string
 
 concurrency:
-  group: release-${{ github.ref }}
+  group: release-${{ inputs.tag || github.ref_name }}
   cancel-in-progress: false
 
 permissions: {}
+
+env:
+  RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+  RELEASE_SOURCE_COMMIT: ${{ inputs.source_commit || github.sha }}
+  RELEASE_WORKFLOW_COMMIT: ${{ inputs.workflow_commit || github.sha }}
+  RELEASE_ID: ${{ inputs.release_id }}
+  RELEASE_PHASE: ${{ inputs.phase || 'automatic' }}
+  PREPARED_RUN_ID: ${{ inputs.prepared_run_id || '0' }}
+  RELEASE_CONTROL_REF: ${{ github.event_name == 'workflow_dispatch' && github.sha || github.ref }}
+  RELEASE_BUILD_ROOT: ${{ github.event_name == 'workflow_dispatch' && 'release-source' || '.' }}
+  GORELEASER_CONFIG: ${{ github.event_name == 'workflow_dispatch' && '../.goreleaser.yaml' || '.goreleaser.yaml' }}
+  RELEASE_IMMUTABLE_PREFLIGHT: ${{ inputs.immutable_releases_preflight }}
+  GORELEASER_CURRENT_TAG: ${{ inputs.tag || github.ref_name }}
 
 jobs:
   release-admission:
     name: Admit exact Release Please handoff
     outputs:
       state: ${{ steps.release_state.outputs.state }}
+      release_id: ${{ steps.release_state.outputs.release_id }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          ref: ${{ env.RELEASE_CONTROL_REF }}
       # The PAT is reserved for cross-repository jbcom/pkgs operations.
       # Current-repository release reads and writes use the built-in token.
       - name: Verify release secret is set
@@ -33,48 +83,135 @@ jobs:
       - name: Require repository immutable releases
         env:
           GH_TOKEN: ${{ github.token }}
+          TRIGGERING_ACTOR: ${{ github.triggering_actor }}
         run: |
-          gh api \
-            -H "X-GitHub-Api-Version: 2026-03-10" \
-            "repos/${GITHUB_REPOSITORY}/immutable-releases" |
-            jq -e '.enabled == true' >/dev/null
+          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
+            [[ "${{ github.actor_id }}" == "2650679" ]]
+            triggering_actor_id="$(gh api \
+              "users/${TRIGGERING_ACTOR}" --jq '.id')"
+            [[ "$triggering_actor_id" == "2650679" ]]
+            [[ "$GITHUB_REF" == "refs/heads/main" ]]
+            [[ "$GITHUB_SHA" == "${{ inputs.workflow_commit }}" ]]
+            [[ "$GITHUB_WORKFLOW_SHA" == "${{ inputs.workflow_commit }}" ]]
+            bash scripts/ci/verify_immutable_release_preflight.sh \
+              "$RELEASE_IMMUTABLE_PREFLIGHT" \
+              "$RELEASE_TAG" "$RELEASE_SOURCE_COMMIT" \
+              "$RELEASE_ID" "$RELEASE_PHASE" 600
+            {
+              echo "### Immutable-release recovery preflight"
+              echo
+              echo "- actor: \`$GITHUB_ACTOR\`"
+              echo "- tag: \`$RELEASE_TAG\`"
+              echo "- source: \`$RELEASE_SOURCE_COMMIT\`"
+              echo "- workflow: \`$GITHUB_WORKFLOW_SHA\`"
+              echo "- release ID: \`$RELEASE_ID\`"
+              echo "- phase: \`$RELEASE_PHASE\`"
+              echo "- request: \`$(jq -r '.request_id' <<<"$RELEASE_IMMUTABLE_PREFLIGHT")\`"
+              echo "- setting ETag SHA-256: \`$(jq -r '.etag_sha256' <<<"$RELEASE_IMMUTABLE_PREFLIGHT")\`"
+            } >> "$GITHUB_STEP_SUMMARY"
+          else
+            gh api \
+              -H "X-GitHub-Api-Version: 2026-03-10" \
+              "repos/${GITHUB_REPOSITORY}/immutable-releases" |
+              jq -e '.enabled == true' >/dev/null
+          fi
 
       # This job is the first dependency of every publisher. Reject manual
       # prerelease or malformed tags before GoReleaser can upload an artifact or
       # open a package-manager PR.
       - name: Require stable SemVer tag
         run: |
-          if [[ ! "$GITHUB_REF_NAME" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
-            echo "::error::$GITHUB_REF_NAME is not a stable SemVer tag"
+          if [[ ! "$RELEASE_TAG" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+            echo "::error::$RELEASE_TAG is not a stable SemVer tag"
             exit 1
+          fi
+          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" &&
+                "$RELEASE_TAG" != "v0.22.0" ]]; then
+            echo "::error::manual recovery is limited to the existing v0.22.0 handoff"
+            exit 1
+          fi
+          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
+            [[ "$RELEASE_ID" =~ ^[1-9][0-9]*$ ]]
+            if [[ "$RELEASE_PHASE" == "publish" ]]; then
+              [[ "$PREPARED_RUN_ID" =~ ^[1-9][0-9]*$ ]]
+            else
+              [[ "$RELEASE_PHASE" == "prepare" ]]
+              [[ "$PREPARED_RUN_ID" == "0" ]]
+            fi
           fi
 
       # The repository's active tag ruleset makes v* tags admin-created and
       # immutable. Still prove the event is the checked-out tag commit on main
       # before trusting the tag as executable release input.
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          fetch-depth: 0
       - name: Require tag commit on main
         id: tag_provenance
         run: |
           set -euo pipefail
           git fetch --no-tags origin \
+            "+refs/tags/${RELEASE_TAG}:refs/tags/${RELEASE_TAG}"
+          git fetch --no-tags origin \
             "+refs/heads/main:refs/remotes/origin/main"
-          tag_commit="$(git rev-parse "${GITHUB_REF_NAME}^{commit}")"
-          event_commit="$(git rev-parse "${GITHUB_SHA}^{commit}")"
+          tag_commit="$(git rev-parse "${RELEASE_TAG}^{commit}")"
+          event_commit="$(git rev-parse "${RELEASE_SOURCE_COMMIT}^{commit}")"
           if [[ "$tag_commit" != "$event_commit" ]]; then
-            echo "::error::tag commit $tag_commit does not match event commit $event_commit"
+            echo "::error::tag commit $tag_commit does not match declared source commit $event_commit"
             exit 1
           fi
           if ! git merge-base --is-ancestor "$tag_commit" origin/main; then
             echo "::error::tag commit $tag_commit is not reachable from origin/main"
             exit 1
           fi
-          manifest_version="$(jq -er '."."' .release-please-manifest.json)"
-          if [[ "v${manifest_version}" != "$GITHUB_REF_NAME" ]]; then
-            echo "::error::tag $GITHUB_REF_NAME does not match Release Please manifest v${manifest_version} at $event_commit"
+          manifest_version="$(
+            git show "${tag_commit}:.release-please-manifest.json" |
+              jq -er '."."'
+          )"
+          if [[ "v${manifest_version}" != "$RELEASE_TAG" ]]; then
+            echo "::error::tag $RELEASE_TAG does not match Release Please manifest v${manifest_version} at $event_commit"
             exit 1
+          fi
+          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
+            allowed="$RUNNER_TEMP/recovery-allowed-paths"
+            changed="$RUNNER_TEMP/recovery-changed-paths"
+            printf '%s\n' \
+              .agent-state/decisions.ndjson \
+              .goreleaser.yaml \
+              .github/workflows/ci.yml \
+              .github/workflows/release.yml \
+              docs/install.sh \
+              docs/launch/release-checklist.md \
+              packaging/publish-cli-manifests.sh \
+              scripts/ci/build_gui_package.sh \
+              scripts/ci/dispatch_release_recovery.sh \
+              scripts/ci/finalize_gui_bundle.sh \
+              scripts/ci/prepare_package_manifests_bundle.sh \
+              scripts/ci/prepare_package_rollback_provenance.sh \
+              scripts/ci/prepare_release_seal.sh \
+              scripts/ci/release_by_id.sh \
+              scripts/ci/release_workflow_identity.sh \
+              scripts/ci/smoke_goreleaser_artifacts.sh \
+              scripts/ci/test_immutable_release_recovery.sh \
+              scripts/ci/test_install_signature_policy.sh \
+              scripts/ci/test_prepare_package_manifests_bundle.sh \
+              scripts/ci/test_prepare_package_rollback_provenance.sh \
+              scripts/ci/test_prepare_release_seal.sh \
+              scripts/ci/test_publish_cli_manifests.sh \
+              scripts/ci/test_release_by_id.sh \
+              scripts/ci/test_premerge_scoop_server_contract.py \
+              scripts/ci/test_verify_release_assets.sh \
+              scripts/ci/test_wait_for_package_publication.sh \
+              scripts/ci/verify_immutable_release_preflight.sh \
+              scripts/ci/verify_release_assets.sh \
+              scripts/ci/wait_for_package_publication.sh \
+              tests/releasecontrol/release_control_test.go \
+              >"$allowed"
+            git diff --name-only "$tag_commit" "$GITHUB_WORKFLOW_SHA" |
+              LC_ALL=C sort -u >"$changed"
+            if comm -23 "$changed" <(LC_ALL=C sort -u "$allowed") |
+                grep -q .; then
+              echo "::error::workflow commit changes product source outside the reviewed recovery allowlist"
+              comm -23 "$changed" <(LC_ALL=C sort -u "$allowed") >&2
+              exit 1
+            fi
           fi
           echo "commit=$tag_commit" >> "$GITHUB_OUTPUT"
 
@@ -88,17 +225,29 @@ jobs:
           TAG_COMMIT: ${{ steps.tag_provenance.outputs.commit }}
         run: |
           for attempt in {1..12}; do
-            if release_state="$(gh release view "$GITHUB_REF_NAME" \
-              --json isDraft,isPrerelease,tagName,targetCommitish \
-              --jq '[.isDraft, .isPrerelease, .tagName, .targetCommitish] | @tsv' 2>/dev/null)"; then
-              read -r is_draft is_prerelease tag_name target_commitish <<< "$release_state"
-              if [[ "$tag_name" != "$GITHUB_REF_NAME" || "$target_commitish" != "$TAG_COMMIT" ]]; then
+            release_id="$RELEASE_ID"
+            if [[ -z "$release_id" ]]; then
+              release_id="$(gh release view "$RELEASE_TAG" \
+                --json databaseId --jq '.databaseId' 2>/dev/null || true)"
+            fi
+            if [[ "$release_id" =~ ^[1-9][0-9]*$ ]] &&
+                release_state="$(gh api \
+                  "repos/${GITHUB_REPOSITORY}/releases/${release_id}" \
+                  2>/dev/null)"; then
+              read -r id is_draft is_prerelease tag_name target_commitish < <(
+                jq -er '[.id, .draft, .prerelease, .tag_name, .target_commitish] |
+                  @tsv' <<<"$release_state"
+              )
+              if [[ "$id" != "$release_id" ]]; then
+                echo "::error::release ID response mismatch"
+                exit 1
+              fi
+              if [[ "$tag_name" != "$RELEASE_TAG" || "$target_commitish" != "$TAG_COMMIT" ]]; then
                 echo "::error::release target does not match immutable tag commit $TAG_COMMIT"
                 exit 1
               fi
               if [[ "$is_draft" == "true" && "$is_prerelease" == "false" ]]; then
-                assets="$(gh release view "$GITHUB_REF_NAME" \
-                  --json assets --jq '.assets[].name')"
+                assets="$(jq -r '.assets[].name' <<<"$release_state")"
                 seal=false
                 bundle=false
                 grep -Fxq release-seal.json <<<"$assets" && seal=true
@@ -117,7 +266,14 @@ jobs:
                 echo "::error::public prerelease or ambiguous release state is invalid"
                 exit 1
               fi
+              if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" &&
+                    "$RELEASE_PHASE" == "publish" &&
+                    "$state" != "draft-sealed" ]]; then
+                echo "::error::publish phase requires a fully sealed prepare run"
+                exit 1
+              fi
               echo "state=$state" >> "$GITHUB_OUTPUT"
+              echo "release_id=$release_id" >> "$GITHUB_OUTPUT"
               echo "Release Please handoff state: $state"
               exit 0
             fi
@@ -139,27 +295,66 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+          ref: ${{ env.RELEASE_CONTROL_REF }}
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: github.event_name == 'workflow_dispatch'
+        with:
+          fetch-depth: 0
+          path: release-source
+          ref: ${{ env.RELEASE_TAG }}
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version-file: go.mod
+          go-version-file: ${{ env.RELEASE_BUILD_ROOT }}/go.mod
       - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
 
       - uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
         with:
           distribution: goreleaser
           version: v2.17.0
-          args: release --clean
+          args: release --clean --config ${{ env.GORELEASER_CONFIG }}
+          workdir: ${{ env.RELEASE_BUILD_ROOT }}
         env:
           GITHUB_TOKEN: ${{ github.token }}
       - name: Smoke GoReleaser archives, native packages, and installer
-        run: bash scripts/ci/smoke_goreleaser_artifacts.sh
+        run: SOURCE_ROOT="$RELEASE_BUILD_ROOT" bash scripts/ci/smoke_goreleaser_artifacts.sh
+      - name: Upload exact CLI set to admitted numeric draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BOUND_RELEASE_ID: ${{ needs.release-admission.outputs.release_id }}
+        run: |
+          set -euo pipefail
+          export RELEASE_ID="$BOUND_RELEASE_ID"
+          RELEASE_REPO="$GITHUB_REPOSITORY"
+          release_gh() {
+            gh "$@"
+          }
+          source scripts/ci/release_by_id.sh
+          VERSION="${RELEASE_TAG#v}"
+          assets=(
+            "radioactive_ralph_${VERSION}_darwin_amd64.tar.gz"
+            "radioactive_ralph_${VERSION}_darwin_arm64.tar.gz"
+            "radioactive_ralph_${VERSION}_linux_amd64.tar.gz"
+            "radioactive_ralph_${VERSION}_linux_arm64.tar.gz"
+            "radioactive_ralph_${VERSION}_windows_amd64.zip"
+            "radioactive-ralph_${VERSION}_linux_amd64.deb"
+            "radioactive-ralph_${VERSION}_linux_arm64.deb"
+            "radioactive-ralph_${VERSION}_linux_amd64.rpm"
+            "radioactive-ralph_${VERSION}_linux_arm64.rpm"
+            checksums.txt
+            checksums.txt.sigstore.json
+          )
+          for asset in "${assets[@]}"; do
+            ralph_release_upload_asset \
+              "$RELEASE_TAG" "$RELEASE_SOURCE_COMMIT" \
+              "$RELEASE_BUILD_ROOT/dist/$asset" replace-before-seal
+          done
       - name: Retain generated CLI package manifests
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: generated-cli-package-manifests
           path: |
-            dist/homebrew/Casks/radioactive-ralph.rb
-            dist/scoop/bucket/radioactive-ralph.json
+            ${{ env.RELEASE_BUILD_ROOT }}/dist/homebrew/Casks/radioactive-ralph.rb
+            ${{ env.RELEASE_BUILD_ROOT }}/dist/scoop/bucket/radioactive-ralph.json
           if-no-files-found: error
 
   gui-bundles:
@@ -195,9 +390,16 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+          ref: ${{ env.RELEASE_CONTROL_REF }}
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: github.event_name == 'workflow_dispatch'
+        with:
+          fetch-depth: 0
+          path: release-source
+          ref: ${{ env.RELEASE_TAG }}
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version-file: go.mod
+          go-version-file: ${{ env.RELEASE_BUILD_ROOT }}/go.mod
       # Linux GUI build needs the GL/X11/Wayland dev headers (same set the CI
       # `gui` job installs) for glfw to link.
       - name: Install Linux GUI dev headers
@@ -213,17 +415,19 @@ jobs:
         shell: bash
         timeout-minutes: 30
         run: |
-          bash scripts/ci/build_gui_package.sh \
-            "${GITHUB_REF_NAME#v}" \
+          SOURCE_ROOT="$RELEASE_BUILD_ROOT" \
+            bash scripts/ci/build_gui_package.sh \
+            "${RELEASE_TAG#v}" \
             "${{ matrix.target }}"
       - name: Finalize and smoke macOS DMG or Linux AppImage
         if: matrix.target != 'windows'
         shell: bash
         run: |
-          VERSION="${GITHUB_REF_NAME#v}"
+          VERSION="${RELEASE_TAG#v}"
           ARCH="${{ matrix.arch }}"
           [[ -n "$ARCH" ]] || ARCH=x86_64
-          bash scripts/ci/finalize_gui_bundle.sh \
+          SOURCE_ROOT="$RELEASE_BUILD_ROOT" \
+            bash scripts/ci/finalize_gui_bundle.sh \
             "$VERSION" "${{ matrix.target }}" "$ARCH"
       # Windows: Authenticode-sign the .exe via the free SignPath Foundation OSS
       # program WHEN enrolled (the SIGNPATH_* secrets are set). Absent the
@@ -252,7 +456,7 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: radioactive-ralph-exe-unsigned
-          path: "*.exe"
+          path: ${{ env.RELEASE_BUILD_ROOT }}/*.exe
       - name: Authenticode-sign the .exe (SignPath, Windows)
         if: matrix.target == 'windows' && steps.signpath_prereq.outputs.sign == 'true'
         uses: signpath/github-action-submit-signing-request@b9d91eadd323de506c0c81cf0c7fe7438f3360fd # v2.2
@@ -264,13 +468,13 @@ jobs:
           artifact-configuration-slug: exe
           github-artifact-id: ${{ steps.exe_artifact.outputs.artifact-id }}
           wait-for-completion: true
-          output-artifact-directory: .
+          output-artifact-directory: ${{ env.RELEASE_BUILD_ROOT }}
       - name: Smoke packaged .exe (Windows)
         if: matrix.target == 'windows'
         shell: bash
         run: |
-          VERSION="${GITHUB_REF_NAME#v}"
-          EXE="$(find . -maxdepth 1 -name '*.exe' | head -n 1)"
+          VERSION="${RELEASE_TAG#v}"
+          EXE="$(find "$RELEASE_BUILD_ROOT" -maxdepth 1 -name '*.exe' | head -n 1)"
           test -n "$EXE"
           "$EXE" --version | grep -F "$VERSION"
           go version -m "$EXE" | grep -F $'dep\tfyne.io/fyne/v2'
@@ -279,9 +483,9 @@ jobs:
         with:
           name: ${{ matrix.artifact }}
           path: |
-            *.dmg
-            *.AppImage
-            *.exe
+            ${{ env.RELEASE_BUILD_ROOT }}/*.dmg
+            ${{ env.RELEASE_BUILD_ROOT }}/*.AppImage
+            ${{ env.RELEASE_BUILD_ROOT }}/*.exe
           if-no-files-found: error
           retention-days: 1
       - name: Reject ambiguous GUI bundle output
@@ -289,7 +493,11 @@ jobs:
         run: |
           set -euo pipefail
           shopt -s nullglob
-          assets=( *.dmg *.AppImage *.exe )
+          assets=(
+            "$RELEASE_BUILD_ROOT"/*.dmg
+            "$RELEASE_BUILD_ROOT"/*.AppImage
+            "$RELEASE_BUILD_ROOT"/*.exe
+          )
           if [ ${#assets[@]} -ne 1 ]; then
             echo "::error::expected exactly one GUI bundle for ${{ matrix.target }}, found ${#assets[@]}"
             exit 1
@@ -297,12 +505,15 @@ jobs:
 
   sign-gui-checksums:
     name: Sign GUI checksum manifest
-    needs: gui-bundles
+    needs: [release-admission, gui-bundles]
     runs-on: ubuntu-latest
     permissions:
       contents: write
       id-token: write
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.RELEASE_CONTROL_REF }}
       - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v8.0.1
         with:
@@ -312,9 +523,16 @@ jobs:
       - name: Download, hash, sign, and upload the exact GUI set
         env:
           GH_TOKEN: ${{ github.token }}
+          BOUND_RELEASE_ID: ${{ needs.release-admission.outputs.release_id }}
         run: |
           set -euo pipefail
-          VERSION="${GITHUB_REF_NAME#v}"
+          export RELEASE_ID="$BOUND_RELEASE_ID"
+          RELEASE_REPO="$GITHUB_REPOSITORY"
+          release_gh() {
+            gh "$@"
+          }
+          source "$GITHUB_WORKSPACE/scripts/ci/release_by_id.sh"
+          VERSION="${RELEASE_TAG#v}"
           cd gui-assets
           expected=(
             "radioactive-ralph_${VERSION}_darwin_amd64.dmg"
@@ -331,11 +549,14 @@ jobs:
             --bundle gui-checksums.txt.sigstore.json \
             gui-checksums.txt \
             --yes
-          gh release upload "$GITHUB_REF_NAME" \
+          for asset in \
             "${expected[@]}" \
             gui-checksums.txt \
-            gui-checksums.txt.sigstore.json \
-            --clobber
+            gui-checksums.txt.sigstore.json; do
+            ralph_release_upload_asset \
+              "$RELEASE_TAG" "$RELEASE_SOURCE_COMMIT" \
+              "$asset" replace-before-seal
+          done
 
   package-rollback-provenance:
     name: Sign original package rollback provenance
@@ -347,14 +568,17 @@ jobs:
       id-token: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.RELEASE_CONTROL_REF }}
       - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
       - name: Capture once or verify original package bytes
         env:
           PKGS_GH_TOKEN: ${{ secrets.PKGS_GITHUB_TOKEN }}
           RELEASE_GH_TOKEN: ${{ github.token }}
+          RELEASE_ID: ${{ needs.release-admission.outputs.release_id }}
         run: |
           bash scripts/ci/prepare_package_rollback_provenance.sh \
-            "${GITHUB_REF_NAME#v}"
+            "${RELEASE_TAG#v}"
 
   package-manifests-bundle:
     name: Sign durable atomic package manifests
@@ -367,6 +591,8 @@ jobs:
       actions: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.RELEASE_CONTROL_REF }}
       - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v8.0.1
         with:
@@ -375,9 +601,10 @@ jobs:
       - name: Sign exact three-file package PR payload
         env:
           RELEASE_GH_TOKEN: ${{ github.token }}
+          RELEASE_ID: ${{ needs.release-admission.outputs.release_id }}
         run: |
           bash scripts/ci/prepare_package_manifests_bundle.sh \
-            "${GITHUB_REF_NAME#v}"
+            "${RELEASE_TAG#v}"
 
   release-seal:
     name: Sign create-last immutable release seal
@@ -390,13 +617,18 @@ jobs:
       id-token: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.RELEASE_CONTROL_REF }}
       - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
       - name: Seal or verify every draft byte
         env:
           RELEASE_GH_TOKEN: ${{ github.token }}
+          RELEASE_ID: ${{ needs.release-admission.outputs.release_id }}
         run: |
           bash scripts/ci/prepare_release_seal.sh \
-            "${GITHUB_REF_NAME#v}" "$GITHUB_SHA"
+            "${RELEASE_TAG#v}" "$RELEASE_SOURCE_COMMIT" \
+            "${{ needs.release-admission.outputs.release_id }}" \
+            "$RELEASE_WORKFLOW_COMMIT"
 
   verify-sealed-release:
     name: Verify sealed draft before package mutation
@@ -411,11 +643,14 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.RELEASE_CONTROL_REF }}
       - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
       - name: Verify exact sealed release bytes
         env:
           RELEASE_GH_TOKEN: ${{ github.token }}
-        run: bash scripts/ci/verify_release_assets.sh "${GITHUB_REF_NAME#v}"
+          RELEASE_ID: ${{ needs.release-admission.outputs.release_id }}
+        run: bash scripts/ci/verify_release_assets.sh "${RELEASE_TAG#v}"
 
   package-manifests:
     name: Publish atomic package manifest PR
@@ -426,13 +661,16 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.RELEASE_CONTROL_REF }}
       - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
       - name: Publish generated Homebrew and Scoop manifests
         env:
           PKGS_GH_TOKEN: ${{ secrets.PKGS_GITHUB_TOKEN }}
           RELEASE_GH_TOKEN: ${{ github.token }}
+          RELEASE_ID: ${{ needs.release-admission.outputs.release_id }}
           RESOLVE_PACKAGE_ATTEMPT_BRANCH: '1'
-        run: bash packaging/publish-cli-manifests.sh "${GITHUB_REF_NAME#v}"
+        run: bash packaging/publish-cli-manifests.sh "${RELEASE_TAG#v}"
 
   chocolatey:
     name: Optional Chocolatey publish after immutable release
@@ -462,6 +700,7 @@ jobs:
         if: steps.prereq.outputs.should_publish == 'true'
         with:
           fetch-depth: 0
+          ref: ${{ env.RELEASE_TAG }}
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         if: steps.prereq.outputs.should_publish == 'true'
         with:
@@ -495,19 +734,24 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 1
+          ref: ${{ env.RELEASE_CONTROL_REF }}
       - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
       - name: Verify trusted exact PR heads without merging
         id: package_heads
         env:
           PKGS_GH_TOKEN: ${{ secrets.PKGS_GITHUB_TOKEN }}
           RELEASE_GH_TOKEN: ${{ github.token }}
+          RELEASE_ID: ${{ needs.release-admission.outputs.release_id }}
           PACKAGE_GATE_MODE: verify-heads
           RESOLVE_PACKAGE_ATTEMPT_BRANCH: '1'
-        run: bash scripts/ci/wait_for_package_publication.sh "${GITHUB_REF_NAME#v}"
+        run: bash scripts/ci/wait_for_package_publication.sh "${RELEASE_TAG#v}"
 
   premerge-package-smoke:
     name: Premerge package smoke (${{ matrix.channel }})
-    needs: verify-package-heads
+    needs: [release-admission, verify-package-heads]
+    if: >-
+      github.event_name != 'workflow_dispatch' ||
+      inputs.phase == 'prepare'
     runs-on: ${{ matrix.os }}
     permissions:
       contents: read
@@ -524,6 +768,7 @@ jobs:
         if: matrix.channel == 'homebrew-exact-heads'
         with:
           persist-credentials: false
+          ref: ${{ env.RELEASE_CONTROL_REF }}
       - name: Install exact Homebrew PR-head casks
         if: matrix.channel == 'homebrew-exact-heads'
         shell: bash
@@ -531,9 +776,16 @@ jobs:
           PKGS_GH_TOKEN: ${{ secrets.PKGS_GITHUB_TOKEN }}
           RELEASE_GH_TOKEN: ${{ github.token }}
           PACKAGE_HEAD: ${{ needs.verify-package-heads.outputs.package_head_oid }}
+          BOUND_RELEASE_ID: ${{ needs.release-admission.outputs.release_id }}
         run: |
           set -euo pipefail
-          VERSION="${GITHUB_REF_NAME#v}"
+          export RELEASE_ID="$BOUND_RELEASE_ID"
+          RELEASE_REPO="$GITHUB_REPOSITORY"
+          release_gh() {
+            GH_TOKEN="$RELEASE_GH_TOKEN" gh "$@"
+          }
+          source scripts/ci/release_by_id.sh
+          VERSION="${RELEASE_TAG#v}"
           mkdir exact-casks premerge-assets
           GH_TOKEN="$PKGS_GH_TOKEN" gh api -H "Accept: application/vnd.github.raw+json" \
             "repos/jbcom/pkgs/contents/Casks/radioactive-ralph.rb?ref=$PACKAGE_HEAD" \
@@ -544,8 +796,9 @@ jobs:
           for asset in \
             "radioactive_ralph_${VERSION}_darwin_arm64.tar.gz" \
             "radioactive-ralph_${VERSION}_darwin_arm64.dmg"; do
-            GH_TOKEN="$RELEASE_GH_TOKEN" gh release download "$GITHUB_REF_NAME" \
-              --pattern "$asset" --dir premerge-assets
+            ralph_release_download_asset \
+              "$RELEASE_TAG" "$RELEASE_SOURCE_COMMIT" draft "$asset" \
+              "premerge-assets/$asset"
             case "$asset" in
               radioactive_ralph_*.tar.gz)
                 cask=exact-casks/radioactive-ralph.rb
@@ -565,7 +818,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          VERSION="${GITHUB_REF_NAME#v}"
+          VERSION="${RELEASE_TAG#v}"
           unset GH_TOKEN PKGS_GH_TOKEN RELEASE_GH_TOKEN
           if git config --local --get-regexp '^http\..*\.extraheader$' \
             >/dev/null 2>&1; then
@@ -594,6 +847,7 @@ jobs:
           PKGS_GH_TOKEN: ${{ secrets.PKGS_GITHUB_TOKEN }}
           RELEASE_GH_TOKEN: ${{ github.token }}
           PACKAGE_HEAD: ${{ needs.verify-package-heads.outputs.package_head_oid }}
+          BOUND_RELEASE_ID: ${{ needs.release-admission.outputs.release_id }}
         run: |
           $ErrorActionPreference = 'Stop'
           New-Item -ItemType Directory exact-scoop | Out-Null
@@ -604,10 +858,30 @@ jobs:
           if ($LASTEXITCODE -ne 0) {
             throw "failed to fetch exact Scoop manifest at $env:PACKAGE_HEAD"
           }
-          $version = $env:GITHUB_REF_NAME.Substring(1)
+          $version = $env:RELEASE_TAG.Substring(1)
           $asset = "radioactive_ralph_${version}_windows_amd64.zip"
           $env:GH_TOKEN = $env:RELEASE_GH_TOKEN
-          gh release download $env:GITHUB_REF_NAME --pattern $asset --dir exact-scoop
+          $release = gh api `
+            "repos/$env:GITHUB_REPOSITORY/releases/$env:BOUND_RELEASE_ID" |
+            ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0 -or
+              $release.id -ne [int64]$env:BOUND_RELEASE_ID -or
+              $release.tag_name -ne $env:RELEASE_TAG -or
+              $release.target_commitish -ne $env:RELEASE_SOURCE_COMMIT -or
+              -not $release.draft -or $release.prerelease) {
+            throw "numeric draft no longer matches the admitted release"
+          }
+          $assets = gh api --paginate --slurp `
+            "repos/$env:GITHUB_REPOSITORY/releases/$env:BOUND_RELEASE_ID/assets?per_page=100" |
+            ConvertFrom-Json
+          $matches = @($assets | ForEach-Object { $_ } |
+            Where-Object { $_.name -eq $asset -and $_.state -eq 'uploaded' })
+          if ($LASTEXITCODE -ne 0 -or $matches.Count -ne 1) {
+            throw "exact draft asset is absent or duplicated"
+          }
+          gh api -H "Accept: application/octet-stream" `
+            "repos/$env:GITHUB_REPOSITORY/releases/assets/$($matches[0].id)" `
+            > "exact-scoop/$asset"
           if ($LASTEXITCODE -ne 0) {
             throw "failed to cache exact draft asset $asset"
           }
@@ -615,7 +889,7 @@ jobs:
           $manifestPath = "exact-scoop/radioactive-ralph.json"
           $assetPath = "exact-scoop/$asset"
           $manifest = Get-Content -Raw $manifestPath | ConvertFrom-Json
-          $expectedAssetUrl = "https://github.com/$env:GITHUB_REPOSITORY/releases/download/$env:GITHUB_REF_NAME/$asset"
+          $expectedAssetUrl = "https://github.com/$env:GITHUB_REPOSITORY/releases/download/$env:RELEASE_TAG/$asset"
           $originalAssetUrl = $manifest.architecture.'64bit'.url
           $originalAssetHash = $manifest.architecture.'64bit'.hash
           if ($originalAssetUrl -ne $expectedAssetUrl) {
@@ -653,7 +927,7 @@ jobs:
             }
           }
 
-          $version = $env:GITHUB_REF_NAME.Substring(1)
+          $version = $env:RELEASE_TAG.Substring(1)
           $asset = "radioactive_ralph_${version}_windows_amd64.zip"
           $assetPath = "$PWD/exact-scoop/$asset"
           $assetUrl = "http://127.0.0.1:8123/$asset"
@@ -732,10 +1006,152 @@ jobs:
             }
           }
 
+  release-readiness:
+    name: Sign prepared release readiness
+    needs:
+      [release-admission, verify-sealed-release, verify-package-heads, premerge-package-smoke]
+    if: >-
+      always() &&
+      github.event_name == 'workflow_dispatch' &&
+      inputs.phase == 'prepare' &&
+      needs.verify-sealed-release.result == 'success' &&
+      needs.verify-package-heads.result == 'success' &&
+      needs.premerge-package-smoke.result == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+    steps:
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+      - name: Sign exact preparation result
+        env:
+          PACKAGE_HEAD_OID: ${{ needs.verify-package-heads.outputs.package_head_oid }}
+          BOUND_RELEASE_ID: ${{ needs.release-admission.outputs.release_id }}
+        run: |
+          set -euo pipefail
+          [[ "$PACKAGE_HEAD_OID" =~ ^[0-9a-f]{40,64}$ ]]
+          [[ "$BOUND_RELEASE_ID" == "$RELEASE_ID" ]]
+          jq -S -n \
+            --arg tag "$RELEASE_TAG" \
+            --arg source "$RELEASE_SOURCE_COMMIT" \
+            --arg workflow "$RELEASE_WORKFLOW_COMMIT" \
+            --arg package_head "$PACKAGE_HEAD_OID" \
+            --argjson release_id "$RELEASE_ID" \
+            --argjson run_id "$GITHUB_RUN_ID" \
+            '{
+              schema: 1,
+              phase: "prepare",
+              tag: $tag,
+              source_commit: $source,
+              release_id: $release_id,
+              workflow_commit: $workflow,
+              prepared_run_id: $run_id,
+              package_head_oid: $package_head
+            }' > release-readiness.json
+          cosign sign-blob release-readiness.json \
+            --bundle release-readiness.json.sigstore.json --yes
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-readiness-v0.22.0
+          path: |
+            release-readiness.json
+            release-readiness.json.sigstore.json
+          if-no-files-found: error
+          retention-days: 1
+
+  verify-release-readiness:
+    name: Verify signed prepared release readiness
+    needs: release-admission
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      inputs.phase == 'publish'
+    runs-on: ubuntu-latest
+    outputs:
+      package_head_oid: ${{ steps.readiness.outputs.package_head_oid }}
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+      - name: Verify exact successful prepare run and signed result
+        id: readiness
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          [[ "$PREPARED_RUN_ID" =~ ^[1-9][0-9]*$ ]]
+          work="$RUNNER_TEMP/release-readiness"
+          mkdir "$work"
+          run="$(gh api \
+            "repos/${GITHUB_REPOSITORY}/actions/runs/${PREPARED_RUN_ID}")"
+          jq -e \
+            --arg sha "$RELEASE_WORKFLOW_COMMIT" \
+            --argjson actor_id 2650679 \
+            '.id > 0 and .event == "workflow_dispatch" and
+             .status == "completed" and .conclusion == "success" and
+             .head_sha == $sha and .actor.id == $actor_id and
+             .triggering_actor.id == $actor_id and
+             .path == ".github/workflows/release.yml"' \
+            <<<"$run" >/dev/null
+          artifacts="$(gh api \
+            "repos/${GITHUB_REPOSITORY}/actions/runs/${PREPARED_RUN_ID}/artifacts?name=release-readiness-v0.22.0")"
+          artifact_id="$(jq -er \
+            '[.artifacts[] | select(
+              .name == "release-readiness-v0.22.0" and
+              .expired == false
+            )] | select(length == 1) | .[0].id' <<<"$artifacts")"
+          gh api -H "Accept: application/vnd.github+json" \
+            "repos/${GITHUB_REPOSITORY}/actions/artifacts/${artifact_id}/zip" \
+            > "$work/readiness.zip"
+          listing="$(unzip -Z1 "$work/readiness.zip" | LC_ALL=C sort)"
+          expected="$(printf '%s\n' \
+            release-readiness.json \
+            release-readiness.json.sigstore.json | LC_ALL=C sort)"
+          [[ "$listing" == "$expected" ]]
+          unzip -q "$work/readiness.zip" -d "$work"
+          cosign verify-blob "$work/release-readiness.json" \
+            --bundle "$work/release-readiness.json.sigstore.json" \
+            --certificate-identity \
+              "https://github.com/${GITHUB_REPOSITORY}/.github/workflows/release.yml@refs/heads/main" \
+            --certificate-github-workflow-sha "$RELEASE_WORKFLOW_COMMIT" \
+            --certificate-github-workflow-trigger workflow_dispatch \
+            --certificate-oidc-issuer \
+              "https://token.actions.githubusercontent.com" >/dev/null
+          jq -e \
+            --arg tag "$RELEASE_TAG" \
+            --arg source "$RELEASE_SOURCE_COMMIT" \
+            --arg workflow "$RELEASE_WORKFLOW_COMMIT" \
+            --argjson release_id "$RELEASE_ID" \
+            --argjson run_id "$PREPARED_RUN_ID" \
+            '.schema == 1 and .phase == "prepare" and
+             .tag == $tag and .source_commit == $source and
+             .release_id == $release_id and
+             .workflow_commit == $workflow and
+             .prepared_run_id == $run_id and
+             (.package_head_oid | test("^[0-9a-f]{40,64}$")) and
+             (keys | sort) == [
+               "package_head_oid", "phase", "prepared_run_id", "release_id",
+               "schema", "source_commit", "tag", "workflow_commit"
+             ]' "$work/release-readiness.json" >/dev/null
+          package_head="$(jq -er '.package_head_oid' \
+            "$work/release-readiness.json")"
+          echo "package_head_oid=$package_head" >> "$GITHUB_OUTPUT"
+
   publish-release:
     name: Commit packages and publish immutable stable release
     needs:
-      [release-admission, verify-sealed-release, verify-package-heads, premerge-package-smoke]
+      [release-admission, verify-sealed-release, verify-package-heads, premerge-package-smoke, verify-release-readiness]
+    if: >-
+      always() &&
+      needs.verify-sealed-release.result == 'success' &&
+      needs.verify-package-heads.result == 'success' &&
+      (
+        (github.event_name != 'workflow_dispatch' &&
+         needs.premerge-package-smoke.result == 'success') ||
+        (github.event_name == 'workflow_dispatch' &&
+         inputs.phase == 'publish' &&
+         needs.premerge-package-smoke.result == 'skipped' &&
+         needs.verify-release-readiness.result == 'success')
+      )
     runs-on: ubuntu-latest
     outputs:
       pkgs_main_oid: ${{ steps.transaction.outputs.pkgs_main_oid }}
@@ -747,6 +1163,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 1
+          ref: ${{ env.RELEASE_CONTROL_REF }}
       - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
       - name: Merge exact smoked head and immediately publish once
         id: transaction
@@ -754,13 +1171,37 @@ jobs:
           PKGS_GH_TOKEN: ${{ secrets.PKGS_GITHUB_TOKEN }}
           RELEASE_GH_TOKEN: ${{ github.token }}
           EXPECTED_PACKAGE_HEAD_OID: ${{ needs.verify-package-heads.outputs.package_head_oid }}
+          READINESS_PACKAGE_HEAD_OID: ${{ needs.verify-release-readiness.outputs.package_head_oid }}
+          RELEASE_ID: ${{ needs.release-admission.outputs.release_id }}
           RESOLVE_PACKAGE_ATTEMPT_BRANCH: '1'
         run: |
           set -euo pipefail
-          VERSION="${GITHUB_REF_NAME#v}"
+          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
+            [[ "$EXPECTED_PACKAGE_HEAD_OID" == "$READINESS_PACKAGE_HEAD_OID" ]]
+          fi
+          VERSION="${RELEASE_TAG#v}"
           provenance="$RUNNER_TEMP/package-rollback.tar.gz"
-          GH_TOKEN="$RELEASE_GH_TOKEN" gh release download "$GITHUB_REF_NAME" \
-            --pattern package-rollback.tar.gz --output "$provenance"
+          RELEASE_REPO="$GITHUB_REPOSITORY"
+          release_gh() {
+            GH_TOKEN="$RELEASE_GH_TOKEN" gh "$@"
+          }
+          source scripts/ci/release_by_id.sh
+          ralph_release_download_asset \
+            "$RELEASE_TAG" "$RELEASE_SOURCE_COMMIT" draft \
+            package-rollback.tar.gz "$provenance"
+          require_immutable_release_authority() {
+            if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
+              bash scripts/ci/verify_immutable_release_preflight.sh \
+                "$RELEASE_IMMUTABLE_PREFLIGHT" \
+                "$RELEASE_TAG" "$RELEASE_SOURCE_COMMIT" \
+                "$RELEASE_ID" "$RELEASE_PHASE" 600
+            else
+              GH_TOKEN="$RELEASE_GH_TOKEN" gh api \
+                -H "X-GitHub-Api-Version: 2026-03-10" \
+                "repos/${GITHUB_REPOSITORY}/immutable-releases" |
+                jq -e '.enabled == true' >/dev/null
+            fi
+          }
           pkgs_main_oid=""
           package_release_merge_oid=""
           resolve_winning_merge() {
@@ -783,10 +1224,11 @@ jobs:
             status=$?
             trap - EXIT
             final_state="$(GH_TOKEN="$RELEASE_GH_TOKEN" gh api \
-              "repos/${GITHUB_REPOSITORY}/releases/tags/${GITHUB_REF_NAME}" \
+              "repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}" \
               2>/dev/null || true)"
-            if jq -e --arg tag "$GITHUB_REF_NAME" --arg target "$GITHUB_SHA" \
-              '.draft == false and .prerelease == false and
+            if jq -e --argjson id "$RELEASE_ID" \
+              --arg tag "$RELEASE_TAG" --arg target "$RELEASE_SOURCE_COMMIT" \
+              '.id == $id and .draft == false and .prerelease == false and
                .immutable == true and .tag_name == $tag and
                .target_commitish == $target' <<<"$final_state" >/dev/null 2>&1; then
               latest_id="$(GH_TOKEN="$RELEASE_GH_TOKEN" gh api --jq '.id' \
@@ -800,8 +1242,9 @@ jobs:
               echo "::warning::publication response was uncertain; stable immutable state was verified by fresh reads"
               exit 0
             fi
-            if ! jq -e --arg tag "$GITHUB_REF_NAME" --arg target "$GITHUB_SHA" \
-              '.draft == true and .prerelease == false and
+            if ! jq -e --argjson id "$RELEASE_ID" \
+              --arg tag "$RELEASE_TAG" --arg target "$RELEASE_SOURCE_COMMIT" \
+              '.id == $id and .draft == true and .prerelease == false and
                .tag_name == $tag and .target_commitish == $target' \
               <<<"$final_state" >/dev/null 2>&1; then
               echo "::error::ambiguous publication state; quarantining without blind compensation"
@@ -818,23 +1261,22 @@ jobs:
           }
           trap compensate EXIT
 
-          GH_TOKEN="$RELEASE_GH_TOKEN" gh api \
-            -H "X-GitHub-Api-Version: 2026-03-10" \
-            "repos/${GITHUB_REPOSITORY}/immutable-releases" |
-            jq -e '.enabled == true' >/dev/null
+          require_immutable_release_authority
           current_manifest="$(GH_TOKEN="$RELEASE_GH_TOKEN" gh api \
             -H "Accept: application/vnd.github.raw+json" \
             "repos/${GITHUB_REPOSITORY}/contents/.release-please-manifest.json?ref=main")"
           [[ "$(jq -er '."."' <<<"$current_manifest")" == "$VERSION" ]]
           tag_sha="$(GH_TOKEN="$RELEASE_GH_TOKEN" gh api \
-            --jq '.object.sha' "repos/${GITHUB_REPOSITORY}/git/ref/tags/${GITHUB_REF_NAME}")"
-          [[ "$tag_sha" == "$GITHUB_SHA" ]]
+            --jq '.object.sha' "repos/${GITHUB_REPOSITORY}/git/ref/tags/${RELEASE_TAG}")"
+          [[ "$tag_sha" == "$RELEASE_SOURCE_COMMIT" ]]
           bash scripts/ci/verify_release_assets.sh "$VERSION"
           release="$(GH_TOKEN="$RELEASE_GH_TOKEN" gh api \
-            "repos/${GITHUB_REPOSITORY}/releases/tags/${GITHUB_REF_NAME}")"
+            "repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}")"
           release_id="$(jq -er '.id' <<<"$release")"
-          jq -e --arg tag "$GITHUB_REF_NAME" --arg target "$GITHUB_SHA" \
-            '.draft == true and .prerelease == false and
+          [[ "$release_id" == "$RELEASE_ID" ]]
+          jq -e --argjson id "$RELEASE_ID" \
+            --arg tag "$RELEASE_TAG" --arg target "$RELEASE_SOURCE_COMMIT" \
+            '.id == $id and .draft == true and .prerelease == false and
              .tag_name == $tag and .target_commitish == $target' \
             <<<"$release" >/dev/null
 
@@ -856,23 +1298,22 @@ jobs:
           EXPECTED_PACKAGE_RELEASE_MERGE_OID="$package_release_merge_oid" \
             PACKAGE_GATE_MODE=recheck-current \
             bash scripts/ci/wait_for_package_publication.sh "$VERSION"
-          GH_TOKEN="$RELEASE_GH_TOKEN" gh api \
-            -H "X-GitHub-Api-Version: 2026-03-10" \
-            "repos/${GITHUB_REPOSITORY}/immutable-releases" |
-            jq -e '.enabled == true' >/dev/null
+          require_immutable_release_authority
           current_manifest="$(GH_TOKEN="$RELEASE_GH_TOKEN" gh api \
             -H "Accept: application/vnd.github.raw+json" \
             "repos/${GITHUB_REPOSITORY}/contents/.release-please-manifest.json?ref=main")"
           [[ "$(jq -er '."."' <<<"$current_manifest")" == "$VERSION" ]]
           tag_sha="$(GH_TOKEN="$RELEASE_GH_TOKEN" gh api \
             --jq '.object.sha' \
-            "repos/${GITHUB_REPOSITORY}/git/ref/tags/${GITHUB_REF_NAME}")"
-          [[ "$tag_sha" == "$GITHUB_SHA" ]]
+            "repos/${GITHUB_REPOSITORY}/git/ref/tags/${RELEASE_TAG}")"
+          [[ "$tag_sha" == "$RELEASE_SOURCE_COMMIT" ]]
           release="$(GH_TOKEN="$RELEASE_GH_TOKEN" gh api \
-            "repos/${GITHUB_REPOSITORY}/releases/tags/${GITHUB_REF_NAME}")"
+            "repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}")"
           release_id="$(jq -er '.id' <<<"$release")"
-          jq -e --arg tag "$GITHUB_REF_NAME" --arg target "$GITHUB_SHA" \
-            '.draft == true and .prerelease == false and
+          [[ "$release_id" == "$RELEASE_ID" ]]
+          jq -e --argjson id "$RELEASE_ID" \
+            --arg tag "$RELEASE_TAG" --arg target "$RELEASE_SOURCE_COMMIT" \
+            '.id == $id and .draft == true and .prerelease == false and
              .tag_name == $tag and .target_commitish == $target' \
             <<<"$release" >/dev/null
 
@@ -883,9 +1324,9 @@ jobs:
             echo "::warning::publication PATCH transport failed; resolving fresh release state"
           fi
           final="$(GH_TOKEN="$RELEASE_GH_TOKEN" gh api \
-            "repos/${GITHUB_REPOSITORY}/releases/tags/${GITHUB_REF_NAME}")"
-          if ! jq -e --argjson id "$release_id" --arg tag "$GITHUB_REF_NAME" \
-            --arg target "$GITHUB_SHA" \
+            "repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}")"
+          if ! jq -e --argjson id "$release_id" --arg tag "$RELEASE_TAG" \
+            --arg target "$RELEASE_SOURCE_COMMIT" \
             '.id == $id and .draft == false and .prerelease == false and
              .immutable == true and .tag_name == $tag and
              .target_commitish == $target' <<<"$response" >/dev/null 2>&1; then
@@ -893,12 +1334,12 @@ jobs:
           fi
           latest="$(GH_TOKEN="$RELEASE_GH_TOKEN" gh api \
             "repos/${GITHUB_REPOSITORY}/releases/latest")"
-          jq -e --argjson id "$release_id" --arg tag "$GITHUB_REF_NAME" \
-            --arg target "$GITHUB_SHA" \
+          jq -e --argjson id "$release_id" --arg tag "$RELEASE_TAG" \
+            --arg target "$RELEASE_SOURCE_COMMIT" \
             '.id == $id and .immutable == true and .draft == false and
              .prerelease == false and .tag_name == $tag and
              .target_commitish == $target' <<<"$final" >/dev/null
-          jq -e --argjson id "$release_id" --arg tag "$GITHUB_REF_NAME" \
+          jq -e --argjson id "$release_id" --arg tag "$RELEASE_TAG" \
             '.id == $id and .tag_name == $tag and .immutable == true' \
             <<<"$latest" >/dev/null
           {
@@ -930,12 +1371,14 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         if: startsWith(matrix.channel, 'linux-direct')
+        with:
+          ref: ${{ env.RELEASE_CONTROL_REF }}
       - name: Smoke official Homebrew CLI and GUI casks
         if: startsWith(matrix.channel, 'homebrew-cli-gui')
         shell: bash
         run: |
           set -euo pipefail
-          VERSION="${GITHUB_REF_NAME#v}"
+          VERSION="${RELEASE_TAG#v}"
           brew tap jbcom/pkgs https://github.com/jbcom/pkgs
           HOMEBREW_NO_INSTALL_FROM_API=1 brew install --cask \
             radioactive-ralph radioactive-ralph-gui
@@ -957,17 +1400,17 @@ jobs:
         run: |
           scoop bucket add jbcom https://github.com/jbcom/pkgs
           scoop install radioactive-ralph
-          $version = $env:GITHUB_REF_NAME.Substring(1)
+          $version = $env:RELEASE_TAG.Substring(1)
           radioactive_ralph --version | Select-String -SimpleMatch $version
       - name: Smoke curl, deb, rpm, and available AppImage release paths
         if: startsWith(matrix.channel, 'linux-direct')
         shell: bash
         run: |
           set -euo pipefail
-          VERSION="${GITHUB_REF_NAME#v}"
-          BASE="https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}"
+          VERSION="${RELEASE_TAG#v}"
+          BASE="https://github.com/${GITHUB_REPOSITORY}/releases/download/${RELEASE_TAG}"
           TMP="$(mktemp -d)"
-          sh docs/install.sh --version "$GITHUB_REF_NAME" --install-dir "$TMP/bin"
+          sh docs/install.sh --version "$RELEASE_TAG" --install-dir "$TMP/bin"
           "$TMP/bin/radioactive_ralph" --version | grep -F "$VERSION"
           if [[ "$(uname -m)" == "aarch64" ]]; then
             ARCH=arm64
@@ -995,7 +1438,7 @@ jobs:
 
   rollback-package-manifests:
     name: Compensate terminal immutable public-channel failure
-    needs: [publish-release, official-channel-smoke]
+    needs: [release-admission, publish-release, official-channel-smoke]
     if: always() && needs.publish-release.result == 'success' && needs.official-channel-smoke.result != 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 25
@@ -1003,23 +1446,32 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.RELEASE_CONTROL_REF }}
       - name: Fetch signed rollback provenance
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASE_ID: ${{ needs.release-admission.outputs.release_id }}
         run: |
-          gh release download "$GITHUB_REF_NAME" \
-            --pattern package-rollback.tar.gz \
-            --output "$RUNNER_TEMP/package-rollback.tar.gz"
+          RELEASE_REPO="$GITHUB_REPOSITORY"
+          release_gh() {
+            gh "$@"
+          }
+          source scripts/ci/release_by_id.sh
+          ralph_release_download_asset \
+            "$RELEASE_TAG" "$RELEASE_SOURCE_COMMIT" published \
+            package-rollback.tar.gz \
+            "$RUNNER_TEMP/package-rollback.tar.gz"
       - name: Restore exact prior package manifests through protected main
         env:
           PKGS_GH_TOKEN: ${{ secrets.PKGS_GITHUB_TOKEN }}
         run: |
           bash scripts/ci/rollback_package_manifests.sh \
-            "${GITHUB_REF_NAME#v}" \
+            "${RELEASE_TAG#v}" \
             "$RUNNER_TEMP/package-rollback.tar.gz" \
             "${{ needs.publish-release.outputs.package_release_merge_oid }}"
           {
-            echo "## Immutable release v${GITHUB_REF_NAME#v} is terminal"
+            echo "## Immutable release v${RELEASE_TAG#v} is terminal"
             echo
             echo "An unavoidable post-publication network/channel check failed."
             echo "Package manifests were compensated. The immutable tag and release"
@@ -1035,20 +1487,24 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.RELEASE_CONTROL_REF }}
       - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
       - name: Verify immutable bytes and historical package merge
         env:
           PKGS_GH_TOKEN: ${{ secrets.PKGS_GITHUB_TOKEN }}
           RELEASE_GH_TOKEN: ${{ github.token }}
+          RELEASE_ID: ${{ needs.release-admission.outputs.release_id }}
         run: |
           set -euo pipefail
-          VERSION="${GITHUB_REF_NAME#v}"
+          VERSION="${RELEASE_TAG#v}"
           bash scripts/ci/verify_release_assets.sh "$VERSION"
           release="$(GH_TOKEN="$RELEASE_GH_TOKEN" gh api \
-            "repos/${GITHUB_REPOSITORY}/releases/tags/${GITHUB_REF_NAME}")"
+            "repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}")"
           release_id="$(jq -er '.id' <<<"$release")"
-          jq -e --arg tag "$GITHUB_REF_NAME" --arg target "$GITHUB_SHA" \
-            '.draft == false and .prerelease == false and .immutable == true and
+          jq -e --argjson id "$RELEASE_ID" \
+            --arg tag "$RELEASE_TAG" --arg target "$RELEASE_SOURCE_COMMIT" \
+            '.id == $id and .draft == false and .prerelease == false and .immutable == true and
              .tag_name == $tag and .target_commitish == $target' \
             <<<"$release" >/dev/null
           PACKAGE_GATE_MODE=resolve-historical \

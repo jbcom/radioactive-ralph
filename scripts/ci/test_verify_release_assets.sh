@@ -11,13 +11,6 @@ cat > "$TMP/gh" <<'FAKEGH'
 set -euo pipefail
 kind="${1:?}"
 shift
-if [[ "$kind" == "api" ]]; then
-  printf 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n'
-  exit 0
-fi
-[[ "$kind" == "release" ]]
-subcommand="${1:?}"
-shift
 assets=(
   radioactive_ralph_1.2.3_darwin_amd64.tar.gz
   radioactive_ralph_1.2.3_darwin_arm64.tar.gz
@@ -43,6 +36,45 @@ assets=(
   release-seal.json
   release-seal.json.sigstore.json
 )
+if [[ "$kind" == "api" ]]; then
+  endpoint="${*: -1}"
+  case "$endpoint" in
+    repos/jbcom/radioactive-ralph/releases/123)
+      printf '%s\n' \
+        '{"id":123,"draft":true,"prerelease":false,"tag_name":"v1.2.3","target_commitish":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}'
+      ;;
+    repos/jbcom/radioactive-ralph/releases/123/assets?per_page=100)
+      payload='[]'
+      for index in "${!assets[@]}"; do
+        asset="${assets[$index]}"
+        [[ "${FAKE_MISSING_ASSET:-}" == "$asset" ]] && continue
+        payload="$(jq -c --arg name "$asset" --argjson id "$((index + 1))" \
+          '. + [{id:$id,name:$name,state:"uploaded"}]' <<<"$payload")"
+      done
+      if [[ "${FAKE_EXTRA_ASSET:-0}" == "1" ]]; then
+        payload="$(jq -c '. + [{id:99,name:"attacker.bin",state:"uploaded"}]' \
+          <<<"$payload")"
+      fi
+      jq -cn --argjson payload "$payload" '[$payload]'
+      ;;
+    repos/jbcom/radioactive-ralph/releases/assets/*)
+      id="${endpoint##*/}"
+      [[ "$id" =~ ^[1-9][0-9]*$ && "$id" -le "${#assets[@]}" ]]
+      pattern="${assets[$((id - 1))]}"
+      generated="${FAKE_STATE:?}/$pattern"
+      "$0" release download ignored --pattern "$pattern" --output "$generated"
+      cat "$generated"
+      ;;
+    *)
+      echo "unexpected API endpoint: $*" >&2
+      exit 1
+      ;;
+  esac
+  exit 0
+fi
+[[ "$kind" == "release" ]]
+subcommand="${1:?}"
+shift
 if [[ "$subcommand" == "view" ]]; then
   for asset in "${assets[@]}"; do
     [[ "${FAKE_MISSING_ASSET:-}" == "$asset" ]] || printf '%s\n' "$asset"
@@ -94,18 +126,18 @@ case "$pattern" in
     rm -rf "$payload"
     ;;
   release-seal.json)
-    output_dir="$(dirname "$output")"
     seal_assets='[]'
     for asset in "${assets[@]:0:21}"; do
-      digest="$(sha256sum "$output_dir/$asset" | awk '{print $1}')"
-      size="$(wc -c < "$output_dir/$asset" | tr -d ' ')"
+      digest="$(sha256sum "${FAKE_STATE:?}/$asset" | awk '{print $1}')"
+      size="$(wc -c < "${FAKE_STATE:?}/$asset" | tr -d ' ')"
       seal_assets="$(jq -c --arg name "$asset" --arg sha "$digest" \
         --argjson size "$size" '. + [{name:$name,size:$size,sha256:$sha}]' \
         <<<"$seal_assets")"
     done
     jq -n --argjson assets "$seal_assets" \
-      '{schema:1,release_version:"1.2.3",tag:"v1.2.3",
+      '{schema:2,release_version:"1.2.3",tag:"v1.2.3",release_id:123,
         source_commit:"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        workflow_commit:"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         workflow:"release.yml",assets:$assets}' > "$output"
     ;;
   *.sigstore.json) printf '{"fixture":true}\n' > "$output" ;;
@@ -133,6 +165,11 @@ export EMPTY_SHA
 export GH_BIN="$TMP/gh"
 export COSIGN_BIN="$TMP/cosign"
 export RELEASE_GH_TOKEN=fake-release-token
+export RELEASE_ID=123
+export RELEASE_SOURCE_COMMIT=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+export RELEASE_WORKFLOW_COMMIT=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+export FAKE_STATE="$TMP/assets"
+mkdir "$FAKE_STATE"
 
 bash "$ROOT/scripts/ci/verify_release_assets.sh" 1.2.3
 

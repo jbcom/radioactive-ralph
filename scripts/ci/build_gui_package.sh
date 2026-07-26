@@ -8,19 +8,19 @@ TARGET="${2:?usage: build_gui_package.sh <version> <darwin|linux|windows>}"
 [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
 [[ "$TARGET" == darwin || "$TARGET" == linux || "$TARGET" == windows ]]
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-BUILD_DATE="${BUILD_DATE:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}"
-BUILD_COMMIT="${GITHUB_SHA:-$(git -C "$ROOT" rev-parse HEAD)}"
+ROOT="${SOURCE_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}"
+BUILD_COMMIT="${RELEASE_SOURCE_COMMIT:-${GITHUB_SHA:-$(git -C "$ROOT" rev-parse HEAD)}}"
+BUILD_DATE="${BUILD_DATE:-$(git -C "$ROOT" show -s --format=%cI "$BUILD_COMMIT")}"
 BINARY="$ROOT/cmd/radioactive_ralph/radioactive-ralph"
 [[ "$TARGET" == windows ]] && BINARY="${BINARY}.exe"
 EXPECTED_VERSION="$VERSION ($BUILD_COMMIT, built $BUILD_DATE)"
 
-CGO_ENABLED=1 go build \
+CGO_ENABLED=1 go -C "$ROOT" build \
   -tags gui \
   -trimpath \
   -ldflags "-s -w -X main.Version=$VERSION -X main.Commit=$BUILD_COMMIT -X main.Date=$BUILD_DATE" \
   -o "$BINARY" \
-  "$ROOT/cmd/radioactive_ralph"
+  ./cmd/radioactive_ralph
 "$BINARY" --version | grep -F "$EXPECTED_VERSION"
 go version -m "$BINARY" | grep -F $'dep\tfyne.io/fyne/v2'
 

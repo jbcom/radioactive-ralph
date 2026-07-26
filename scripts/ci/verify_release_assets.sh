@@ -6,6 +6,8 @@ set -euo pipefail
 VERSION="${1:?usage: verify_release_assets.sh <version>}"
 RELEASE_REPO="${RELEASE_REPO:-jbcom/radioactive-ralph}"
 RELEASE_GH_TOKEN="${RELEASE_GH_TOKEN:-}"
+RELEASE_ID="${RELEASE_ID:-}"
+RELEASE_SOURCE_COMMIT="${RELEASE_SOURCE_COMMIT:-}"
 GH_BIN="${GH_BIN:-gh}"
 COSIGN_BIN="${COSIGN_BIN:-cosign}"
 
@@ -17,10 +19,22 @@ COSIGN_BIN="${COSIGN_BIN:-cosign}"
   echo "release assets: RELEASE_GH_TOKEN is required" >&2
   exit 1
 }
+[[ "$RELEASE_ID" =~ ^[1-9][0-9]*$ ]] || {
+  echo "release assets: RELEASE_ID must be a positive decimal integer" >&2
+  exit 1
+}
+[[ "$RELEASE_SOURCE_COMMIT" =~ ^[0-9a-f]{40,64}$ ]] || {
+  echo "release assets: RELEASE_SOURCE_COMMIT is required" >&2
+  exit 1
+}
 
 release_gh() {
   GH_TOKEN="$RELEASE_GH_TOKEN" "$GH_BIN" "$@"
 }
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=scripts/ci/release_by_id.sh
+source "$script_dir/release_by_id.sh"
+ralph_release_by_id "v${VERSION}" "$RELEASE_SOURCE_COMMIT" either >/dev/null
 
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
@@ -56,10 +70,7 @@ metadata_assets=(
 )
 expected=("${cli_assets[@]}" "${gui_assets[@]}" "${metadata_assets[@]}")
 
-actual_names="$(release_gh release view "v${VERSION}" \
-  --repo "$RELEASE_REPO" \
-  --json assets \
-  --jq '.assets[].name' | LC_ALL=C sort)"
+actual_names="$(ralph_release_assets_by_id | jq -r '.[].name' | LC_ALL=C sort)"
 expected_names="$(printf '%s\n' "${expected[@]}" | LC_ALL=C sort)"
 [[ "$actual_names" == "$expected_names" ]] || {
   echo "release assets: uploaded asset set is not exact" >&2
@@ -69,32 +80,48 @@ expected_names="$(printf '%s\n' "${expected[@]}" | LC_ALL=C sort)"
 }
 
 for asset in "${expected[@]}"; do
-  release_gh release download "v${VERSION}" \
-    --repo "$RELEASE_REPO" \
-    --pattern "$asset" \
-    --output "$work/$asset"
+  ralph_release_download_asset "v${VERSION}" "$RELEASE_SOURCE_COMMIT" either \
+    "$asset" "$work/$asset"
   [[ -f "$work/$asset" ]] || exit 1
 done
 
-identity="https://github.com/${RELEASE_REPO}/.github/workflows/release.yml@refs/tags/v${VERSION}"
+# shellcheck source=scripts/ci/release_workflow_identity.sh
+source "$script_dir/release_workflow_identity.sh"
+identity="$(ralph_release_workflow_identity "$RELEASE_REPO" "$VERSION")"
 issuer="https://token.actions.githubusercontent.com"
+workflow_commit="$(jq -er \
+  '.workflow_commit | select(type == "string" and test("^[0-9a-f]{40}$"))' \
+  "$work/release-seal.json")"
+workflow_sha_args=()
+if [[ "$VERSION" == "0.22.0" ]]; then
+  if [[ -n "${RELEASE_WORKFLOW_COMMIT:-}" ]]; then
+    [[ "$workflow_commit" == "$RELEASE_WORKFLOW_COMMIT" ]]
+  fi
+  workflow_sha_args=(
+    --certificate-github-workflow-sha "$workflow_commit"
+  )
+fi
 for manifest in checksums.txt gui-checksums.txt; do
   "$COSIGN_BIN" verify-blob "$work/$manifest" \
     --bundle "$work/${manifest}.sigstore.json" \
     --certificate-identity "$identity" \
+    "${workflow_sha_args[@]}" \
     --certificate-oidc-issuer "$issuer" >/dev/null
 done
 "$COSIGN_BIN" verify-blob "$work/package-rollback.tar.gz" \
   --bundle "$work/package-rollback.tar.gz.sigstore.json" \
   --certificate-identity "$identity" \
+  "${workflow_sha_args[@]}" \
   --certificate-oidc-issuer "$issuer" >/dev/null
 "$COSIGN_BIN" verify-blob "$work/package-manifests.tar.gz" \
   --bundle "$work/package-manifests.tar.gz.sigstore.json" \
   --certificate-identity "$identity" \
+  "${workflow_sha_args[@]}" \
   --certificate-oidc-issuer "$issuer" >/dev/null
 "$COSIGN_BIN" verify-blob "$work/release-seal.json" \
   --bundle "$work/release-seal.json.sigstore.json" \
   --certificate-identity "$identity" \
+  "${workflow_sha_args[@]}" \
   --certificate-oidc-issuer "$issuer" >/dev/null
 
 cli_names="$(awk '{name=$2; sub(/^\*/, "", name); print name}' \
@@ -178,14 +205,17 @@ expected_package_names="$(printf '%s\n' \
   bucket/radioactive-ralph.json | LC_ALL=C sort)"
 [[ "$package_names" == "$expected_package_names" ]]
 
-release_target="$(release_gh api \
-  --jq '.target_commitish' \
-  "repos/${RELEASE_REPO}/releases/tags/v${VERSION}")"
+jq -e --argjson release_id "$RELEASE_ID" \
+  '.release_id == $release_id' "$work/release-seal.json" >/dev/null
 jq -e \
   --arg version "$VERSION" \
-  --arg source "$release_target" \
-  '.schema == 1 and .release_version == $version and
+  --arg source "$RELEASE_SOURCE_COMMIT" \
+  --arg workflow "$workflow_commit" \
+  --argjson release_id "$RELEASE_ID" \
+  '.schema == 2 and .release_version == $version and
    .tag == ("v" + $version) and .source_commit == $source and
+   .workflow_commit == $workflow and
+   .release_id == $release_id and
    .workflow == "release.yml" and
    (.assets | length) == 21' "$work/release-seal.json" >/dev/null
 sealed_names="$(jq -r '.assets[].name' "$work/release-seal.json" | LC_ALL=C sort)"

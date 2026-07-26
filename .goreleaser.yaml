@@ -30,7 +30,8 @@ builds:
       - -s -w
       - -X main.Version={{.Version}}
       - -X main.Commit={{.ShortCommit}}
-      - -X main.Date={{.Date}}
+      - -X main.Date={{.CommitDate}}
+    mod_timestamp: "{{ .CommitTimestamp }}"
     flags:
       - -trimpath
 
@@ -215,16 +216,10 @@ winget:
 # is only available on Windows runners.
 
 release:
-  github:
-    owner: jbcom
-    name: radioactive-ralph
-  # Release Please creates the tagged draft; every release job adds its
-  # artifacts to that draft. release.yml publishes it only after the required
-  # CLI, GUI, and package-manager jobs have all succeeded.
-  draft: true
-  use_existing_draft: true
-  replace_existing_artifacts: true
-  prerelease: auto
+  # Release Please owns the numeric draft. GoReleaser only builds and signs;
+  # release.yml uploads every artifact through the already-admitted numeric
+  # release ID because GitHub's tag endpoint cannot see a draft.
+  disable: true
   name_template: "v{{ .Version }}"
   footer: |
     ## Install

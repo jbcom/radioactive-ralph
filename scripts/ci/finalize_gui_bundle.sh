@@ -6,7 +6,7 @@ set -euo pipefail
 VERSION="${1:?usage: finalize_gui_bundle.sh <version> <target> <arch>}"
 TARGET="${2:?usage: finalize_gui_bundle.sh <version> <target> <arch>}"
 ARCH="${3:?usage: finalize_gui_bundle.sh <version> <target> <arch>}"
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+ROOT="${SOURCE_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}"
 
 case "$TARGET" in
   darwin)

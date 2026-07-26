@@ -8,16 +8,24 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=scripts/ci/package_guidance_contract.sh
 source "$SCRIPT_DIR/package_guidance_contract.sh"
+# shellcheck source=scripts/ci/release_workflow_identity.sh
+source "$SCRIPT_DIR/release_workflow_identity.sh"
 
 VERSION="${1:?usage: wait_for_package_publication.sh <version>}"
 PKGS_REPO="${PKGS_REPO:-jbcom/pkgs}"
 RELEASE_REPO="${RELEASE_REPO:-jbcom/radioactive-ralph}"
+RELEASE_ID="${RELEASE_ID:-}"
+RELEASE_SOURCE_COMMIT="${RELEASE_SOURCE_COMMIT:-}"
+RELEASE_WORKFLOW_COMMIT="${RELEASE_WORKFLOW_COMMIT:-}"
 EXPECTED_OWNER="${PKGS_REPO%%/*}"
 EXPECTED_ACTIONS_APP_ID=15368
 GH_BIN="${GH_BIN:-gh}"
 COSIGN_BIN="${COSIGN_BIN:-cosign}"
 PKGS_GH_TOKEN="${PKGS_GH_TOKEN:-}"
 RELEASE_GH_TOKEN="${RELEASE_GH_TOKEN:-}"
+RELEASE_WORKFLOW_IDENTITY="$(
+  ralph_release_workflow_identity "$RELEASE_REPO" "$VERSION"
+)"
 MAX_ATTEMPTS="${MAX_ATTEMPTS:-60}"
 SLEEP_SECONDS="${SLEEP_SECONDS:-10}"
 PR_ATTEMPTS="${PR_ATTEMPTS:-12}"
@@ -38,6 +46,11 @@ if [[ "$EXPECTED_OWNER" == "$PKGS_REPO" ]]; then
 fi
 if [[ -z "$PKGS_GH_TOKEN" || -z "$RELEASE_GH_TOKEN" ]]; then
   echo "package publication: PKGS_GH_TOKEN and RELEASE_GH_TOKEN are required" >&2
+  exit 1
+fi
+if [[ ! "$RELEASE_SOURCE_COMMIT" =~ ^[0-9a-f]{40,64}$ ||
+      ! "$RELEASE_WORKFLOW_COMMIT" =~ ^[0-9a-f]{40}$ ]]; then
+  echo "package publication: exact release source and workflow commits are required" >&2
   exit 1
 fi
 
@@ -86,6 +99,9 @@ resolve_package_attempt_branch() {
 release_gh() {
   GH_TOKEN="$RELEASE_GH_TOKEN" "$GH_BIN" "$@"
 }
+# shellcheck source=scripts/ci/release_by_id.sh
+source "$SCRIPT_DIR/release_by_id.sh"
+ralph_release_by_id "v${VERSION}" "$RELEASE_SOURCE_COMMIT" either >/dev/null
 
 require_current_release_manifest() {
   local manifest
@@ -128,10 +144,8 @@ cache_release_asset() {
   if [[ ! -f "$destination" ]]; then
     local partial="${destination}.partial"
     rm -f "$partial"
-    release_gh release download "v${VERSION}" \
-      --repo "$RELEASE_REPO" \
-      --pattern "$asset" \
-      --output "$partial" || {
+    ralph_release_download_asset "v${VERSION}" "$RELEASE_SOURCE_COMMIT" \
+      either "$asset" "$partial" || {
         rm -f "$partial"
         return 1
       }
@@ -350,9 +364,9 @@ ensure_package_payload_integrity() {
   )" || return 1
   "$COSIGN_BIN" verify-blob "$package_path" \
     --bundle "$package_bundle_path" \
-    --certificate-identity \
-    "https://github.com/${RELEASE_REPO}/.github/workflows/release.yml@refs/tags/v${VERSION}" \
+    --certificate-identity "$RELEASE_WORKFLOW_IDENTITY" \
     --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+    --certificate-github-workflow-sha "$RELEASE_WORKFLOW_COMMIT" \
     >/dev/null || return 1
   package_listing="$(tar -tzf "$package_path" | LC_ALL=C sort)" || return 1
   package_expected="$(printf '%s\n' \
@@ -379,15 +393,15 @@ ensure_release_integrity() {
     return 1
   "$COSIGN_BIN" verify-blob "$checksums_path" \
     --bundle "$bundle_path" \
-    --certificate-identity \
-    "https://github.com/${RELEASE_REPO}/.github/workflows/release.yml@refs/tags/v${VERSION}" \
+    --certificate-identity "$RELEASE_WORKFLOW_IDENTITY" \
     --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+    --certificate-github-workflow-sha "$RELEASE_WORKFLOW_COMMIT" \
     >/dev/null || return 1
   "$COSIGN_BIN" verify-blob "$gui_checksums_path" \
     --bundle "$gui_bundle_path" \
-    --certificate-identity \
-    "https://github.com/${RELEASE_REPO}/.github/workflows/release.yml@refs/tags/v${VERSION}" \
+    --certificate-identity "$RELEASE_WORKFLOW_IDENTITY" \
     --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+    --certificate-github-workflow-sha "$RELEASE_WORKFLOW_COMMIT" \
     >/dev/null || return 1
   ensure_package_payload_integrity || return 1
 
@@ -558,8 +572,8 @@ resolve_historical_release_merge() {
   local prs candidates count index pr oid head_oid check_runs
   local merged_at merged_epoch latest_epoch=-1 latest_oid=""
   ensure_release_integrity || return 1
-  release="$(release_gh api \
-    "repos/${RELEASE_REPO}/releases/tags/v${VERSION}")" || return 1
+  release="$(ralph_release_by_id \
+    "v${VERSION}" "$RELEASE_SOURCE_COMMIT" published)" || return 1
   published_at="$(jq -er --arg tag "v${VERSION}" \
     'select(
       .draft == false and .prerelease == false and .immutable == true and

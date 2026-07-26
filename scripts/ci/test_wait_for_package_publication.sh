@@ -18,6 +18,27 @@ source "${RALPH_GUIDANCE_HELPER:?}"
 
 command_name="${1:?}"
 shift
+release_assets=(
+  checksums.txt
+  checksums.txt.sigstore.json
+  gui-checksums.txt
+  gui-checksums.txt.sigstore.json
+  package-manifests.tar.gz
+  package-manifests.tar.gz.sigstore.json
+  "radioactive_ralph_${FAKE_VERSION:?}_darwin_amd64.tar.gz"
+  "radioactive_ralph_${FAKE_VERSION}_darwin_arm64.tar.gz"
+  "radioactive_ralph_${FAKE_VERSION}_linux_amd64.tar.gz"
+  "radioactive_ralph_${FAKE_VERSION}_linux_arm64.tar.gz"
+  "radioactive_ralph_${FAKE_VERSION}_windows_amd64.zip"
+  "radioactive-ralph_${FAKE_VERSION}_linux_amd64.deb"
+  "radioactive-ralph_${FAKE_VERSION}_linux_arm64.deb"
+  "radioactive-ralph_${FAKE_VERSION}_linux_amd64.rpm"
+  "radioactive-ralph_${FAKE_VERSION}_linux_arm64.rpm"
+  "radioactive-ralph_${FAKE_VERSION}_darwin_amd64.dmg"
+  "radioactive-ralph_${FAKE_VERSION}_darwin_arm64.dmg"
+  "radioactive-ralph_${FAKE_VERSION}_linux_x86_64.AppImage"
+  radioactive-ralph.exe
+)
 
 if [[ "$command_name" == "release" && "${1:-}" == "download" ]]; then
   pattern=""
@@ -141,7 +162,24 @@ if [[ "$command_name" == "api" ]]; then
     printf '{".":"%s"}\n' "${FAKE_VERSION:?}"
     exit 0
   fi
-  if [[ "$request" == "repos/jbcom/radioactive-ralph/releases/tags/v${FAKE_VERSION:?}" ]]; then
+  if [[ "$request" == "repos/jbcom/radioactive-ralph/releases/123/assets?per_page=100" ]]; then
+    jq -cn --args \
+      '[[$ARGS.positional | to_entries[] |
+        {id: (.key + 100), name: .value, state: "uploaded"}]]' \
+      "${release_assets[@]}"
+    exit 0
+  fi
+  if [[ "$request" =~ ^repos/jbcom/radioactive-ralph/releases/assets/([0-9]+)$ ]]; then
+    asset_index=$((BASH_REMATCH[1] - 100))
+    ((asset_index >= 0 && asset_index < ${#release_assets[@]}))
+    output="$(mktemp)"
+    "$0" release download \
+      --pattern "${release_assets[$asset_index]}" --output "$output"
+    cat "$output"
+    rm -f "$output"
+    exit 0
+  fi
+  if [[ "$request" == "repos/jbcom/radioactive-ralph/releases/123" ]]; then
     published_at="2026-07-26T04:00:00Z"
     release_body="$(
       printf '# Changelog\n\n- Release fixture.\n\n%s' \
@@ -162,10 +200,12 @@ if [[ "$command_name" == "api" ]]; then
       --arg published "$published_at" \
       --arg body "$release_body" \
       '{
+        id: 123,
         draft: false,
         prerelease: false,
         immutable: true,
         tag_name: $tag,
+        target_commitish: env.RELEASE_SOURCE_COMMIT,
         published_at: $published,
         body: $body
       }'
@@ -676,6 +716,7 @@ printf '%s\n' "$*" >> "$FAKE_STATE_DIR/cosign.log"
 [[ "$*" == *"--bundle "* ]]
 [[ "$*" == *"--certificate-identity https://github.com/jbcom/radioactive-ralph/.github/workflows/release.yml@refs/tags/v${FAKE_VERSION:?}"* ]]
 [[ "$*" == *"--certificate-oidc-issuer https://token.actions.githubusercontent.com"* ]]
+[[ "$*" == *"--certificate-github-workflow-sha ${RELEASE_WORKFLOW_COMMIT:?}"* ]]
 FAKECOSIGN
 chmod +x "$TMP/cosign"
 
@@ -683,6 +724,9 @@ export GH_BIN="$TMP/gh"
 export COSIGN_BIN="$TMP/cosign"
 export PKGS_GH_TOKEN=fake-pkgs-token
 export RELEASE_GH_TOKEN=fake-release-token
+export RELEASE_ID=123
+export RELEASE_SOURCE_COMMIT=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+export RELEASE_WORKFLOW_COMMIT=cccccccccccccccccccccccccccccccccccccccc
 export MAX_ATTEMPTS=1
 export SLEEP_SECONDS=0
 export PR_ATTEMPTS=1

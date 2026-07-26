@@ -16,10 +16,16 @@ PKGS_CLONE_URL="${PKGS_CLONE_URL:-https://x-access-token@github.com/${PKGS}.git}
 GH_BIN="${GH_BIN:-gh}"
 COSIGN_BIN="${COSIGN_BIN:-cosign}"
 RELEASE_REPO="${RELEASE_REPO:-jbcom/radioactive-ralph}"
+RELEASE_ID="${RELEASE_ID:-}"
+RELEASE_SOURCE_COMMIT="${RELEASE_SOURCE_COMMIT:-}"
+RELEASE_WORKFLOW_COMMIT="${RELEASE_WORKFLOW_COMMIT:-}"
 PKGS_GH_TOKEN="${PKGS_GH_TOKEN:-}"
 RELEASE_GH_TOKEN="${RELEASE_GH_TOKEN:-}"
 BASE_BRANCH="chore/update-radioactive-ralph-${VERSION}"
 BRANCH="${PACKAGE_BRANCH:-$BASE_BRANCH}"
+# shellcheck source=scripts/ci/release_workflow_identity.sh
+source "$SCRIPT_DIR/../scripts/ci/release_workflow_identity.sh"
+identity="$(ralph_release_workflow_identity "$RELEASE_REPO" "$VERSION")"
 
 [[ -n "$PKGS_GH_TOKEN" ]] || {
   echo "publish-cli-manifests: PKGS_GH_TOKEN is required" >&2
@@ -29,6 +35,19 @@ BRANCH="${PACKAGE_BRANCH:-$BASE_BRANCH}"
   echo "publish-cli-manifests: RELEASE_GH_TOKEN is required" >&2
   exit 1
 }
+[[ "$RELEASE_ID" =~ ^[1-9][0-9]*$ &&
+   "$RELEASE_SOURCE_COMMIT" =~ ^[0-9a-f]{40,64}$ &&
+   "$RELEASE_WORKFLOW_COMMIT" =~ ^[0-9a-f]{40}$ ]] || {
+  echo "publish-cli-manifests: exact release ID, source, and workflow commit are required" >&2
+  exit 1
+}
+
+release_gh() {
+  GH_TOKEN="$RELEASE_GH_TOKEN" "$GH_BIN" "$@"
+}
+# shellcheck source=scripts/ci/release_by_id.sh
+source "$SCRIPT_DIR/../scripts/ci/release_by_id.sh"
+ralph_release_by_id "v${VERSION}" "$RELEASE_SOURCE_COMMIT" draft >/dev/null
 
 if [[ "${RESOLVE_PACKAGE_ATTEMPT_BRANCH:-0}" == "1" &&
       -z "${PACKAGE_BRANCH:-}" ]]; then
@@ -75,15 +94,13 @@ WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 archive="$WORK/package-manifests.tar.gz"
 bundle="$WORK/package-manifests.tar.gz.sigstore.json"
-GH_TOKEN="$RELEASE_GH_TOKEN" "$GH_BIN" release download "v${VERSION}" \
-  --repo "$RELEASE_REPO" --pattern package-manifests.tar.gz \
-  --output "$archive"
-GH_TOKEN="$RELEASE_GH_TOKEN" "$GH_BIN" release download "v${VERSION}" \
-  --repo "$RELEASE_REPO" --pattern package-manifests.tar.gz.sigstore.json \
-  --output "$bundle"
+ralph_release_download_asset "v${VERSION}" "$RELEASE_SOURCE_COMMIT" draft \
+  package-manifests.tar.gz "$archive"
+ralph_release_download_asset "v${VERSION}" "$RELEASE_SOURCE_COMMIT" draft \
+  package-manifests.tar.gz.sigstore.json "$bundle"
 "$COSIGN_BIN" verify-blob "$archive" --bundle "$bundle" \
-  --certificate-identity \
-  "https://github.com/${RELEASE_REPO}/.github/workflows/release.yml@refs/tags/v${VERSION}" \
+  --certificate-identity "$identity" \
+  --certificate-github-workflow-sha "$RELEASE_WORKFLOW_COMMIT" \
   --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
   >/dev/null
 listing="$(tar -tzf "$archive" | LC_ALL=C sort)"

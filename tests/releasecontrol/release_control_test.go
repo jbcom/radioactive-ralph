@@ -94,7 +94,7 @@ func TestReleasePleaseCreatesTaggedDraftFromManifestConfig(t *testing.T) {
 	requireNotContains(t, workflow, "skip-github-release: true", workflowPath)
 }
 
-func TestGoReleaserReusesDraftAndWritesCurrentCosignBundle(t *testing.T) {
+func TestGoReleaserBuildsDeterministicallyWithoutPublishingByTag(t *testing.T) {
 	const path = ".goreleaser.yaml"
 	config := readRepositoryFile(t, path)
 
@@ -109,9 +109,12 @@ func TestGoReleaserReusesDraftAndWritesCurrentCosignBundle(t *testing.T) {
 	if len(releaseSection) != 2 {
 		t.Fatalf("%s has no release section", path)
 	}
-	requireContains(t, releaseSection[1], "draft: true", path)
-	requireContains(t, releaseSection[1], "use_existing_draft: true", path)
-	requireContains(t, releaseSection[1], "replace_existing_artifacts: true", path)
+	requireContains(t, releaseSection[1], "disable: true", path)
+	requireContains(t, config, `-X main.Date={{.CommitDate}}`, path)
+	requireContains(t, config, `mod_timestamp: "{{ .CommitTimestamp }}"`, path)
+	requireNotContains(t, releaseSection[1], "draft: true", path)
+	requireNotContains(t, releaseSection[1], "use_existing_draft: true", path)
+	requireNotContains(t, releaseSection[1], "replace_existing_artifacts: true", path)
 	if got := strings.Count(config, "skip_upload: true"); got != 3 {
 		t.Errorf("%s skip_upload count = %d, want 3", path, got)
 	}
@@ -121,7 +124,7 @@ func TestPublicReleaseWaitsForAllRequiredArtifacts(t *testing.T) {
 	const path = ".github/workflows/release.yml"
 	workflow := readRepositoryFile(t, path)
 
-	requireContains(t, workflow, "group: release-${{ github.ref }}", path)
+	requireContains(t, workflow, "group: release-${{ inputs.tag || github.ref_name }}", path)
 	requireContains(t, workflow, "cancel-in-progress: false", path)
 
 	requireNotContains(t, workflow, "\n  stage-release:\n", path)
@@ -147,9 +150,9 @@ func TestPublicReleaseWaitsForAllRequiredArtifacts(t *testing.T) {
 
 	lastAssets := strings.LastIndex(publishJob, "bash scripts/ci/verify_release_assets.sh")
 	lastPackageRecheck := strings.LastIndex(publishJob, "PACKAGE_GATE_MODE=recheck-current")
-	lastImmutable := strings.LastIndex(publishJob, `"repos/${GITHUB_REPOSITORY}/immutable-releases"`)
+	lastImmutable := strings.LastIndex(publishJob, "require_immutable_release_authority")
 	lastManifest := strings.LastIndex(publishJob, `contents/.release-please-manifest.json?ref=main`)
-	lastTag := strings.LastIndex(publishJob, `git/ref/tags/${GITHUB_REF_NAME}`)
+	lastTag := strings.LastIndex(publishJob, `git/ref/tags/${RELEASE_TAG}`)
 	lastRelease := strings.LastIndex(publishJob, `release="$(GH_TOKEN="$RELEASE_GH_TOKEN" gh api`)
 	promotion := strings.Index(publishJob, "-f make_latest=true")
 	for label, index := range map[string]int{
@@ -189,13 +192,14 @@ func TestStableAdmissionPrecedesAllPublishers(t *testing.T) {
 	requireContains(t, admission, "contents: read", path)
 	requireContains(t, admission, "fetch-depth: 0", path)
 	requireContains(t, admission, `+refs/heads/main:refs/remotes/origin/main`, path)
-	requireContains(t, admission, `git rev-parse "${GITHUB_REF_NAME}^{commit}"`, path)
-	requireContains(t, admission, `git rev-parse "${GITHUB_SHA}^{commit}"`, path)
+	requireContains(t, admission, `git rev-parse "${RELEASE_TAG}^{commit}"`, path)
+	requireContains(t, admission, `git rev-parse "${RELEASE_SOURCE_COMMIT}^{commit}"`, path)
 	requireContains(t, admission, `git merge-base --is-ancestor "$tag_commit" origin/main`, path)
-	requireContains(t, admission, `jq -er '."."' .release-please-manifest.json`, path)
-	requireContains(t, admission, `"v${manifest_version}" != "$GITHUB_REF_NAME"`, path)
-	requireContains(t, admission, "--json isDraft,isPrerelease,tagName,targetCommitish", path)
-	requireContains(t, admission, `"$tag_name" != "$GITHUB_REF_NAME" || "$target_commitish" != "$TAG_COMMIT"`, path)
+	requireContains(t, admission, `git show "${tag_commit}:.release-please-manifest.json"`, path)
+	requireContains(t, admission, `"v${manifest_version}" != "$RELEASE_TAG"`, path)
+	requireContains(t, admission, "--json databaseId --jq '.databaseId'", path)
+	requireContains(t, admission, `"repos/${GITHUB_REPOSITORY}/releases/${release_id}"`, path)
+	requireContains(t, admission, `"$tag_name" != "$RELEASE_TAG" || "$target_commitish" != "$TAG_COMMIT"`, path)
 	requireContains(t, admission, `"$is_draft" == "true" && "$is_prerelease" == "false"`, path)
 	requireContains(t, admission, "public prerelease or ambiguous release state is invalid", path)
 	requireContains(t, admission, "immutable-releases", path)
@@ -203,6 +207,45 @@ func TestStableAdmissionPrecedesAllPublishers(t *testing.T) {
 	goreleaser := requireWorkflowJob(t, workflow, "goreleaser", path)
 	requireContains(t, goreleaser, "needs: release-admission", path)
 	requireNotContains(t, admission, "goreleaser/goreleaser-action@", path)
+}
+
+func TestV022ManualRecoveryIsExactAndAudited(t *testing.T) {
+	const path = ".github/workflows/release.yml"
+	workflow := readRepositoryFile(t, path)
+
+	for _, fragment := range []string{
+		"workflow_dispatch:",
+		"phase:",
+		"tag:",
+		"source_commit:",
+		"workflow_commit:",
+		"release_id:",
+		"prepared_run_id:",
+		"immutable_releases_preflight:",
+		`"${{ github.actor_id }}" == "2650679"`,
+		`"users/${TRIGGERING_ACTOR}" --jq '.id'`,
+		`.triggering_actor.id == $actor_id`,
+		`"$RELEASE_TAG" != "v0.22.0"`,
+		`"$GITHUB_REF" == "refs/heads/main"`,
+		`"$GITHUB_SHA" == "${{ inputs.workflow_commit }}"`,
+		`"$GITHUB_WORKFLOW_SHA" == "${{ inputs.workflow_commit }}"`,
+		`verify_immutable_release_preflight.sh`,
+		`git diff --name-only "$tag_commit" "$GITHUB_WORKFLOW_SHA"`,
+		`ref: ${{ env.RELEASE_TAG }}`,
+		`workdir: ${{ env.RELEASE_BUILD_ROOT }}`,
+		`release-readiness.json`,
+		`--certificate-github-workflow-sha "$RELEASE_WORKFLOW_COMMIT"`,
+	} {
+		requireContains(t, workflow, fragment, path)
+	}
+
+	admission := requireWorkflowJob(t, workflow, "release-admission", path)
+	requireContains(t, admission, "workflow commit changes product source outside the reviewed recovery allowlist", path)
+	requireContains(t, admission, `"repos/${GITHUB_REPOSITORY}/releases/${release_id}"`, path)
+	publish := requireWorkflowJob(t, workflow, "publish-release", path)
+	if got := strings.Count(publish, "require_immutable_release_authority"); got != 3 {
+		t.Errorf("publish-release immutable authority call count = %d, want function plus two calls", got)
+	}
 }
 
 func TestPackagePublicationRequiresExactMergedMainVersions(t *testing.T) {
@@ -239,7 +282,11 @@ func TestPackagePublicationRequiresExactMergedMainVersions(t *testing.T) {
 	requireContains(t, script, "validate_changed_files", scriptPath)
 	requireContains(t, script, "validate_release_manifests", scriptPath)
 	requireContains(t, script, `repos/${PKGS_REPO}/contents/${path}?ref=${ref}`, scriptPath)
-	requireContains(t, script, `release_gh release download "v${VERSION}"`, scriptPath)
+	requireContains(t, script, `source "$SCRIPT_DIR/release_by_id.sh"`, scriptPath)
+	requireContains(t, script, `ralph_release_download_asset`, scriptPath)
+	requireContains(t, script,
+		`--certificate-github-workflow-sha "$RELEASE_WORKFLOW_COMMIT"`,
+		scriptPath)
 	requireContains(t, script, `gui-checksums.txt.sigstore.json`, scriptPath)
 	requireContains(t, script, `"$COSIGN_BIN" verify-blob "$gui_checksums_path"`, scriptPath)
 	requireContains(t, script, `release_checksum "$checksums" "$release_asset"`, scriptPath)
@@ -653,6 +700,8 @@ func TestHostedProviderAndGUIPackageChecksExerciseDeliveredCode(t *testing.T) {
 	requireContains(t, guiScript,
 		`GOFLAGS="-trimpath -ldflags=-X=main.Version=$VERSION -ldflags=-X=main.Commit=$BUILD_COMMIT -ldflags=-X=main.Date=$BUILD_DATE"`,
 		guiScriptPath)
+	requireContains(t, guiScript, `git -C "$ROOT" show -s --format=%cI`, guiScriptPath)
+	requireContains(t, guiScript, `go -C "$ROOT" build`, guiScriptPath)
 	if got := strings.Count(guiScript, `grep -F "$EXPECTED_VERSION"`); got != 2 {
 		t.Errorf("%s exact version identity check count = %d, want 2", guiScriptPath, got)
 	}

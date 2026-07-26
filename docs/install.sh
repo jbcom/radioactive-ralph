@@ -133,6 +133,10 @@ resolve_version() {
 
 resolve_version
 VERSION_NO_V=${VERSION#v}
+SIGNING_IDENTITY="https://github.com/$REPO/.github/workflows/release.yml@refs/tags/$VERSION"
+if [ "$VERSION" = "v0.22.0" ]; then
+  SIGNING_IDENTITY="https://github.com/$REPO/.github/workflows/release.yml@refs/heads/main"
+fi
 
 # --- download + verify + install -------------------------------------------
 
@@ -143,6 +147,8 @@ ARCHIVE="${BIN}_${VERSION_NO_V}_${OS}_${ARCH}.tar.gz"
 URL="$RELEASE_BASE_URL/$VERSION/$ARCHIVE"
 CHECKSUMS_URL="$RELEASE_BASE_URL/$VERSION/checksums.txt"
 SIGSTORE_URL="$RELEASE_BASE_URL/$VERSION/checksums.txt.sigstore.json"
+SEAL_URL="$RELEASE_BASE_URL/$VERSION/release-seal.json"
+SEAL_SIGSTORE_URL="$RELEASE_BASE_URL/$VERSION/release-seal.json.sigstore.json"
 
 echo "Downloading $ARCHIVE..."
 curl -sSL -o "$TMP/$ARCHIVE" "$URL" || {
@@ -160,10 +166,42 @@ if command -v cosign >/dev/null 2>&1; then
     echo "install.sh: Sigstore bundle download failed: $SIGSTORE_URL" >&2
     exit 1
   }
+  WORKFLOW_SHA_ARGS=""
+  if [ "$VERSION" = "v0.22.0" ]; then
+    curl -sSL -o "$TMP/release-seal.json" "$SEAL_URL" || {
+      echo "install.sh: release seal download failed: $SEAL_URL" >&2
+      exit 1
+    }
+    curl -sSL -o "$TMP/release-seal.json.sigstore.json" \
+      "$SEAL_SIGSTORE_URL" || {
+      echo "install.sh: release seal bundle download failed: $SEAL_SIGSTORE_URL" >&2
+      exit 1
+    }
+    WORKFLOW_COMMIT=$(sed -n \
+      's/^[[:space:]]*"workflow_commit":[[:space:]]*"\([0-9a-f]\{40\}\)",\{0,1\}[[:space:]]*$/\1/p' \
+      "$TMP/release-seal.json")
+    if [ "${#WORKFLOW_COMMIT}" -ne 40 ]; then
+      echo "install.sh: release seal has no exact recovery workflow commit" >&2
+      exit 1
+    fi
+    cosign verify-blob "$TMP/release-seal.json" \
+      --bundle "$TMP/release-seal.json.sigstore.json" \
+      --certificate-identity "$SIGNING_IDENTITY" \
+      --certificate-github-workflow-sha "$WORKFLOW_COMMIT" \
+      --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+      >/dev/null || {
+        echo "install.sh: signed release seal verification failed" >&2
+        exit 1
+      }
+    WORKFLOW_SHA_ARGS="--certificate-github-workflow-sha $WORKFLOW_COMMIT"
+  fi
+  # WORKFLOW_SHA_ARGS contains only the fixed flag and a validated lowercase
+  # hex commit. Intentional splitting keeps this installer POSIX sh.
+  # shellcheck disable=SC2086
   cosign verify-blob "$TMP/checksums.txt" \
     --bundle "$TMP/checksums.txt.sigstore.json" \
-    --certificate-identity \
-      "https://github.com/$REPO/.github/workflows/release.yml@refs/tags/$VERSION" \
+    --certificate-identity "$SIGNING_IDENTITY" \
+    $WORKFLOW_SHA_ARGS \
     --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
     >/dev/null || {
       echo "install.sh: signed checksum verification failed" >&2

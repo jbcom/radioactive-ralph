@@ -27,7 +27,7 @@ def require_order(*fragments: str) -> None:
 
 require(
     '$expectedAssetUrl = "https://github.com/$env:GITHUB_REPOSITORY/'
-    'releases/download/$env:GITHUB_REF_NAME/$asset"'
+    'releases/download/$env:RELEASE_TAG/$asset"'
 )
 require("$originalAssetUrl -ne $expectedAssetUrl")
 require("$cachedAssetHash -ne $originalAssetHash")

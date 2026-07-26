@@ -599,7 +599,14 @@ jobs:
             scripts/ci/test_prepare_package_rollback_provenance.sh \
             scripts/ci/prepare_package_manifests_bundle.sh \
             scripts/ci/test_prepare_package_manifests_bundle.sh \
+            scripts/ci/release_by_id.sh \
+            scripts/ci/test_release_by_id.sh \
             scripts/ci/prepare_release_seal.sh \
+            scripts/ci/test_prepare_release_seal.sh \
+            scripts/ci/release_workflow_identity.sh \
+            scripts/ci/dispatch_release_recovery.sh \
+            scripts/ci/verify_immutable_release_preflight.sh \
+            scripts/ci/test_immutable_release_recovery.sh \
             scripts/ci/test_push_version_branch.sh
       - name: Test package publication gate
         run: |
@@ -614,6 +621,9 @@ jobs:
           bash scripts/ci/test_package_guidance_contract.sh
           bash scripts/ci/test_install_signature_policy.sh
           bash scripts/ci/test_prepare_package_rollback_provenance.sh
+          bash scripts/ci/test_prepare_release_seal.sh
+          bash scripts/ci/test_release_by_id.sh
+          bash scripts/ci/test_immutable_release_recovery.sh
           python3 scripts/ci/test_premerge_scoop_server_contract.py
       - name: Validate the .desktop launcher
         run: desktop-file-validate packaging/linux/radioactive-ralph.desktop

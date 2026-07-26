@@ -1,6 +1,6 @@
 ---
 title: Release checklist
-lastUpdated: 2026-07-25
+lastUpdated: 2026-07-26
 ---
 
 # Release checklist
@@ -18,6 +18,10 @@ draft-to-prerelease promotion.
 - [ ] `PKGS_GITHUB_TOKEN` can read, create PRs in, and squash-merge checked
       heads in `jbcom/pkgs`; it is not used for this repository's releases.
 - [ ] Repository immutable releases are enabled.
+      Verify with an authenticated repository administrator before any manual
+      recovery because Actions' installation token cannot receive the
+      repository Administration permission required by
+      `GET /repos/jbcom/radioactive-ralph/immutable-releases`.
 - [ ] `radioactive-ralph` main protection is strict, applies to administrators,
       requires PRs, linear history, conversation resolution, and all 25
       GitHub-Actions-app-ID-`15368` contexts:
@@ -96,6 +100,52 @@ Do not create or move a release tag manually.
       repository setting before any publisher runs.
 - [ ] A public prerelease is rejected. There is no public staging state.
 
+### v0.22.0 one-time recovery
+
+The v0.22.0 tag and empty Release Please draft already exist. Do not move,
+replace, delete, or recreate either one. The tag-addressed REST endpoint does
+not expose drafts, so the recovery binds every read, download, upload, seal,
+and publish operation to the draft's numeric release ID.
+
+After this recovery change is squash-merged to `main`, the authenticated
+repository administrator runs the preparation phase:
+
+```sh
+bash scripts/ci/dispatch_release_recovery.sh prepare v0.22.0
+```
+
+Preparation deterministically builds from the exact tag commit, uploads and
+seals the numeric draft, opens the atomic package PR, verifies its exact head,
+and runs the credential-free Homebrew and Scoop premerge smokes. It does not
+merge package `main` or publish the release. Wait for that run to succeed and
+record its numeric Actions run ID. The signed readiness artifact is retained
+for one day; rerun preparation if it expires.
+
+Immediately before publication, the same administrator performs a second live
+setting read and dispatch:
+
+```sh
+bash scripts/ci/dispatch_release_recovery.sh publish v0.22.0 <PREPARE_RUN_ID>
+```
+
+Each helper invocation reads the live immutable-release setting with the
+administrator's local `gh` token, captures GitHub's request ID, ETag digest,
+and server time, and binds them to the existing tag SHA, numeric draft ID,
+phase, and current reviewed `main` workflow commit. The workflow accepts manual
+recovery only when both the original and triggering GitHub actor resolve to
+the authorized administrator ID. Evidence older than ten minutes fails closed.
+The publish phase also verifies the exact successful prepare run, its signed
+readiness payload, the sealed release, and the still-current package PR head
+before any merge.
+
+This is an operator-attested exception to the in-run Administration read, not
+an assertion that `GITHUB_TOKEN` has that authority. A repository writer cannot
+manufacture or rerun the administrator's dispatch. The publish transaction
+revalidates the fresh evidence immediately before its numeric release PATCH.
+Stale evidence, a changed setting, or ambiguous release state fails closed and
+enters the existing compensation/quarantine path. Publication succeeds only
+when a fresh post-PATCH read reports the exact numeric release as immutable.
+
 ## 5. Draft rendezvous and seal
 
 All prepublication verification uses authenticated draft downloads. Package
@@ -134,6 +184,14 @@ or Scoop executes package content.
     --certificate-oidc-issuer "https://token.actions.githubusercontent.com"
   ```
 
+  v0.22.0 is the bounded exception because the tag predates the dispatch
+  trigger. Its exact identity is
+  `https://github.com/jbcom/radioactive-ralph/.github/workflows/release.yml@refs/heads/main`;
+  every seal and signed manifest additionally verifies
+  `--certificate-github-workflow-sha <REVIEWED_MAIN_COMMIT>`. The installer
+  reads that exact commit from the immutable signed seal and requires the same
+  certificate commit for the checksum bundle.
+
 - [ ] The atomic package PR changes exactly
       `Casks/radioactive-ralph.rb`,
       `Casks/radioactive-ralph-gui.rb`, and
@@ -146,7 +204,9 @@ or Scoop executes package content.
 
 ## 6. Final transaction
 
-The final transaction orders its state changes and authority reads exactly:
+The v0.22.0 preparation phase completes the sealed build and slow package
+smokes without a public transition. Its separate publish phase orders state
+changes and authority reads exactly:
 
 1. squash-merge only the checked atomic package PR head;
 2. identify the unique winning package merge and complete the slow exact
@@ -156,9 +216,10 @@ The final transaction orders its state changes and authority reads exactly:
    winning merge OID and current `main` bytes to equal the small signed
    `package-manifests.tar.gz` payload;
 4. immediately after the lightweight package recheck, freshly require the live
-   immutable-release setting, source `main` version, tag SHA, and exact draft
-   target/state, then PATCH once with `draft=false`, `prerelease=false`, and
-   `make_latest=true`;
+   immutable-release setting (or, only for the documented v0.22.0 recovery,
+   revalidate the exact operator preflight evidence), source `main` version,
+   tag SHA, and exact draft target/state, then PATCH once with `draft=false`,
+   `prerelease=false`, and `make_latest=true`;
 5. treat the fresh post-PATCH release read as authoritative when the PATCH
    response is absent or uncertain, accepting only the exact immutable stable
    state and otherwise compensating an exact draft or quarantining ambiguity;

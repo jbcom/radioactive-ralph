@@ -21,23 +21,44 @@ include_status=0
 for argument in "$@"; do
   [[ "$argument" == "--include" ]] && include_status=1
 done
-if [[ "$kind" == release && "${1:-}" == view ]]; then
-  exit 0
-fi
-if [[ "$kind" == release && "${1:-}" == upload ]]; then
-  for argument in "$@"; do
-    case "$argument" in
-      */package-rollback.tar.gz|*/package-rollback.tar.gz.sigstore.json)
-        cp "$argument" "$FAKE_STATE_DIR/$(basename "$argument")"
-        ;;
-    esac
-  done
-  touch "$FAKE_STATE_DIR/uploaded"
+if [[ "$kind" == api &&
+      "$request" == repos/jbcom/radioactive-ralph/releases/123 ]]; then
+  jq -cn --arg target "$RELEASE_SOURCE_COMMIT" '{
+    id: 123, tag_name: "v1.2.3", target_commitish: $target,
+    draft: true, prerelease: false, immutable: false
+  }'
   exit 0
 fi
 if [[ "$kind" == api &&
-      "$request" == repos/jbcom/radioactive-ralph/releases/tags/v1.2.3 ]]; then
-  printf '{"draft":true,"prerelease":false,"tag_name":"v1.2.3"}\n'
+      "$*" == *"--paginate --slurp repos/jbcom/radioactive-ralph/releases/123/assets?per_page=100"* ]]; then
+  find "$FAKE_STATE_DIR" -maxdepth 1 -type f \
+    \( -name package-rollback.tar.gz -o \
+       -name package-rollback.tar.gz.sigstore.json \) \
+    -exec basename {} \; | LC_ALL=C sort |
+    jq -Rn '[inputs | {id: (if . == "package-rollback.tar.gz" then 21 else 22 end), name: ., state: "uploaded"}] | [.]'
+  exit 0
+fi
+if [[ "$kind" == api &&
+      "$request" == repos/jbcom/radioactive-ralph/releases/assets/21 ]]; then
+  cat "$FAKE_STATE_DIR/package-rollback.tar.gz"
+  exit 0
+fi
+if [[ "$kind" == api &&
+      "$request" == repos/jbcom/radioactive-ralph/releases/assets/22 ]]; then
+  cat "$FAKE_STATE_DIR/package-rollback.tar.gz.sigstore.json"
+  exit 0
+fi
+if [[ "$kind" == api && "$*" == *"uploads.github.com"* &&
+      "$*" == *"assets?name=package-rollback.tar.gz --input "* ]]; then
+  cp "${*: -1}" "$FAKE_STATE_DIR/package-rollback.tar.gz"
+  printf '%s\n' '{"id":21,"name":"package-rollback.tar.gz","state":"uploaded"}'
+  exit 0
+fi
+if [[ "$kind" == api && "$*" == *"uploads.github.com"* &&
+      "$*" == *"assets?name=package-rollback.tar.gz.sigstore.json --input "* ]]; then
+  cp "${*: -1}" "$FAKE_STATE_DIR/package-rollback.tar.gz.sigstore.json"
+  touch "$FAKE_STATE_DIR/uploaded"
+  printf '%s\n' '{"id":22,"name":"package-rollback.tar.gz.sigstore.json","state":"uploaded"}'
   exit 0
 fi
 if [[ "$kind" == api &&
@@ -78,6 +99,10 @@ cat > "$TMP/cosign" <<'FAKECOSIGN'
 #!/usr/bin/env bash
 set -euo pipefail
 
+if [[ "${1:-}" == verify-blob ]]; then
+  [[ "$*" == *"--certificate-github-workflow-sha ${RELEASE_WORKFLOW_COMMIT:?}"* ]]
+  exit 0
+fi
 [[ "${1:-}" == sign-blob ]]
 bundle=""
 while (($#)); do
@@ -104,6 +129,9 @@ run_prepare() {
   TAR_BIN="$TAR_BIN_OVERRIDE" \
   FAKE_STATE_DIR="$1" \
   PRIOR_OID="$PRIOR_OID" \
+  RELEASE_ID=123 \
+  RELEASE_SOURCE_COMMIT=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb \
+  RELEASE_WORKFLOW_COMMIT=cccccccccccccccccccccccccccccccccccccccc \
     bash "$ROOT/scripts/ci/prepare_package_rollback_provenance.sh" 1.2.3
 }
 
@@ -111,6 +139,18 @@ state="$TMP/success"
 mkdir "$state"
 run_prepare "$state"
 [[ -e "$state/uploaded" ]]
+run_prepare "$state"
+
+mv "$state/package-rollback.tar.gz.sigstore.json" "$TMP/original-bundle"
+run_prepare "$state"
+[[ -f "$state/package-rollback.tar.gz.sigstore.json" ]]
+
+mv "$state/package-rollback.tar.gz" "$TMP/original-archive"
+if run_prepare "$state" >/dev/null 2>&1; then
+  echo "expected orphaned rollback signature bundle to fail" >&2
+  exit 1
+fi
+mv "$TMP/original-archive" "$state/package-rollback.tar.gz"
 
 listing="$(tar -tzf "$state/package-rollback.tar.gz" | LC_ALL=C sort)"
 expected="$(printf '%s\n' \

@@ -33,6 +33,35 @@ cat > "$FAKE_GH" <<'FAKEGH'
 #!/usr/bin/env bash
 set -euo pipefail
 
+if [[ "${1:-}" == "api" ]]; then
+  endpoint="${*: -1}"
+  case "$endpoint" in
+    repos/jbcom/radioactive-ralph/releases/123)
+      printf '%s\n' \
+        '{"id":123,"draft":true,"prerelease":false,"tag_name":"v1.2.3","target_commitish":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}'
+      ;;
+    repos/jbcom/radioactive-ralph/releases/123/assets?per_page=100)
+      printf '%s\n' \
+        '[[{"id":1,"name":"package-manifests.tar.gz","state":"uploaded"},{"id":2,"name":"package-manifests.tar.gz.sigstore.json","state":"uploaded"}]]'
+      ;;
+    repos/jbcom/radioactive-ralph/releases/assets/1)
+      generated="$(mktemp)"
+      "$0" release download ignored --pattern package-manifests.tar.gz \
+        --output "$generated"
+      cat "$generated"
+      rm -f "$generated"
+      ;;
+    repos/jbcom/radioactive-ralph/releases/assets/2)
+      printf '{"fixture":true}\n'
+      ;;
+    *)
+      echo "fake gh: unexpected API invocation: $*" >&2
+      exit 1
+      ;;
+  esac
+  exit 0
+fi
+
 if [[ "${1:-}" == "release" && "${2:-}" == "download" ]]; then
   pattern=""
   output=""
@@ -82,6 +111,7 @@ cat > "$TMP/cosign" <<'FAKECOSIGN'
 set -euo pipefail
 [[ "$*" == *"verify-blob"* ]]
 [[ "$*" == *"release.yml@refs/tags/v1.2.3"* ]]
+[[ "$*" == *"--certificate-github-workflow-sha aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"* ]]
 FAKECOSIGN
 chmod +x "$TMP/cosign"
 
@@ -90,6 +120,9 @@ run_publisher() {
     COSIGN_BIN="$TMP/cosign" \
     PKGS_GH_TOKEN=test-pkgs-token \
     RELEASE_GH_TOKEN=test-release-token \
+    RELEASE_ID=123 \
+    RELEASE_SOURCE_COMMIT=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
+    RELEASE_WORKFLOW_COMMIT=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
     FAKE_STATE="$STATE" \
     SOURCE_ROOT="$SOURCE" \
     PKGS_CLONE_URL="$REMOTE" \

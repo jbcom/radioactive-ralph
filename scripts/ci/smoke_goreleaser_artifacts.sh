@@ -9,7 +9,8 @@ if [[ "$HOST_OS" != "Linux" ]]; then
   exit 1
 fi
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+CONTROL_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+ROOT="${SOURCE_ROOT:-$CONTROL_ROOT}"
 # shellcheck source=scripts/ci/package_guidance_contract.sh
 source "$ROOT/scripts/ci/package_guidance_contract.sh"
 VERSION="$(jq -er '.version' "$ROOT/dist/metadata.json")"
@@ -76,7 +77,7 @@ for attempt in {1..20}; do
 done
 PATH="$SMOKE/fake-bin:$PATH" \
 RADIOACTIVE_RALPH_RELEASE_BASE_URL="http://127.0.0.1:8123" \
-  sh "$ROOT/docs/install.sh" \
+  sh "$CONTROL_ROOT/docs/install.sh" \
     --version "$TAG" \
     --install-dir "$SMOKE/bin"
 "$SMOKE/bin/radioactive_ralph" --version | grep -F "$VERSION"

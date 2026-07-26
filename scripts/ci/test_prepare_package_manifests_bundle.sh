@@ -17,33 +17,42 @@ printf '{"version":"1.2.3"}\n' > "$SOURCE/scoop/bucket/radioactive-ralph.json"
 cat > "$TMP/gh" <<'FAKEGH'
 #!/usr/bin/env bash
 set -euo pipefail
-[[ "${1:-}" == release ]]
-case "${2:-}" in
-  view)
-    find "$FAKE_ASSETS" -maxdepth 1 -type f -exec basename {} \; | sort
+[[ "${1:-}" == api ]]
+case "$*" in
+  "api repos/jbcom/radioactive-ralph/releases/123")
+    jq -cn --arg target "$RELEASE_SOURCE_COMMIT" '{
+      id: 123, tag_name: "v1.2.3", target_commitish: $target,
+      draft: true, prerelease: false, immutable: false
+    }'
     ;;
-  download)
-    pattern=""
-    output=""
-    while (($#)); do
-      case "$1" in
-        --pattern) pattern="${2:?}"; shift 2 ;;
-        --output) output="${2:?}"; shift 2 ;;
-        *) shift ;;
-      esac
-    done
-    cp "$FAKE_ASSETS/$pattern" "$output"
+  "api --paginate --slurp repos/jbcom/radioactive-ralph/releases/123/assets?per_page=100")
+    find "$FAKE_ASSETS" -maxdepth 1 -type f -exec basename {} \; |
+      LC_ALL=C sort |
+      jq -Rn '[inputs | {id: (if . == "gui-checksums.txt" then 1 elif . == "package-manifests.tar.gz" then 2 else 3 end), name: ., state: "uploaded"}] | [.]'
     ;;
-  upload)
-    shift 3
-    while (($#)); do
-      case "$1" in
-        --repo) shift 2 ;;
-        *) cp "$1" "$FAKE_ASSETS/$(basename "$1")"; shift ;;
-      esac
-    done
+  *"releases/assets/1")
+    cat "$FAKE_ASSETS/gui-checksums.txt"
     ;;
-  *) exit 1 ;;
+  *"releases/assets/2")
+    cat "$FAKE_ASSETS/package-manifests.tar.gz"
+    ;;
+  *"releases/assets/3")
+    cat "$FAKE_ASSETS/package-manifests.tar.gz.sigstore.json"
+    ;;
+  *"uploads.github.com"*"assets?name=package-manifests.tar.gz --input "*)
+    input="${*: -1}"
+    cp "$input" "$FAKE_ASSETS/package-manifests.tar.gz"
+    printf '%s\n' '{"id":2,"name":"package-manifests.tar.gz","state":"uploaded"}'
+    ;;
+  *"uploads.github.com"*"assets?name=package-manifests.tar.gz.sigstore.json --input "*)
+    input="${*: -1}"
+    cp "$input" "$FAKE_ASSETS/package-manifests.tar.gz.sigstore.json"
+    printf '%s\n' '{"id":3,"name":"package-manifests.tar.gz.sigstore.json","state":"uploaded"}'
+    ;;
+  *)
+    echo "unexpected fake gh invocation: $*" >&2
+    exit 1
+    ;;
 esac
 FAKEGH
 chmod +x "$TMP/gh"
@@ -61,18 +70,37 @@ if [[ "$1" == sign-blob ]]; then
   done
 fi
 [[ "$1" == verify-blob ]]
+[[ "$*" == *"--certificate-github-workflow-sha ${RELEASE_WORKFLOW_COMMIT:?}"* ]]
 FAKECOSIGN
 chmod +x "$TMP/cosign"
 cat > "$TMP/tar" <<'FAKETAR'
 #!/usr/bin/env bash
 set -euo pipefail
 args=()
-for arg in "$@"; do
-  case "$arg" in
+output=""
+payload_root=""
+while (($#)); do
+  case "$1" in
     --sort=*|--mtime=*|--owner=*|--group=*|--numeric-owner) ;;
-    *) args+=("$arg") ;;
+    -czf)
+      output="${2:?}"
+      args+=(-cf -)
+      shift
+      ;;
+    -C)
+      payload_root="${2:?}"
+      args+=("$1" "$2")
+      shift
+      ;;
+    *) args+=("$1") ;;
   esac
+  shift
 done
+if [[ -n "$output" ]]; then
+  find "$payload_root" -exec touch -t 198001010000 {} +
+  /usr/bin/tar "${args[@]}" | gzip -n > "$output"
+  exit 0
+fi
 exec /usr/bin/tar "${args[@]}"
 FAKETAR
 chmod +x "$TMP/tar"
@@ -83,6 +111,9 @@ run_prepare() {
   COSIGN_BIN="$TMP/cosign" \
   TAR_BIN="$TMP/tar" \
   RELEASE_GH_TOKEN=fake \
+  RELEASE_ID=123 \
+  RELEASE_SOURCE_COMMIT=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb \
+  RELEASE_WORKFLOW_COMMIT=cccccccccccccccccccccccccccccccccccccccc \
   SOURCE_ROOT="$SOURCE" \
     bash "$ROOT/scripts/ci/prepare_package_manifests_bundle.sh" 1.2.3
 }
@@ -95,11 +126,15 @@ run_prepare
 [[ "$(shasum -a 256 "$ASSETS/package-manifests.tar.gz" | awk '{print $1}')" == "$first_sha" ]]
 
 mv "$ASSETS/package-manifests.tar.gz.sigstore.json" "$TMP/bundle"
+run_prepare
+test -f "$ASSETS/package-manifests.tar.gz.sigstore.json"
+
+mv "$ASSETS/package-manifests.tar.gz" "$TMP/archive"
 if run_prepare >/dev/null 2>&1; then
-  echo "expected partial durable package bundle to fail" >&2
+  echo "expected orphaned signature bundle to fail" >&2
   exit 1
 fi
-mv "$TMP/bundle" "$ASSETS/package-manifests.tar.gz.sigstore.json"
+mv "$TMP/archive" "$ASSETS/package-manifests.tar.gz"
 
 printf 'changed\n' > "$SOURCE/homebrew/Casks/radioactive-ralph.rb"
 if run_prepare >/dev/null 2>&1; then
