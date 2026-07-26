@@ -26,6 +26,18 @@ func (s *Store) ClaimReadyTask(
 	ctx context.Context,
 	planID, taskID, sessionID, workerID string,
 ) (*Task, error) {
+	// SQLite admits one writer at a time. Serialize this supervisor's short
+	// exact-claim transactions before they enter the driver so a large ready
+	// wave does not turn ordinary in-process queueing into SQLITE_BUSY timeouts.
+	// The database transaction remains the cross-process correctness boundary;
+	// running provider work is outside this mutex and remains parallel.
+	select {
+	case s.exactClaimGate <- struct{}{}:
+		defer func() { <-s.exactClaimGate }()
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+
 	deadline := time.Now().Add(exactClaimBusyRetryWindow)
 	for {
 		task, err := s.claimReadyTaskOnce(ctx, planID, taskID, sessionID, workerID)

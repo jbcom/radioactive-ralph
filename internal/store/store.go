@@ -42,9 +42,10 @@ const (
 // Store is the user-level store handle. It wraps a *sql.DB plus a
 // deterministic clock + UUID provider (test-swappable).
 type Store struct {
-	db    *sql.DB
-	clock clockwork.Clock
-	uuid  func() string
+	db             *sql.DB
+	clock          clockwork.Clock
+	uuid           func() string
+	exactClaimGate chan struct{}
 }
 
 // DSN builds the canonical modernc.org/sqlite DSN for the user-level store
@@ -153,7 +154,10 @@ func Open(ctx context.Context, opts Options) (*Store, error) {
 		return nil, err
 	}
 
-	return &Store{db: db, clock: opts.Clock, uuid: opts.UUID}, nil
+	return &Store{
+		db: db, clock: opts.Clock, uuid: opts.UUID,
+		exactClaimGate: make(chan struct{}, 1),
+	}, nil
 }
 
 // ensureJournalModeWAL performs the one database-level journal-mode change
