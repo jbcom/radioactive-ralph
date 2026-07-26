@@ -57,6 +57,16 @@ $unknownCommand = $null
 $guardCommand = $null
 $legacyCommand = $null
 
+function Convert-TraceSID {
+  param([AllowNull()][object]$SIDBytes)
+
+  $bytes = @($SIDBytes)
+  if ($bytes.Count -eq 0) {
+    return ""
+  }
+  return [Convert]::ToBase64String([byte[]]$bytes)
+}
+
 function Get-RalphService {
   $services = @(Get-CimInstance Win32_Service -Filter "Name='$serviceName'" -ErrorAction Stop)
   if ($services.Count -gt 1) {
@@ -538,7 +548,25 @@ func main() {
     if ($guardProcessID -eq 0) {
       throw "SCM process-start event reported PID 0"
     }
+    $guardProcessName = [string]$launchEvent.SourceEventArgs.NewEvent.ProcessName
+    if (-not [string]::Equals(
+        $guardProcessName,
+        $ralphProcessName,
+        [StringComparison]::OrdinalIgnoreCase
+      )) {
+      throw "SCM process-start event reported unexpected process name '$guardProcessName'"
+    }
+    $guardParentProcessID = [uint32]$launchEvent.SourceEventArgs.NewEvent.ParentProcessID
+    $guardSessionID = [uint32]$launchEvent.SourceEventArgs.NewEvent.SessionID
+    $guardSID = Convert-TraceSID $launchEvent.SourceEventArgs.NewEvent.Sid
     $guardProcessStartTraceTime = [uint64]$launchEvent.SourceEventArgs.NewEvent.TIME_CREATED
+    # Win32_ProcessStopTrace still truncates long image names to 14 characters
+    # on the Windows Server 2025 hosted runner. Bind that observed provider
+    # representation to the full name captured by the paired start event.
+    $guardStopTraceName = $guardProcessName.Substring(
+      0,
+      [Math]::Min(14, $guardProcessName.Length)
+    )
 
     # Windows Server 2025 did not reliably deliver a provider-filtered
     # ProcessStopTrace even though the matching process had exited. Subscribe
@@ -564,18 +592,29 @@ func main() {
       try {
         $candidateProcessID = [uint32]$candidate.SourceEventArgs.NewEvent.ProcessID
         $candidateProcessName = [string]$candidate.SourceEventArgs.NewEvent.ProcessName
+        $candidateParentProcessID = [uint32]$candidate.SourceEventArgs.NewEvent.ParentProcessID
+        $candidateSessionID = [uint32]$candidate.SourceEventArgs.NewEvent.SessionID
+        $candidateSID = Convert-TraceSID $candidate.SourceEventArgs.NewEvent.Sid
         $candidateTraceTime = [uint64]$candidate.SourceEventArgs.NewEvent.TIME_CREATED
         if ($candidateProcessID -eq $guardProcessID) {
           $guardPIDStopCandidates.Add(
-            "name='$candidateProcessName' time=$candidateTraceTime exit=$([uint32]$candidate.SourceEventArgs.NewEvent.ExitStatus)"
+            "name='$candidateProcessName' parent=$candidateParentProcessID session=$candidateSessionID time=$candidateTraceTime exit=$([uint32]$candidate.SourceEventArgs.NewEvent.ExitStatus)"
           )
         }
+        $candidateNameMatches = [string]::Equals(
+          $candidateProcessName,
+          $guardProcessName,
+          [StringComparison]::OrdinalIgnoreCase
+        ) -or [string]::Equals(
+          $candidateProcessName,
+          $guardStopTraceName,
+          [StringComparison]::OrdinalIgnoreCase
+        )
         if ($candidateProcessID -eq $guardProcessID -and
-            [string]::Equals(
-              $candidateProcessName,
-              $ralphProcessName,
-              [StringComparison]::OrdinalIgnoreCase
-            ) -and
+            $candidateParentProcessID -eq $guardParentProcessID -and
+            $candidateSessionID -eq $guardSessionID -and
+            $candidateSID -eq $guardSID -and
+            $candidateNameMatches -and
             $candidateTraceTime -ge $guardProcessStartTraceTime) {
           $stoppedProcessID = $candidateProcessID
           $guardProcessExit = [uint32]$candidate.SourceEventArgs.NewEvent.ExitStatus
