@@ -69,16 +69,10 @@ func TestE2E_LiveDispatchWithRealProviderCLI(t *testing.T) {
 	}
 
 	// A deliberately tiny, cheap plan. No mechanical (file/command)
-	// acceptance criterion is attached — orch/orchestrator.go's
-	// dispatchWorker runs every turn with WorkingDir "." (the dispatching
-	// process's own cwd, not a per-task project directory; a real
-	// project-scoped cwd is a separate gap outside Phase 8's scope), so a
-	// "create a file" criterion would verify against the wrong
-	// directory. mechanicalAcceptanceCheck's no-criterion fallback
-	// (internal/orch/verify.go) requires non-empty evidence output
-	// instead — still an orchestrator-side check, just not filesystem-
-	// mechanical, which is what this smoke test is actually proving:
-	// dispatch reaches a terminal state against a REAL provider CLI.
+	// acceptance criterion is attached: mechanicalAcceptanceCheck's
+	// no-criterion fallback requires non-empty evidence output, which is enough
+	// to prove a real provider turn traversed dispatch and verification without
+	// asking the hosted model to mutate even this disposable fixture.
 	planMarkdown := "# Live E2E smoke\n\n1. Reply with a short confirmation that you received this task.\n"
 	planID, err := st.CreatePlan(ctx, store.CreatePlanOpts{
 		ProjectID:      projectID,
@@ -109,6 +103,9 @@ func TestE2E_LiveDispatchWithRealProviderCLI(t *testing.T) {
 	if dispatched != 1 {
 		t.Fatalf("DispatchNext dispatched = %d, want 1", dispatched)
 	}
+	// Dispatch is intentionally asynchronous. Await the real provider turn
+	// before reading task state or closing its store.
+	o.Wait()
 
 	task, err := st.GetTask(ctx, planID, "0.0")
 	if err != nil {
@@ -121,15 +118,10 @@ func TestE2E_LiveDispatchWithRealProviderCLI(t *testing.T) {
 			t.Logf("live dispatch: event kind=%s payload=%s", ev.Kind, ev.PayloadJSON)
 		}
 	}
-	// A rejected verification with retry budget remaining requeues to
-	// 'pending' rather than 'failed' (store.MarkFailedWithPayload) — that
-	// is a legitimate real-dispatch outcome, not a defect, so pending is
-	// an acceptable terminal-for-this-smoke-test state alongside
-	// done/failed. What matters is that a REAL dispatch pass ran to
-	// completion (dispatched == 1, asserted above) without error.
-	switch task.Status {
-	case store.TaskStatusDone, store.TaskStatusFailed, store.TaskStatusPending:
-	default:
-		t.Fatalf("task status = %q, want done, failed, or pending (retry-eligible) after one real dispatch", task.Status)
+	// This opt-in test spends real provider budget specifically to validate the
+	// complete provider path. Merely launching a process and requeueing its
+	// failure is not a passing live smoke.
+	if task.Status != store.TaskStatusDone {
+		t.Fatalf("task status = %q (retry_count=%d), want done after a successful real provider dispatch; see logged task events above", task.Status, task.RetryCount)
 	}
 }

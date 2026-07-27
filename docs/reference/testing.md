@@ -53,6 +53,13 @@ prebuild in one shot.
 | `govulncheck ./...` | Dependency and call-site vulnerability scan |
 | `tox -e docs` | API markdown generation, docs validation, Sphinx build |
 
+Provider timeout tests use fake installed binaries for Claude, Codex, OpenCode,
+and declarative execution. They emit progress for longer than the stall lease
+and prove the absolute turn deadline still wins; separate tests prove silence
+stalls early and retries share one total budget. Darwin lifecycle tests spawn a
+real `setpgrp(2)` descendant repeatedly, verify leaf-first convergence, and
+prove a changed audit-token PID version is rejected by the kernel.
+
 ## What CI does not prove
 
 CI is intentionally strong on hermetic coverage and weaker on host-manager

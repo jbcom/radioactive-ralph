@@ -42,25 +42,21 @@ const (
 	// beyond this inspection bound fail closed rather than being trusted from a
 	// partial prefix.
 	codexRetainedJSONLLineBytes = 4 << 20
-
-	// Keep aggressively test-sized global timeouts from treating cold CLI
-	// startup as a stall on a loaded host. Once the pty yields bytes, underlying
-	// read activity—not retained-line completion—continually resets this timer.
-	// Raw prompts are still detected immediately, and the production default
-	// (three minutes) is already larger.
-	codexMinimumStallTimeout = 10 * time.Second
 )
 
-func codexWatchdogConfig() agent.WatchdogConfig {
-	cfg := StreamJSONWatchdogConfig()
-	if cfg.StallTimeout < codexMinimumStallTimeout {
-		cfg.StallTimeout = codexMinimumStallTimeout
-	}
-	return cfg
+func codexWatchdogConfig(stall time.Duration) agent.WatchdogConfig {
+	return streamJSONWatchdogConfigWithStall(stall)
 }
 
 // Run executes one non-interactive Codex turn.
 func (CodexRunner) Run(ctx context.Context, binding Binding, req Request) (Result, error) {
+	limits, err := ResolveTurnLimits(binding, req)
+	if err != nil {
+		return Result{}, err
+	}
+	ctx, cancelTurn := WithTurnDeadline(ctx, limits.TurnTimeout)
+	defer cancelTurn()
+
 	schemaPath, cleanup, err := withTempSchema(req)
 	if err != nil {
 		return Result{}, err
@@ -113,7 +109,7 @@ func (CodexRunner) Run(ctx context.Context, binding Binding, req Request) (Resul
 	if err := superviseAgentWithDiscarded(
 		ctx,
 		a,
-		codexWatchdogConfig(),
+		codexWatchdogConfig(limits.StallTimeout),
 		func(line []byte) bool {
 			diagnostics.consume(line)
 			return diagnostics.failed()

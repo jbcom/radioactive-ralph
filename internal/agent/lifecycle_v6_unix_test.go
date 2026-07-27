@@ -166,35 +166,13 @@ time.sleep(300)
 		}
 		childPID := readChildPID(t, a, iteration)
 		waitErr := a.TerminateAndWait()
-		if runtime.GOOS == "linux" {
-			if waitErr != nil {
-				t.Fatalf("iteration %d Linux TerminateAndWait: %v", iteration, waitErr)
-			}
-			if !waitForPIDGone(childPID) {
-				_ = syscall.Kill(-childPID, syscall.SIGKILL)
-				t.Fatalf("iteration %d regrouped descendant %d survived", iteration, childPID)
-			}
-			continue
+		if waitErr != nil {
+			t.Fatalf("iteration %d TerminateAndWait: %v", iteration, waitErr)
 		}
-
-		if !errors.Is(waitErr, ErrProcessSessionCleanup) ||
-			!errors.Is(waitErr, ErrProcessTreeCleanup) {
+		if !waitForPIDGone(childPID) {
 			_ = syscall.Kill(-childPID, syscall.SIGKILL)
-			t.Fatalf(
-				"iteration %d Darwin cleanup = %v, want compatible typed failure",
-				iteration,
-				waitErr,
-			)
+			t.Fatalf("iteration %d regrouped descendant %d survived", iteration, childPID)
 		}
-		if err := syscall.Kill(childPID, 0); err != nil {
-			t.Fatalf(
-				"iteration %d Darwin unsafely targeted/reaped descendant %d: %v",
-				iteration,
-				childPID,
-				err,
-			)
-		}
-		_ = syscall.Kill(-childPID, syscall.SIGKILL)
 	}
 }
 

@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 func combinePrompt(req Request) string {
@@ -25,18 +26,43 @@ func combinePrompt(req Request) string {
 }
 
 func runCommand(ctx context.Context, dir, bin string, args []string) (string, error) {
-	cmd := exec.CommandContext(ctx, bin, args...) //nolint:gosec // argv is runtime-controlled
+	return runCommandWithStall(ctx, DefaultStallTimeout, dir, bin, args)
+}
+
+func runCommandWithStall(ctx context.Context, stallTimeout time.Duration, dir, bin string, args []string) (string, error) {
+	stallCtx, progress, cancelStall := withProgressLease(ctx, stallTimeout)
+	defer cancelStall()
+	cmd := exec.CommandContext(stallCtx, bin, args...) //nolint:gosec // argv is runtime-controlled
 	cmd.Dir = dir
 	setProcessGroupKill(cmd) // ctx-cancel must reap the whole tree, not just the CLI
 	// Capture stdout and stderr separately so on the success path, some
 	// CLIs don't get warnings/progress lines folded into AssistantOutput.
 	// On failure we surface stderr in the wrapped error so operators can
 	// see why the CLI exited non-zero.
+	// Bound both sinks as they stream. exec.Cmd aborts the copy and kills the
+	// process when a writer returns an error, so crossing the ceiling ends the
+	// turn instead of growing until the process OOMs the supervisor.
 	var stdout, stderr strings.Builder
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
+	var stdoutN, stderrN int
+	cmd.Stdout = progressWriter{
+		Writer: &stdout, progress: progress,
+		limit: maxAuthoritativeResultBytes, n: &stdoutN,
+	}
+	cmd.Stderr = progressWriter{
+		Writer: &stderr, progress: progress,
+		limit: maxAuthoritativeResultBytes, n: &stderrN,
+	}
 	err := cmd.Run()
 	if err != nil {
+		// A ceiling crossing is the authoritative reason the turn ended, ahead
+		// of the exec error it caused. Report the static sentinel so no
+		// provider-controlled bytes ride out on the error path.
+		if stdoutN >= maxAuthoritativeResultBytes || stderrN >= maxAuthoritativeResultBytes {
+			return "", ErrProviderOutputTooLarge
+		}
+		if cause := context.Cause(stallCtx); cause != nil {
+			return "", cause
+		}
 		msg := strings.TrimSpace(stderr.String())
 		if msg == "" {
 			msg = strings.TrimSpace(stdout.String())

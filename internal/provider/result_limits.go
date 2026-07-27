@@ -28,11 +28,30 @@ var (
 	// nonblocking open. It is static so path or provider-controlled bytes never
 	// cross the error boundary.
 	ErrAuthoritativeResultUnsafe = errors.New("provider: authoritative result was not an identity-stable regular file")
+
+	// ErrProviderOutputTooLarge is returned by the streaming sinks when a
+	// provider crosses the output ceiling mid-turn. It is separate from
+	// ErrAuthoritativeResultTooLarge, which is a post-hoc check on a completed
+	// result: this one fires while the process is still running so the caller
+	// can kill it, and it is retryable because a truncated turn carries no
+	// verdict about the work itself.
+	ErrProviderOutputTooLarge = errors.New("provider: output exceeded 16MiB limit while streaming")
 )
 
 type boundedResultBuffer struct {
 	buf bytes.Buffer
 	n   int
+}
+
+// ValidateEvidenceBounds refuses provider-controlled assistant output that is
+// too large to cross Ralph's durable evidence boundary. Built-in runners apply
+// the same ceiling while parsing; the orchestrator calls this again so custom
+// and declarative runners cannot bypass it.
+func ValidateEvidenceBounds(output string) error {
+	if len(output) > maxAuthoritativeResultBytes {
+		return ErrAuthoritativeResultTooLarge
+	}
+	return nil
 }
 
 func (b *boundedResultBuffer) writeString(value string) error {

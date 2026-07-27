@@ -84,6 +84,10 @@ type Evidence struct {
 	// kept for the audit trail and for judgment-based acceptance criteria.
 	Output string `json:"output,omitempty"`
 
+	// FailureCategory is a closed, privacy-safe provider failure code. Raw
+	// provider diagnostics are never persisted in evidence.
+	FailureCategory string `json:"failure_category,omitempty"`
+
 	// Diff is the worker's summary/patch of what it changed, if any.
 	Diff string `json:"diff,omitempty"`
 

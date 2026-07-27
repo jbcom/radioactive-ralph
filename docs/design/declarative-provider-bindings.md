@@ -40,8 +40,9 @@ type BindingConfig struct {
     Args       []string // argv template
     OutputFile string   // for last-message-file: where to read the result
     SessionIDRegex string // optional session-id extractor for stateful CLIs
-    TurnTimeout string
-    MaxRetries  int
+    TurnTimeout  string
+    StallTimeout string
+    MaxRetries   int
 }
 ```
 
@@ -56,9 +57,24 @@ Before a declarative binding can be dispatched to, the runtime validates:
 - `args` reference only known tokens
 - `Type` is one of the three supported framings
 - `SessionIDRegex`, if present, compiles
+- `turn_timeout` and `stall_timeout`, when set, are positive duration strings
+  within the runtime safety maxima
 
 Any failure is a hard error naming the misbehaving binding, not a silent
 fallback.
+
+## Independent runtime bounds
+
+All three framings use the same two-clock model as built-in providers.
+`turn_timeout` bounds the complete turn and all retries together.
+`stall_timeout` is renewed by every stdout or stderr read, including bytes in
+an incomplete `stream-json` record. A process that remains silent fails with
+the typed `stall_timeout` category; a productive process may continue past
+that interval but still stops at the absolute turn deadline.
+
+Cancellation signals the provider process group and waits boundedly for pipe
+drain. Partial output from a canceled, stalled, oversized, or failed attempt is
+never accepted as assistant evidence.
 
 ## Non-goals
 

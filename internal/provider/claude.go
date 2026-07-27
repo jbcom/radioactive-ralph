@@ -45,6 +45,13 @@ var ErrClaudeMissingResult = errors.New("provider: claude exited without a resul
 // message from stdin), tees stdout into a bounded ResultPath evidence file,
 // and parses the terminal result frame for Usage.
 func (ClaudeRunner) Run(ctx context.Context, binding Binding, req Request) (Result, error) {
+	limits, err := ResolveTurnLimits(binding, req)
+	if err != nil {
+		return Result{}, err
+	}
+	ctx, cancelTurn := WithTurnDeadline(ctx, limits.TurnTimeout)
+	defer cancelTurn()
+
 	model := resolveModel(binding.Config, req.Model)
 	effort := resolveEffort(binding.Config, req.Effort)
 	input, err := streamJSONInput(req.UserPrompt)
@@ -164,7 +171,7 @@ func (ClaudeRunner) Run(ctx context.Context, binding Binding, req Request) (Resu
 		return false
 	}
 
-	runErr := superviseAgent(ctx, a, StreamJSONWatchdogConfig(), onLine)
+	runErr := superviseAgent(ctx, a, streamJSONWatchdogConfigWithStall(limits.StallTimeout), onLine)
 	closeErr := resultFile.close()
 	if runErr != nil {
 		runErr = fmt.Errorf("provider: claude run: %w", runErr)

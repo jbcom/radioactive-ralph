@@ -5,6 +5,7 @@ package provider
 import (
 	"context"
 	"fmt"
+	"time"
 )
 
 // Binding is one resolved provider selection after repo config, local
@@ -31,6 +32,13 @@ type Request struct {
 	Model        Model
 	Effort       string
 	AllowedTools []string
+	// TurnTimeout is the absolute wall-clock ceiling for the complete turn,
+	// including provider retries. StallTimeout is the renewable progress
+	// lease: output renews it, but never extends TurnTimeout.
+	//
+	// Zero values inherit the resolved provider/project defaults.
+	TurnTimeout  time.Duration
+	StallTimeout time.Duration
 }
 
 // Usage captures the token/cost accounting for one provider turn. Fields

@@ -10,6 +10,7 @@ require (
 	github.com/charmbracelet/lipgloss v1.1.0
 	github.com/charmbracelet/x/exp/teatest v0.0.0-20260713092006-0d683c34c74b
 	github.com/creack/pty v1.1.24
+	github.com/ebitengine/purego v0.10.2
 	github.com/google/uuid v1.6.0
 	github.com/jonboulle/clockwork v0.5.0
 	github.com/mattn/go-isatty v0.0.24

@@ -52,6 +52,13 @@ var ErrOpencodeInvalidUsage = errors.New("provider: opencode reported invalid us
 // intermediate model step; OpenCode 1.18.3 closes the actual run only after
 // session.status becomes idle, so Ralph must consume the complete stream.
 func (OpencodeRunner) Run(ctx context.Context, binding Binding, req Request) (Result, error) {
+	limits, err := ResolveTurnLimits(binding, req)
+	if err != nil {
+		return Result{}, err
+	}
+	ctx, cancelTurn := WithTurnDeadline(ctx, limits.TurnTimeout)
+	defer cancelTurn()
+
 	resultPath, cleanup, err := newResultFile("opencode-result-*.jsonl")
 	if err != nil {
 		return Result{}, err
@@ -142,7 +149,7 @@ func (OpencodeRunner) Run(ctx context.Context, binding Binding, req Request) (Re
 		return false
 	}
 
-	runErr := superviseAgent(ctx, a, StreamJSONWatchdogConfig(), onLine)
+	runErr := superviseAgent(ctx, a, streamJSONWatchdogConfigWithStall(limits.StallTimeout), onLine)
 	closeErr := resultFile.close()
 	if runErr != nil {
 		runErr = fmt.Errorf("provider: opencode run: %w", runErr)
