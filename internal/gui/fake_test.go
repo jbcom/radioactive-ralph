@@ -4,11 +4,12 @@ package gui
 
 import (
 	"context"
-	"encoding/json"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/jbcom/radioactive-ralph/internal/ipc"
+	"github.com/jbcom/radioactive-ralph/internal/observe"
 	"github.com/jbcom/radioactive-ralph/internal/orch"
 	"github.com/jbcom/radioactive-ralph/internal/store"
 )
@@ -54,43 +55,103 @@ func newFakeController() *fakeController {
 	}
 }
 
-func (f *fakeController) Status(context.Context) (ipc.StatusReply, error) {
+func (f *fakeController) Snapshot(
+	_ context.Context,
+	query observe.SnapshotQuery,
+) (*observe.Snapshot, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	return f.status, nil
+	reply := &observe.Snapshot{
+		SchemaVersion: observe.SchemaVersion,
+		CapturedAt:    time.Now().UTC(),
+		Project:       observe.Project{ID: query.ProjectID},
+		Summary: observe.Summary{
+			ActiveWorkerCount: f.status.ActiveWorkers,
+			ZeroActiveWorkers: f.status.ActiveWorkers == 0,
+			PlanTotal:         len(f.plans),
+			TaskStatusCounts: []observe.StatusCount{
+				{Status: "ready", Count: f.status.ReadyTasks},
+				{Status: "ready_pending_approval", Count: f.status.ApprovalTasks},
+				{Status: "blocked", Count: f.status.BlockedTasks},
+				{Status: "running", Count: f.status.RunningTasks},
+				{Status: "failed", Count: f.status.FailedTasks},
+			},
+			PlanStatusCounts: []observe.StatusCount{},
+		},
+		Plans:        observe.PlanPage{Items: []observe.Plan{}},
+		Tasks:        observe.TaskPage{Items: []observe.Task{}},
+		Workers:      []observe.Worker{},
+		RecentEvents: observe.EventPage{Items: []observe.Event{}},
+	}
+	for _, item := range f.plans {
+		if query.PlanID != "" && item.ID != query.PlanID {
+			continue
+		}
+		value := f.progr[item.ID]
+		reply.Plans.Items = append(reply.Plans.Items, observe.Plan{
+			ID:        item.ID,
+			Slug:      item.Slug,
+			Title:     item.Title,
+			Status:    string(item.Status),
+			TaskDone:  value.Done,
+			TaskTotal: value.Total,
+			CreatedAt: item.CreatedAt,
+			UpdatedAt: item.UpdatedAt,
+		})
+	}
+	if query.PlanID != "" {
+		for _, item := range f.tasks[query.PlanID] {
+			if query.TaskID != "" && item.ID != query.TaskID {
+				continue
+			}
+			reply.Tasks.Items = append(reply.Tasks.Items, observe.Task{
+				PlanID:            item.PlanID,
+				ID:                item.ID,
+				CanonicalID:       item.PlanID + ":" + item.ID,
+				Status:            string(item.Status),
+				ClaimedByWorkerID: item.ClaimedByWorkerID,
+				CreatedAt:         item.CreatedAt,
+				UpdatedAt:         item.UpdatedAt,
+			})
+		}
+	}
+	rawEvents := f.pEvents
+	if query.TaskID != "" {
+		rawEvents = f.tEvents[query.PlanID+"/"+query.TaskID]
+	}
+	for _, item := range rawEvents {
+		reply.RecentEvents.Items = append(
+			reply.RecentEvents.Items,
+			observe.Event{
+				ID:         item.ID,
+				PlanID:     item.PlanID,
+				TaskID:     item.TaskID,
+				Kind:       item.Kind,
+				Stream:     item.Stream,
+				OccurredAt: item.OccurredAt,
+			},
+		)
+		if item.ID > reply.EventCursor {
+			reply.EventCursor = item.ID
+		}
+	}
+	for _, worker := range f.status.Workers {
+		reply.Workers = append(reply.Workers, observe.Worker{
+			ID: worker.WorkerID,
+			Claims: []observe.WorkerClaim{{
+				PlanID: worker.PlanID,
+				TaskID: worker.TaskID,
+				Status: "running",
+			}},
+		})
+	}
+	return reply, nil
 }
 
-func (f *fakeController) ListPlans(context.Context, string) ([]store.Plan, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	return f.plans, nil
-}
-
-func (f *fakeController) PlanProgress(_ context.Context, planID string) (orch.Progress, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	return f.progr[planID], nil
-}
-
-func (f *fakeController) ListTasks(_ context.Context, planID string) ([]store.Task, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	return f.tasks[planID], nil
-}
-
-func (f *fakeController) ListProjectEvents(_ context.Context, _ string, _ int) ([]store.Event, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	return f.pEvents, nil
-}
-
-func (f *fakeController) ListTaskEvents(_ context.Context, planID, taskID string, _ int) ([]store.Event, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	return f.tEvents[planID+"/"+taskID], nil
-}
-
-func (f *fakeController) Attach(ctx context.Context, _ func(json.RawMessage) error) error {
+func (f *fakeController) Attach(
+	ctx context.Context,
+	_ func(ipc.AttachEvent) error,
+) error {
 	f.attachCount.Add(1)
 	// When attachReturn is set, return immediately (simulating a failed dial or
 	// a stream end) so a test can observe runAttach re-dialing. Otherwise the

@@ -32,6 +32,23 @@ The schema is embedded under schema/\*.sql and applied in lexical order by Migra
 - [type EventPayload](<#EventPayload>)
 - [type Fingerprint](<#Fingerprint>)
   - [func Fingerprints\(ctx context.Context, dir string\) \(\[\]Fingerprint, error\)](<#Fingerprints>)
+- [type OperatorEvent](<#OperatorEvent>)
+- [type OperatorEventPage](<#OperatorEventPage>)
+- [type OperatorMessageMetadata](<#OperatorMessageMetadata>)
+- [type OperatorMessagePage](<#OperatorMessagePage>)
+- [type OperatorMessageQuery](<#OperatorMessageQuery>)
+- [type OperatorPlan](<#OperatorPlan>)
+- [type OperatorPlanPage](<#OperatorPlanPage>)
+- [type OperatorProject](<#OperatorProject>)
+- [type OperatorSnapshot](<#OperatorSnapshot>)
+- [type OperatorSnapshotQuery](<#OperatorSnapshotQuery>)
+- [type OperatorStatusCount](<#OperatorStatusCount>)
+- [type OperatorTask](<#OperatorTask>)
+- [type OperatorTaskCursor](<#OperatorTaskCursor>)
+- [type OperatorTaskDetail](<#OperatorTaskDetail>)
+- [type OperatorTaskPage](<#OperatorTaskPage>)
+- [type OperatorWorker](<#OperatorWorker>)
+- [type OperatorWorkerClaim](<#OperatorWorkerClaim>)
 - [type Options](<#Options>)
 - [type Plan](<#Plan>)
 - [type PlanStatus](<#PlanStatus>)
@@ -67,6 +84,8 @@ The schema is embedded under schema/\*.sql and applied in lexical order by Migra
   - [func \(s \*Store\) HeartbeatWorker\(ctx context.Context, workerID string\) error](<#Store.HeartbeatWorker>)
   - [func \(s \*Store\) HeartbeatWorkerAndSession\(ctx context.Context, workerID string\) error](<#Store.HeartbeatWorkerAndSession>)
   - [func \(s \*Store\) ListMessages\(ctx context.Context, planID, taskID string\) \(\[\]A2AMessage, error\)](<#Store.ListMessages>)
+  - [func \(s \*Store\) ListOperatorMessages\(ctx context.Context, q OperatorMessageQuery\) \(\*OperatorMessagePage, error\)](<#Store.ListOperatorMessages>)
+  - [func \(s \*Store\) ListOperatorTaskDescriptions\(ctx context.Context, projectID, planID string, taskIDs \[\]string\) \(map\[string\]string, error\)](<#Store.ListOperatorTaskDescriptions>)
   - [func \(s \*Store\) ListPlans\(ctx context.Context, projectID string, statuses \[\]PlanStatus\) \(\[\]Plan, error\)](<#Store.ListPlans>)
   - [func \(s \*Store\) ListProjectEvents\(ctx context.Context, projectID string, limit int\) \(\[\]Event, error\)](<#Store.ListProjectEvents>)
   - [func \(s \*Store\) ListRunningWorkers\(ctx context.Context\) \(\[\]RunningWorker, error\)](<#Store.ListRunningWorkers>)
@@ -79,6 +98,8 @@ The schema is embedded under schema/\*.sql and applied in lexical order by Migra
   - [func \(s \*Store\) MaxEventID\(ctx context.Context, projectID string\) \(int64, error\)](<#Store.MaxEventID>)
   - [func \(s \*Store\) ProjectAbsPath\(ctx context.Context, projectID string\) \(path string, found bool, err error\)](<#Store.ProjectAbsPath>)
   - [func \(s \*Store\) ProjectSpendByProvider\(ctx context.Context, projectID string\) \(map\[string\]float64, error\)](<#Store.ProjectSpendByProvider>)
+  - [func \(s \*Store\) ReadOperatorSnapshot\(ctx context.Context, q OperatorSnapshotQuery\) \(\*OperatorSnapshot, error\)](<#Store.ReadOperatorSnapshot>)
+  - [func \(s \*Store\) ReadOperatorTaskDetail\(ctx context.Context, projectID, planID, taskID string\) \(OperatorTaskDetail, error\)](<#Store.ReadOperatorTaskDetail>)
   - [func \(s \*Store\) Ready\(ctx context.Context, planID string\) \(\[\]Task, error\)](<#Store.Ready>)
   - [func \(s \*Store\) ReclaimStale\(ctx context.Context, staleAfter time.Duration\) \(reclaimed int, err error\)](<#Store.ReclaimStale>)
   - [func \(s \*Store\) ReclaimWorker\(ctx context.Context, workerID string\) \(found bool, err error\)](<#Store.ReclaimWorker>)
@@ -97,6 +118,28 @@ The schema is embedded under schema/\*.sql and applied in lexical order by Migra
 
 ## Constants
 
+<a name="DefaultOperatorMessageLimit"></a>Operator\-message page defaults and hard bounds.
+
+```go
+const (
+    DefaultOperatorMessageLimit = 100
+    MaxOperatorMessageLimit     = 500
+)
+```
+
+<a name="DefaultOperatorPageLimit"></a>Operator\-query defaults and hard bounds. Snapshot plan/task pages are independently paginated; active workers and their claims are returned in full up to hard safety ceilings so an automation gate can never mistake a truncated worker list for the truth.
+
+```go
+const (
+    DefaultOperatorPageLimit  = 50
+    MaxOperatorPageLimit      = 200
+    DefaultOperatorEventLimit = 20
+    MaxOperatorEventLimit     = 100
+    MaxOperatorActiveWorkers  = 256
+    MaxOperatorActiveClaims   = 2048
+)
+```
+
 <a name="FingerprintKindAbsPath"></a>Fingerprint identity kinds. A project is identified by the SET of these rows in project\_identifiers, not by a single fragile path — see §5b of the supervisor\-architecture design.
 
 ```go
@@ -108,6 +151,21 @@ const (
 ```
 
 ## Variables
+
+<a name="ErrOperatorInvalidQuery"></a>Operator\-query sentinels let projection/IPC layers fail closed without scraping error strings.
+
+```go
+var (
+    ErrOperatorInvalidQuery     = errors.New("store: invalid operator query")
+    ErrOperatorProjectNotFound  = errors.New("store: operator project not found")
+    ErrOperatorPlanNotFound     = errors.New("store: operator plan not found")
+    ErrOperatorTaskNotFound     = errors.New("store: operator task not found")
+    ErrOperatorInvalidCursor    = errors.New("store: invalid operator cursor")
+    ErrOperatorSnapshotTooLarge = errors.New(
+        "store: operator snapshot exceeds safety bounds",
+    )
+)
+```
 
 <a name="ErrDuplicateSlug"></a>ErrDuplicateSlug is returned when a plan with \(project\_id, slug\) already exists. Callers either pick a new slug or update.
 
@@ -125,6 +183,12 @@ var ErrDuplicateTask = errors.New("store: task with this id already exists in th
 
 ```go
 var ErrNoReadyTask = errors.New("store: no ready task")
+```
+
+<a name="ErrOperatorTaskDetailNotFound"></a>ErrOperatorTaskDetailNotFound reports a detail read for a task that does not exist within the requested project.
+
+```go
+var ErrOperatorTaskDetailNotFound = errors.New("store: operator task detail not found")
 ```
 
 <a name="ErrPlanNotFound"></a>ErrPlanNotFound is returned when an operation targets a plan id that no row matches. It is a typed sentinel so callers match with errors.Is rather than scraping the formatted message \(the drive API maps it to CodeNotFound\).
@@ -318,6 +382,268 @@ func Fingerprints(ctx context.Context, dir string) ([]Fingerprint, error)
 ```
 
 Fingerprints computes the identity fingerprints for a directory: always the cleaned absolute path, plus — best\-effort, if dir is a git repository — the root\-commit sha and any "origin" remote URL. A fingerprint whose git command fails \(e.g. no origin remote configured\) is silently skipped rather than failing the whole call.
+
+<a name="OperatorEvent"></a>
+## type [OperatorEvent](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/operator_snapshot.go#L162-L169>)
+
+OperatorEvent is safe event metadata. Raw payload, actor/provider output, and any IDs carried inside the payload are never selected.
+
+```go
+type OperatorEvent struct {
+    ID         int64     `json:"id"`
+    PlanID     string    `json:"plan_id"`
+    TaskID     string    `json:"task_id"`
+    Kind       string    `json:"kind"`
+    Stream     string    `json:"stream"`
+    OccurredAt time.Time `json:"occurred_at"`
+}
+```
+
+<a name="OperatorEventPage"></a>
+## type [OperatorEventPage](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/operator_snapshot.go#L173-L177>)
+
+OperatorEventPage is one bounded newest\-first event page. NextBeforeID is a keyset cursor that continues toward older events.
+
+```go
+type OperatorEventPage struct {
+    Items        []OperatorEvent `json:"items"`
+    HasMore      bool            `json:"has_more"`
+    NextBeforeID int64           `json:"next_before_id"`
+}
+```
+
+<a name="OperatorMessageMetadata"></a>
+## type [OperatorMessageMetadata](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/operator_messages.go#L32-L39>)
+
+OperatorMessageMetadata is the safe envelope metadata for one durable A2A message. content\_json is deliberately never selected, so raw worker evidence, provider output, prompts, commands, paths, or secrets cannot cross this store boundary.
+
+```go
+type OperatorMessageMetadata struct {
+    ID         int64     `json:"id"`
+    WorkerID   string    `json:"worker_id"`
+    PlanID     string    `json:"plan_id"`
+    TaskID     string    `json:"task_id"`
+    Role       string    `json:"role"`
+    OccurredAt time.Time `json:"occurred_at"`
+}
+```
+
+<a name="OperatorMessagePage"></a>
+## type [OperatorMessagePage](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/operator_messages.go#L43-L47>)
+
+OperatorMessagePage is one oldest\-first A2A metadata page. NextAfterID is the monotonic keyset cursor for a subsequent call.
+
+```go
+type OperatorMessagePage struct {
+    Items       []OperatorMessageMetadata `json:"items"`
+    HasMore     bool                      `json:"has_more"`
+    NextAfterID int64                     `json:"next_after_id"`
+}
+```
+
+<a name="OperatorMessageQuery"></a>
+## type [OperatorMessageQuery](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/operator_messages.go#L20-L26>)
+
+OperatorMessageQuery selects a bounded chronological page of content\-free A2A metadata. ProjectID is always required. PlanID optionally narrows to a plan; TaskID may only be supplied with PlanID.
+
+```go
+type OperatorMessageQuery struct {
+    ProjectID string `json:"project_id"`
+    PlanID    string `json:"plan_id"`
+    TaskID    string `json:"task_id"`
+    AfterID   int64  `json:"after_id"`
+    Limit     int    `json:"limit"`
+}
+```
+
+<a name="OperatorPlan"></a>
+## type [OperatorPlan](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/operator_snapshot.go#L97-L106>)
+
+OperatorPlan is a safe plan projection. SourceMarkdown, TagsJSON, and session information are intentionally absent.
+
+```go
+type OperatorPlan struct {
+    ID        string     `json:"id"`
+    Slug      string     `json:"slug"`
+    Title     string     `json:"title"`
+    Status    PlanStatus `json:"status"`
+    TaskDone  int        `json:"task_done"`
+    TaskTotal int        `json:"task_total"`
+    CreatedAt time.Time  `json:"created_at"`
+    UpdatedAt time.Time  `json:"updated_at"`
+}
+```
+
+<a name="OperatorPlanPage"></a>
+## type [OperatorPlanPage](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/operator_snapshot.go#L109-L113>)
+
+OperatorPlanPage is one bounded, ID\-ordered plan page.
+
+```go
+type OperatorPlanPage struct {
+    Items       []OperatorPlan `json:"items"`
+    HasMore     bool           `json:"has_more"`
+    NextAfterID string         `json:"next_after_id"`
+}
+```
+
+<a name="OperatorProject"></a>
+## type [OperatorProject](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/operator_snapshot.go#L81-L87>)
+
+OperatorProject is safe project metadata. Identity fingerprints and paths never enter the operator DTO.
+
+```go
+type OperatorProject struct {
+    ID          string     `json:"id"`
+    DisplayName string     `json:"display_name"`
+    CreatedAt   time.Time  `json:"created_at"`
+    UpdatedAt   time.Time  `json:"updated_at"`
+    LastSeenAt  *time.Time `json:"last_seen_at"`
+}
+```
+
+<a name="OperatorSnapshot"></a>
+## type [OperatorSnapshot](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/operator_snapshot.go#L66-L77>)
+
+OperatorSnapshot is a content\-safe, project\-scoped read model. It deliberately excludes plan markdown, task descriptions and acceptance commands, raw event payloads/actors, project identifiers and paths, process/session identifiers, and configuration.
+
+```go
+type OperatorSnapshot struct {
+    CapturedAt        time.Time             `json:"captured_at"`
+    Project           OperatorProject       `json:"project"`
+    PlanCounts        []OperatorStatusCount `json:"plan_counts"`
+    TaskCounts        []OperatorStatusCount `json:"task_counts"`
+    Plans             OperatorPlanPage      `json:"plans"`
+    Tasks             OperatorTaskPage      `json:"tasks"`
+    ActiveWorkerCount int                   `json:"active_worker_count"`
+    Workers           []OperatorWorker      `json:"workers"`
+    EventCursor       int64                 `json:"event_cursor"`
+    RecentEvents      OperatorEventPage     `json:"recent_events"`
+}
+```
+
+<a name="OperatorSnapshotQuery"></a>
+## type [OperatorSnapshotQuery](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/operator_snapshot.go#L43-L53>)
+
+OperatorSnapshotQuery selects finite pages from one project's consistent operator snapshot. Zero limits use the exported defaults. Cursors are keyset cursors from a prior page and are validated against ProjectID before any page is read.
+
+```go
+type OperatorSnapshotQuery struct {
+    ProjectID     string             `json:"project_id"`
+    PlanID        string             `json:"plan_id"`
+    TaskID        string             `json:"task_id"`
+    PlanLimit     int                `json:"plan_limit"`
+    PlanAfterID   string             `json:"plan_after_id"`
+    TaskLimit     int                `json:"task_limit"`
+    TaskAfter     OperatorTaskCursor `json:"task_after"`
+    EventLimit    int                `json:"event_limit"`
+    EventBeforeID int64              `json:"event_before_id"`
+}
+```
+
+<a name="OperatorStatusCount"></a>
+## type [OperatorStatusCount](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/operator_snapshot.go#L90-L93>)
+
+OperatorStatusCount is one deterministic status/count pair.
+
+```go
+type OperatorStatusCount struct {
+    Status string `json:"status"`
+    Count  int    `json:"count"`
+}
+```
+
+<a name="OperatorTask"></a>
+## type [OperatorTask](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/operator_snapshot.go#L117-L129>)
+
+OperatorTask is safe task state. Description and AcceptanceJSON can contain source text, commands, or repository paths, so neither is projected.
+
+```go
+type OperatorTask struct {
+    PlanID            string     `json:"plan_id"`
+    ID                string     `json:"id"`
+    Status            TaskStatus `json:"status"`
+    ParallelGroup     *int64     `json:"parallel_group"`
+    SequenceOrdinal   *int64     `json:"sequence_ordinal"`
+    RetryCount        int        `json:"retry_count"`
+    ReclaimCount      int        `json:"reclaim_count"`
+    ParentTaskID      string     `json:"parent_task_id"`
+    ClaimedByWorkerID string     `json:"claimed_by_worker_id"`
+    CreatedAt         time.Time  `json:"created_at"`
+    UpdatedAt         time.Time  `json:"updated_at"`
+}
+```
+
+<a name="OperatorTaskCursor"></a>
+## type [OperatorTaskCursor](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/operator_snapshot.go#L57-L60>)
+
+OperatorTaskCursor is the deterministic keyset cursor for project tasks, which are ordered by \(plan\_id, task\_id\).
+
+```go
+type OperatorTaskCursor struct {
+    PlanID string `json:"plan_id"`
+    TaskID string `json:"task_id"`
+}
+```
+
+<a name="OperatorTaskDetail"></a>
+## type [OperatorTaskDetail](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/operator_task_detail.go#L23-L27>)
+
+OperatorTaskDetail is the OPT\-IN, single\-task view. It carries the one field the bulk snapshot deliberately withholds: the task's author\-written description.
+
+Why this is a separate call rather than a field on OperatorTask: Description is orch's step.Text — free text the plan author controls, which can contain filesystem paths, URLs, or anything else they typed. Putting it in the always\-on snapshot would emit it for every task in every list to every observer, which is what the content\-safety tests exist to prevent. Issue \#204 forbids that for \*default\* DTOs while allowing exposure for legitimate follow\-up, so it is available here: one named task, requested deliberately, for an operator who has already drilled into it.
+
+```go
+type OperatorTaskDetail struct {
+    PlanID      string `json:"plan_id"`
+    ID          string `json:"id"`
+    Description string `json:"description"`
+}
+```
+
+<a name="OperatorTaskPage"></a>
+## type [OperatorTaskPage](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/operator_snapshot.go#L132-L136>)
+
+OperatorTaskPage is one bounded, \(plan\_id, task\_id\)\-ordered task page.
+
+```go
+type OperatorTaskPage struct {
+    Items     []OperatorTask      `json:"items"`
+    HasMore   bool                `json:"has_more"`
+    NextAfter *OperatorTaskCursor `json:"next_after"`
+}
+```
+
+<a name="OperatorWorker"></a>
+## type [OperatorWorker](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/operator_snapshot.go#L142-L151>)
+
+OperatorWorker is one active Ralph\-managed worker. Ralph worker IDs are operator controls \(for example worker kill\), not provider\-session IDs. Claims contains every task claimed by the worker in this project, including native fan\-out claims beyond workers.current\_task\_id.
+
+```go
+type OperatorWorker struct {
+    ID            string                `json:"id"`
+    Provider      string                `json:"provider"`
+    Model         string                `json:"model"`
+    NativeFanout  bool                  `json:"native_fanout"`
+    Status        string                `json:"status"`
+    StartedAt     time.Time             `json:"started_at"`
+    LastHeartbeat time.Time             `json:"last_heartbeat"`
+    Claims        []OperatorWorkerClaim `json:"claims"`
+}
+```
+
+<a name="OperatorWorkerClaim"></a>
+## type [OperatorWorkerClaim](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/operator_snapshot.go#L154-L158>)
+
+OperatorWorkerClaim is one project task held by an active worker.
+
+```go
+type OperatorWorkerClaim struct {
+    PlanID string     `json:"plan_id"`
+    TaskID string     `json:"task_id"`
+    Status TaskStatus `json:"status"`
+}
+```
 
 <a name="Options"></a>
 ## type [Options](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/store.go#L86-L96>)
@@ -627,7 +953,7 @@ func (s *Store) Emit(ctx context.Context, o EmitOpts) error
 Emit appends one event row. Used for events not already covered by a more specific transactional helper \(e.g. task claim/done/failed emit their own events inline so the status transition and audit row commit atomically\).
 
 <a name="Store.EventsAfter"></a>
-### func \(\*Store\) [EventsAfter](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/events.go#L111>)
+### func \(\*Store\) [EventsAfter](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/events.go#L116>)
 
 ```go
 func (s *Store) EventsAfter(ctx context.Context, projectID string, afterID int64, limit int) ([]Event, error)
@@ -697,6 +1023,28 @@ func (s *Store) ListMessages(ctx context.Context, planID, taskID string) ([]A2AM
 ```
 
 ListMessages returns every message logged for one task, oldest first.
+
+<a name="Store.ListOperatorMessages"></a>
+### func \(\*Store\) [ListOperatorMessages](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/operator_messages.go#L55-L58>)
+
+```go
+func (s *Store) ListOperatorMessages(ctx context.Context, q OperatorMessageQuery) (*OperatorMessagePage, error)
+```
+
+ListOperatorMessages returns bounded, chronological, content\-free A2A metadata for one validated project/plan/task scope. It uses a read transaction so scope/cursor validation and the page read agree.
+
+Like ReadOperatorSnapshot, an error returns a nil page rather than a plausible empty page.
+
+<a name="Store.ListOperatorTaskDescriptions"></a>
+### func \(\*Store\) [ListOperatorTaskDescriptions](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/operator_task_detail.go#L41-L45>)
+
+```go
+func (s *Store) ListOperatorTaskDescriptions(ctx context.Context, projectID, planID string, taskIDs []string) (map[string]string, error)
+```
+
+ListOperatorTaskDescriptions returns task id \-\> description for one plan, in ONE query.
+
+The per\-task ReadOperatorTaskDetail exists for a single drilled\-in task; a list view must not call it in a loop. Each call is a separate round trip \(and over IPC, a separate socket dial\), so rendering an N\-task page would cost N round trips inside one refresh budget — the same per\-item\-vs\-per\-page mistake ListTaskGroupPaths avoids on the dispatch side.
 
 <a name="Store.ListPlans"></a>
 ### func \(\*Store\) [ListPlans](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/plans.go#L122>)
@@ -782,7 +1130,7 @@ MarkFailedWithPayload transitions a running task to failed or retries while pres
 Both UPDATEs are guarded by \`status = 'running' AND claimed\_by\_session = sessionID\`, the same owner guard MarkDone and MarkBlocked carry. Without the owner guard a stale failure report from a worker whose claim the reaper already reclaimed \(and possibly reassigned to a new worker\) would flip the task back to pending / failed and clear the NEW owner's claim — double execution plus a dropped completion. When the guard matches nothing the task has moved on under a different session; MarkFailed returns ErrTaskNotOwnedRunning so the caller can drop the stale report rather than resurrect the task.
 
 <a name="Store.MaxEventID"></a>
-### func \(\*Store\) [MaxEventID](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/events.go#L145>)
+### func \(\*Store\) [MaxEventID](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/events.go#L160>)
 
 ```go
 func (s *Store) MaxEventID(ctx context.Context, projectID string) (int64, error)
@@ -809,6 +1157,26 @@ func (s *Store) ProjectSpendByProvider(ctx context.Context, projectID string) (m
 ```
 
 ProjectSpendByProvider sums cost\_usd for one project, grouped by provider. Used to enforce a per\-provider spend cap before dispatch.
+
+<a name="Store.ReadOperatorSnapshot"></a>
+### func \(\*Store\) [ReadOperatorSnapshot](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/operator_snapshot.go#L187-L190>)
+
+```go
+func (s *Store) ReadOperatorSnapshot(ctx context.Context, q OperatorSnapshotQuery) (*OperatorSnapshot, error)
+```
+
+ReadOperatorSnapshot reads all snapshot components from one SQLite read transaction. A non\-nil result is therefore internally consistent: plans, tasks, complete active\-worker claims, counts, and recent safe event metadata all describe the same database snapshot.
+
+The pointer return is intentional. Any query/scan/commit failure returns a nil snapshot, so a caller cannot accidentally interpret a partial result's zero ActiveWorkerCount as a valid zero\-worker automation gate.
+
+<a name="Store.ReadOperatorTaskDetail"></a>
+### func \(\*Store\) [ReadOperatorTaskDetail](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/operator_task_detail.go#L103-L106>)
+
+```go
+func (s *Store) ReadOperatorTaskDetail(ctx context.Context, projectID, planID, taskID string) (OperatorTaskDetail, error)
+```
+
+ReadOperatorTaskDetail returns one task's description, scoped to a project so a caller cannot read across projects by guessing ids.
 
 <a name="Store.Ready"></a>
 ### func \(\*Store\) [Ready](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/tasks.go#L264>)

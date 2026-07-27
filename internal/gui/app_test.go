@@ -4,7 +4,6 @@ package gui
 
 import (
 	"context"
-	"encoding/json"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -13,6 +12,7 @@ import (
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/test"
 	"github.com/jbcom/radioactive-ralph/internal/ipc"
+	"github.com/jbcom/radioactive-ralph/internal/observe"
 	"github.com/jbcom/radioactive-ralph/internal/store"
 )
 
@@ -22,10 +22,13 @@ type blockingStatusController struct {
 	statusRelease chan struct{}
 }
 
-func (b *blockingStatusController) Status(ctx context.Context) (ipc.StatusReply, error) {
+func (b *blockingStatusController) Snapshot(
+	ctx context.Context,
+	query observe.SnapshotQuery,
+) (*observe.Snapshot, error) {
 	close(b.statusStarted)
 	<-b.statusRelease
-	return b.fakeController.Status(ctx)
+	return b.fakeController.Snapshot(ctx, query)
 }
 
 type contextCapturingController struct {
@@ -34,9 +37,12 @@ type contextCapturingController struct {
 	once      sync.Once
 }
 
-func (c *contextCapturingController) Status(ctx context.Context) (ipc.StatusReply, error) {
+func (c *contextCapturingController) Snapshot(
+	ctx context.Context,
+	query observe.SnapshotQuery,
+) (*observe.Snapshot, error) {
 	c.once.Do(func() { c.statusCtx <- ctx })
-	return c.fakeController.Status(ctx)
+	return c.fakeController.Snapshot(ctx, query)
 }
 
 type lifecycleRefreshController struct {
@@ -44,12 +50,15 @@ type lifecycleRefreshController struct {
 	refreshEvent chan struct{}
 }
 
-func (c *lifecycleRefreshController) Attach(ctx context.Context, onEvent func(json.RawMessage) error) error {
+func (c *lifecycleRefreshController) Attach(
+	ctx context.Context,
+	onEvent func(ipc.AttachEvent) error,
+) error {
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
 	case <-c.refreshEvent:
-		if err := onEvent(json.RawMessage(`{"kind":"task.done"}`)); err != nil {
+		if err := onEvent(ipc.AttachEvent{Kind: "task.done"}); err != nil {
 			return err
 		}
 		<-ctx.Done()
@@ -64,12 +73,15 @@ type directDrainController struct {
 	lateGatherReleased chan struct{}
 }
 
-func (c *directDrainController) Status(ctx context.Context) (ipc.StatusReply, error) {
+func (c *directDrainController) Snapshot(
+	ctx context.Context,
+	query observe.SnapshotQuery,
+) (*observe.Snapshot, error) {
 	if c.statusCalls.Add(1) == 2 {
 		close(c.lateGatherStarted)
 		<-c.lateGatherReleased
 	}
-	return c.lifecycleRefreshController.Status(ctx)
+	return c.lifecycleRefreshController.Snapshot(ctx, query)
 }
 
 type capturingDesktopApp struct {
@@ -1136,25 +1148,23 @@ func TestRun_RequiresController(t *testing.T) {
 }
 
 // TestEventTriggersRefresh confirms the runAttach refresh gate: lifecycle events
-// trigger a refresh, pure log/heartbeat kinds are skipped, and an undecodable
-// frame defaults to refreshing (fail safe, not silent-stale).
+// trigger a refresh, while pure log/heartbeat kinds are skipped.
 func TestEventTriggersRefresh(t *testing.T) {
 	cases := []struct {
-		raw  string
+		kind string
 		want bool
 	}{
-		{`{"kind":"task.done","task_id":"t1"}`, true},
-		{`{"kind":"task.claimed","task_id":"t1"}`, true},
-		{`{"kind":"plan.imported"}`, true},
-		{`{"kind":"worker.completed"}`, true},
-		{`{"kind":"tick"}`, false},
-		{`{"kind":"task.progress","task_id":"t1"}`, false},
-		{`{not json`, true},        // undecodable → refresh (fail safe)
-		{`{"task_id":"t1"}`, true}, // empty kind → refresh (fail safe)
+		{"task.done", true},
+		{"task.claimed", true},
+		{"plan.imported", true},
+		{"worker.completed", true},
+		{"tick", false},
+		{"task.progress", false},
+		{"", true},
 	}
 	for _, tc := range cases {
-		if got := eventTriggersRefresh([]byte(tc.raw)); got != tc.want {
-			t.Errorf("eventTriggersRefresh(%s) = %v, want %v", tc.raw, got, tc.want)
+		if got := eventTriggersRefresh(ipc.AttachEvent{Kind: tc.kind}); got != tc.want {
+			t.Errorf("eventTriggersRefresh(%q) = %v, want %v", tc.kind, got, tc.want)
 		}
 	}
 }

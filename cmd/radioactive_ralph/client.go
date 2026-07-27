@@ -86,17 +86,11 @@ func runClientMode(ctx context.Context, cmd *cobra.Command) error {
 
 	if !tui.IsTerminal() {
 		defer func() { _ = client.Close() }()
-		return printStatus(ctx, client)
+		return printStatus(ctx, client, projectID)
 	}
 	_ = client.Close()
 
-	st, err := store.Open(ctx, store.Options{DSN: store.DSN(storeDBPath(stateRoot))})
-	if err != nil {
-		return fmt.Errorf("open store: %w", err)
-	}
-	defer func() { _ = st.Close() }()
-
-	source := tui.NewLiveDataSource(stateRoot, st, projectID)
+	source := tui.NewLiveDataSource(stateRoot, projectID)
 	return tui.Run(ctx, source, tui.Options{ProjectID: projectID})
 }
 
@@ -106,17 +100,17 @@ func runClientMode(ctx context.Context, cmd *cobra.Command) error {
 // stdout isn't a terminal (a pipe, a CI job, `go test`), so those paths
 // never block on a Bubble Tea program that has no interactive end to
 // drive it.
-func printStatus(ctx context.Context, client *ipc.Client) error {
+func printStatus(ctx context.Context, client *ipc.Client, projectID string) error {
 	statusCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	status, err := client.Status(statusCtx)
-	if err != nil {
-		return fmt.Errorf("supervisor status: %w", err)
-	}
-
-	fmt.Printf("radioactive_ralph: supervisor is up (pid %d, uptime %s, %d active worker(s))\n",
-		status.PID, status.Uptime.Round(time.Second), status.ActiveWorkers)
-	return nil
+	return runStatusQueryWith(
+		statusCtx,
+		os.Stdout,
+		client,
+		ipc.ObserveSnapshotArgs{ProjectID: projectID},
+		false,
+		false,
+	)
 }
 
 // ensureProjectKnown resolves cwd against the store's accumulated

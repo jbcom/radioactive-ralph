@@ -7,7 +7,6 @@ import (
 	"os"
 
 	"github.com/jbcom/radioactive-ralph/internal/gui"
-	"github.com/jbcom/radioactive-ralph/internal/store"
 	"github.com/jbcom/radioactive-ralph/internal/xdg"
 	"github.com/spf13/cobra"
 )
@@ -39,13 +38,7 @@ func newGUICmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			st, err := store.Open(ctx, store.Options{DSN: store.DSN(storeDBPath(stateRoot))})
-			if err != nil {
-				return fmt.Errorf("open store: %w", err)
-			}
-			defer func() { _ = st.Close() }()
-
-			ctrl := gui.NewLiveController(stateRoot, st, projectID)
+			ctrl := gui.NewLiveController(stateRoot, projectID)
 			return gui.Run(ctx, gui.Opts{Controller: ctrl, ProjectID: projectID})
 		},
 	}

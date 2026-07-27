@@ -8,13 +8,13 @@ import (
 	"strings"
 	"testing"
 	"time"
-	"unicode/utf8"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/test"
 	"fyne.io/fyne/v2/widget"
 	"github.com/jbcom/radioactive-ralph/internal/ipc"
+	"github.com/jbcom/radioactive-ralph/internal/observe"
 	"github.com/jbcom/radioactive-ralph/internal/orch"
 	"github.com/jbcom/radioactive-ralph/internal/store"
 )
@@ -135,7 +135,7 @@ func TestMacro_RendersPlansAndDrillsToMeso(t *testing.T) {
 	if findButton(u.root, "Pause") == nil {
 		t.Error("meso view missing Pause control")
 	}
-	if findButton(u.root, "do the thing") == nil {
+	if findButton(u.root, "t1") == nil {
 		t.Error("meso view did not render the task")
 	}
 }
@@ -534,17 +534,23 @@ func TestMicro_NoKillButtonWhenNoWorker(t *testing.T) {
 }
 
 func TestHeaderText_ConnectedAndWaiting(t *testing.T) {
-	// Connected: leads with the uptime + counters.
-	st := ipc.StatusReply{Uptime: 2 * time.Hour, ActivePlans: 3, ActiveWorkers: 1}
-	got := headerText(st, nil)
-	if !strings.Contains(got, "connected") || !strings.Contains(got, "up 2h0m") {
-		t.Errorf("connected header = %q, want it to lead with connected + uptime", got)
+	summary := observe.Summary{
+		PlanTotal:         3,
+		ActiveWorkerCount: 1,
+		TaskStatusCounts: []observe.StatusCount{{
+			Status: "running",
+			Count:  2,
+		}},
 	}
-	if !strings.Contains(got, "plans 3 active") {
+	got := headerText(summary, time.Now(), nil)
+	if !strings.Contains(got, "connected") || !strings.Contains(got, "observed") {
+		t.Errorf("connected header = %q, want connected + observation time", got)
+	}
+	if !strings.Contains(got, "plans 3") {
 		t.Errorf("connected header = %q, want the plan counter", got)
 	}
 	// Waiting: a Status error → the calm waiting-for-supervisor line, no stale counters.
-	if w := headerText(ipc.StatusReply{}, errors.New("no supervisor")); !strings.Contains(w, "waiting for supervisor") {
+	if w := headerText(observe.Summary{}, time.Time{}, errors.New("no supervisor")); !strings.Contains(w, "waiting for supervisor") {
 		t.Errorf("error header = %q, want the waiting-for-supervisor state", w)
 	}
 }
@@ -632,7 +638,7 @@ func TestMacro_RenderedStructure(t *testing.T) {
 
 	markup := test.RenderToMarkup(u.win.Canvas())
 	for _, want := range []string{
-		"connected · up 1h30m", // live status header
+		"connected · observed", // safe snapshot header
 		"Ship it",              // the plan
 		"2/3",                  // progress
 		"Import plan…",         // import affordance
@@ -670,10 +676,11 @@ func TestMacro_NoImportInProjectAgnosticMode(t *testing.T) {
 	}
 }
 
-func TestHeaderText_LabelsCountersAllProjects(t *testing.T) {
-	got := headerText(ipc.StatusReply{Uptime: time.Minute, ActivePlans: 2}, nil)
-	if !strings.Contains(got, "all projects") {
-		t.Errorf("header should label the supervisor-wide counters 'all projects': %q", got)
+func TestHeaderText_LabelsCountersProjectScoped(t *testing.T) {
+	got := headerText(observe.Summary{PlanTotal: 2}, time.Now(), nil)
+	if !strings.Contains(got, "project:") ||
+		strings.Contains(got, "all projects") {
+		t.Errorf("header should label safe counters as project-scoped: %q", got)
 	}
 }
 
@@ -692,24 +699,16 @@ func TestMacro_ActivityFeedShownWithNoPlans(t *testing.T) {
 	}
 }
 
-func TestTaskLabel_TruncatesOnRuneBoundary(t *testing.T) {
-	// A long description made of multi-byte runes must not be sliced mid-rune
-	// (which would produce invalid UTF-8). 70 emoji → truncated to 57 runes + …
-	long := store.Task{Description: strings.Repeat("🚀", 70)}
-	got := taskLabel(long)
-	if !utf8.ValidString(got) {
-		t.Fatalf("taskLabel produced invalid UTF-8: %q", got)
+func TestTaskLabelUsesSafeIdentityOnly(t *testing.T) {
+	if got := taskLabel(observe.Task{
+		ID:          "t7",
+		CanonicalID: "plan:t7",
+	}); got != "t7" {
+		t.Errorf("taskLabel = %q, want stable task id", got)
 	}
-	if r := []rune(got); len(r) != 58 { // 57 + the ellipsis
-		t.Errorf("truncated label = %d runes, want 58 (57 + ellipsis)", len(r))
-	}
-
-	// A short description is returned unchanged.
-	if got := taskLabel(store.Task{Description: "short"}); got != "short" {
-		t.Errorf("taskLabel(short) = %q, want short", got)
-	}
-	// An empty description falls back to the task id.
-	if got := taskLabel(store.Task{ID: "t7"}); got != "t7" {
-		t.Errorf("taskLabel(empty) = %q, want the id t7", got)
+	if got := taskLabel(observe.Task{
+		CanonicalID: "plan:t8",
+	}); got != "plan:t8" {
+		t.Errorf("taskLabel fallback = %q, want canonical id", got)
 	}
 }

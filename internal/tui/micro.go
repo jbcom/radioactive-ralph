@@ -17,10 +17,12 @@ const microViewportLines = 20
 func renderMicro(m Model) string {
 	var b strings.Builder
 
-	statusStr := statusStyle(string(m.selectedTask.Status)).Render(string(m.selectedTask.Status))
+	statusStr := statusStyle(m.selectedTask.Status).Render(m.selectedTask.Status)
 	b.WriteString(styleHeader.Render(fmt.Sprintf("task: %s", m.selectedTask.ID)))
 	b.WriteString("\n")
-	b.WriteString(styleMuted.Render(m.selectedTask.Description) + "\n")
+	if desc := m.snap.descriptions[m.selectedTask.ID]; desc != "" {
+		b.WriteString(styleMuted.Render(desc) + "\n")
+	}
 	fmt.Fprintf(&b, "status=%s\n\n", statusStr)
 
 	lines := microLines(m)
@@ -47,7 +49,7 @@ func renderMicro(m Model) string {
 // frames into one chronological (oldest-first) list of renderable lines.
 func microLines(m Model) []string {
 	out := make([]string, 0, len(m.snap.taskEvent)+len(m.snap.live))
-	// taskEvent is stored most-recent-first (ListTaskEvents contract);
+	// taskEvent is stored most-recent-first (safe snapshot contract);
 	// reverse it so the whole tail reads oldest -> newest, matching how a
 	// scrolling log is conventionally read.
 	for i := len(m.snap.taskEvent) - 1; i >= 0; i-- {
@@ -56,6 +58,9 @@ func microLines(m Model) []string {
 	}
 	for _, l := range m.snap.live {
 		out = append(out, styleMuted.Render(l.at.Format("15:04:05"))+" "+l.text)
+	}
+	if m.snap.eventsHasMore {
+		out = append([]string{styleMuted.Render("(older events available)")}, out...)
 	}
 	return out
 }
