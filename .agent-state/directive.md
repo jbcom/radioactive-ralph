@@ -438,12 +438,14 @@ tags before deletion: `archive/plan-v2-dag`, `archive/release-022-recovery-scrat
       supervisor_cmd.go and binding_resolver.go remain exempt, both
       supervisor-side by design, so a new entry now means a NEW violation.
 
-- [ ] Five ralph-task metadata fields PARSE AND PERSIST but have ZERO consumers
-      (verified by grep across internal/orch and internal/store): `requires`,
-      `providers`, `differentFrom`, `inputs`, `outputs`. `inputs`/`outputs` are
-      partially consumed — #228 enforces path containment and #229 enforces
-      output reservations. As of PR #247 `requires` IS enforced (see the child
-      item below); `providers` and `differentFrom` still have no readers.
+- [ ] [WAIT] Five ralph-task metadata fields that parsed and persisted with
+      ZERO consumers — FOUR are now enforced, and the fifth cannot be started.
+      `inputs`/`outputs` are consumed by #228 (path containment) and #229
+      (output reservations); `requires` by #247; `providers` by #250. Only
+      `differentFrom` remains, and it is gated on #234/#236 merging (see the
+      child item) rather than on anything doable now. This item closes when
+      those PRs land and differentFrom can be built against a real
+      independence domain.
       docs/guides/plan-format.md tells operators which fields are enforced vs
       merely parsed, so this is honest rather than broken; it is the work those
       fields were added for.
@@ -470,7 +472,7 @@ tags before deletion: `archive/plan-v2-dag`, `archive/release-022-recovery-scrat
             indistinguishable from one this project is simply not bound to; it
             blocks with the allowed list named either way. An all-blank list
             restricts nothing rather than blocking everywhere.
-      - [ ] `differentFrom` — still no reader, and cannot get one yet: it names
+      - [ ] [WAIT] `differentFrom` — still no reader, and cannot get one yet: it names
             tasks that must not share this task's INDEPENDENCE DOMAIN, and no
             dispatch path reads a domain today. The domain arrives with the
             calibration identity work (#234 resolves the invocation, #236
