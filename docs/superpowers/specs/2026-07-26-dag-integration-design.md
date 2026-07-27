@@ -113,7 +113,7 @@ refactor collapses `nil` and `[]` back together.
 
 | Source file / feature | Lands in | Discard |
 |---|---|---|
-| `plan_import.go` → `ImportPlan` / `ImportPlanOpts` / `ErrInvalidPlanContract` | **`internal/orch/plan_import.go` (new, non-versioned)** — justified: main has *no* plan-ingress function today. `cmd/radioactive_ralph/plan_cmd.go` and the IPC path each call `store.CreatePlan` directly. A single validated ingress that materializes tasks + edges is a genuinely new concept. | The `if !parsed.V2 { return o.importLegacyPlan(...) }` fork and `importLegacyPlan` itself. One import path: validate → parse → materialize tasks → `AddDep` every edge. A plan with no `after:` clauses materializes a chain of edges from document order — same function, degenerate input. |
+| `plan_import.go` → `ImportPlan` / `ImportPlanOpts` / `ErrInvalidPlanContract` | **`internal/orch/plan_import.go` (new, non-versioned)** — justified: main has *no* plan-ingress function today. `cmd/radioactive_ralph/plan_cmd.go` and the IPC path each call `store.CreatePlan` directly. A single validated ingress that materializes tasks + edges is a genuinely new concept. | The `if !parsed.V2 { return o.importLegacyPlan(...) }` fork and `importLegacyPlan` itself. One import path: validate → parse → **one `store.CreatePlanGraph` call** carrying every node and edge in a single transaction (see the transactional-import correction below §A.3 — sequential `CreateTask`/`AddDep` calls each autocommit and cannot be atomic). A plan with no `after:` clauses materializes a chain of edges from document order — same function, degenerate input. |
 | `v2_dispatch.go` → `dispatchNextV2` | **`internal/orch/orchestrator.go`, inside the existing `DispatchNext`.** Replace the `plan.DecomposeRefs(parsedPlan, done)` readiness computation with `o.store.Ready(ctx, planID)`. Everything downstream of readiness in `DispatchNext` — the `maxParallel` admission budget, `stepGateBlocks`, `acquireDispatchSlot`, `dispatchReadyStep`, the native-fanout branch — is already graph-agnostic and stays verbatim. | The whole second dispatch loop. Also discard `dispatchNextV2`'s `byID` map built from `parsed.V2Tasks()` on every pass: once edges are persisted at import, dispatch does not need to re-parse markdown to know readiness. |
 | `v2_dispatch.go` → `separatedDomains`, `resolveV2DispatchBinding`, `v2DispatchBinding` | **`internal/orch/calibration_admission.go` (new, non-versioned)** — team-lead brief already blesses calibration as a new concept. These are calibration-lane resolution, not dispatch. | — |
 | `v2_admission.go` → `secureProjectPath`, `resolveThroughExistingAncestor`, `pathContained`, `pathWithinDeclaredOutput`, `validateV2Filesystem`, `validateV2Inputs`, `verifyV2CompletionFilesystem` | **`internal/orch/task_paths.go` (new, non-versioned)** — path containment for task-declared inputs/outputs is a new concept with no existing home. Rename the entry points: `validateTaskFilesystem`, `verifyTaskCompletionFilesystem`. **Must be fixed before landing — see §E.4.** | The `V2`/`v2` in every identifier. |
@@ -213,8 +213,12 @@ type Step struct {
 
 `Plan` and `Group` move unchanged. **No `Plan.V2` field.**
 
-`TaskMetadata` ports from `v2.go` verbatim (field names are already version-free), with
-`After []string` as the edge list.
+`TaskMetadata` ports from `v2.go` with version-free field names, but **`After` is
+`*[]string`, not `[]string`** — see the edge-derivation table in §A.1. A plain slice
+cannot distinguish an omitted `after` (document order applies) from an explicitly empty
+one (an unconditioned root), and collapsing those two would let the same plan import as
+two different graphs. `DependsOn() (ids, stated)` is the accessor; callers branch on
+`stated` rather than inferring intent from emptiness.
 
 ### B.2 SQLite: edges table, not columns — and it already exists
 

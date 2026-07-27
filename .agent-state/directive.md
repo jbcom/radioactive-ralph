@@ -147,17 +147,18 @@ tags before deletion: `archive/plan-v2-dag`, `archive/release-022-recovery-scrat
       "banana"` let dispatch claim a task that then looped forever until stale
       reclamation — now validated at binding resolution via
       `ValidateConfiguredTimeout`.
-- [ ] [WAIT] PR #212 — store concurrent-open safety. 0 failures, 0 unresolved
-      threads; blocked only on the `Package GUI (windows-latest)` required check.
-      Two pre-existing races proven on main and fixed: `journal_mode` as a DSN
-      `_pragma` re-ran a lock-taking pragma on every pooled connection
-      (`store: ping: database is locked`), and `Migrate` read the schema version
-      outside any lock so concurrent first-openers all ran the same DDL
-      (`table projects already exists`). Review then caught a bug the fix
-      introduced — the early return swallowed the newer-schema case, letting an
-      old binary treat a newer schema as already-applied — fixed with
-      `ErrSchemaNewerThanBinary` checked inside the transaction, plus
-      cancellation-aware retries.
+- [x] PR #212 (DAG increment 1) — MERGED as 72b75b5. Two pre-existing races
+      proven on main and fixed: `journal_mode` as a DSN `_pragma` re-ran a
+      lock-taking pragma on every pooled connection, and `Migrate` read the
+      schema version outside any lock so concurrent first-openers all ran the
+      same DDL. Review then caught a bug the fix introduced — the early return
+      swallowed the newer-schema case, letting an old binary treat a newer schema
+      as already-applied — fixed with `ErrSchemaNewerThanBinary` checked inside
+      the transaction, plus cancellation-aware retries. A Windows CI failure I had
+      first misattributed to a pre-existing flake turned out to be mine: the retry
+      loops stacked on the DSN's own `busy_timeout`, so one contended Open could
+      burn >10s of backoff against a 15s test bound. Retries are now a 3-attempt
+      backstop (240ms/Open, 44x reduction).
 - [ ] [WAIT] PR #210 — directive + DAG integration spec. 0 failures, 0 unresolved
       threads, 9 checks still running. Absorbed 9 review findings including four
       spec-consistency fixes: edge derivation is four distinct cases (an OMITTED
