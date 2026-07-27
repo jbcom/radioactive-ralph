@@ -177,8 +177,24 @@ tags before deletion: `archive/plan-v2-dag`, `archive/release-022-recovery-scrat
       cancel them). PROVEN LIVE: an empty second push cancelled the prior run
       (conclusion=cancelled), leaving exactly one in flight.
       Whether that ALONE unblocks macOS is NOT yet known — the queue was still
-      12 CI runs deep right after. If macOS still refuses to start once the
-      superseded runs drain, the remaining cause is upstream. ubuntu, windows, CodeQL, E2E and GUI
+      ~11 CI runs deep after, and #252 only governs its OWN branch until it
+      merges, which it cannot do because the macOS checks it fixes are the ones
+      blocking it. That deadlock is real and is NOT resolvable from here:
+      enforce_admins=true on main, and --admin / force-merge past red CI are
+      forbidden by standing rules regardless.
+      RULED OUT as causes (verified, not assumed):
+        * Bad runner label — `macos-latest` and `macos-15-intel` are BOTH
+          current, checked against actions/runner-images README rather than
+          memory.
+        * Billing/minutes — repo is PUBLIC, so macOS minutes are free and
+          unmetered.
+        * GitHub incident — githubstatus.com reports all systems operational.
+        * Workflow defect — actionlint clean; ubuntu, windows, CodeQL, E2E and
+          GUI (ubuntu) all pass on the same runs.
+      Remaining cause is GitHub-side macOS capacity, which no repo change can
+      fix. Watcher armed that asserts a macOS job actually REACHED in_progress
+      (cancelled/skipped explicitly excluded, after an earlier watcher reported
+      success by matching a run this session had itself cancelled). ubuntu, windows, CodeQL, E2E and GUI
       (ubuntu) all pass. githubstatus.com reports all systems operational and
       the repo is PUBLIC (macOS minutes are free and unmetered), so this is
       GitHub-side runner capacity, not billing and not a workflow defect. Four
