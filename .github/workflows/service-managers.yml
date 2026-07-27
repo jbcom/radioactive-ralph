@@ -6,6 +6,11 @@ on:
 permissions:
   contents: read
 
+# See ci.yml: one in-flight run per PR, and never cancel a main run.
+concurrency:
+  group: service-managers-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   launchd:
     name: launchd smoke (${{ matrix.arch }})

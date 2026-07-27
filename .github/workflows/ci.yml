@@ -9,6 +9,18 @@ on:
 permissions:
   contents: read
 
+# One in-flight run per PR. Every push previously started a full run — four
+# macOS jobs among them — while every superseded run kept its queued slots, so
+# a branch pushed eight times held thirty-two macOS jobs for work already
+# obsolete. With four macOS-only checks in the required set, that starves every
+# other PR of the runners it needs to merge.
+#
+# main is deliberately EXCLUDED from cancellation: its runs gate releases, and
+# `github.run_id` gives each one a unique group so nothing can cancel it.
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   test:
     name: Test (${{ matrix.os }})
