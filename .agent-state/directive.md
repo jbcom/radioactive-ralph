@@ -353,6 +353,20 @@ tags before deletion: `archive/plan-v2-dag`, `archive/release-022-recovery-scrat
 
 ## Rolling improvement queue (directive 0 appends here)
 
+- [ ] Two LOAD-SENSITIVE timing tests, found 2026-07-27, both verified not
+      caused by the branch that surfaced them (each passed 3/3 and 4/4 in
+      isolation on that same branch):
+      `internal/provider/claudesession.TestResumeSendsSentinelOnSpawn` and
+      `internal/provider.TestDeclarativeProgressRenewsStallButTotalDeadlineStillWins`.
+      Both assert which of two racing deadlines fires first, so under
+      full-suite parallel load the host's scheduling decides the outcome
+      instead of the code. Two independent tests failing the same way is a
+      PATTERN, not two flakes. Fix on their own terms — inject a clock, or
+      widen the margin between the two deadlines so scheduling cannot invert
+      them — NOT by weakening them as a ride-along on an unrelated PR. Cost of
+      leaving them: each one eventually fails CI on an unrelated PR and sends
+      someone hunting a bug that is not there, which happened twice today.
+
 Completed this arc (audits → fixes, all shipped):
 - [x] Orchestrator async-dispatch concurrency audit → panic containment #146.
 - [x] Store claim-path audit → approval-gate dead-end #147; LIVE reaper
