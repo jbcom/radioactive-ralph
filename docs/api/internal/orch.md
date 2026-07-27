@@ -18,6 +18,7 @@ Orchestrator reads a plan \(internal/plan\), dispatches workers \(internal/provi
 ## Index
 
 - [Constants](<#constants>)
+- [Variables](<#variables>)
 - [func EnforcementPrompt\(ctx context.Context, a \*agent.Agent, interval time.Duration\)](<#EnforcementPrompt>)
 - [func HandleWatchdogSignal\(sig agent.Signal\) \(shouldKill bool\)](<#HandleWatchdogSignal>)
 - [type Acceptance](<#Acceptance>)
@@ -63,6 +64,14 @@ Orchestrator reads a plan \(internal/plan\), dispatches workers \(internal/provi
 
 ```go
 const EnforcementPromptText = "Stay on task. If you can fan out to subagents or workflows, do. Otherwise, self-check your progress against the assigned step now.\n"
+```
+
+## Variables
+
+<a name="ErrTaskPathEscapesProject"></a>ErrTaskPathEscapesProject reports a declared input or output that does not resolve to a location inside the project root. Callers distinguish it from an I/O fault: containment is a refusal, not a transient failure.
+
+```go
+var ErrTaskPathEscapesProject = errors.New("orch: declared path escapes the project root")
 ```
 
 <a name="EnforcementPrompt"></a>

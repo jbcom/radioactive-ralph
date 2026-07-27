@@ -1,0 +1,191 @@
+package orch
+
+import (
+	"crypto/sha256"
+	"encoding/hex"
+	"errors"
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+	"strings"
+
+	"github.com/jbcom/radioactive-ralph/internal/plan"
+)
+
+// ErrTaskPathEscapesProject reports a declared input or output that does not
+// resolve to a location inside the project root. Callers distinguish it from an
+// I/O fault: containment is a refusal, not a transient failure.
+var ErrTaskPathEscapesProject = errors.New("orch: declared path escapes the project root")
+
+// taskFilesystemDecl is a task's declared filesystem surface, as project-
+// relative paths.
+type taskFilesystemDecl struct {
+	Inputs  []string
+	Outputs []string
+}
+
+// secureProjectPath resolves a project-relative declared path and returns the
+// RESOLVED path, or ErrTaskPathEscapesProject if it lands outside root.
+//
+// Returning the resolved path rather than the candidate is the CWE-22 fix, and
+// it is not a detail. Handing back the candidate gives the caller a string that
+// was never the thing containment approved: the caller then opens the
+// candidate, which re-resolves through whatever the symlink points at at open
+// time. Every caller must operate on what was actually checked.
+//
+// A declared path is always project-relative. An absolute path is refused
+// outright rather than honored, so a plan cannot name /etc/passwd as an
+// "output" and have it treated as in scope.
+//
+// # What this does and does not guarantee
+//
+// This constrains RALPH's own reads and completion checks. It does NOT
+// constrain the provider, which is a separate process performing its own
+// pathname-based open minutes later. A peer task can replace a directory
+// component with a symlink after this returns and before the provider writes;
+// no string this function returns travels into that process's syscalls.
+//
+// So: declared-output containment is best-effort VALIDATION, not a security
+// boundary. Ralph's guarantee is that an escaping output is DETECTED at
+// completion, not that a provider cannot write outside the project root. A real
+// write-side guarantee needs a containment primitive around the provider
+// process — sandbox profile, mount namespace, or a brokered file API — which is
+// a separate design with its own macOS/Linux/Windows matrix.
+func secureProjectPath(root, declared string) (string, error) {
+	if declared == "" {
+		return "", fmt.Errorf("%w: empty path", ErrTaskPathEscapesProject)
+	}
+	if filepath.IsAbs(declared) {
+		return "", fmt.Errorf("%w: %q is absolute; declared paths are project-relative",
+			ErrTaskPathEscapesProject, declared)
+	}
+
+	resolvedRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		// Fail closed: without a resolved root there is nothing to contain
+		// against, so no comparison below would mean anything.
+		return "", fmt.Errorf("%w: resolve project root: %v", ErrTaskPathEscapesProject, err)
+	}
+
+	candidate := filepath.Join(resolvedRoot, filepath.Clean(declared))
+	resolved, err := resolveThroughExistingAncestor(candidate)
+	if err != nil {
+		return "", fmt.Errorf("%w: resolve %q: %v", ErrTaskPathEscapesProject, declared, err)
+	}
+	if !containedIn(resolvedRoot, resolved) {
+		return "", fmt.Errorf("%w: %q resolves to %q", ErrTaskPathEscapesProject, declared, resolved)
+	}
+	return resolved, nil
+}
+
+// resolveThroughExistingAncestor resolves symlinks for a path that may not exist
+// yet — the normal case for a declared OUTPUT, which by definition has not been
+// written at admission time.
+//
+// It resolves the deepest EXISTING ancestor and re-joins the remaining suffix.
+// The suffix is a gap: a symlink planted inside it after this returns is
+// invisible here, which is one of the reasons the doc comment on
+// secureProjectPath calls this validation rather than a boundary. What it does
+// close is the case that actually matters at admission — an ancestor that is
+// ALREADY a symlink pointing out of the project, which is how a declared
+// "build/out.txt" ends up writing to /etc.
+func resolveThroughExistingAncestor(path string) (string, error) {
+	remaining := []string{}
+	current := path
+	for {
+		resolved, err := filepath.EvalSymlinks(current)
+		if err == nil {
+			if len(remaining) == 0 {
+				return resolved, nil
+			}
+			// Re-join in the order the components were peeled off.
+			parts := append([]string{resolved}, reversed(remaining)...)
+			return filepath.Join(parts...), nil
+		}
+		if !os.IsNotExist(err) {
+			return "", err
+		}
+		parent := filepath.Dir(current)
+		if parent == current {
+			// Walked to the filesystem root without finding anything that
+			// exists. Nothing to resolve against; fail closed.
+			return "", fmt.Errorf("no existing ancestor for %q", path)
+		}
+		remaining = append(remaining, filepath.Base(current))
+		current = parent
+	}
+}
+
+func reversed(in []string) []string {
+	out := make([]string, len(in))
+	for i, s := range in {
+		out[len(in)-1-i] = s
+	}
+	return out
+}
+
+// containedIn reports whether path is root itself or lies beneath it. The
+// separator check is what stops "/project-evil" from matching root "/project".
+func containedIn(root, path string) bool {
+	if path == root {
+		return true
+	}
+	return strings.HasPrefix(path, root+string(filepath.Separator))
+}
+
+// hashContainedFile returns the SHA-256 of path, read through the no-follow
+// open and hashed FROM THE FILE HANDLE.
+//
+// Hashing from the handle rather than re-reading the pathname is the point: the
+// bytes hashed are the bytes of the inode that was opened, so a path swapped
+// for a symlink after the open cannot change what was pinned.
+func hashContainedFile(path string) (string, error) {
+	f, err := openContainedFile(path)
+	if err != nil {
+		return "", fmt.Errorf("orch: open %q: %w", path, err)
+	}
+	defer func() { _ = f.Close() }()
+
+	digest := sha256.New()
+	if _, err := io.Copy(digest, f); err != nil {
+		return "", fmt.Errorf("orch: hash %q: %w", path, err)
+	}
+	return hex.EncodeToString(digest.Sum(nil)), nil
+}
+
+// validateTaskFilesystem checks every declared path in one task at admission.
+//
+// This is a FAST FAIL, not the security boundary — see secureProjectPath. It
+// refuses a plan whose declarations are already escaping so the failure lands
+// at import with a clear message, rather than mid-run.
+func validateTaskFilesystem(root string, decl taskFilesystemDecl) error {
+	for _, in := range decl.Inputs {
+		if _, err := secureProjectPath(root, in); err != nil {
+			return fmt.Errorf("declared input %q: %w", in, err)
+		}
+	}
+	for _, out := range decl.Outputs {
+		if _, err := secureProjectPath(root, out); err != nil {
+			return fmt.Errorf("declared output %q: %w", out, err)
+		}
+	}
+	return nil
+}
+
+// declFromMetadata reads a step's declared filesystem surface out of its
+// ralph-task metadata. A step with no metadata declares nothing, which is the
+// common case and correctly yields an empty decl.
+func declFromMetadata(step plan.Step) taskFilesystemDecl {
+	if step.Metadata == nil {
+		return taskFilesystemDecl{}
+	}
+	decl := taskFilesystemDecl{}
+	for _, in := range step.Metadata.Inputs {
+		decl.Inputs = append(decl.Inputs, in.Path)
+	}
+	for _, out := range step.Metadata.Outputs {
+		decl.Outputs = append(decl.Outputs, out.Path)
+	}
+	return decl
+}
