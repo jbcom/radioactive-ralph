@@ -82,11 +82,32 @@ lines) is largely a reimplementation of `CreateTask`+`AddDep` inside one transac
 | `v2.go` → `parseTaskMetadataBlock` (goldmark `FencedCodeBlock` walk for ` ```ralph-task `) | **`internal/plan/parse.go`**, called from the existing `parseLeafSteps` loop, right where `parseStepMarkers` is already called. The `[approval]` marker precedent is exact: main already extracts structured meaning out of a list item there. | — |
 | `v2.go` → `requireMetadataFields`, `ensureJSONEOF`, `validateTaskMetadata`, `validateTaskBinding`, `validateTaskBindingSyntax`, `validateTaskLists`, `validateTaskPaths`, `validateRelativePath`, `uniqueTaskPaths`, `inputPaths`/`outputPaths`, `unique`, `contains` | **`internal/plan/validate.go`** — extends the existing file. `validateRelativePath` is load-bearing (see §E.4). | — |
 | `v2.go` → `V2Task` struct + `(*Plan).V2Tasks()` + `countMetadata` | **`internal/plan/decompose.go`** — main already has `walkGroups(groups, path, fn)` doing the identical document-order flatten. `V2Tasks` is `walkGroups` with a different accumulator. Fold into a `func (p *Plan) Tasks() []TaskRef` built on `walkGroups`. Do **not** add a second walker. | The `V2Task.Order int` field — `walkGroups` already yields document order; the index is the enumeration position. |
-| `v2_validate.go` → `ValidateV2` | **`internal/plan/validate.go`**, merged into `ValidateForImport`. Main's `ValidateForImport` is already the ingress fail-closed gate ("*ingress must fail closed instead of persisting a document whose dispatch order the heuristic grammar cannot determine*") — dependency validation is the same contract, one more clause. | The "metadata is mixed with legacy steps" all-or-nothing rule. Under integration, a step with no `after:` is a step with no incoming edges — a valid DAG node, not a legacy step. Partial annotation must be legal. |
+| `v2_validate.go` → `ValidateV2` | **`internal/plan/validate.go`**, merged into `ValidateForImport`. Main's `ValidateForImport` is already the ingress fail-closed gate ("*ingress must fail closed instead of persisting a document whose dispatch order the heuristic grammar cannot determine*") — dependency validation is the same contract, one more clause. | The "metadata is mixed with legacy steps" all-or-nothing rule. Partial annotation must be legal — but see the edge-derivation table below for exactly what "partial" means, because "no metadata" and "metadata with no `after`" are NOT the same case. |
 | `v2_validate.go` → `dependencyCycle` (DFS colouring, returns the cycle path) | **`internal/plan/validate.go`** as `dependencyCycle`. Worth keeping over the store's `wouldCreateCycle` at the *document* layer because it reports the cycle path for the error message; the store's incremental check stays as the persistence-layer backstop. | — |
 | `v2_validate.go` → `transitivelyDepends`, `validateOutputOverlaps`, `pathsOverlap`, `validateInputOutputOverlaps` | **`internal/plan/validate.go`**. | — |
 | `v2_test.go`, plus new dependency cases | **`internal/plan/validate_test.go`** and **`internal/plan/plan_test.go`** — append to existing files, matching main's layout (`plan_test.go` = parse, `validate_test.go` = validate, `decompose_test.go` = decompose). | `internal/plan/v2_test.go` as a filename. |
 | `parse.go` diff (−75/+... on the branch) | Re-derive from main's current `parse.go`, do not port the branch's version — the branch rewrote the doc comment and moved the types out. Only the `parseTaskMetadataBlock` call site is needed. | The branch's wholesale `parse.go` replacement. |
+
+#### Edge derivation — the three cases are distinct
+
+An earlier draft said both "no `after:` means no incoming edges" and "absent metadata
+falls back to document order." Those disagree, and the same plan could import as two
+different graphs depending on which sentence a reader followed. The rule is:
+
+| Case | Meaning | Edges |
+|---|---|---|
+| **No ` ```ralph-task ` block at all** | An unannotated step. This is every plan that exists today. | **Document order.** Sequential leaf → chain each step to its predecessor; parallel leaf → chain the whole group to the previous group's terminals. This is what makes a linear plan the degenerate DAG and what keeps existing plans importing identically. |
+| **Block present, `after` key omitted** | The author annotated the step (binding, team, inputs/outputs) but said nothing about ordering. | **Document order**, exactly as above. Annotating a step must not silently change its position in the graph — that would make adding a `team:` field reorder execution. |
+| **Block present, `after: []`** | The author explicitly declared no dependencies. | **No incoming edges.** A root node, ready immediately. This is the only way to opt a step out of document order. |
+| **Block present, `after: [ids…]`** | Explicit dependencies. | **Exactly those edges.** Every id must resolve to a task in the same plan; an unknown id fails `ValidateForImport`. Document order is NOT additionally applied — the author has taken ownership of this node's ordering. |
+
+Empty-vs-omitted is therefore load-bearing and the parser must distinguish them: `After`
+is `*[]string`, not `[]string`. `nil` means omitted, non-nil-empty means explicitly none.
+
+Regression test (`internal/plan/validate_test.go`,
+`TestImportPlanMixedAnnotationEdgeDerivation`): one plan containing all four cases,
+asserting the exact edge set. Without it these four rules are prose, and the first
+refactor collapses `nil` and `[]` back together.
 
 ### A.2 `internal/orch`
 
@@ -215,6 +236,16 @@ renamed, comment header rewritten):
 
 - `task_metadata` — PK `(plan_id, task_id)`, FK → `tasks(plan_id, id)` ON DELETE CASCADE.
   Index `task_metadata_team ON task_metadata(plan_id, team_path)`.
+- `task_metadata.group_path TEXT NOT NULL` — the task's leaf-group identity, as the
+  dotted `StepRef.GroupPath` (e.g. `"0.2"`). **Load-bearing for increment 6**, not
+  decoration: `dispatchFanoutGroup` delegates a whole partition to ONE provider under one
+  group heading, so the partition key must be durable. Deriving it at dispatch time would
+  mean re-parsing the markdown, which is exactly the positional dependence the graph walk
+  removes. Populated by `ImportPlan` from the `StepRef` it already holds while walking
+  groups; index `task_metadata_group ON task_metadata(plan_id, group_path)`.
+  Accessor: `GroupPath` on `TaskExecutionMetadata`, plus a
+  `ListTaskGroupPaths(ctx, planID) (map[string]string, error)` so dispatch can partition a
+  ready wave in one query instead of N.
 - `task_input_reservations` — PK `(plan_id, task_id, path)`, `sha256` pin. Index on
   `(plan_id, path)`.
 - `task_output_reservations` — PK `(plan_id, task_id, path)`,
@@ -288,9 +319,13 @@ Orthogonal to the DAG; landing it first keeps it reviewable and de-risks the res
 - **Change**: land the migration; `GetTaskExecutionMetadata`, `RecordTaskProvider`,
   `RecordTaskProviderSession`, `MarkBlockedCapability`, `MarkBlockedInput`. No orchestrator
   changes; nothing writes these tables yet.
+- **Must include `group_path`** (see §B.2) on the `task_metadata` table, on
+  `TaskExecutionMetadata`, and as `ListTaskGroupPaths`. Increment 6's fan-out partitioning
+  depends on it, so it has to exist in the schema from the start — adding it later would
+  mean a second migration for a field the design already requires.
 - **Test**: `go test ./internal/store/ -race` — `TestOpenRunsMigrations`,
   `TestRefuseNewerSchema`, `TestReopenIsIdempotent`, `TestForeignKeyCascade` must pass
-  unchanged.
+  unchanged. New: `TestTaskMetadataRoundTripsGroupPath`.
 - **Depends on**: 1.
 
 ---
@@ -333,19 +368,33 @@ Orthogonal to the DAG; landing it first keeps it reviewable and de-risks the res
 
 The keystone. This is where a linear plan and a DAG plan become one path.
 
-- **Files (~6)**: `internal/orch/plan_import.go` (new),
-  `internal/orch/plan_import_test.go` (new), `internal/orch/verify.go`
+- **Files (~8)**: `internal/orch/plan_import.go` (new),
+  `internal/orch/plan_import_test.go` (new), `internal/store/plans.go`,
+  `internal/store/tasks.go`, `internal/orch/verify.go`
   (`strictAcceptanceJSON` + `Acceptance.RequiredOutputs`),
   `internal/orch/acceptance_derive_test.go`, `cmd/radioactive_ralph/plan_cmd.go`,
   `docs/api/internal/orch.md`
-- **Change**: `ImportPlan` — `plan.ValidateForImport` → `plan.Parse` → per node
-  `store.CreateTask` → per edge `store.AddDep`. Edges come from `Metadata.After` when
-  present; **otherwise from document order** (sequential leaf → chain each step to its
-  predecessor; parallel leaf → chain the whole group to the previous group's terminals).
-  One function, no fork.
+- **Store change (prerequisite, same increment)**: add unexported `createPlanTx`,
+  `createTaskTx`, and `addDepTx` taking `*sql.Tx`; refactor the three public methods into
+  one-statement wrappers over them so the SQL has exactly one owner; add one public
+  `CreatePlanGraph(ctx, opts)` that opens a single transaction and composes them. Cycle
+  checking runs inside `addDepTx`, through the same transaction, so the graph path cannot
+  bypass it — that bypass is precisely what made the source branch's version unsafe.
+- **Change**: `ImportPlan` — `plan.ValidateForImport` → `plan.Parse` → one
+  `store.CreatePlanGraph` call carrying every node and edge. Edges come from
+  `Metadata.After` when present; **otherwise from document order** (sequential leaf →
+  chain each step to its predecessor; parallel leaf → chain the whole group to the
+  previous group's terminals). One function, no fork, one transaction.
+- **Why not sequential calls**: `CreatePlan` (`plans.go:68`), `CreateTask`
+  (`tasks.go:93`), and `AddDep` (`tasks.go:137`) each issue a bare `s.db.ExecContext` and
+  autocommit; no `*Tx` variants exist to compose. Calling them in sequence would leave a
+  `draft` plan plus partial nodes on any mid-import failure or cancellation, and the retry
+  would hit `ErrDuplicateSlug` instead of completing — a plan permanently undispatchable.
 - **Test**: `go test ./internal/orch/ ./internal/store/ -race`; new
   `TestImportPlanLinearPlanMaterializesChainEdges`,
-  `TestImportPlanExplicitAfterMaterializesEdges`, `TestImportPlanRejectsCycle`.
+  `TestImportPlanExplicitAfterMaterializesEdges`, `TestImportPlanRejectsCycle`,
+  and `TestImportPlanFailureLeavesNoPlanRow` (inject a failure after the plan insert;
+  assert zero `plans` rows and that re-importing the same slug succeeds).
 - **Depends on**: 3, 4.
 
 ---
@@ -657,7 +706,7 @@ Amazon Q's flag is real, but **not** dot-dot traversal — I verified the ingres
 `plan.validateRelativePath` (`internal/plan/v2.go`) correctly rejects `..`, `.`,
 non-canonical spellings, absolute paths, and `\`/`:`:
 
-```
+```text
 "a/../../etc/passwd"  -> not a canonical project-relative path
 "sub/../../out"       -> not a canonical project-relative path
 ".."                  -> not a canonical project-relative path
@@ -688,7 +737,7 @@ worker, a peer task in the same plan can plant a symlink in between.
 
 I reproduced the escape end-to-end:
 
-```
+```text
 === VECTOR 1: TOCTOU — validate at import, plant symlink, write at dispatch ===
 import-time output check: returned=".../project/build/out.txt" err=<nil>
   outside/out.txt content="ESCAPED" err=<nil>  -> ESCAPE=true
