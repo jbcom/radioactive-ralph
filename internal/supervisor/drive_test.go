@@ -142,3 +142,58 @@ func TestDriveHandlers_ValidateEmptyArgs(t *testing.T) {
 		t.Errorf("worker-kill empty worker_id err = %v, want CodeInvalidArgs", err)
 	}
 }
+
+// TestHandlePlanImportMaterializesTheGraph is the P1 that mattered most: the
+// graph ingress existed but nothing user-facing reached it. The supervisor's
+// plan-import handler called CreatePlan + SetPlanStatus directly, so a plan
+// whose steps declare `after:` edges imported with NO edges and NO metadata —
+// user-authored ordering was silently discarded and the plan ran in document
+// order instead.
+func TestHandlePlanImportMaterializesTheGraph(t *testing.T) {
+	sup := newTestSupervisor(t, nil)
+	ctx := context.Background()
+	projectID, err := sup.store.CreateProject(ctx, "graphproj",
+		[]store.Fingerprint{{Kind: store.FingerprintKindAbsPath, Value: t.TempDir()}})
+	if err != nil {
+		t.Fatalf("CreateProject: %v", err)
+	}
+
+	markdown := "# Graph\n\n" +
+		"1. prepare\n\n" +
+		"   ```ralph-task\n   {\"id\": \"prepare\"}\n   ```\n\n" +
+		"2. depends on prepare\n\n" +
+		"   ```ralph-task\n   {\"id\": \"after-prepare\", \"after\": [\"prepare\"]}\n   ```\n"
+
+	reply, importErr := sup.HandlePlanImport(ctx, ipc.PlanImportArgs{
+		Project: projectID, Markdown: markdown, Title: "Graph",
+	})
+	if importErr != nil {
+		t.Fatalf("HandlePlanImport: %v", importErr)
+	}
+
+	tasks, err := sup.store.ListTasks(ctx, reply.PlanID, nil)
+	if err != nil {
+		t.Fatalf("ListTasks: %v", err)
+	}
+	if len(tasks) != 2 {
+		t.Fatalf("got %d tasks, want 2 — the import must materialize the graph, "+
+			"not just store the markdown", len(tasks))
+	}
+	byID := map[string]bool{}
+	for _, task := range tasks {
+		byID[task.ID] = true
+	}
+	if !byID["prepare"] || !byID["after-prepare"] {
+		t.Fatalf("task ids = %v, want the EXPLICIT graph ids from the plan", byID)
+	}
+
+	// The edge must be real: only the root is ready.
+	ready, err := sup.store.Ready(ctx, reply.PlanID)
+	if err != nil {
+		t.Fatalf("Ready: %v", err)
+	}
+	if len(ready) != 1 || ready[0].ID != "prepare" {
+		t.Fatalf("ready = %v, want exactly [prepare] — the declared edge was dropped",
+			ready)
+	}
+}
