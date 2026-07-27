@@ -35,9 +35,17 @@ the edges had already proven both were ready.
 ## Grouping decides what fan-out may take
 
 Some providers can fan out internally: one invocation manages its own
-sub-agents. When that happens, Ralph hands the provider a **whole leaf
-group** — one heading, one resolved binding, one turn — rather than spawning
-one worker per step.
+sub-agents. When that happens, Ralph hands the provider the **claimable
+members of one leaf group** — one heading, one resolved binding, one turn —
+rather than spawning one worker per step.
+
+"Claimable" rather than "whole" is deliberate. A member held behind the
+approval gate, or one whose declared output is already reserved by a sibling
+in the same wave, is skipped and the turn carries the rest. Exclusive outputs
+are the common case: two ready steps in one group declaring the same output
+cannot both run, so the group arrives at the provider partially. A design
+that promised the whole group would have to choose between breaking that
+guarantee and deadlocking the group behind one unclaimable member.
 
 That makes the *leaf group* the unit of fan-out, which is why every ready
 task carries its persisted `group_path`. Deciding to fan out because
@@ -89,6 +97,14 @@ not hide the other ready work behind it.
 
 Concurrency limits are an admission budget, not a guarantee of parallelism.
 A ready, unreserved, ungated task still waits for a dispatch slot, a
-resolved binding, and any spend cap on its provider. Those are separate
-gates with separate reasons, and each reports its own refusal rather than
-silently returning "nothing ready".
+resolved binding, and any spend cap on its provider.
+
+Those gates do NOT report uniformly today. A spend-cap refusal emits
+`worker.admission_refused` with its reason; a capability or input block
+records a durable status an operator can read. **Slot saturation reports
+nothing**: both the fan-out and per-step paths simply return or break when
+`acquireDispatchSlot` fails, so `DispatchNext` returns zero with no event
+and no error. To an operator that is indistinguishable from "nothing was
+ready" — the two states that most need telling apart, since one clears on
+its own and the other may not. Making saturation observable is open work,
+not a property of the current design.
