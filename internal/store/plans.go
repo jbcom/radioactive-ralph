@@ -59,13 +59,19 @@ var ErrPlanNotFound = errors.New("store: plan not found")
 // CreatePlan inserts a fresh plan in draft status and returns the newly
 // generated UUID v7 id.
 func (s *Store) CreatePlan(ctx context.Context, o CreatePlanOpts) (string, error) {
+	return s.createPlanOn(ctx, s.db, o)
+}
+
+// createPlanOn inserts a plan through any executor, so the standalone and
+// transactional paths share one statement rather than a hand-copied twin.
+func (s *Store) createPlanOn(ctx context.Context, ex execer, o CreatePlanOpts) (string, error) {
 	if o.ProjectID == "" || o.Slug == "" || o.Title == "" {
 		return "", fmt.Errorf("store: ProjectID, Slug, and Title required")
 	}
 	id := s.uuid()
 	now := s.clock.Now().UTC().Format(time.RFC3339)
 
-	_, err := s.db.ExecContext(ctx, `
+	_, err := ex.ExecContext(ctx, `
 		INSERT INTO plans(
 			id, project_id, slug, title, status, source_markdown,
 			created_at, updated_at, tags_json
@@ -103,7 +109,15 @@ func (s *Store) GetPlan(ctx context.Context, id string) (*Plan, error) {
 
 // SetPlanStatus updates the plan's status column.
 func (s *Store) SetPlanStatus(ctx context.Context, id string, status PlanStatus) error {
-	res, err := s.db.ExecContext(ctx, `UPDATE plans SET status = ? WHERE id = ?`, string(status), id)
+	return s.setPlanStatusOn(ctx, s.db, id, status)
+}
+
+// setPlanStatusOn updates status through any executor, so a graph import can
+// activate the plan in the same transaction that created it — a freshly
+// imported plan is meant to run, and a separate activate call could fail on its
+// own and leave it stranded in draft.
+func (s *Store) setPlanStatusOn(ctx context.Context, ex execer, id string, status PlanStatus) error {
+	res, err := ex.ExecContext(ctx, `UPDATE plans SET status = ? WHERE id = ?`, string(status), id)
 	if err != nil {
 		return fmt.Errorf("store: update status: %w", err)
 	}

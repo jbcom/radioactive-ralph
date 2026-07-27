@@ -100,6 +100,11 @@ var ErrDuplicateTask = errors.New("store: task with this id already exists in th
 // 'ready_pending_approval' when o.RequiresApproval is set (held behind the
 // approval gate). Callers wire dependencies via AddDep.
 func (s *Store) CreateTask(ctx context.Context, o CreateTaskOpts) error {
+	return s.createTaskOn(ctx, s.db, o)
+}
+
+// createTaskOn inserts a task through any executor. See createPlanOn.
+func (s *Store) createTaskOn(ctx context.Context, ex execer, o CreateTaskOpts) error {
 	if o.PlanID == "" || o.ID == "" || o.Description == "" {
 		return fmt.Errorf("store: PlanID, ID, and Description required")
 	}
@@ -126,7 +131,7 @@ func (s *Store) CreateTask(ctx context.Context, o CreateTaskOpts) error {
 		status = string(TaskStatusReadyPendingApproval)
 	}
 
-	_, err := s.db.ExecContext(ctx, `
+	_, err := ex.ExecContext(ctx, `
 		INSERT INTO tasks(
 			id, plan_id, description, parallel_group, sequence_ordinal,
 			acceptance_json, status, parent_task_id
@@ -144,18 +149,31 @@ func (s *Store) CreateTask(ctx context.Context, o CreateTaskOpts) error {
 
 // AddDep wires task → depends_on for the same plan. Rejects cycles.
 func (s *Store) AddDep(ctx context.Context, planID, taskID, dependsOn string) error {
+	return s.addDepOn(ctx, s.db, planID, taskID, dependsOn)
+}
+
+// addDepOn inserts one edge through any executor, running the cycle check on
+// the SAME executor.
+//
+// That last part is the whole point. When this runs inside a graph-import
+// transaction, the check must see the edges that transaction has already
+// inserted but not yet committed — otherwise a cycle formed entirely within one
+// import would pass. The source branch's CreatePlanGraph INSERTed into
+// task_deps directly and skipped the check altogether, which is what made it
+// unsafe to reuse.
+func (s *Store) addDepOn(ctx context.Context, ex execer, planID, taskID, dependsOn string) error {
 	if taskID == dependsOn {
 		return fmt.Errorf("store: task cannot depend on itself")
 	}
 	// Reject cycles by checking: does `depends_on` transitively depend on
 	// `task_id`? If yes, adding this edge creates a cycle.
-	if wouldCycle, err := s.wouldCreateCycle(ctx, planID, taskID, dependsOn); err != nil {
+	if wouldCycle, err := s.wouldCreateCycleOn(ctx, ex, planID, taskID, dependsOn); err != nil {
 		return fmt.Errorf("store: cycle check: %w", err)
 	} else if wouldCycle {
 		return fmt.Errorf("store: adding dep %s → %s would create a cycle", taskID, dependsOn)
 	}
 
-	_, err := s.db.ExecContext(ctx,
+	_, err := ex.ExecContext(ctx,
 		`INSERT INTO task_deps(plan_id, task_id, depends_on) VALUES (?, ?, ?)`,
 		planID, taskID, dependsOn)
 	if err != nil {
@@ -166,7 +184,9 @@ func (s *Store) AddDep(ctx context.Context, planID, taskID, dependsOn string) er
 
 // wouldCreateCycle returns true if dep (task→depends_on) would make the
 // graph cyclic. DFS from depends_on; if we can reach task, cycle.
-func (s *Store) wouldCreateCycle(ctx context.Context, planID, task, dep string) (bool, error) {
+// wouldCreateCycleOn walks the edge graph through the given executor so an
+// in-transaction check sees that transaction's uncommitted edges.
+func (s *Store) wouldCreateCycleOn(ctx context.Context, ex execer, planID, task, dep string) (bool, error) {
 	visited := map[string]bool{}
 	var visit func(node string) (bool, error)
 	visit = func(node string) (bool, error) {
@@ -177,7 +197,7 @@ func (s *Store) wouldCreateCycle(ctx context.Context, planID, task, dep string) 
 			return false, nil
 		}
 		visited[node] = true
-		rows, err := s.db.QueryContext(ctx,
+		rows, err := ex.QueryContext(ctx,
 			`SELECT depends_on FROM task_deps WHERE plan_id = ? AND task_id = ?`,
 			planID, node)
 		if err != nil {

@@ -28,6 +28,18 @@ func (r StepRef) ID() string {
 	return strings.Join(parts, ".")
 }
 
+// GroupID is the dotted path of the step's LEAF GROUP, without the step index
+// — "0.2" for a step at index 3 of group 0.2. Dispatch partitions a ready wave
+// by this before native fan-out, since fan-out delegates a whole partition to
+// one provider under one group heading.
+func (r StepRef) GroupID() string {
+	parts := make([]string, 0, len(r.GroupPath))
+	for _, p := range r.GroupPath {
+		parts = append(parts, strconv.Itoa(p))
+	}
+	return strings.Join(parts, ".")
+}
+
 // StepIDs returns the stable ID (see StepRef.ID) for every step in the
 // plan, in document order. This is the full universe of valid keys for a
 // done-set map, and is useful for validating/seeding one.

@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/jbcom/radioactive-ralph/internal/ipc"
+	"github.com/jbcom/radioactive-ralph/internal/orch"
 	"github.com/jbcom/radioactive-ralph/internal/plan"
 	"github.com/jbcom/radioactive-ralph/internal/store"
 	"github.com/jbcom/radioactive-ralph/internal/supervisor"
@@ -113,20 +114,23 @@ func runPlanImport(ctx context.Context, cmd *cobra.Command, planPath, slug strin
 	}
 	defer func() { _ = st.Close() }()
 
-	planID, err := st.CreatePlan(ctx, store.CreatePlanOpts{
-		ProjectID:      projectID,
-		Slug:           slug,
-		Title:          title,
-		SourceMarkdown: markdown,
-	})
-	if err != nil {
-		return fmt.Errorf("create plan: %w", err)
-	}
-	// A freshly imported plan is meant to run: activate it so the
-	// supervisor's periodic dispatch loop picks it up (ListPlans with an
-	// empty filter returns active+paused plans).
-	if err := st.SetPlanStatus(ctx, planID, store.PlanStatusActive); err != nil {
-		return fmt.Errorf("activate plan: %w", err)
+	// The offline fallback must produce the SAME plan the supervisor would.
+	// CreatePlan + SetPlanStatus stores the markdown and nothing else, so a
+	// plan whose steps declare `after:` edges would import with none of them —
+	// an offline import and an online import of one file would run in different
+	// orders. ImportPlan materializes tasks, edges, metadata, and derived
+	// acceptance in one transaction, and activates on success.
+	//
+	// A freshly imported plan is meant to run: it lands active so the
+	// supervisor's periodic dispatch loop picks it up once one is started.
+	o := orch.New(st)
+	if _, err := o.ImportPlan(ctx, orch.ImportPlanOpts{
+		ProjectID: projectID,
+		Slug:      slug,
+		Title:     title,
+		Markdown:  markdown,
+	}); err != nil {
+		return fmt.Errorf("import plan: %w", err)
 	}
 
 	fmt.Printf("radioactive_ralph: imported plan %q (%s) — active\n", title, slug)

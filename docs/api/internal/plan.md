@@ -37,6 +37,7 @@ Plans are markdown documents parsed with goldmark into an AST and decomposed heu
 - [type Step](<#Step>)
   - [func Decompose\(p \*Plan, done map\[string\]bool\) \(readyNow \[\]Step, parallel bool\)](<#Decompose>)
 - [type StepRef](<#StepRef>)
+  - [func \(r StepRef\) GroupID\(\) string](<#StepRef.GroupID>)
   - [func \(r StepRef\) ID\(\) string](<#StepRef.ID>)
 - [type TaskBinding](<#TaskBinding>)
 - [type TaskInput](<#TaskInput>)
@@ -48,7 +49,7 @@ Plans are markdown documents parsed with goldmark into an AST and decomposed heu
 
 
 <a name="DecomposeRefs"></a>
-## func [DecomposeRefs](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plan/decompose.go#L142>)
+## func [DecomposeRefs](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plan/decompose.go#L154>)
 
 ```go
 func DecomposeRefs(p *Plan, done map[string]bool) (readyNow []Step, refs []StepRef, parallel bool)
@@ -136,7 +137,7 @@ func Parse(md []byte) (*Plan, error)
 Parse parses plan markdown into a Plan. Parse uses goldmark's core parser only \(block \+ inline\); GFM extensions \(tables, strikethrough, autolinks, task\-list checkboxes, etc.\) are deliberately not enabled \-\- the plan grammar is intentionally small.
 
 <a name="Plan.StepAt"></a>
-### func \(\*Plan\) [StepAt](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plan/decompose.go#L153>)
+### func \(\*Plan\) [StepAt](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plan/decompose.go#L165>)
 
 ```go
 func (p *Plan) StepAt(ref StepRef) (Step, Group, error)
@@ -145,7 +146,7 @@ func (p *Plan) StepAt(ref StepRef) (Step, Group, error)
 StepAt resolves a StepRef back to its Step and owning Group, primarily for callers that received a StepRef from DecomposeRefs and need to re\-fetch the current Step/Group \(e.g. after a re\-parse\).
 
 <a name="Plan.StepIDs"></a>
-### func \(\*Plan\) [StepIDs](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plan/decompose.go#L34>)
+### func \(\*Plan\) [StepIDs](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plan/decompose.go#L46>)
 
 ```go
 func (p *Plan) StepIDs() []string
@@ -223,7 +224,7 @@ type Step struct {
 ```
 
 <a name="Decompose"></a>
-### func [Decompose](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plan/decompose.go#L92>)
+### func [Decompose](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plan/decompose.go#L104>)
 
 ```go
 func Decompose(p *Plan, done map[string]bool) (readyNow []Step, parallel bool)
@@ -249,6 +250,15 @@ type StepRef struct {
     Index     int
 }
 ```
+
+<a name="StepRef.GroupID"></a>
+### func \(StepRef\) [GroupID](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plan/decompose.go#L35>)
+
+```go
+func (r StepRef) GroupID() string
+```
+
+GroupID is the dotted path of the step's LEAF GROUP, without the step index — "0.2" for a step at index 3 of group 0.2. Dispatch partitions a ready wave by this before native fan\-out, since fan\-out delegates a whole partition to one provider under one group heading.
 
 <a name="StepRef.ID"></a>
 ### func \(StepRef\) [ID](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plan/decompose.go#L22>)
