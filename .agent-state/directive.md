@@ -161,13 +161,11 @@ tags before deletion: `archive/plan-v2-dag`, `archive/release-022-recovery-scrat
       backstop (240ms/Open, 44x reduction).
 - [x] PR #210 — MERGED. Directive re-armed + the DAG integration spec landed.
 - [x] DAG increment 4 (#217) — MERGED, released v0.23.0.
-- [ ] [WAIT] Sixteen PRs open (220, 222, 224, 225, 226, 228, 229, 230, 233,
-      234, 235, 236, 237, 238, 239, 240); MERGED in this arc: #215, #216, #221,
-      #231, #232, plus releases through v0.26.0. Remaining DAG chain: **#225 -> #228 -> #229**
-      (increments 6, 7, 8). Independents: #220 (dumb client), #222 (directive),
-      #224 (winio Stop), #226 (packaging flake), #230 (claude classification),
-      #233 (#204 config surface), #234 (increment 9 invocation), #235 (provider
-      CLI flags), #236 (increment 10 calibration store), #232 (release).
+- [ ] [WAIT] Thirteen PRs open (222, 224, 225, 228, 229, 233, 234, 236, 237,
+      238, 239, 240, 245). MERGED in this arc: #215, #216, #219, #220, #221,
+      #226, #230, #231, #232, #235, plus releases through v0.29.1. Worktrees
+      reconciled 2026-07-28: 23 -> 13, every one current with main
+      (behind_main=0), and remotes renamed so origin=GitHub.
       Reconciliation lesson (2026-07-27): after a stacked parent squash-merges,
       REBUILD the child from main and cherry-pick only its unique commits —
       never rebase it. Enumerate the unique set EXPLICITLY with
