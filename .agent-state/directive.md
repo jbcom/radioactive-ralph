@@ -213,7 +213,9 @@ tags before deletion: `archive/plan-v2-dag`, `archive/release-022-recovery-scrat
       Gitea-side pull mirror — but if the flow is reversed, renaming is not
       enough. (2) rename in all 8 worktrees or only the primary checkout?
 
-- [ ] Issue #204 remainder — after #219 + #220 land, three criteria are left:
+- [ ] [WAIT] Issue #204 remainder — 2 of 3 criteria DONE; the third is split,
+      part 1 shipped and part 2 gated on #220 merging. Nothing actionable here
+      until that lands.
       1. IN PROGRESS. The config surface shipped (branch
          feat/config-apply-over-ipc, PR pending — GitHub GraphQL rate limit was
          exhausted at the time, resets 05:38Z). vconfig.ConfigSource is the
