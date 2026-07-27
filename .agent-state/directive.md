@@ -411,6 +411,25 @@ tags before deletion: `archive/plan-v2-dag`, `archive/release-022-recovery-scrat
       `differentFrom` at all. docs/guides/plan-format.md already tells operators
       which fields are enforced vs merely parsed, so this is honest rather than
       broken; it is the work those fields were added for.
+      - [x] `requires` — ENFORCED (PR #247). Closed capability vocabulary
+            (`native_fanout`, `resume`, `append_system_prompt`) derived from
+            BindingConfig rather than a per-provider table, checked in
+            stepGateBlocks before any session/worker/slot is allocated. An
+            unknown key is refused DISTINCTLY from an unmet one: a typo cannot
+            be satisfied by any binding, so passing it through would run the
+            task on a provider chosen by accident. Blocks visibly via
+            MarkBlockedCapability + a task.blocked_capability event.
+            Surfaced and fixed a LATENT HOLE: nothing in production ever wrote
+            a task_metadata row (PutTaskMetadata had zero non-test callers), so
+            BOTH MarkBlockedCapability and MarkBlockedInput — which record
+            their reason there and fail closed without it — were unreachable
+            for every dispatch-materialized task. #228 depends on the same
+            primitive. Metadata is now written as part of materializing a task.
+      - [ ] `providers` / `differentFrom` — still no readers. These express
+            independence constraints (run this task on a provider DIFFERENT
+            from the one that produced the artifact it reviews), which needs
+            the calibration identity work in #234/#236 to have a domain to
+            compare against. Sequence after those merge, not before.
 
 - [x] Two LOAD-SENSITIVE timing tests — FIXED (PR #237). Both verified not
       caused by the branch that surfaced them (each passed 3/3 and 4/4 in
