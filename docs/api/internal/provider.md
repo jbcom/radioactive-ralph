@@ -17,7 +17,6 @@ Package provider adapts configured CLI backends into radioactive\_ralph's provid
 
 - [Constants](<#constants>)
 - [Variables](<#variables>)
-- [func ClaudeFailureRetryable\(err error\) bool](<#ClaudeFailureRetryable>)
 - [func DefaultWatchdogConfig\(\) agent.WatchdogConfig](<#DefaultWatchdogConfig>)
 - [func StreamJSONWatchdogConfig\(\) agent.WatchdogConfig](<#StreamJSONWatchdogConfig>)
 - [func ValidateBinding\(binding Binding\) error](<#ValidateBinding>)
@@ -40,6 +39,8 @@ Package provider adapts configured CLI backends into radioactive\_ralph's provid
 - [type Failure](<#Failure>)
   - [func ClassifyFailure\(err error\) Failure](<#ClassifyFailure>)
   - [func \(f Failure\) Error\(\) string](<#Failure.Error>)
+  - [func \(f Failure\) RetryBudget\(configured int\) int](<#Failure.RetryBudget>)
+  - [func \(f Failure\) Retryable\(\) bool](<#Failure.Retryable>)
   - [func \(f Failure\) Unwrap\(\) error](<#Failure.Unwrap>)
 - [type FailureCategory](<#FailureCategory>)
 - [type File](<#File>)
@@ -219,17 +220,6 @@ var ErrProviderStalled = errors.New("provider: progress stalled")
 ```go
 var ErrStreamJSONLineTooLong = errors.New("provider: stream-json line exceeded 16MiB limit")
 ```
-
-<a name="ClaudeFailureRetryable"></a>
-## func [ClaudeFailureRetryable](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/claude.go#L72>)
-
-```go
-func ClaudeFailureRetryable(err error) bool
-```
-
-ClaudeFailureRetryable reports whether a claude failure category is worth retrying.
-
-The split matters operationally. Retrying an invalid credential burns the retry budget and DELAYS the operator seeing the real problem, because a key does not fix itself; a 429 or a 503, by contrast, is precisely what retries are for.
 
 <a name="DefaultWatchdogConfig"></a>
 ## func [DefaultWatchdogConfig](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/watchdog.go#L83>)
@@ -427,7 +417,7 @@ type ClaudeRunner struct{}
 ```
 
 <a name="ClaudeRunner.Run"></a>
-### func \(ClaudeRunner\) [Run](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/claude.go#L87>)
+### func \(ClaudeRunner\) [Run](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/claude.go#L70>)
 
 ```go
 func (ClaudeRunner) Run(ctx context.Context, binding Binding, req Request) (Result, error)
@@ -487,7 +477,7 @@ type Failure struct {
 ```
 
 <a name="ClassifyFailure"></a>
-### func [ClassifyFailure](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/failure.go#L57>)
+### func [ClassifyFailure](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/failure.go#L97>)
 
 ```go
 func ClassifyFailure(err error) Failure
@@ -503,6 +493,28 @@ func (f Failure) Error() string
 ```
 
 
+
+<a name="Failure.RetryBudget"></a>
+### func \(Failure\) [RetryBudget](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/failure.go#L88>)
+
+```go
+func (f Failure) RetryBudget(configured int) int
+```
+
+RetryBudget returns the retry count dispatch should hand to the store for this failure: the caller's budget when the failure is worth retrying, and ZERO when it is not, which makes the task fail terminally on this attempt.
+
+<a name="Failure.Retryable"></a>
+### func \(Failure\) [Retryable](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/failure.go#L65>)
+
+```go
+func (f Failure) Retryable() bool
+```
+
+Retryable reports whether re\-running the turn could plausibly succeed.
+
+This lives on the classification rather than in dispatch because the answer is a property of WHY the turn failed, and every dispatch path needs the same answer. The split is operational: retrying an invalid credential burns the retry budget on turns that cannot succeed and DELAYS the operator seeing a terminal error, while a 429 or a 503 is precisely what retries exist for.
+
+The default is RETRYABLE, matching the pre\-classification behavior — a category nobody has reasoned about should not silently become terminal.
 
 <a name="Failure.Unwrap"></a>
 ### func \(Failure\) [Unwrap](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/failure.go#L53>)

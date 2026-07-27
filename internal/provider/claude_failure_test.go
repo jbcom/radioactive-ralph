@@ -139,28 +139,6 @@ func TestClaudeGenuineSuccessIsStillSuccess(t *testing.T) {
 	}
 }
 
-// TestClaudeAuthCategoryIsNotRetryable ties classification to behavior. An
-// invalid key does not fix itself, so retrying burns the retry budget and
-// delays the operator seeing the real problem — whereas a 429 or 503 is exactly
-// what retries are for.
-func TestClaudeAuthCategoryIsNotRetryable(t *testing.T) {
-	if ClaudeFailureRetryable(ErrClaudeAuthentication) {
-		t.Error("authentication failure marked retryable; an invalid key does not fix itself")
-	}
-	if ClaudeFailureRetryable(ErrClaudeModelAccess) {
-		t.Error("model-access failure marked retryable")
-	}
-	if ClaudeFailureRetryable(ErrClaudeInvalidRequest) {
-		t.Error("invalid-request failure marked retryable")
-	}
-	if !ClaudeFailureRetryable(ErrClaudeRateLimit) {
-		t.Error("rate limit marked non-retryable; waiting is exactly the remedy")
-	}
-	if !ClaudeFailureRetryable(ErrClaudeServiceUnavailable) {
-		t.Error("service-unavailable marked non-retryable")
-	}
-}
-
 // TestClaudeCategoriesReachTheDurableFailureSurface is what makes the
 // classification useful rather than decorative. ClassifyFailure produces the
 // category persisted on the task and shown to an operator; if the new
@@ -200,5 +178,49 @@ func TestClaudeAuthFailureSummaryTellsTheOperatorWhatToDo(t *testing.T) {
 	got := ClassifyFailure(ErrClaudeAuthentication)
 	if !strings.Contains(got.Summary, "authentication") {
 		t.Fatalf("summary = %q, want it to name authentication", got.Summary)
+	}
+}
+
+// TestFailureRetryableCoversEveryCategory moves the retry decision onto the
+// durable Failure type, so it is a property of the classification rather than
+// a claude-specific helper that dispatch has to remember to call.
+//
+// The split is operational, not cosmetic: retrying an invalid credential burns
+// the retry budget on turns that cannot succeed and DELAYS the operator seeing
+// a terminal error, while a 429 or 503 is precisely what retries exist for.
+func TestFailureRetryableCoversEveryCategory(t *testing.T) {
+	for _, tc := range []struct {
+		category FailureCategory
+		want     bool
+		why      string
+	}{
+		{FailureProviderAuth, false, "a credential does not fix itself"},
+		{FailureProviderRejected, false, "the provider rejected the request as-is"},
+		{FailureProviderThrottled, true, "waiting is the remedy"},
+		{FailureProviderUnavailable, true, "upstream faults are transient"},
+		{FailureStall, true, "a stalled turn may progress on a retry"},
+		{FailureTurnDeadline, true, "a deadline may be met on a retry"},
+		{FailureInteractivePrompt, false, "the CLI wants an operator, not another turn"},
+		{FailureOutputLimit, false, "the same turn will exceed the same ceiling"},
+	} {
+		t.Run(string(tc.category), func(t *testing.T) {
+			if got := (Failure{Category: tc.category}).Retryable(); got != tc.want {
+				t.Fatalf("Retryable() = %v, want %v — %s", got, tc.want, tc.why)
+			}
+		})
+	}
+}
+
+// TestFailureRetryBudgetIsZeroForTerminalCategories is the number dispatch
+// actually passes to MarkFailedWithPayload. A terminal category must yield a
+// budget of ZERO so the task fails immediately instead of launching three more
+// turns that cannot succeed.
+func TestFailureRetryBudgetIsZeroForTerminalCategories(t *testing.T) {
+	if got := (Failure{Category: FailureProviderAuth}).RetryBudget(3); got != 0 {
+		t.Fatalf("auth retry budget = %d, want 0 — three more turns against a bad "+
+			"credential only delay the terminal error", got)
+	}
+	if got := (Failure{Category: FailureProviderThrottled}).RetryBudget(3); got != 3 {
+		t.Fatalf("throttled retry budget = %d, want the caller's 3", got)
 	}
 }

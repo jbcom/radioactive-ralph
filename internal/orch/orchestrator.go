@@ -150,6 +150,11 @@ type Orchestrator struct {
 // window.
 const workerHeartbeatInterval = 20 * time.Second
 
+// defaultTurnRetries is how many times a RETRYABLE provider failure is
+// re-dispatched before the task fails terminally. A non-retryable failure gets
+// zero regardless — see provider.Failure.RetryBudget.
+const defaultTurnRetries = 3
+
 // runWithHeartbeat runs fn (a provider turn) while periodically refreshing
 // workerID's store heartbeat — AND its owning session's heartbeat
 // (HeartbeatWorkerAndSession) — so the supervisor's reaper does not mistake a
@@ -1132,9 +1137,13 @@ func (o *Orchestrator) dispatchWorker(ctx context.Context, projectID, projectDir
 		// mid-run and possibly reassigned the task) is benign — the current
 		// owner keeps its work; we just release this now-defunct worker.
 		failure := provider.ClassifyFailure(runErr)
+		// Honor the classification's retry policy. A terminal category yields a
+		// budget of ZERO, so an invalid credential or a rejected request fails
+		// now instead of launching three more turns that cannot succeed and
+		// delaying the operator seeing the real problem.
 		if _, err := o.store.MarkFailedWithPayload(persistCtx, planID, ds.task.ID, sessionID, store.EventPayload{
 			Reason: failure.Summary, FailureCategory: string(failure.Category),
-		}, 3); err != nil && !errors.Is(err, store.ErrTaskNotOwnedRunning) {
+		}, failure.RetryBudget(defaultTurnRetries)); err != nil && !errors.Is(err, store.ErrTaskNotOwnedRunning) {
 			return fmt.Errorf("orch: mark failed after run error: %w", err)
 		}
 		_ = o.store.ClearWorkerTask(persistCtx, workerID, "crashed")
@@ -1382,7 +1391,7 @@ func (o *Orchestrator) runFanoutGroup(ctx context.Context, projectID, projectDir
 			// don't stomp the new owner (see MarkFailed's owner guard).
 			if _, err := o.store.MarkFailedWithPayload(persistCtx, planID, ds.task.ID, sessionID, store.EventPayload{
 				Reason: failure.Summary, FailureCategory: string(failure.Category),
-			}, 3); err != nil && !errors.Is(err, store.ErrTaskNotOwnedRunning) {
+			}, failure.RetryBudget(defaultTurnRetries)); err != nil && !errors.Is(err, store.ErrTaskNotOwnedRunning) {
 				return fmt.Errorf("orch: mark failed after run error: %w", err)
 			}
 		}

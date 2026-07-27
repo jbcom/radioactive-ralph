@@ -52,6 +52,46 @@ type Failure struct {
 func (f Failure) Error() string { return f.Summary }
 func (f Failure) Unwrap() error { return f.Cause }
 
+// Retryable reports whether re-running the turn could plausibly succeed.
+//
+// This lives on the classification rather than in dispatch because the answer
+// is a property of WHY the turn failed, and every dispatch path needs the same
+// answer. The split is operational: retrying an invalid credential burns the
+// retry budget on turns that cannot succeed and DELAYS the operator seeing a
+// terminal error, while a 429 or a 503 is precisely what retries exist for.
+//
+// The default is RETRYABLE, matching the pre-classification behavior — a
+// category nobody has reasoned about should not silently become terminal.
+func (f Failure) Retryable() bool {
+	switch f.Category {
+	case FailureProviderAuth,
+		// The provider rejected the request as written; the same request will
+		// be rejected again.
+		FailureProviderRejected,
+		// The CLI is asking for an operator, not for another turn.
+		FailureInteractivePrompt,
+		// The same turn will cross the same ceiling.
+		FailureOutputLimit,
+		// Ralph could not prove process convergence; retrying compounds it.
+		FailureProcessCleanup,
+		// An external caller asked for this; do not fight it.
+		FailureCanceled:
+		return false
+	default:
+		return true
+	}
+}
+
+// RetryBudget returns the retry count dispatch should hand to the store for
+// this failure: the caller's budget when the failure is worth retrying, and
+// ZERO when it is not, which makes the task fail terminally on this attempt.
+func (f Failure) RetryBudget(configured int) int {
+	if f.Retryable() {
+		return configured
+	}
+	return 0
+}
+
 // ClassifyFailure converts a transient provider error to its durable,
 // provider-output-free category and summary.
 func ClassifyFailure(err error) Failure {

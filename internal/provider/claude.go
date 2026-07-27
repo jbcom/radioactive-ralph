@@ -62,23 +62,6 @@ var (
 	ErrClaudeInvalidRequest = errors.New("provider: claude rejected the request")
 )
 
-// ClaudeFailureRetryable reports whether a claude failure category is worth
-// retrying.
-//
-// The split matters operationally. Retrying an invalid credential burns the
-// retry budget and DELAYS the operator seeing the real problem, because a key
-// does not fix itself; a 429 or a 503, by contrast, is precisely what retries
-// are for.
-func ClaudeFailureRetryable(err error) bool {
-	switch {
-	case errors.Is(err, ErrClaudeRateLimit),
-		errors.Is(err, ErrClaudeServiceUnavailable):
-		return true
-	default:
-		return false
-	}
-}
-
 // Run spawns `claude -p --input-format stream-json --output-format
 // stream-json` under agent.Start, feeds req.UserPrompt through a finite stdin
 // pipe (claude in --input-format stream-json mode reads a JSON-line user
