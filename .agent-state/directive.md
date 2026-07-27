@@ -193,20 +193,24 @@ tags before deletion: `archive/plan-v2-dag`, `archive/release-022-recovery-scrat
       second writer to a supervisor-owned DB, and silently produced a plan
       nothing was driving). `plan_cmd.go` joins the architecture gate so it
       cannot regress. Stacked on #219.
-- [ ] Issue #204 remainder — three criteria left after #219 + #220 land:
-      1. `init_cmd.go` and `client.go` still call `store.Open`. These are WRITES
-         (`CreateProject`, `AddProjectIdentifiers`, `ApplyProjectConfig`,
-         `TouchProjectLastSeen`, `ResolveProject`), so they need new drive
-         commands, not an observe query — decision recorded 2026-07-27T05:30.
-         AGENTS.md already settles the design question: the client "initializes
-         project config" over the socket and "refuses to run without a
-         supervisor", so there is no legitimate pre-supervisor bootstrap window.
+- [ ] Issue #204 remainder — after #219 + #220 land, three criteria are left:
+      1. `init_cmd.go` is the last direct store user. Beyond project
+         resolve/create it pulls in ~90 lines of `vconfig` layer resolution
+         (`DiffConflicts`, `EffectiveProject`, `ApplyProjectConfig`), so it
+         needs a config-apply command surface of its own — larger than the
+         project-ensure command #220 adds. AGENTS.md already settles the design
+         question: the client "initializes project config" over the socket and
+         "refuses to run without a supervisor".
       2. `StatusReply.RepoPath`, `StatusReply.PID`, and
          `WorkerSummary.ProviderSessionID` remain declared on the live
          `CmdStatus` wire contract, with PID still populated by `os.Getpid()`.
       3. Claude auth failures are unclassified — `internal/provider` is untouched
-         and only Codex has a failure classifier
+         and only Codex has a classifier
          (`codex_diagnostics.go:classifyCodexFailure`).
+      Note for whoever picks this up: `ensureProjectKnown` must stay AFTER
+      supervisor discovery in client.go. Moving it earlier breaks the first-run
+      wizard, which exists for the operator who has no supervisor yet —
+      `TestE2E_FirstRunWizardDeclinePath` is the guard.
 - [ ] DAG integration — increments 5-12. Central verified finding: **main already has the DAG store
       layer.** `task_deps` ships in 0001_initial with cycle prevention in
       `AddDep`; `Ready`/`ClaimNextReady` already walk the edges. The gap is
