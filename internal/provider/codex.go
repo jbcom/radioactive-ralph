@@ -82,9 +82,13 @@ func (CodexRunner) Run(ctx context.Context, binding Binding, req Request) (Resul
 		"-C", req.WorkingDir,
 		"--output-last-message", outPath,
 	}
-	model := resolveModel(binding.Config, req.Model)
-	if model != "" {
-		args = append(args, "-m", model)
+	// One resolution, reported on the Result and enforcing StrictBinding.
+	invocation, err := ResolveInvocation(binding, req)
+	if err != nil {
+		return Result{}, err
+	}
+	if invocation.Model != "" {
+		args = append(args, "-m", invocation.Model)
 	}
 	if schemaPath != "" {
 		args = append(args, "--output-schema", schemaPath)
@@ -143,5 +147,8 @@ func (CodexRunner) Run(ctx context.Context, binding Binding, req Request) (Resul
 	if err != nil {
 		return Result{}, fmt.Errorf("provider: read codex output: %w", err)
 	}
-	return Result{AssistantOutput: normalizeStructuredOutput(string(raw), req)}, nil
+	return Result{
+		AssistantOutput: normalizeStructuredOutput(string(raw), req),
+		Invocation:      invocation,
+	}, nil
 }
