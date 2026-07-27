@@ -214,13 +214,18 @@ tags before deletion: `archive/plan-v2-dag`, `archive/release-022-recovery-scrat
       enough. (2) rename in all 8 worktrees or only the primary checkout?
 
 - [ ] Issue #204 remainder — after #219 + #220 land, three criteria are left:
-      1. `init_cmd.go` is the last direct store user. Beyond project
-         resolve/create it pulls in ~90 lines of `vconfig` layer resolution
-         (`DiffConflicts`, `EffectiveProject`, `ApplyProjectConfig`), so it
-         needs a config-apply command surface of its own — larger than the
-         project-ensure command #220 adds. AGENTS.md already settles the design
-         question: the client "initializes project config" over the socket and
-         "refuses to run without a supervisor".
+      1. IN PROGRESS. The config surface shipped (branch
+         feat/config-apply-over-ipc, PR pending — GitHub GraphQL rate limit was
+         exhausted at the time, resets 05:38Z). vconfig.ConfigSource is the
+         seam: the supervisor passes a store-backed source, the CLI an
+         IPC-backed one, and BOTH run the same resolution code. Raw JSON
+         strings cross the wire (vconfig owns the encoding); upserts+deletes
+         travel in ONE call (vconfig computes them together, and splitting them
+         could leave a project holding both a new provider selection and the
+         stale key it replaced); the SUPERVISOR resolves user scope because
+         doing so may CREATE the project, which is a store write.
+         REMAINING: init_cmd.go still opens the store for PROJECT RESOLUTION,
+         which needs ProjectEnsure from #220. Land after #220 merges.
       2. DONE (PR #231). All three had ZERO production consumers — a grep
          across internal/ and cmd/ found only tests. RepoPath and
          ProviderSessionID were never populated at all. They describe the
