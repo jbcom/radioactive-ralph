@@ -323,3 +323,118 @@ func countBlockedCapabilityEvents(t *testing.T, s *store.Store, projectID string
 	}
 	return n
 }
+
+const restrictsProvidersPlan = "# Cap group\n\n" +
+	"- only codex may do this\n\n" +
+	"   ```ralph-task\n   {\"id\": \"codex-only\", \"providers\": [\"codex\"]}\n   ```\n"
+
+const restrictsProvidersByAliasPlan = "# Cap group\n\n" +
+	"- named by alias\n\n" +
+	"   ```ralph-task\n   {\"id\": \"alias-only\", \"providers\": [\"claude-pool\"]}\n   ```\n"
+
+// TestDispatchBlocksTaskRestrictedToAnotherProvider enforces the `providers`
+// field, which parsed and persisted with no reader.
+//
+// A task naming the providers allowed to run it is expressing that the work is
+// only valid from one of them — a cross-check written for codex is worthless
+// executed by the model that produced the thing it reviews. Ignoring the field
+// silently produced exactly the result it exists to prevent.
+func TestDispatchBlocksTaskRestrictedToAnotherProvider(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	projectID := mustCreateTestProject(t, s, "prov-block")
+	planID := mustCreateTestPlan(t, s, projectID, "prov-block", "Prov", restrictsProvidersPlan)
+
+	runner := &fakeRunner{results: []provider.Result{{AssistantOutput: "should never run"}}}
+	o := New(s,
+		WithRunnerFactory(func(provider.Binding) (provider.Runner, error) { return runner, nil }),
+		WithBindingResolver(fakeBindingResolver("claude", false)), // not codex
+	)
+
+	dispatched, err := o.DispatchNext(ctx, projectID, planID)
+	if err != nil {
+		t.Fatalf("DispatchNext: %v", err)
+	}
+	o.Wait()
+
+	if dispatched != 0 {
+		t.Fatalf("dispatched = %d, want 0 — a task restricted to codex must not "+
+			"run on claude", dispatched)
+	}
+	if calls := runner.callReqs(); len(calls) != 0 {
+		t.Fatalf("runner called %d times; the restricted provider must never see it",
+			len(calls))
+	}
+	task, err := s.GetTask(ctx, planID, "codex-only")
+	if err != nil {
+		t.Fatalf("GetTask: %v", err)
+	}
+	if task.Status != store.TaskStatusBlockedCapability {
+		t.Fatalf("status = %q, want %q", task.Status, store.TaskStatusBlockedCapability)
+	}
+	meta, err := s.GetTaskExecutionMetadata(ctx, planID, "codex-only")
+	if err != nil {
+		t.Fatalf("GetTaskExecutionMetadata: %v", err)
+	}
+	if !strings.Contains(meta.BlockedReason, "codex") {
+		t.Errorf("BlockedReason = %q, want it to name the allowed provider so an "+
+			"operator knows what to bind", meta.BlockedReason)
+	}
+}
+
+// TestDispatchRunsTaskOnAnAllowedProvider is the control on the provider TYPE.
+func TestDispatchRunsTaskOnAnAllowedProvider(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	projectID := mustCreateTestProject(t, s, "prov-ok")
+	planID := mustCreateTestPlan(t, s, projectID, "prov-ok", "Prov", restrictsProvidersPlan)
+
+	runner := &fakeRunner{results: []provider.Result{{AssistantOutput: "done"}}}
+	o := New(s,
+		WithRunnerFactory(func(provider.Binding) (provider.Runner, error) { return runner, nil }),
+		WithBindingResolver(fakeBindingResolver("codex", false)),
+	)
+	dispatched, err := o.DispatchNext(ctx, projectID, planID)
+	if err != nil {
+		t.Fatalf("DispatchNext: %v", err)
+	}
+	o.Wait()
+	if dispatched != 1 {
+		t.Fatalf("dispatched = %d, want 1 — codex is allowed", dispatched)
+	}
+}
+
+// TestProvidersMatchesAliasOrType lets an operator name either the binding
+// ALIAS or the provider TYPE.
+//
+// Both are meaningful and they differ: several aliases can share one type (a
+// round-robin pool of claude bindings), so "any claude" and "this specific
+// pool member" are different restrictions. Accepting only one of the two would
+// silently block plans written against the other.
+func TestProvidersMatchesAliasOrType(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	projectID := mustCreateTestProject(t, s, "prov-alias")
+	planID := mustCreateTestPlan(t, s, projectID, "prov-alias", "Prov", restrictsProvidersByAliasPlan)
+
+	runner := &fakeRunner{results: []provider.Result{{AssistantOutput: "done"}}}
+	o := New(s,
+		WithRunnerFactory(func(provider.Binding) (provider.Runner, error) { return runner, nil }),
+		// Alias "claude-pool", type "claude": the plan names the ALIAS.
+		WithBindingResolver(func(_ context.Context, _ string, _ bool, _ BindingResolutionPurpose) (provider.Binding, error) {
+			return provider.Binding{
+				Name:   "claude-pool",
+				Config: provider.BindingConfig{Type: "claude", Binary: "true"},
+			}, nil
+		}),
+	)
+	dispatched, err := o.DispatchNext(ctx, projectID, planID)
+	if err != nil {
+		t.Fatalf("DispatchNext: %v", err)
+	}
+	o.Wait()
+	if dispatched != 1 {
+		t.Fatalf("dispatched = %d, want 1 — the plan names the binding alias, "+
+			"which must be as valid a restriction as the provider type", dispatched)
+	}
+}

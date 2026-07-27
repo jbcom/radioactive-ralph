@@ -1019,7 +1019,8 @@ func (o *Orchestrator) stepGateBlocks(ctx context.Context, planID, projectID str
 // consuming a pool cursor — the same reason the native-fan-out probe does.
 func (o *Orchestrator) capabilityGateBlocks(ctx context.Context, planID, projectID string, parallel bool, task *store.Task, step plan.Step) (bool, error) {
 	taskID := task.ID
-	if step.Metadata == nil || len(step.Metadata.Requires) == 0 {
+	if step.Metadata == nil ||
+		(len(step.Metadata.Requires) == 0 && len(step.Metadata.Providers) == 0) {
 		return false, nil
 	}
 	binding, err := o.resolveBinding(ctx, projectID, parallel, BindingProbe)
@@ -1027,6 +1028,12 @@ func (o *Orchestrator) capabilityGateBlocks(ctx context.Context, planID, project
 		return false, fmt.Errorf("orch: resolve binding for capability gate: %w", err)
 	}
 	capErr := provider.CheckRequirements(binding, step.Metadata.Requires)
+	if capErr == nil {
+		// Both gates are capability-class refusals — "this provider cannot or
+		// may not do this work" — so they share blocked_capability rather than
+		// splitting into a status an operator would have to learn separately.
+		capErr = provider.CheckAllowedProviders(binding, step.Metadata.Providers)
+	}
 	if capErr == nil {
 		// The requirement is satisfied NOW. If this task was blocked on it, the
 		// operator has performed exactly the fix the block asked for, so release
@@ -1045,7 +1052,9 @@ func (o *Orchestrator) capabilityGateBlocks(ctx context.Context, planID, project
 		}
 		return false, nil
 	}
-	if !errors.Is(capErr, provider.ErrCapabilityUnmet) && !errors.Is(capErr, provider.ErrCapabilityUnknown) {
+	if !errors.Is(capErr, provider.ErrCapabilityUnmet) &&
+		!errors.Is(capErr, provider.ErrCapabilityUnknown) &&
+		!errors.Is(capErr, provider.ErrProviderNotAllowed) {
 		return false, capErr
 	}
 	// Record WHY before reporting blocked. A task made undispatchable without a

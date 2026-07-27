@@ -116,6 +116,36 @@ supervisor retries its way out of. That is the point: a task that can
 never succeed on this binding says so immediately instead of stalling
 with no explanation.
 
+## Restricting which provider runs a task
+
+A step can name the providers allowed to run it:
+
+```markdown
+# Cross-check
+
+- review the generated migration
+
+   ```ralph-task
+   {"id": "review-migration", "providers": ["codex"]}
+   ```
+```
+
+A name matches either the binding **alias** or the provider **type**, because
+both are useful restrictions: several aliases can share one type (a
+round-robin pool of `claude` bindings), so "any claude" and "this specific
+pool member" mean different things.
+
+Like a capability requirement, a task bound to a provider outside its list
+moves to `blocked_capability` with the allowed names recorded as its reason,
+rather than running somewhere the plan says it must not. Both are the same
+kind of refusal — *this provider may not do this work* — so they share one
+status instead of splitting into two an operator has to learn separately.
+
+Unlike `requires`, there is no closed vocabulary here: provider names are
+operator-chosen configuration, so an unrecognized name is indistinguishable
+from a provider this project simply is not bound to right now. Either way the
+task blocks and names the list, which is the actionable report.
+
 ## Validation
 
 `internal/plan.Validate` checks the document against the grammar (sibling

@@ -112,3 +112,47 @@ func CheckRequirements(binding Binding, requires []string) error {
 	}
 	return nil
 }
+
+// ErrProviderNotAllowed reports a binding outside a task's declared
+// `providers` restriction.
+var ErrProviderNotAllowed = errors.New("provider: binding is not among the task's allowed providers")
+
+// CheckAllowedProviders verifies a binding is permitted to run a task that
+// restricts which providers may do so.
+//
+// A name matches the binding's ALIAS or its provider TYPE, and both are
+// meaningful: several aliases can share a type (a round-robin pool of claude
+// bindings), so "any claude" and "this specific pool member" are different
+// restrictions an operator may legitimately want. Accepting only one of the two
+// would silently block plans written against the other.
+//
+// Unlike CheckRequirements there is no closed vocabulary to validate against:
+// provider names are operator-chosen configuration, so an unrecognized one is
+// indistinguishable from a provider this project simply is not bound to right
+// now. It blocks with the allowed list named, which is the actionable report
+// either way.
+func CheckAllowedProviders(binding Binding, providers []string) error {
+	if len(providers) == 0 {
+		return nil
+	}
+	allowed := make([]string, 0, len(providers))
+	for _, name := range providers {
+		name = strings.TrimSpace(name)
+		if name == "" {
+			continue
+		}
+		if name == binding.Name || name == binding.Config.Type {
+			return nil
+		}
+		allowed = append(allowed, name)
+	}
+	if len(allowed) == 0 {
+		// Every entry was blank: an empty restriction restricts nothing rather
+		// than blocking every provider, which would make a typo unrunnable
+		// everywhere with no way to tell why.
+		return nil
+	}
+	sort.Strings(allowed)
+	return fmt.Errorf("%w: binding %q (type %q) is not in [%s]",
+		ErrProviderNotAllowed, binding.Name, binding.Config.Type, strings.Join(allowed, ", "))
+}
