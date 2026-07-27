@@ -484,8 +484,8 @@ func (s *Server) handleConn(conn net.Conn) {
 		// Final frame: single Response signals end-of-stream.
 		s.writeResponse(conn, Response{Ok: attachErr == nil, Error: errString(attachErr)})
 
-	case CmdPlanImport, CmdPlanSetStatus, CmdTaskApprove, CmdWorkerKill,
-		CmdProjectEnsure, CmdProjectConfigGet, CmdProjectConfigApply:
+	case CmdPlanImport, CmdPlanSetStatus, CmdTaskApprove, CmdWorkerKill, CmdProjectEnsure,
+		CmdProjectConfigGet, CmdProjectConfigApply:
 		s.dispatchDrive(ctx, conn, req)
 
 	case CmdObserveSnapshot, CmdObserveMessages, CmdObserveTaskDescriptions:

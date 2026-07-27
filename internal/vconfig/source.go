@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"reflect"
 
 	"github.com/jbcom/radioactive-ralph/internal/store"
 )
@@ -66,6 +67,12 @@ func (s *StoreConfigSource) ApplyProjectConfigValues(
 // value. The store persists JSON-encoded strings (see store.SetProjectConfig),
 // and vconfig owns that decoding.
 func loadSourceConfig(ctx context.Context, src ConfigSource, projectID string) (map[string]any, error) {
+	// No source is a legitimate caller state, not an error: the user `projects:`
+	// overlay still applies with nothing to layer it over. Dereferencing here
+	// panicked instead, which turned "no store configured" into a crash.
+	if isNilConfigSource(src) {
+		return map[string]any{}, nil
+	}
 	raw, err := src.ProjectConfigValues(ctx, projectID)
 	if err != nil {
 		return nil, err
@@ -109,7 +116,18 @@ func isNilConfigSource(src ConfigSource) bool {
 		return true
 	}
 	if s, ok := src.(*StoreConfigSource); ok {
+		// A store-backed source with no store is as unusable as no source.
 		return s == nil || s.Store == nil
 	}
-	return false
+	// A typed nil satisfies the interface but panics on first use, and the
+	// check must hold for EVERY implementation — the IPC-backed source in
+	// cmd/radioactive_ralph is not a *StoreConfigSource, so a check specific to
+	// that one type let exactly the shape it was guarding against through.
+	v := reflect.ValueOf(src)
+	switch v.Kind() {
+	case reflect.Pointer, reflect.Interface, reflect.Map, reflect.Slice, reflect.Func, reflect.Chan:
+		return v.IsNil()
+	default:
+		return false
+	}
 }
