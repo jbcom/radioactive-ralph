@@ -13,6 +13,13 @@ shipped. That means historical sections may still mention MCP, plugins,
 supervisors, or the archived Python implementation even though those are no
 longer part of the live contract.
 
+## [0.29.0](https://github.com/jbcom/radioactive-ralph/compare/v0.28.0...v0.29.0) (2026-07-27)
+
+
+### Features
+
+* **provider:** add --no-chrome and --pure; REFUSE the permission bypasses ([#235](https://github.com/jbcom/radioactive-ralph/issues/235)) ([f0d4a4b](https://github.com/jbcom/radioactive-ralph/commit/f0d4a4be7059447a87334bb254c9d25486fb8d17))
+
 ## [0.28.0](https://github.com/jbcom/radioactive-ralph/compare/v0.27.0...v0.28.0) (2026-07-27)
 
 
