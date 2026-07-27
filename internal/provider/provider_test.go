@@ -117,6 +117,13 @@ while :; do
   sleep 0.04
 done
 `)
+	// The margin between the emit interval (40ms) and the stall lease is what
+	// this test races. At a 400ms lease, ONE scheduling hiccup on a loaded
+	// machine exceeds it and the stall fires first — so the assertion below
+	// would report a stall where the code is correct, and the host's load
+	// decides the outcome rather than the behavior under test. A 3s lease is
+	// ~75 emit intervals: still far below the 1200ms turn deadline this test
+	// exists to prove wins, but well beyond any plausible scheduling gap.
 	start := time.Now()
 	_, err := DeclarativeRunner{}.Run(context.Background(), Binding{
 		Name:            "progress",
@@ -125,7 +132,7 @@ done
 			Type:         declarativePlainStdout,
 			Binary:       bin,
 			TurnTimeout:  "1200ms",
-			StallTimeout: "400ms",
+			StallTimeout: "3s",
 		},
 	}, Request{WorkingDir: t.TempDir(), UserPrompt: "x"})
 	elapsed := time.Since(start)

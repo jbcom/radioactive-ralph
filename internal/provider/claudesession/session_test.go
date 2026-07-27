@@ -55,7 +55,10 @@ func TestSpawnAndSendMessageRoundTrip(t *testing.T) {
 
 	// Expect: system init, assistant echo, result.
 	sawInit, sawAssistant, sawResult := false, false, false
-	waitCh := time.After(5 * time.Second)
+	// Below the ctx budget above, so a genuine failure to echo still fails HERE
+	// with the specific "timeout waiting for sentinel echo" rather than as a
+	// closed-channel side effect of the context expiring.
+	waitCh := time.After(30 * time.Second)
 	for !sawInit || !sawAssistant || !sawResult {
 		select {
 		case <-waitCh:
@@ -123,7 +126,13 @@ func TestResumeRequiresSessionID(t *testing.T) {
 
 func TestResumeSendsSentinelOnSpawn(t *testing.T) {
 	bin := buildFakeClaude(t)
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	// Generous on purpose. This test asserts that a sentinel is SENT and echoed,
+	// not how fast — but the spawn ctx also bounds the fake CLI's life, so a
+	// tight budget turns a slow machine into "events closed without echo",
+	// reporting a missing sentinel where the code is correct. Under full-suite
+	// parallel load 5s was not enough; the failure told us about the host, not
+	// the behavior.
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
 	t.Setenv("FAKE_CLAUDE_RESUME_ECHO", "1")
@@ -141,7 +150,10 @@ func TestResumeSendsSentinelOnSpawn(t *testing.T) {
 
 	// We expect to see the echo of our sentinel user message come back
 	// as an assistant frame. Sentinel text is `SENTINEL: resuming task T42 …`.
-	waitCh := time.After(5 * time.Second)
+	// Below the ctx budget above, so a genuine failure to echo still fails HERE
+	// with the specific "timeout waiting for sentinel echo" rather than as a
+	// closed-channel side effect of the context expiring.
+	waitCh := time.After(30 * time.Second)
 	for {
 		select {
 		case <-waitCh:
