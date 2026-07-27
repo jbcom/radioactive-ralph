@@ -5,13 +5,25 @@ import (
 	"fmt"
 
 	"github.com/jbcom/radioactive-ralph/internal/ipc"
+	"github.com/jbcom/radioactive-ralph/internal/supervisor"
 	"github.com/jbcom/radioactive-ralph/internal/vconfig"
 )
 
 // newSupervisorConfigSource returns a vconfig.ConfigSource backed by the
 // supervisor socket.
-func newSupervisorConfigSource(client *ipc.Client) vconfig.ConfigSource {
-	return &supervisorConfigSource{client: client}
+func newSupervisorConfigSource(stateRoot string) vconfig.ConfigSource {
+	return &supervisorConfigSource{stateRoot: stateRoot}
+}
+
+// dial opens a connection for ONE request. The caller closes it.
+func (s *supervisorConfigSource) dial() (*ipc.Client, error) {
+	client, err := supervisor.Find(s.stateRoot)
+	if err != nil {
+		return nil, fmt.Errorf(
+			"%w: resolving project config needs a running supervisor; start one with: %s",
+			errNoSupervisorListening, supervisorStartHint())
+	}
+	return client, nil
 }
 
 // supervisorConfigSource resolves vconfig layers over the supervisor socket.
@@ -21,7 +33,12 @@ func newSupervisorConfigSource(client *ipc.Client) vconfig.ConfigSource {
 // second writer to a database it does not own, which is the ownership split the
 // one-binary architecture exists to prevent.
 type supervisorConfigSource struct {
-	client *ipc.Client
+	// stateRoot rather than a held *ipc.Client: the protocol is deliberately
+	// one request per connection (dial -> request -> response -> close, see
+	// internal/ipc/server.go), so reusing a client across calls gets a broken
+	// pipe on the second one. Config resolution makes several calls, so each
+	// dials its own connection.
+	stateRoot string
 	// userProjectID caches the user-scope project id for this command's
 	// lifetime. Resolving it is a round trip AND may create the project, so
 	// repeating it per layer would be both slower and needlessly write-y.
@@ -38,7 +55,12 @@ func (s *supervisorConfigSource) UserScopeProject(ctx context.Context) (string, 
 	}
 	// Ask the SUPERVISOR to resolve it: doing so may create the project, and
 	// that is a store write the client must not perform.
-	reply, err := s.client.ProjectConfigGet(ctx, ipc.ProjectConfigGetArgs{UserScope: true})
+	client, err := s.dial()
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = client.Close() }()
+	reply, err := client.ProjectConfigGet(ctx, ipc.ProjectConfigGetArgs{UserScope: true})
 	if err != nil {
 		return "", fmt.Errorf("resolve user-scope project: %w", err)
 	}
@@ -53,7 +75,12 @@ func (s *supervisorConfigSource) ProjectConfigValues(
 	if projectID != "" && projectID == s.userProjectID && s.userValues != nil {
 		return s.userValues, nil
 	}
-	reply, err := s.client.ProjectConfigGet(ctx, ipc.ProjectConfigGetArgs{Project: projectID})
+	client, err := s.dial()
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = client.Close() }()
+	reply, err := client.ProjectConfigGet(ctx, ipc.ProjectConfigGetArgs{Project: projectID})
 	if err != nil {
 		return nil, err
 	}
@@ -66,7 +93,12 @@ func (s *supervisorConfigSource) ApplyProjectConfigValues(
 	if len(upserts) == 0 && len(deleteKeys) == 0 {
 		return nil
 	}
-	return s.client.ProjectConfigApply(ctx, ipc.ProjectConfigApplyArgs{
+	client, err := s.dial()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = client.Close() }()
+	return client.ProjectConfigApply(ctx, ipc.ProjectConfigApplyArgs{
 		Project: projectID, Upserts: upserts, DeleteKeys: deleteKeys,
 	})
 }

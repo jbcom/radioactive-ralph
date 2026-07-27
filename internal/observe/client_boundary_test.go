@@ -122,9 +122,6 @@ var clientBoundaryExemptions = map[string]string{
 
 	// REAL DEBT (#204). Each of these is a client that still reads the store
 	// directly. Removing an entry is the definition of done for that file.
-	"init_cmd.go": "#204: resolves vconfig layers against the store before a " +
-		"supervisor exists for the project; needs a supervisor-side " +
-		"config-apply surface usable at first contact",
 	"desktop_launch.go": "#204: resolves the project for a Finder/Explorer " +
 		"launch before any supervisor is known to be running",
 }
