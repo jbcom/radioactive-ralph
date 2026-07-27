@@ -388,29 +388,30 @@ tags before deletion: `archive/plan-v2-dag`, `archive/release-022-recovery-scrat
       have to enumerate every read/mach-lookup/network call each CLI version
       needs, and its first omission looks like a provider bug rather than a
       policy one.
-      - [ ] [WAIT-AGENT] Linux containment — DELEGATED to stuck-loop-debugger
-            (2026-07-27) after several cycles failed to get exec working under
-            an enforced Landlock ruleset. Returns ErrContainmentUnavailable
-            today. Findings so far, all EMPIRICAL in golang:1.24-alpine on
-            kernel 6.12 (Landlock ABI 6):
-            * Landlock DOES enforce writes correctly in-process: a write outside
-              the root is refused, inside is allowed.
-            * IN-PROCESS Landlock is UNUSABLE FROM GO on ABI<8. TSYNC (all-thread
-              enforcement) needs ABI 8; below that restrict_self binds only the
-              CALLING thread. PROVEN: a thread created BEFORE restrict_self
-              writes outside the root successfully. Go's runtime has threads
-              running before any user code, so this would be a boundary with a
-              hole — the same "reports success while not containing" failure the
-              macOS TMPDIR grant had.
-            * Hence the design is RE-EXEC: restrict, then syscall.Exec
-              immediately, so nothing survives but the inherited domain.
-            * BLOCKER being diagnosed: syscall.Exec returns permission denied
-              AFTER restrict_self, even with EXECUTE (bit 0) NOT handled
-              (handled=0x7fe). Ruled out: seccomp/apparmor (reproduced
-              unconfined), missing allowed_access mask (applied), NNP alone
-              (exec works without restrict_self), and the TSYNC issue.
-            Lands with its own behavioral proof — outside-write refused,
-            inside-write allowed, AND exec working — or it does not land.
+      - [x] Linux containment — SHIPPED (PR #251). Landlock via a RE-EXEC
+            helper: Wrap re-invokes Ralph's own binary with a sentinel flag,
+            that helper restricts itself and immediately execs the provider.
+            main() handles the sentinel FIRST — work before the exec is either
+            outside the restriction or discarded.
+            WHY re-exec and not in-process: Landlock is applied by a process to
+            ITSELF, and below ABI 8 there is no TSYNC, so restrict_self binds
+            only the CALLING thread. MEASURED on ABI 6: a thread created BEFORE
+            the call writes outside the root successfully. Go's runtime has
+            threads running before any user code, so in-process would ship a
+            boundary with a hole while reporting containment.
+            LESSON — the handled-rights mask cost the most time. Landlock denies
+            a HANDLED right everywhere no rule grants it. A mask written as "all
+            write bits" (0x7fe) actually handles bit 2 READ_FILE and bit 3
+            READ_DIR; granting them only under the root made every file outside
+            unreadable — including the provider binary and the dynamic loader —
+            so execve failed EACCES, a symptom pointing at exec rather than
+            reads. Root-caused by stuck-loop-debugger after I burned several
+            cycles on it. Three tests now guard the mask directly.
+            SECOND LESSON — the behavioral tests build a REAL helper binary.
+            Re-execing the go test binary makes it reject the sentinel and never
+            run the command, which every "did the file appear?" assertion reads
+            as successful containment. That false pass was OBSERVED before being
+            fixed; it is the same trap the macOS TMPDIR grant set.
       - [x] Windows containment — NOT NEEDED, closed as a DECISION rather
             than left as a gap (PR #251). No provider can run on native
             Windows: agent.Start allocates a pty via creack/pty, which returns
