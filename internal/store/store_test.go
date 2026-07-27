@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -20,6 +21,136 @@ func TestOpenCapsConnectionPool(t *testing.T) {
 	s := openTestStore(t)
 	if got := s.DB().Stats().MaxOpenConnections; got != maxDBConns {
 		t.Fatalf("MaxOpenConnections = %d, want %d", got, maxDBConns)
+	}
+}
+
+// TestOpenSetsWALJournalMode pins the durability mode the rest of this suite
+// assumes. journal_mode is deliberately NOT a DSN _pragma (setting it takes a
+// database lock, so a DSN pragma would re-run it on every newly opened pooled
+// connection); Open sets it once via ensureJournalModeWAL. Nothing else asserts
+// the resulting mode, so a regression to the DSN form — or a silent failure to
+// apply it — would otherwise only surface as lock flakiness under load.
+func TestOpenSetsWALJournalMode(t *testing.T) {
+	s := openTestStore(t)
+	var mode string
+	if err := s.DB().QueryRow("PRAGMA journal_mode").Scan(&mode); err != nil {
+		t.Fatalf("read journal_mode: %v", err)
+	}
+	if !strings.EqualFold(mode, "wal") {
+		t.Fatalf("journal_mode = %q, want wal", mode)
+	}
+}
+
+// TestDSNOmitsJournalMode guards the specific regression: journal_mode as a DSN
+// _pragma runs the lock-taking pragma on every pooled connection.
+func TestDSNOmitsJournalMode(t *testing.T) {
+	dsn := DSN(filepath.Join(t.TempDir(), "store.db"))
+	if strings.Contains(strings.ToLower(dsn), "journal_mode") {
+		t.Fatalf("DSN must not set journal_mode as a per-connection pragma: %s", dsn)
+	}
+	// The pragmas that ARE safe per-connection must remain.
+	for _, want := range []string{"_txlock=immediate", "foreign_keys(1)", "busy_timeout(5000)", "synchronous(NORMAL)"} {
+		if !strings.Contains(dsn, want) {
+			t.Errorf("DSN missing %q: %s", want, dsn)
+		}
+	}
+}
+
+// TestConcurrentOpenersOfFreshDBAllSucceed covers the race the DSN form made
+// worse: several processes opening the same brand-new database at once each try
+// to switch it to WAL, and only one can hold the database lock to do it. Every
+// opener must still end up with a usable WAL store rather than a SQLITE_BUSY
+// failure from connection setup.
+func TestConcurrentOpenersOfFreshDBAllSucceed(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "store.db")
+	const openers = 8
+
+	var wg sync.WaitGroup
+	errs := make([]error, openers)
+	modes := make([]string, openers)
+	for i := range openers {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			s, err := Open(context.Background(), Options{DSN: DSN(dbPath)})
+			if err != nil {
+				errs[i] = err
+				return
+			}
+			defer func() { _ = s.Close() }()
+			errs[i] = s.DB().QueryRow("PRAGMA journal_mode").Scan(&modes[i])
+		}(i)
+	}
+	wg.Wait()
+
+	for i, err := range errs {
+		if err != nil {
+			t.Errorf("opener %d: %v", i, err)
+			continue
+		}
+		if !strings.EqualFold(modes[i], "wal") {
+			t.Errorf("opener %d journal_mode = %q, want wal", i, modes[i])
+		}
+	}
+}
+
+// TestApplyMigrationRefusesNewerSchemaInsideLock covers the race the pre-lock
+// guard cannot see. Migrate reads user_version before taking any lock, so a
+// NEWER binary can migrate the shared database in the window between that read
+// and this transaction acquiring the write lock. Returning early on
+// "current >= version" would then treat the newer schema as
+// already-applied-successfully, Migrate would return nil, and an incompatible
+// binary would go on to read and mutate the store.
+func TestApplyMigrationRefusesNewerSchemaInsideLock(t *testing.T) {
+	ctx := context.Background()
+	dbPath := filepath.Join(t.TempDir(), "store.db")
+
+	s, err := Open(ctx, Options{DSN: DSN(dbPath)})
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	t.Cleanup(func() { _ = s.Close() })
+
+	// Simulate a newer binary having migrated past what we support.
+	if _, err := s.DB().ExecContext(ctx, "PRAGMA user_version = 999"); err != nil {
+		t.Fatalf("bump user_version: %v", err)
+	}
+
+	// Call applyMigration directly for a version this binary would consider
+	// pending; it must refuse rather than report the newer schema as applied.
+	err = applyMigration(ctx, s.DB(), currentSchemaVersion, "SELECT 1;")
+	if err == nil {
+		t.Fatal("applyMigration accepted a newer schema as already-applied")
+	}
+	if !errors.Is(err, ErrSchemaNewerThanBinary) {
+		t.Fatalf("error = %v, want ErrSchemaNewerThanBinary", err)
+	}
+}
+
+// TestMigrateHonorsCanceledContext pins that a canceled Open does not keep
+// retrying. The busy-retry budget (20 attempts against a 5s DSN busy_timeout
+// plus backoff) could otherwise hold shutdown for roughly 105 seconds.
+func TestMigrateHonorsCanceledContext(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "store.db")
+	s, err := Open(context.Background(), Options{DSN: DSN(dbPath)})
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	t.Cleanup(func() { _ = s.Close() })
+
+	canceled, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	start := time.Now()
+	err = applyMigrationWithRetry(canceled, s.DB(), currentSchemaVersion+1, "SELECT 1;")
+	if err == nil {
+		t.Fatal("applyMigrationWithRetry ignored a canceled context")
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("error = %v, want context.Canceled", err)
+	}
+	if elapsed := time.Since(start); elapsed > 2*time.Second {
+		t.Fatalf("returned after %s, want prompt cancellation", elapsed)
 	}
 }
 

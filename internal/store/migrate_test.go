@@ -1,10 +1,43 @@
 package store
 
 import (
+	"context"
 	"database/sql"
 	"testing"
 	"testing/fstest"
+
+	"github.com/jbcom/radioactive-ralph/internal/store/schema"
 )
+
+// TestCurrentSchemaVersionMatchesEmbeddedMigrations pins currentSchemaVersion to
+// the highest embedded migration. schema/embed.go globs `*.sql`, so ANY .sql file
+// dropped into that directory is applied — including one staged locally while a
+// later migration is still being written. The database then reports a
+// user_version this binary refuses, and every store test fails with
+// "DB schema is newer than this binary supports", which reads like a code defect
+// rather than a stray file.
+//
+// This test names the real cause instead. It also catches the inverse mistake:
+// adding a migration file and forgetting to bump currentSchemaVersion, which
+// would leave the new tables unapplied on existing databases.
+func TestCurrentSchemaVersionMatchesEmbeddedMigrations(t *testing.T) {
+	migrations, err := listMigrations(schema.FS, ".up.sql")
+	if err != nil {
+		t.Fatalf("listMigrations: %v", err)
+	}
+	if len(migrations) == 0 {
+		t.Fatal("no embedded migrations found")
+	}
+	highest := migrations[len(migrations)-1]
+	if highest.version != currentSchemaVersion {
+		t.Fatalf(
+			"highest embedded migration is %s (version %d) but currentSchemaVersion = %d.\n"+
+				"Either bump currentSchemaVersion, or remove a migration file staged in "+
+				"internal/store/schema/ that is not ready to ship — schema/embed.go globs *.sql, "+
+				"so an untracked file there is still applied.",
+			highest.name, highest.version, currentSchemaVersion)
+	}
+}
 
 func TestListMigrationsOrdersByVersion(t *testing.T) {
 	fsys := fstest.MapFS{
@@ -71,7 +104,7 @@ func openRawSQLite(t *testing.T) *sql.DB {
 func TestApplyMigrationExecFailureDoesNotBumpVersion(t *testing.T) {
 	db := openRawSQLite(t)
 
-	err := applyMigration(db, 1, "THIS IS NOT VALID SQL;")
+	err := applyMigration(context.Background(), db, 1, "THIS IS NOT VALID SQL;")
 	if err == nil {
 		t.Fatal("applyMigration with invalid SQL: want error, got nil")
 	}
@@ -88,7 +121,7 @@ func TestApplyMigrationExecFailureDoesNotBumpVersion(t *testing.T) {
 func TestApplyMigrationSuccessBumpsVersion(t *testing.T) {
 	db := openRawSQLite(t)
 
-	if err := applyMigration(db, 7, "CREATE TABLE t_migrate_test(id INTEGER PRIMARY KEY);"); err != nil {
+	if err := applyMigration(context.Background(), db, 7, "CREATE TABLE t_migrate_test(id INTEGER PRIMARY KEY);"); err != nil {
 		t.Fatalf("applyMigration: %v", err)
 	}
 
