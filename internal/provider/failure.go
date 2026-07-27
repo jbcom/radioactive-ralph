@@ -25,6 +25,17 @@ const (
 	FailureCanceled FailureCategory = "canceled"
 	// FailureProviderRejected means the provider reported an unsuccessful turn.
 	FailureProviderRejected FailureCategory = "provider_rejected"
+	// FailureProviderAuth means the provider rejected the credential or denied
+	// access to the requested model. Separate from provider_rejected because
+	// the remediation is an operator action (fix the key, grant the model), and
+	// because it is NOT worth retrying — a credential does not fix itself.
+	FailureProviderAuth FailureCategory = "provider_auth"
+	// FailureProviderThrottled means the provider rate-limited the turn.
+	// Retrying after a wait is precisely the remedy.
+	FailureProviderThrottled FailureCategory = "provider_throttled"
+	// FailureProviderUnavailable means an upstream provider fault (HTTP 5xx).
+	// Transient by nature, so worth retrying.
+	FailureProviderUnavailable FailureCategory = "provider_unavailable"
 	// FailureRuntime is the fail-closed category for unrecognized failures.
 	FailureRuntime FailureCategory = "provider_runtime"
 )
@@ -40,6 +51,46 @@ type Failure struct {
 
 func (f Failure) Error() string { return f.Summary }
 func (f Failure) Unwrap() error { return f.Cause }
+
+// Retryable reports whether re-running the turn could plausibly succeed.
+//
+// This lives on the classification rather than in dispatch because the answer
+// is a property of WHY the turn failed, and every dispatch path needs the same
+// answer. The split is operational: retrying an invalid credential burns the
+// retry budget on turns that cannot succeed and DELAYS the operator seeing a
+// terminal error, while a 429 or a 503 is precisely what retries exist for.
+//
+// The default is RETRYABLE, matching the pre-classification behavior — a
+// category nobody has reasoned about should not silently become terminal.
+func (f Failure) Retryable() bool {
+	switch f.Category {
+	case FailureProviderAuth,
+		// The provider rejected the request as written; the same request will
+		// be rejected again.
+		FailureProviderRejected,
+		// The CLI is asking for an operator, not for another turn.
+		FailureInteractivePrompt,
+		// The same turn will cross the same ceiling.
+		FailureOutputLimit,
+		// Ralph could not prove process convergence; retrying compounds it.
+		FailureProcessCleanup,
+		// An external caller asked for this; do not fight it.
+		FailureCanceled:
+		return false
+	default:
+		return true
+	}
+}
+
+// RetryBudget returns the retry count dispatch should hand to the store for
+// this failure: the caller's budget when the failure is worth retrying, and
+// ZERO when it is not, which makes the task fail terminally on this attempt.
+func (f Failure) RetryBudget(configured int) int {
+	if f.Retryable() {
+		return configured
+	}
+	return 0
+}
 
 // ClassifyFailure converts a transient provider error to its durable,
 // provider-output-free category and summary.
@@ -74,8 +125,28 @@ func ClassifyFailure(err error) Failure {
 		return Failure{Category: FailureTurnDeadline, Summary: "provider exceeded its total turn deadline", Cause: err}
 	case errors.Is(err, context.Canceled):
 		return Failure{Category: FailureCanceled, Summary: "provider turn was canceled", Cause: err}
+	case errors.Is(err, ErrClaudeAuthentication),
+		errors.Is(err, ErrClaudeModelAccess):
+		return Failure{
+			Category: FailureProviderAuth,
+			Summary:  "provider authentication or model access was denied",
+			Cause:    err,
+		}
+	case errors.Is(err, ErrClaudeRateLimit):
+		return Failure{
+			Category: FailureProviderThrottled,
+			Summary:  "provider rate limited the turn",
+			Cause:    err,
+		}
+	case errors.Is(err, ErrClaudeServiceUnavailable):
+		return Failure{
+			Category: FailureProviderUnavailable,
+			Summary:  "provider service was unavailable",
+			Cause:    err,
+		}
 	case errors.Is(err, ErrClaudeResultFailed),
 		errors.Is(err, ErrClaudeMaximumTurns),
+		errors.Is(err, ErrClaudeInvalidRequest),
 		errors.Is(err, ErrClaudeMissingResult),
 		errors.Is(err, ErrCodexTurnFailed),
 		errors.Is(err, ErrCodexOversizeSchema),

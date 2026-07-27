@@ -490,9 +490,15 @@ type FailureCategory string
 const (
 	FailureTaskAttempt  FailureCategory = "task_attempt"
 	FailureTaskTerminal FailureCategory = "task_terminal"
-	FailureVerification FailureCategory = "verification"
-	FailureDispatch     FailureCategory = "dispatch"
-	FailureAdmission    FailureCategory = "admission"
+	// Provider-cause categories, mirrored from provider.FailureCategory. They
+	// tell an operator WHICH remediation applies — re-authenticate, wait, or
+	// retry — rather than only that a turn failed.
+	FailureProviderAuth        FailureCategory = "provider_auth"
+	FailureProviderThrottled   FailureCategory = "provider_throttled"
+	FailureProviderUnavailable FailureCategory = "provider_unavailable"
+	FailureVerification        FailureCategory = "verification"
+	FailureDispatch            FailureCategory = "dispatch"
+	FailureAdmission           FailureCategory = "admission"
 )
 
 // FailureSummary explains a recognized failure event using only static text.
@@ -959,7 +965,7 @@ func EventFromMetadata(item store.OperatorEvent) Event {
 		Kind:       item.Kind,
 		Stream:     item.Stream,
 		OccurredAt: item.OccurredAt,
-		Failure:    failureForEvent(item.Kind),
+		Failure:    failureForEvent(item.Kind, item.FailureCategory),
 	}
 }
 
@@ -1008,10 +1014,20 @@ func canonicalTaskID(planID, taskID string) string {
 	return planID + ":" + taskID
 }
 
-func failureForEvent(kind string) *FailureSummary {
+func failureForEvent(kind, providerCategory string) *FailureSummary {
 	var failure FailureSummary
 	switch kind {
 	case "task.failed":
+		// The provider category, when the event carries one, says WHY the turn
+		// failed — and whether a retry is even coming. Without it every failed
+		// turn reads identically, so an invalid credential is indistinguishable
+		// from a rate limit, which is the ambiguity classification exists to
+		// remove. The old summary also hardcoded "requeued", which became a lie
+		// once terminal categories stopped being requeued.
+		if summary, ok := providerFailureSummary(providerCategory); ok {
+			failure = summary
+			break
+		}
 		failure = FailureSummary{
 			Category:  FailureTaskAttempt,
 			Summary:   "task attempt failed and was requeued",
@@ -1051,4 +1067,36 @@ func failureForEvent(kind string) *FailureSummary {
 		return nil
 	}
 	return &failure
+}
+
+// providerFailureSummary maps a provider failure code onto the operator-facing
+// summary, or reports false when the code is absent or not one this surface
+// renders specially.
+//
+// Retryable here must agree with provider.Failure.Retryable: an operator told
+// "will retry" about a failure Ralph has already given up on would wait for a
+// turn that is never coming.
+func providerFailureSummary(category string) (FailureSummary, bool) {
+	switch category {
+	case string(FailureProviderAuth):
+		return FailureSummary{
+			Category:  FailureProviderAuth,
+			Summary:   "provider authentication or model access was denied",
+			Retryable: false,
+		}, true
+	case string(FailureProviderThrottled):
+		return FailureSummary{
+			Category:  FailureProviderThrottled,
+			Summary:   "provider rate limited the turn; it will be retried",
+			Retryable: true,
+		}, true
+	case string(FailureProviderUnavailable):
+		return FailureSummary{
+			Category:  FailureProviderUnavailable,
+			Summary:   "provider service was unavailable; it will be retried",
+			Retryable: true,
+		}, true
+	default:
+		return FailureSummary{}, false
+	}
 }
