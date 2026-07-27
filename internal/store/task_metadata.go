@@ -90,10 +90,20 @@ func (s *Store) GetTaskExecutionMetadata(ctx context.Context, planID, taskID str
 // PutTaskMetadata inserts the immutable half of a task's metadata row. Plan
 // import owns this; provenance fields are filled in later by the dispatch path.
 func (s *Store) PutTaskMetadata(ctx context.Context, planID, taskID, groupPath, teamPath, metadataJSON string) error {
+	return s.putTaskMetadataOn(ctx, s.db, planID, taskID, groupPath, teamPath, metadataJSON)
+}
+
+// putTaskMetadataOn inserts the row through any executor, so plan-graph import
+// writes it inside the same transaction as the task it describes.
+func (s *Store) putTaskMetadataOn(
+	ctx context.Context,
+	ex execer,
+	planID, taskID, groupPath, teamPath, metadataJSON string,
+) error {
 	if groupPath == "" {
 		return fmt.Errorf("store: group path required for task %s", taskID)
 	}
-	if _, err := s.db.ExecContext(ctx, `
+	if _, err := ex.ExecContext(ctx, `
 		INSERT INTO task_metadata(plan_id, task_id, group_path, team_path, metadata_json)
 		VALUES (?, ?, ?, ?, ?)
 	`, planID, taskID, groupPath, teamPath, metadataJSON); err != nil {
