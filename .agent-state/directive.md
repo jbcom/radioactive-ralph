@@ -161,22 +161,27 @@ tags before deletion: `archive/plan-v2-dag`, `archive/release-022-recovery-scrat
       backstop (240ms/Open, 44x reduction).
 - [x] PR #210 — MERGED. Directive re-armed + the DAG integration spec landed.
 - [x] DAG increment 4 (#217) — MERGED, released v0.23.0.
-- [ ] [WAIT] Ten PRs open as of 2026-07-27: 220, 222, 224, 225, 226, 228, 229,
-      230, 231, 232. MERGED so far in this arc: #215 (increment 2), #216
-      (increment 3), #221 (increment 5, the keystone). Remaining DAG chain:
-      **#225 -> #228 -> #229** (increments 6, 7, 8). Independents: #220 (dumb
-      client), #222 (this directive), #224 (winio Stop), #226 (packaging
-      flake), #230 (claude classification), #231 (StatusReply host ids).
+- [ ] [WAIT] Thirteen PRs open (220, 222, 224, 225, 226, 228, 229, 230, 232,
+      233, 234, 235, 236); MERGED in this arc: #215, #216, #221, #231, plus
+      releases through v0.26.0. Remaining DAG chain: **#225 -> #228 -> #229**
+      (increments 6, 7, 8). Independents: #220 (dumb client), #222 (directive),
+      #224 (winio Stop), #226 (packaging flake), #230 (claude classification),
+      #233 (#204 config surface), #234 (increment 9 invocation), #235 (provider
+      CLI flags), #236 (increment 10 calibration store), #232 (release).
       Reconciliation lesson (2026-07-27): after a stacked parent squash-merges,
       REBUILD the child from main and cherry-pick only its unique commits —
-      never rebase it. Enumerate the unique set explicitly with
+      never rebase it. Enumerate the unique set EXPLICITLY with
       `git log --reverse --format=%H <pre-squash-parent-tip>..<child-head>`;
       `git merge-base --is-ancestor` only confirms the precondition, it does not
-      select the commits. Rebasing #220 replayed all eight of #219's commits
-      against the squash of themselves. The squash rewrites the parent's history
-      into one commit the child no longer shares ancestry with, so git cannot
-      tell the duplicates apart. Same treatment rebuilt #215/#216/#221/#225 and,
-      after #221 merged, #225/#228/#229 again.
+      select the commits. The squash rewrites the parent's history into one
+      commit the child no longer shares ancestry with, so git cannot tell the
+      duplicates apart. A DIRTY child whose only conflict is a GENERATED file
+      (docs/api/*) is the easy case: take main's version, rebase, regenerate.
+      Watcher lesson: poll REST, reserve GraphQL for real thread reads. Exhausting
+      GraphQL made `gh pr view --json state` return EMPTY, which an earlier
+      watcher counted as zero-open and reported "ALL MERGED" against a main that
+      never moved — a watcher must treat an empty response as UNKNOWN, never as
+      terminal.
       - #224 fixes a REAL Windows deadlock, not a flake: winio's Accept waits on
         an internal goroutine with no cancellation case while that goroutine
         selects between close and accept; when close loses the coin flip it calls
