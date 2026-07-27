@@ -129,17 +129,42 @@ tags before deletion: `archive/plan-v2-dag`, `archive/release-022-recovery-scrat
       replaced the admission command blocklist with a structural allowlist —
       `gh api -f x=1 --method PATCH` evaded the old literal `gh api --method`
       check; proven by a negative test. Both threads resolved.
-- [ ] PR #209 (issue #205) — turn deadlines separated from stall detection +
-      Darwin process-tree containment. CI in flight. The branch was based on
-      v0.22.0 and would have DELETED PR #206's three release-authority files and
-      reverted the released 0.22.1 CHANGELOG heading; rebased onto f99cb44 so the
-      diff is now purely the fix. A second real defect was found and fixed during
-      review: the cleanup path guarded on `errors.Is(err, syscall.ESRCH)` but
-      `auditTokenForPID` never wraps ESRCH (`task_name_for_pid` reports a dead PID
-      as KERN_FAILURE / Mach code 5), so the guard could never fire and an
-      ordinary teardown race failed the whole cleanup — the exact false-cleanup
-      failure #205 exists to eliminate. Fixed via an `errDarwinProcessGone`
-      sentinel; regression test verified to fail without the mapping.
+- [x] PR #209 (issue #205) — MERGED as 3045d07; issue #205 auto-closed. Turn
+      deadlines separated from stall detection + Darwin process-tree containment.
+      The branch was based on v0.22.0 and would have DELETED PR #206's three
+      release-authority files and reverted the released 0.22.1 CHANGELOG heading;
+      rebased so the diff is purely the fix. Three further defects found and
+      fixed during review: (1) the cleanup path guarded on
+      `errors.Is(err, syscall.ESRCH)` but `auditTokenForPID` never wraps ESRCH
+      (`task_name_for_pid` reports a dead PID as KERN_FAILURE / Mach code 5), so
+      the guard could never fire and an ordinary teardown race failed the whole
+      cleanup — the exact false-cleanup failure #205 exists to eliminate, fixed
+      via an `errDarwinProcessGone` sentinel; (2) unbounded stdout/stderr and
+      stream-JSON aggregate sinks, which the 30m turn default widened into an OOM
+      path since every write renews the stall lease — now bounded inline at
+      16MiB, verified 0.34s vs a 90s timeout without the ceiling; (3)
+      `layeredTimeoutValue` accepted any non-empty string, so `turn_timeout =
+      "banana"` let dispatch claim a task that then looped forever until stale
+      reclamation — now validated at binding resolution via
+      `ValidateConfiguredTimeout`.
+- [ ] [WAIT] PR #212 — store concurrent-open safety. 0 failures, 0 unresolved
+      threads; blocked only on the `Package GUI (windows-latest)` required check.
+      Two pre-existing races proven on main and fixed: `journal_mode` as a DSN
+      `_pragma` re-ran a lock-taking pragma on every pooled connection
+      (`store: ping: database is locked`), and `Migrate` read the schema version
+      outside any lock so concurrent first-openers all ran the same DDL
+      (`table projects already exists`). Review then caught a bug the fix
+      introduced — the early return swallowed the newer-schema case, letting an
+      old binary treat a newer schema as already-applied — fixed with
+      `ErrSchemaNewerThanBinary` checked inside the transaction, plus
+      cancellation-aware retries.
+- [ ] [WAIT] PR #210 — directive + DAG integration spec. 0 failures, 0 unresolved
+      threads, 9 checks still running. Absorbed 9 review findings including four
+      spec-consistency fixes: edge derivation is four distinct cases (an OMITTED
+      `after` keeps document order so annotation cannot silently reorder;
+      `after: []` is the explicit root opt-out), plan import is transactional
+      everywhere, `group_path` is a persisted contract, and containment is
+      documented as detection rather than a boundary.
 - [ ] Issue #204 (feat/operator-observability-a2a) — NEEDS_WORK, do not PR yet.
       The query/control plane, projection service, and IPC v3 surface are strong
       and privacy on the NEW path is airtight. Blockers: 2 e2e tests fail that
@@ -149,21 +174,42 @@ tags before deletion: `archive/plan-v2-dag`, `archive/release-022-recovery-scrat
       legacy `StatusReply.RepoPath`/`PID`/`WorkerSummary.ProviderSessionID` remain
       in the live CmdStatus wire contract; Claude auth-failure classification not
       implemented (internal/provider untouched — only Codex has a classifier).
-- [ ] DAG integration (feat/plan-v2-reland) — see the two decisions recorded
-      2026-07-27. Central verified finding: **main already has the DAG store
+- [ ] DAG integration — increment 2 next, gated on #212 merging (increment 1 is
+      its base). Central verified finding: **main already has the DAG store
       layer.** `task_deps` ships in 0001_initial with cycle prevention in
       `AddDep`; `Ready`/`ClaimNextReady` already walk the edges. The gap is
       confined to the orchestrator — `DispatchNext` re-parses markdown and derives
       readiness POSITIONALLY, and `internal/orch` has zero `AddDep` calls. Work =
       grammar expresses edges -> persist into the existing table at import ->
       dispatch walks the graph. 12 ordered increments in
-      `docs/superpowers/specs/2026-07-26-dag-integration-design.md`. Hard
-      discards: `plan_graph.go`
+      `docs/superpowers/specs/2026-07-26-dag-integration-design.md`.
+      Increment 1 = PR #212 (WAL + migration races). Increment 2 =
+      `0003_plan_graph.up.sql` (WRITTEN, in the rr-dag-reland worktree, with
+      `group_path` added since increment 6's fan-out partitioning needs it
+      persisted rather than re-derived from markdown) + `store/task_metadata.go`.
+      Verified salvage constraints: `ErrTaskNotRunning` moves to `tasks.go`;
+      `TeamRollups` SURVIVES the `task_metadata_view.go` discard (consumed by
+      supervisor.go:349 + gui/team.go + views.go:262); keep main's `isSQLiteBusy`
+      from #212 (broader than the archive's — handles SQLITE_LOCKED too).
+      Hard discards: `plan_graph.go`'s `CreatePlanGraph`
       (duplicates CreatePlan+CreateTask+AddDep AND bypasses the cycle check),
-      `graph_validate.go`, the `Task` metadata widening + `task_metadata_view.go`,
-      `Plan.V2` and every `parsed.V2` fork, the 18-arg Codex expansion, and the
+      `graph_validate.go`, `enrichTaskMetadata` + the `Task` widening,
+      `Plan.V2` and every `parsed.V2` fork, the Codex arg expansion, and the
       double filesystem verification in `VerifyAndComplete`. CWE-22 located in
       `secureProjectPath` with a fix specified — must land fixed.
+- [ ] Deferred provider CLI flag decisions, own PR with real-CLI verification:
+      claude `--permission-mode bypassPermissions` (a security posture change —
+      arguable since claude.go:122 already treats a permission prompt as a KILL,
+      but it needs its own decision, not a DAG ride-along), claude `--no-chrome`,
+      opencode `--pure --auto`. DISCARDED separately: the `defaultOpencodeProvider`
+      NativeFanout true->false flip, which regresses a capability main documents
+      as verified against installed opencode 1.18.3.
+- [ ] Windows shutdown flake in `TestRun_SecondRunRefuses`
+      (supervisor_test.go:133). Pre-existing — PR #209 changed only COMMENTS in
+      internal/supervisor/supervisor.go, and the file's own comments at :17/:153
+      document this named-pipe timing flake while :158 calls this very test the
+      "deterministic" alternative, which the failure disproves. Root-cause the
+      cancel-and-collect tail rather than raising the 15s bound again.
 
 ## Rolling improvement queue (directive 0 appends here)
 
