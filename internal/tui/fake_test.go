@@ -27,6 +27,7 @@ type fakeDataSource struct {
 	descriptions     map[string]string
 	detailErr        error
 	descriptionCalls int
+	gotTaskIDs       []string
 
 	maxEventID   int64
 	attachFrames []json.RawMessage
@@ -157,6 +158,7 @@ func (f *fakeDataSource) TaskDescriptions(
 	query observe.TaskDescriptionsQuery,
 ) (observe.TaskDescriptions, error) {
 	f.descriptionCalls++
+	f.gotTaskIDs = query.TaskIDs
 	if f.detailErr != nil {
 		return observe.TaskDescriptions{}, f.detailErr
 	}

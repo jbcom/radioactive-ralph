@@ -49,7 +49,7 @@ func TestDescriptionFetchFailureDegradesToIDs(t *testing.T) {
 	f := testFake()
 	f.detailErr = errors.New("unsupported command")
 
-	got := fetchDescriptions(t.Context(), f, "project-1", "plan-1")
+	got := fetchDescriptions(t.Context(), f, "project-1", "plan-1", []string{"task-a", "task-b"})
 	if len(got) != 0 {
 		t.Fatalf("descriptions = %v, want empty on fetch failure", got)
 	}
@@ -67,11 +67,12 @@ func TestDescriptionFetchFailureDegradesToIDs(t *testing.T) {
 }
 
 // TestFetchDescriptionsSkipsBlankPlan avoids a pointless round trip when there
-// is no plan in scope.
+// is no plan in scope. The same guard covers an empty task list, so a page with
+// nothing on it costs no query.
 func TestFetchDescriptionsSkipsBlankPlan(t *testing.T) {
 	f := testFake()
 	f.descriptions = map[string]string{"task-a": "real label"}
-	if got := fetchDescriptions(t.Context(), f, "project-1", ""); got != nil {
+	if got := fetchDescriptions(t.Context(), f, "project-1", "", []string{"task-a"}); got != nil {
 		t.Fatalf("descriptions = %v, want nil for an empty plan id", got)
 	}
 }
@@ -82,7 +83,7 @@ func TestFetchDescriptionsSkipsBlankPlan(t *testing.T) {
 func TestFetchDescriptionsCostsOneRoundTrip(t *testing.T) {
 	f := testFake()
 	f.descriptions = map[string]string{"task-a": "first", "task-b": "second"}
-	got := fetchDescriptions(t.Context(), f, "project-1", "plan-1")
+	got := fetchDescriptions(t.Context(), f, "project-1", "plan-1", []string{"task-a", "task-b"})
 	if len(got) != 2 || got["task-a"] != "first" || got["task-b"] != "second" {
 		t.Fatalf("descriptions = %v, want both labels from one call", got)
 	}
@@ -119,5 +120,30 @@ func TestFetchedDescriptionsSurviveTheMerge(t *testing.T) {
 	}
 	if out := m.View(); !strings.Contains(out, "wire up the frobnicator") {
 		t.Fatalf("meso view lacks the description after a real fetch:\n%s", out)
+	}
+}
+
+// TestFetchDescriptionsSkipsEmptyTaskList proves the read is bounded by the
+// visible page: with no tasks to render there is nothing to look up, and a
+// query would be a pure waste on every one-second refresh.
+func TestFetchDescriptionsSkipsEmptyTaskList(t *testing.T) {
+	f := testFake()
+	f.descriptions = map[string]string{"task-a": "label"}
+	if got := fetchDescriptions(t.Context(), f, "project-1", "plan-1", nil); got != nil {
+		t.Fatalf("descriptions = %v, want nil for an empty task page", got)
+	}
+	if f.descriptionCalls != 0 {
+		t.Fatalf("issued %d queries for an empty page, want 0", f.descriptionCalls)
+	}
+}
+
+// TestFetchDescriptionsRequestsOnlyVisibleTasks pins the bound itself: the
+// query must name the rendered tasks, not the whole plan.
+func TestFetchDescriptionsRequestsOnlyVisibleTasks(t *testing.T) {
+	f := testFake()
+	f.descriptions = map[string]string{"task-a": "first"}
+	fetchDescriptions(t.Context(), f, "project-1", "plan-1", []string{"task-a"})
+	if len(f.gotTaskIDs) != 1 || f.gotTaskIDs[0] != "task-a" {
+		t.Fatalf("query carried task ids %v, want exactly [task-a]", f.gotTaskIDs)
 	}
 }

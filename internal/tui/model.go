@@ -323,11 +323,12 @@ func (m Model) fetchCmd() tea.Cmd {
 		case levelMeso:
 			snap.tasks = reply.Tasks.Items
 			snap.tasksHasMore = reply.Tasks.HasMore
-			snap.descriptions = fetchDescriptions(ctx, source, projectID, selectedPlan.ID)
+			snap.descriptions = fetchDescriptions(ctx, source, projectID, selectedPlan.ID, taskIDsOf(reply.Tasks.Items))
 		case levelMicro:
 			snap.taskEvent = reply.RecentEvents.Items
 			snap.eventsHasMore = reply.RecentEvents.HasMore
-			snap.descriptions = fetchDescriptions(ctx, source, projectID, selectedPlan.ID)
+			snap.descriptions = fetchDescriptions(
+				ctx, source, projectID, selectedPlan.ID, []string{selectedTask.ID})
 		}
 		return fetchedMsg{snap: snap}
 	}
@@ -976,16 +977,30 @@ func fetchDescriptions(
 	ctx context.Context,
 	source DataSource,
 	projectID, planID string,
+	taskIDs []string,
 ) map[string]string {
-	if planID == "" {
+	if planID == "" || len(taskIDs) == 0 {
 		return nil
 	}
 	got, err := source.TaskDescriptions(ctx, observe.TaskDescriptionsQuery{
 		ProjectID: projectID,
 		PlanID:    planID,
+		TaskIDs:   taskIDs,
 	})
 	if err != nil {
 		return nil
 	}
 	return got.ByTask
+}
+
+// taskIDsOf bounds a description fetch to exactly the tasks being rendered, so
+// the label read stays as page-bounded as the snapshot that produced them.
+func taskIDsOf(tasks []observe.Task) []string {
+	ids := make([]string, 0, len(tasks))
+	for _, task := range tasks {
+		if task.ID != "" {
+			ids = append(ids, task.ID)
+		}
+	}
+	return ids
 }

@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 )
 
 // OperatorTaskDetail is the OPT-IN, single-task view. It carries the one field
@@ -40,16 +41,44 @@ var ErrOperatorTaskDetailNotFound = errors.New("store: operator task detail not 
 func (s *Store) ListOperatorTaskDescriptions(
 	ctx context.Context,
 	projectID, planID string,
+	taskIDs []string,
 ) (map[string]string, error) {
 	if projectID == "" || planID == "" {
 		return nil, fmt.Errorf("store: operator task descriptions require project and plan ids")
 	}
-	rows, err := s.db.QueryContext(ctx, `
+	if len(taskIDs) == 0 {
+		return map[string]string{}, nil
+	}
+	// Bounded to the caller's visible page. Reading every description in the
+	// plan would make an otherwise page-bounded operator surface perform an
+	// unbounded scan on every one-second refresh, and serialize unbounded
+	// author-controlled text with it — a large plan would blow the refresh
+	// budget. MaxOperatorPageLimit matches the snapshot's own page cap, so a
+	// caller can never ask for more labels than tasks it was shown.
+	if len(taskIDs) > MaxOperatorPageLimit {
+		return nil, fmt.Errorf(
+			"store: operator task descriptions: %d ids exceeds the %d page limit",
+			len(taskIDs), MaxOperatorPageLimit)
+	}
+	args := make([]any, 0, len(taskIDs)+2)
+	args = append(args, projectID, planID)
+	placeholders := make([]string, len(taskIDs))
+	for i, id := range taskIDs {
+		placeholders[i] = "?"
+		args = append(args, id)
+	}
+	// The only interpolated text is a comma-joined run of "?" generated from
+	// len(taskIDs) above — never caller data. Every id is bound as a parameter
+	// in args, so no value reaches the SQL text.
+	//nolint:gosec // G202: placeholders are generated "?" markers, not user input
+	query := `
 		SELECT t.id, t.description
 		FROM tasks t
 		JOIN plans p ON p.id = t.plan_id
 		WHERE p.project_id = ? AND t.plan_id = ?
-	`, projectID, planID)
+		  AND t.id IN (` + strings.Join(placeholders, ",") + `)
+	`
+	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("store: list operator task descriptions: %w", err)
 	}

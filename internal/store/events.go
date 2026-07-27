@@ -100,6 +100,11 @@ func (s *Store) ListProjectEvents(ctx context.Context, projectID string, limit i
 // service-internal kinds like `tick`) belong to no project and are excluded.
 const eventProjectScope = `(project_id = ? OR (project_id IS NULL AND plan_id IN (SELECT id FROM plans WHERE project_id = ?)))`
 
+// eventProjectScopeQualified is eventProjectScope with an `e.` table alias, for
+// the query that LEFT JOINs plans to blank cross-project identifiers. Same
+// predicate, same two bindings — kept adjacent so the two cannot drift.
+const eventProjectScopeQualified = `(e.project_id = ? OR (e.project_id IS NULL AND e.plan_id IN (SELECT id FROM plans WHERE project_id = ?)))`
+
 // EventsAfter returns a project's events with id strictly greater than
 // afterID, in ascending id order, capped at limit. It is the tail query
 // backing the Attach event stream: a client resumes from its last-seen id and
@@ -112,14 +117,24 @@ func (s *Store) EventsAfter(ctx context.Context, projectID string, afterID int64
 	if limit <= 0 {
 		limit = 256
 	}
+	// The LEFT JOIN blanks plan_id/task_id when the referenced plan does not
+	// belong to projectID. eventProjectScope decides which ROWS are visible —
+	// an event naming this project explicitly is included even if it carries a
+	// plan from another one — but the identifiers on such a row must not leak
+	// across the project boundary. This mirrors readOperatorEvents exactly;
+	// without it the live Attach stream would break an isolation guarantee the
+	// snapshot already enforces.
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, COALESCE(project_id,''), COALESCE(plan_id,''), COALESCE(task_id,''),
-		       kind, COALESCE(stream,''), COALESCE(actor,''), COALESCE(payload_json,''), occurred_at
-		FROM events
-		WHERE id > ? AND `+eventProjectScope+`
-		ORDER BY id ASC
+		SELECT e.id, COALESCE(e.project_id,''), COALESCE(ep.id,''),
+		       CASE WHEN ep.id IS NULL THEN '' ELSE COALESCE(e.task_id,'') END,
+		       e.kind, COALESCE(e.stream,''), COALESCE(e.actor,''),
+		       COALESCE(e.payload_json,''), e.occurred_at
+		FROM events e
+		LEFT JOIN plans ep ON ep.id = e.plan_id AND ep.project_id = ?
+		WHERE e.id > ? AND `+eventProjectScopeQualified+`
+		ORDER BY e.id ASC
 		LIMIT ?
-	`, afterID, projectID, projectID, limit)
+	`, projectID, afterID, projectID, projectID, limit)
 	if err != nil {
 		return nil, fmt.Errorf("store: events after: %w", err)
 	}

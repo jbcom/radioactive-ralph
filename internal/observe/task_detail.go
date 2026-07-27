@@ -9,6 +9,10 @@ import (
 type TaskDescriptionsQuery struct {
 	ProjectID string `json:"project_id"`
 	PlanID    string `json:"plan_id"`
+	// TaskIDs bounds the read to the tasks the caller is actually rendering.
+	// Without it a plan larger than one snapshot page would scan every
+	// description on every refresh.
+	TaskIDs []string `json:"task_ids"`
 }
 
 // TaskDescriptions carries author-written task labels for one plan.
@@ -35,7 +39,7 @@ func (s *Service) TaskDescriptions(
 	ctx context.Context,
 	q TaskDescriptionsQuery,
 ) (TaskDescriptions, error) {
-	byTask, err := s.reader.ListOperatorTaskDescriptions(ctx, q.ProjectID, q.PlanID)
+	byTask, err := s.reader.ListOperatorTaskDescriptions(ctx, q.ProjectID, q.PlanID, q.TaskIDs)
 	if err != nil {
 		return TaskDescriptions{}, fmt.Errorf("observe: task descriptions: %w", err)
 	}

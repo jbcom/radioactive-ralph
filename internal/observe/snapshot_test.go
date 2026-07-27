@@ -851,6 +851,7 @@ func TestServiceDefendsProjectionBounds(t *testing.T) {
 func (f *fakeReader) ListOperatorTaskDescriptions(
 	_ context.Context,
 	_, _ string,
+	_ []string,
 ) (map[string]string, error) {
 	if f.detailErr != nil {
 		return nil, f.detailErr

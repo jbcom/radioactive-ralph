@@ -117,7 +117,7 @@ func (m Model) Init() tea.Cmd
 Init starts the refresh loop. It fires an IMMEDIATE refresh tick rather than launching a fetch directly, so the very first gather goes through the same in\-flight\-guarded path as every periodic tick \(Init returns a Cmd and cannot set m.fetching, so a direct fetch here could overlap the first periodic tick if the initial gather is slow\).
 
 <a name="Model.Update"></a>
-### func \(Model\) [Update](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/tui/model.go#L397>)
+### func \(Model\) [Update](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/tui/model.go#L398>)
 
 ```go
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd)
@@ -126,7 +126,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd)
 Update handles key events \(arrows/enter to drill in, esc/backspace to drill out, q to quit\) and the periodic refresh tick. This is the surface the model\_test.go table tests exercise directly, injecting tea.KeyMsg values without a real terminal.
 
 <a name="Model.View"></a>
-### func \(Model\) [View](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/tui/model.go#L769>)
+### func \(Model\) [View](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/tui/model.go#L770>)
 
 ```go
 func (m Model) View() string

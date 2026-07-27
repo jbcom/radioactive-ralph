@@ -85,7 +85,7 @@ The schema is embedded under schema/\*.sql and applied in lexical order by Migra
   - [func \(s \*Store\) HeartbeatWorkerAndSession\(ctx context.Context, workerID string\) error](<#Store.HeartbeatWorkerAndSession>)
   - [func \(s \*Store\) ListMessages\(ctx context.Context, planID, taskID string\) \(\[\]A2AMessage, error\)](<#Store.ListMessages>)
   - [func \(s \*Store\) ListOperatorMessages\(ctx context.Context, q OperatorMessageQuery\) \(\*OperatorMessagePage, error\)](<#Store.ListOperatorMessages>)
-  - [func \(s \*Store\) ListOperatorTaskDescriptions\(ctx context.Context, projectID, planID string\) \(map\[string\]string, error\)](<#Store.ListOperatorTaskDescriptions>)
+  - [func \(s \*Store\) ListOperatorTaskDescriptions\(ctx context.Context, projectID, planID string, taskIDs \[\]string\) \(map\[string\]string, error\)](<#Store.ListOperatorTaskDescriptions>)
   - [func \(s \*Store\) ListPlans\(ctx context.Context, projectID string, statuses \[\]PlanStatus\) \(\[\]Plan, error\)](<#Store.ListPlans>)
   - [func \(s \*Store\) ListProjectEvents\(ctx context.Context, projectID string, limit int\) \(\[\]Event, error\)](<#Store.ListProjectEvents>)
   - [func \(s \*Store\) ListRunningWorkers\(ctx context.Context\) \(\[\]RunningWorker, error\)](<#Store.ListRunningWorkers>)
@@ -587,7 +587,7 @@ type OperatorTaskCursor struct {
 ```
 
 <a name="OperatorTaskDetail"></a>
-## type [OperatorTaskDetail](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/operator_task_detail.go#L22-L26>)
+## type [OperatorTaskDetail](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/operator_task_detail.go#L23-L27>)
 
 OperatorTaskDetail is the OPT\-IN, single\-task view. It carries the one field the bulk snapshot deliberately withholds: the task's author\-written description.
 
@@ -953,7 +953,7 @@ func (s *Store) Emit(ctx context.Context, o EmitOpts) error
 Emit appends one event row. Used for events not already covered by a more specific transactional helper \(e.g. task claim/done/failed emit their own events inline so the status transition and audit row commit atomically\).
 
 <a name="Store.EventsAfter"></a>
-### func \(\*Store\) [EventsAfter](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/events.go#L111>)
+### func \(\*Store\) [EventsAfter](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/events.go#L116>)
 
 ```go
 func (s *Store) EventsAfter(ctx context.Context, projectID string, afterID int64, limit int) ([]Event, error)
@@ -1036,10 +1036,10 @@ ListOperatorMessages returns bounded, chronological, content\-free A2A metadata 
 Like ReadOperatorSnapshot, an error returns a nil page rather than a plausible empty page.
 
 <a name="Store.ListOperatorTaskDescriptions"></a>
-### func \(\*Store\) [ListOperatorTaskDescriptions](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/operator_task_detail.go#L40-L43>)
+### func \(\*Store\) [ListOperatorTaskDescriptions](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/operator_task_detail.go#L41-L45>)
 
 ```go
-func (s *Store) ListOperatorTaskDescriptions(ctx context.Context, projectID, planID string) (map[string]string, error)
+func (s *Store) ListOperatorTaskDescriptions(ctx context.Context, projectID, planID string, taskIDs []string) (map[string]string, error)
 ```
 
 ListOperatorTaskDescriptions returns task id \-\> description for one plan, in ONE query.
@@ -1130,7 +1130,7 @@ MarkFailedWithPayload transitions a running task to failed or retries while pres
 Both UPDATEs are guarded by \`status = 'running' AND claimed\_by\_session = sessionID\`, the same owner guard MarkDone and MarkBlocked carry. Without the owner guard a stale failure report from a worker whose claim the reaper already reclaimed \(and possibly reassigned to a new worker\) would flip the task back to pending / failed and clear the NEW owner's claim — double execution plus a dropped completion. When the guard matches nothing the task has moved on under a different session; MarkFailed returns ErrTaskNotOwnedRunning so the caller can drop the stale report rather than resurrect the task.
 
 <a name="Store.MaxEventID"></a>
-### func \(\*Store\) [MaxEventID](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/events.go#L145>)
+### func \(\*Store\) [MaxEventID](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/events.go#L160>)
 
 ```go
 func (s *Store) MaxEventID(ctx context.Context, projectID string) (int64, error)
@@ -1170,7 +1170,7 @@ ReadOperatorSnapshot reads all snapshot components from one SQLite read transact
 The pointer return is intentional. Any query/scan/commit failure returns a nil snapshot, so a caller cannot accidentally interpret a partial result's zero ActiveWorkerCount as a valid zero\-worker automation gate.
 
 <a name="Store.ReadOperatorTaskDetail"></a>
-### func \(\*Store\) [ReadOperatorTaskDetail](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/operator_task_detail.go#L74-L77>)
+### func \(\*Store\) [ReadOperatorTaskDetail](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/operator_task_detail.go#L103-L106>)
 
 ```go
 func (s *Store) ReadOperatorTaskDetail(ctx context.Context, projectID, planID, taskID string) (OperatorTaskDetail, error)

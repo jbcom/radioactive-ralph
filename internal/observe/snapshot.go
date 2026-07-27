@@ -333,6 +333,7 @@ type Reader interface {
 	ListOperatorTaskDescriptions(
 		ctx context.Context,
 		projectID, planID string,
+		taskIDs []string,
 	) (map[string]string, error)
 }
 
