@@ -234,7 +234,7 @@ func TestHashContainedFileFailsClosedOnASymlink(t *testing.T) {
 func TestValidateTaskFilesystemRejectsAnEscapingDeclaration(t *testing.T) {
 	root := realTempDir(t)
 	for name, decl := range map[string]taskFilesystemDecl{
-		"escaping input":  {Inputs: []string{"../outside.txt"}},
+		"escaping input":  {Inputs: []taskInputDecl{{Path: "../outside.txt"}}},
 		"escaping output": {Outputs: []string{"../outside.txt"}},
 		"absolute output": {Outputs: []string{filepath.Join(string(filepath.Separator), "etc", "passwd")}},
 	} {
@@ -339,5 +339,85 @@ func TestDispatchRunsATaskWithContainedPaths(t *testing.T) {
 	o.Wait()
 	if dispatched != 1 {
 		t.Fatalf("dispatched = %d, want 1 — a contained declaration must still run", dispatched)
+	}
+}
+
+// TestValidateTaskInputsEnforcesHashPins is the second P1: a declared input
+// pinned by sha256 must be CHECKED, not merely resolved. Discarding the digest
+// meant hashContainedFile was never called from dispatch, so a task pinned to
+// exact bytes ran against whatever the file happened to contain — the pin
+// silently did nothing.
+func TestValidateTaskInputsEnforcesHashPins(t *testing.T) {
+	root := realTempDir(t)
+	path := filepath.Join(root, "input.txt")
+	if err := os.WriteFile(path, []byte("expected"), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	want, err := hashContainedFile(path)
+	if err != nil {
+		t.Fatalf("hashContainedFile: %v", err)
+	}
+
+	matching := taskFilesystemDecl{Inputs: []taskInputDecl{{Path: "input.txt", SHA256: want}}}
+	if err := validateTaskFilesystem(root, matching); err != nil {
+		t.Fatalf("a matching pin was rejected: %v", err)
+	}
+
+	if err := os.WriteFile(path, []byte("something else"), 0o600); err != nil {
+		t.Fatalf("rewrite: %v", err)
+	}
+	if err := validateTaskFilesystem(root, matching); err == nil {
+		t.Fatal("a task pinned to exact bytes was admitted against DIFFERENT bytes; " +
+			"the pin did nothing")
+	} else if !errors.Is(err, ErrTaskInputPinMismatch) {
+		t.Fatalf("err = %v, want ErrTaskInputPinMismatch", err)
+	}
+}
+
+// TestValidateTaskInputsRefusesAMissingPinnedInput covers the other half: a pin
+// against a file that does not exist must refuse rather than admit.
+func TestValidateTaskInputsRefusesAMissingPinnedInput(t *testing.T) {
+	root := realTempDir(t)
+	decl := taskFilesystemDecl{Inputs: []taskInputDecl{{Path: "absent.txt", SHA256: "abc123"}}}
+	if err := validateTaskFilesystem(root, decl); err == nil {
+		t.Fatal("a pinned input that does not exist was admitted")
+	}
+}
+
+// TestUnpinnedInputIsNotHashed keeps the check proportional: an input declared
+// WITHOUT a digest is a scope declaration, not a pin, so it must not be forced
+// to exist at admission — a task may legitimately declare an input a
+// predecessor has yet to write.
+func TestUnpinnedInputIsNotHashed(t *testing.T) {
+	root := realTempDir(t)
+	decl := taskFilesystemDecl{Inputs: []taskInputDecl{{Path: "not-yet.txt"}}}
+	if err := validateTaskFilesystem(root, decl); err != nil {
+		t.Fatalf("an unpinned, not-yet-created input was refused: %v", err)
+	}
+}
+
+// TestResolutionFaultIsNotAContainmentRefusal is the P2. A symlink loop, a
+// permission error, or transient I/O is NOT an escape, but wrapping it in
+// ErrTaskPathEscapesProject made pathGateBlocks take its permanent
+// MarkBlockedInput branch — so a transient fault permanently blocked a task
+// and the intended transient branch was unreachable.
+func TestResolutionFaultIsNotAContainmentRefusal(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink creation needs elevation on Windows")
+	}
+	root := realTempDir(t)
+	// A symlink loop: resolution fails, but nothing escaped.
+	loop := filepath.Join(root, "loop")
+	if err := os.Symlink(loop, loop); err != nil {
+		t.Fatalf("symlink: %v", err)
+	}
+
+	_, err := secureProjectPath(root, "loop")
+	if err == nil {
+		t.Fatal("a symlink loop resolved successfully")
+	}
+	if errors.Is(err, ErrTaskPathEscapesProject) {
+		t.Fatal("a resolution FAULT was reported as a containment refusal; the " +
+			"caller then blocks the task permanently for what may be transient")
 	}
 }

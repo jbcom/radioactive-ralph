@@ -18,11 +18,31 @@ import (
 // I/O fault: containment is a refusal, not a transient failure.
 var ErrTaskPathEscapesProject = errors.New("orch: declared path escapes the project root")
 
+// ErrTaskInputPinMismatch reports a declared input whose bytes do not match the
+// sha256 the plan pinned it to. Distinct from a containment refusal: the path
+// is in scope, its CONTENT is not what the task was written against.
+var ErrTaskInputPinMismatch = errors.New("orch: declared input does not match its pinned hash")
+
+// ErrTaskPathUnresolvable reports a path that could not be resolved for a
+// reason that is NOT an escape — a symlink loop, a permission error, transient
+// I/O. Kept separate because the caller's response differs: a containment
+// refusal blocks the task permanently, while a fault may clear on its own and
+// must not strand the task.
+var ErrTaskPathUnresolvable = errors.New("orch: declared path could not be resolved")
+
 // taskFilesystemDecl is a task's declared filesystem surface, as project-
 // relative paths.
 type taskFilesystemDecl struct {
-	Inputs  []string
+	Inputs  []taskInputDecl
 	Outputs []string
+}
+
+// taskInputDecl is one declared input. An empty SHA256 means the plan declared
+// the path's SCOPE but did not pin its content — a meaningful distinction,
+// since an unpinned input may legitimately not exist yet.
+type taskInputDecl struct {
+	Path   string
+	SHA256 string
 }
 
 // secureProjectPath resolves a project-relative declared path and returns the
@@ -63,15 +83,19 @@ func secureProjectPath(root, declared string) (string, error) {
 
 	resolvedRoot, err := filepath.EvalSymlinks(root)
 	if err != nil {
-		// Fail closed: without a resolved root there is nothing to contain
-		// against, so no comparison below would mean anything.
-		return "", fmt.Errorf("%w: resolve project root: %v", ErrTaskPathEscapesProject, err)
+		// A root that will not resolve is a FAULT, not an escape: there is
+		// nothing to contain against, so no comparison below would mean
+		// anything, but nothing escaped either.
+		return "", fmt.Errorf("%w: resolve project root: %v", ErrTaskPathUnresolvable, err)
 	}
 
 	candidate := filepath.Join(resolvedRoot, filepath.Clean(declared))
 	resolved, err := resolveThroughExistingAncestor(candidate)
 	if err != nil {
-		return "", fmt.Errorf("%w: resolve %q: %v", ErrTaskPathEscapesProject, declared, err)
+		// Symlink loop, permission error, transient I/O — none of these is an
+		// escape. Reporting them as containment would make the caller block the
+		// task permanently for a condition that may clear on its own.
+		return "", fmt.Errorf("%w: resolve %q: %v", ErrTaskPathUnresolvable, declared, err)
 	}
 	if !containedIn(resolvedRoot, resolved) {
 		return "", fmt.Errorf("%w: %q resolves to %q", ErrTaskPathEscapesProject, declared, resolved)
@@ -161,8 +185,27 @@ func hashContainedFile(path string) (string, error) {
 // at import with a clear message, rather than mid-run.
 func validateTaskFilesystem(root string, decl taskFilesystemDecl) error {
 	for _, in := range decl.Inputs {
-		if _, err := secureProjectPath(root, in); err != nil {
-			return fmt.Errorf("declared input %q: %w", in, err)
+		resolved, err := secureProjectPath(root, in.Path)
+		if err != nil {
+			return fmt.Errorf("declared input %q: %w", in.Path, err)
+		}
+		if in.SHA256 == "" {
+			// Declared scope, not a pin. An unpinned input may legitimately not
+			// exist yet — a predecessor may still be writing it — so requiring
+			// it to be readable here would refuse valid plans.
+			continue
+		}
+		// A pin is a claim about CONTENT, so it has to be checked against the
+		// bytes. Reading through the no-follow handle and hashing from the
+		// *os.File is what makes the check mean anything: a pathname re-read
+		// could hash a different inode than the one containment approved.
+		got, err := hashContainedFile(resolved)
+		if err != nil {
+			return fmt.Errorf("declared input %q: %w: %v", in.Path, ErrTaskInputPinMismatch, err)
+		}
+		if got != in.SHA256 {
+			return fmt.Errorf(
+				"declared input %q: %w", in.Path, ErrTaskInputPinMismatch)
 		}
 	}
 	for _, out := range decl.Outputs {
@@ -182,7 +225,9 @@ func declFromMetadata(step plan.Step) taskFilesystemDecl {
 	}
 	decl := taskFilesystemDecl{}
 	for _, in := range step.Metadata.Inputs {
-		decl.Inputs = append(decl.Inputs, in.Path)
+		// Carry the digest, not just the path: dropping it silently turned every
+		// pin into a no-op.
+		decl.Inputs = append(decl.Inputs, taskInputDecl{Path: in.Path, SHA256: in.SHA256})
 	}
 	for _, out := range step.Metadata.Outputs {
 		decl.Outputs = append(decl.Outputs, out.Path)
