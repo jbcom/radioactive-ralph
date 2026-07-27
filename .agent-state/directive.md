@@ -174,8 +174,20 @@ tags before deletion: `archive/plan-v2-dag`, `archive/release-022-recovery-scrat
       legacy `StatusReply.RepoPath`/`PID`/`WorkerSummary.ProviderSessionID` remain
       in the live CmdStatus wire contract; Claude auth-failure classification not
       implemented (internal/provider untouched — only Codex has a classifier).
-- [ ] DAG integration — increment 2 next, gated on #212 merging (increment 1 is
-      its base). Central verified finding: **main already has the DAG store
+- [ ] [WAIT] DAG increment 2 — COMMITTED on `feat/plan-graph-metadata`
+      (af7ca49, stacked on #212). `0003_plan_graph` migration + `task_metadata.go`
+      with `group_path`/`ListTaskGroupPaths`, `TeamRollups` rescued from the
+      `task_metadata_view.go` discard, `ErrTaskNotRunning` relocated to
+      `tasks.go` with `ErrTaskNotOwnedRunning` wrapping it, and the two new
+      blocked statuses folding into `StatusCounts.Blocked`. 25 packages green
+      cache-busted, -race clean, lint 0 issues; the four
+      must-not-change migration tests pass unchanged. Also added a guard for a
+      trap I hit: `schema/embed.go` globs `*.sql`, so a locally staged migration
+      is silently applied and every store test then fails with "DB schema is
+      newer than this binary supports" —
+      `TestCurrentSchemaVersionMatchesEmbeddedMigrations` now names the real
+      cause. Opens as a PR once #212 merges (it is the base).
+- [ ] DAG integration — increments 3-12. Central verified finding: **main already has the DAG store
       layer.** `task_deps` ships in 0001_initial with cycle prevention in
       `AddDep`; `Ready`/`ClaimNextReady` already walk the edges. The gap is
       confined to the orchestrator — `DispatchNext` re-parses markdown and derives
