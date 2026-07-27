@@ -161,8 +161,8 @@ tags before deletion: `archive/plan-v2-dag`, `archive/release-022-recovery-scrat
       backstop (240ms/Open, 44x reduction).
 - [x] PR #210 — MERGED. Directive re-armed + the DAG integration spec landed.
 - [x] DAG increment 4 (#217) — MERGED, released v0.23.0.
-- [ ] [WAIT-CI] Sixteen PRs open (222, 224, 225, 228, 229, 233, 234, 236, 237,
-      238, 239, 240, 245, 246, 247, 250). ALL review threads on ALL of them are
+- [ ] [WAIT-CI] Seventeen PRs open (222, 224, 225, 228, 229, 233, 234, 236,
+      237, 238, 239, 240, 245, 246, 247, 250, 251). ALL review threads are
       RESOLVED as of 2026-07-27 16:20Z. The only thing between them and merge
       is macOS CI.
       BLOCKER (external, not repo-side): every macOS job — Test/GUI/Package GUI
@@ -365,16 +365,36 @@ tags before deletion: `archive/plan-v2-dag`, `archive/release-022-recovery-scrat
       their WORK being finished. Audited main for unfinished scope and found
       three genuine items, each verified against the code rather than inferred:
 
-- [ ] Provider write-side containment. `secureProjectPath` is best-effort
-      VALIDATION and says so: it constrains Ralph's own reads and what Ralph
-      will dispatch, and #228 added DETECTION at completion. It does NOT stop a
-      provider — a separate process opening by pathname minutes later — from
-      writing outside the checkout, because no string Ralph returns travels
-      into that process's syscalls. Verified open: grep for
-      sandbox/namespace/seccomp/landlock in internal/agent finds NOTHING. A real
-      guarantee needs a containment primitive around the provider process with
-      its own macOS/Linux/Windows matrix. Deliberately out of scope for the DAG
-      work; this is the follow-up that was promised.
+- [x] Provider write-side containment — SHIPPED for macOS (PR #251).
+      internal/contain wraps the provider in sandbox-exec (Seatbelt) with an
+      absolute, SYMLINK-RESOLVED root; opt-in per agent.Start via
+      ContainmentRoot (NOT derived from Dir — where a process starts is not the
+      same claim as the only place it may write); fails closed on an
+      unsupported platform or a relative root.
+      Inheritance is the load-bearing property: Seatbelt applies the policy to
+      the process AND everything it spawns, so a fan-out provider's sub-agents
+      cannot escape. Grandchild test included.
+      LESSON — a convenience grant silently re-opened the boundary. The draft
+      profile granted the resolved TMPDIR for scratch files; on macOS that
+      resolves under /private/tmp, so it allowed writes to a subtree full of
+      other tools' files WHILE STILL REPORTING CONTAINMENT. Only the behavioral
+      test caught it (the escape target wrote successfully). A grant that
+      widens the boundary is worse than no containment because it reports
+      success. No temp grant now, plus a regression test asserting every
+      writable subpath resolves to the root — it inspects the PROFILE's grants
+      rather than scanning argv, since in tests the root itself lives under a
+      temp dir and a substring scan cannot tell intended from extra.
+      The profile allows by default and denies WRITES only: default-deny would
+      have to enumerate every read/mach-lookup/network call each CLI version
+      needs, and its first omission looks like a provider bug rather than a
+      policy one.
+      - [ ] Linux containment (Landlock 5.13+, bubblewrap, or user namespaces).
+            Returns ErrContainmentUnavailable today. Lands with its own
+            behavioral proof that an outside write is refused, the way macOS's
+            did, or it does not land — an untested containment claim is worse
+            than an honest refusal because callers rely on it.
+      - [ ] Windows containment (job object + restricted token, or
+            AppContainer). Same fail-closed contract and same evidence bar.
 
 - [x] `desktop_launch.go` — DONE (PR #246). Was the LAST CLI store reader.
       It resolves the project for a Finder/Explorer launch before any supervisor
