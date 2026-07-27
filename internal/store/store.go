@@ -41,6 +41,12 @@ type Store struct {
 	db    *sql.DB
 	clock clockwork.Clock
 	uuid  func() string
+
+	// claimGate serializes this process's named-claim transactions. SQLite
+	// admits one writer, so letting a whole ready wave contend in the driver
+	// turns ordinary in-process queueing into SQLITE_BUSY timeouts. Capacity 1;
+	// the DB transaction remains the cross-process correctness boundary.
+	claimGate chan struct{}
 }
 
 // DSN builds the canonical modernc.org/sqlite DSN for the user-level store
@@ -156,7 +162,12 @@ func Open(ctx context.Context, opts Options) (*Store, error) {
 		return nil, err
 	}
 
-	return &Store{db: db, clock: opts.Clock, uuid: opts.UUID}, nil
+	return &Store{
+		db:        db,
+		clock:     opts.Clock,
+		uuid:      opts.UUID,
+		claimGate: make(chan struct{}, 1),
+	}, nil
 }
 
 // journalModeWALAttempts and journalModeWALBackoff bound the retry window for
