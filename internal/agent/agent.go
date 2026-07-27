@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/creack/pty"
+	"github.com/jbcom/radioactive-ralph/internal/contain"
 )
 
 // ErrPTYUnsupported is returned by Start on platforms where creack/pty cannot
@@ -78,6 +79,21 @@ type Options struct {
 	// OversizeOutputPolicy chooses whether a line larger than the derived
 	// retention threshold terminates the agent or is drained and discarded.
 	OversizeOutputPolicy OversizeOutputPolicy
+
+	// ContainmentRoot, when set, confines the process AND EVERYTHING IT SPAWNS
+	// to writing beneath this absolute path, enforced by the kernel.
+	//
+	// Opt-in rather than derived from Dir: the working directory is where the
+	// process starts, which is not the same claim as the only place it may
+	// write, and silently turning one into the other would change every
+	// existing caller's behavior. A caller that wants the guarantee asks for
+	// it. Empty leaves the process unwrapped, exactly as before.
+	//
+	// Fails closed: an unsupported platform or a relative root is an error from
+	// Start, never a silently uncontained process — a caller that believes it
+	// is contained when it is not makes precisely the false guarantee this
+	// exists to replace.
+	ContainmentRoot string
 
 	// DisableEcho turns OFF the pty's terminal echo before the child starts.
 	DisableEcho bool
@@ -162,8 +178,19 @@ func Start(ctx context.Context, opts Options) (*Agent, error) {
 		return nil, ErrInvalidObservedOutputLimit
 	}
 
+	command, args := opts.Command, opts.Args
+	if opts.ContainmentRoot != "" {
+		policy, err := contain.NewPolicy(opts.ContainmentRoot)
+		if err != nil {
+			return nil, err
+		}
+		if command, args, err = policy.Wrap(command, args); err != nil {
+			return nil, err
+		}
+	}
+
 	// Ralph, not exec.CommandContext, owns termination and reaping.
-	cmd := exec.Command(opts.Command, opts.Args...) //nolint:gosec // configured provider CLI is intentionally launched
+	cmd := exec.Command(command, args...) //nolint:gosec // configured provider CLI is intentionally launched
 	cmd.Dir = opts.Dir
 	if opts.Env != nil {
 		cmd.Env = opts.Env

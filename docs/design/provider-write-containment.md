@@ -1,0 +1,105 @@
+---
+title: Provider write containment
+---
+
+# Provider write containment
+
+Ralph runs provider CLIs it does not control, against a checkout it does. This
+document states what stops a provider writing outside that checkout, and —
+just as importantly — where that guarantee does not yet hold.
+
+## Validation is not containment
+
+Two layers exist and they are not substitutes.
+
+`internal/orch`'s `secureProjectPath` **validates**. It decides which declared
+paths Ralph will read and which declared outputs Ralph will admit, and
+completion re-checks the declarations. Every one of those operations happens
+inside Ralph's own process.
+
+None of it constrains the provider. The provider is a separate process that
+opens files by pathname, minutes later, and **no string Ralph returns ever
+travels into its syscalls**. Validation can say "this task declared an escaping
+path". Only the kernel can say "this process may not write there".
+
+The layers are complementary: validation catches the honest mistake early with
+a good error, and containment is what makes the guarantee true when a provider
+does something its declarations did not describe.
+
+## The boundary
+
+`internal/contain` produces a policy from an absolute, symlink-resolved root and
+wraps the command so the kernel enforces it. The root is resolved because a
+policy written against a symlink names the link rather than its target, so a
+provider writing through the resolved path would land outside a boundary that
+appears to contain it.
+
+Containment is **opt-in per `agent.Start`** via `ContainmentRoot`, not derived
+from `Dir`. Where a process starts is not the same claim as the only place it
+may write, and quietly turning one into the other would change every existing
+caller's behavior.
+
+It **fails closed**. An unsupported platform or a relative root is an error from
+`Start`, never a silently uncontained process — a caller that believes it is
+contained when it is not is making exactly the false guarantee this replaces.
+
+## Writes only, and why the profile allows by default
+
+The macOS profile allows by default, denies all writes, then re-allows them
+beneath the root.
+
+Default-deny would be stronger in the abstract and worse in practice: it would
+have to enumerate every read, mach lookup, and network call each provider CLI
+needs — an open-ended list that differs per provider and per version, whose
+first omission surfaces as a provider bug rather than a policy one. The
+guarantee here is scoped to **writes**, so the profile denies exactly that.
+Reads are covered by the validation layer; network egress is out of scope and
+named as such below.
+
+### There is no temp-directory exception, deliberately
+
+An earlier draft granted the resolved `TMPDIR` so provider scratch files would
+work. That single convenience line silently re-opened the boundary: on macOS
+`TMPDIR` resolves under `/private/tmp`, so "allow writes to the temp dir"
+allowed writes to a subtree holding other tools' and other users' files — while
+the policy still reported containment.
+
+The behavioral test caught it: an escape target in that subtree wrote
+successfully. **A grant that widens the boundary is worse than no containment,
+because it reports success.** A regression test now asserts every writable
+subpath in the profile resolves to the containment root.
+
+A provider needing scratch space writes it under the project root, which is
+where a task's work belongs anyway. Verified: a compiled Go binary runs and
+writes inside the root under this profile.
+
+## Containment is inherited
+
+macOS Seatbelt applies the policy to the process **and everything it spawns**.
+That is load-bearing rather than incidental: a fan-out provider runs its own
+sub-agents, so a boundary holding only for the top-level process would be
+escaped by exactly the providers Ralph is built to run. There is a test for the
+grandchild case specifically.
+
+## Platform matrix
+
+| Platform | Primitive | Status |
+|---|---|---|
+| macOS | `sandbox-exec` (Seatbelt) | **Enforced**, with behavioral tests proving an outside write is refused by the kernel, including from a grandchild process. |
+| Linux | Landlock (5.13+), bubblewrap, user namespaces | **Not implemented.** Candidates exist; none is wired up or tested. |
+| Windows | Job object + restricted token, AppContainer | **Not implemented.** |
+
+Unimplemented platforms return `ErrContainmentUnavailable` rather than passing
+the command through. An untested containment claim is worse than an honest
+refusal, because callers rely on it. Each platform lands with its own proof that
+an outside write is actually refused, the way macOS's did, or it does not land.
+
+## Out of scope
+
+- **Network egress.** A contained provider can still reach the network. Scoping
+  that needs a different mechanism and its own threat model.
+- **Reads.** The provider can read what the user running Ralph can read.
+  Containment here is about what it can *change*.
+- **Deliberate privilege escalation.** This raises the cost of an accidental or
+  careless write outside the checkout. It is not a defense against a provider
+  actively attacking the host.

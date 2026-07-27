@@ -28,6 +28,7 @@ cmd/radioactive_ralph
 internal/a2a
 internal/agent
 internal/agentdetect
+internal/contain
 internal/doctor
 internal/genesis
 internal/gui
