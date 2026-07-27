@@ -313,13 +313,21 @@ var ErrClosed error = closedError{}
 
 // ProjectConfigGetArgs asks for one project's stored config (CmdProjectConfigGet).
 //
-// An EMPTY Project means the user-scope project — the synthetic project holding
-// user-level config. The supervisor resolves (and creates) it, rather than the
-// client doing so and then telling the supervisor which id to use: that
-// resolution is a store write, and the supervisor is the single writer.
+// The two selectors are MUTUALLY EXCLUSIVE, and the supervisor rejects any other
+// combination rather than guessing:
+//
+//   - UserScope=true with an EMPTY Project selects the user-scope project — the
+//     synthetic project holding user-level config.
+//   - UserScope=false with a NON-EMPTY Project selects that project.
+//
+// An empty Project alone does NOT select user scope; it is an invalid request.
+// The supervisor resolves (and creates) the user-scope project rather than the
+// client doing so and telling the supervisor which id to use: that resolution is
+// a store write, and the supervisor is the single writer.
 type ProjectConfigGetArgs struct {
 	Project string `json:"project"`
 	// UserScope asks for the user-level config project instead of naming one.
+	// Requires Project to be empty.
 	UserScope bool `json:"user_scope,omitempty"`
 }
 
@@ -342,8 +350,14 @@ type ProjectConfigGetReply struct {
 // together — an overlay to write and, when a provider selection replaces the
 // legacy singular key, a key to remove. Splitting them across two round trips
 // would let a crash in between leave the project half-configured.
+// Project and UserScope select the target under the same mutually exclusive
+// rule as ProjectConfigGetArgs. A client applying to the user layer must say so
+// with UserScope rather than sending the id that layer resolves to: naming the
+// resolved id asks the supervisor to trust a client-computed identity for a
+// scope the supervisor owns.
 type ProjectConfigApplyArgs struct {
-	Project    string            `json:"project"`
+	Project string `json:"project"`
+	// UserScope targets the user-level config project. Requires Project empty.
 	UserScope  bool              `json:"user_scope,omitempty"`
 	Upserts    map[string]string `json:"upserts,omitempty"`
 	DeleteKeys []string          `json:"delete_keys,omitempty"`

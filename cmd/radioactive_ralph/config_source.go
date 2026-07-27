@@ -66,7 +66,18 @@ func (s *supervisorConfigSource) ApplyProjectConfigValues(
 	if len(upserts) == 0 && len(deleteKeys) == 0 {
 		return nil
 	}
-	return s.client.ProjectConfigApply(ctx, ipc.ProjectConfigApplyArgs{
+	// Express user scope as USER SCOPE rather than as the project id it happens
+	// to resolve to. Sending the resolved id with UserScope=false reaches the
+	// same row today only because this client resolved it first — it asks the
+	// supervisor to trust a client-computed identity for a scope the supervisor
+	// owns, and it bypasses the mutual-exclusivity check that exists to catch
+	// exactly that confusion.
+	args := ipc.ProjectConfigApplyArgs{
 		Project: projectID, Upserts: upserts, DeleteKeys: deleteKeys,
-	})
+	}
+	if projectID != "" && projectID == s.userProjectID {
+		args.Project = ""
+		args.UserScope = true
+	}
+	return s.client.ProjectConfigApply(ctx, args)
 }
