@@ -29,6 +29,7 @@ Orchestrator reads a plan \(internal/plan\), dispatches workers \(internal/provi
   - [func \(e \*ErrProviderTurnInFlight\) Error\(\) string](<#ErrProviderTurnInFlight.Error>)
 - [type ErrSpendCapExceeded](<#ErrSpendCapExceeded>)
   - [func \(e \*ErrSpendCapExceeded\) Error\(\) string](<#ErrSpendCapExceeded.Error>)
+- [type ImportPlanOpts](<#ImportPlanOpts>)
 - [type Option](<#Option>)
   - [func WithAcceptanceChecker\(c AcceptanceChecker\) Option](<#WithAcceptanceChecker>)
   - [func WithBaseContext\(ctx context.Context\) Option](<#WithBaseContext>)
@@ -45,6 +46,7 @@ Orchestrator reads a plan \(internal/plan\), dispatches workers \(internal/provi
   - [func \(o \*Orchestrator\) AbsorbDecisionLog\(ctx context.Context, projectID, planID, taskID, workerID string\) error](<#Orchestrator.AbsorbDecisionLog>)
   - [func \(o \*Orchestrator\) DispatchNext\(ctx context.Context, projectID, planID string\) \(dispatched int, err error\)](<#Orchestrator.DispatchNext>)
   - [func \(o \*Orchestrator\) HandleContextEnd\(ctx context.Context, a \*agent.Agent, planID, taskID, sessionID string\) error](<#Orchestrator.HandleContextEnd>)
+  - [func \(o \*Orchestrator\) ImportPlan\(ctx context.Context, opts ImportPlanOpts\) \(string, error\)](<#Orchestrator.ImportPlan>)
   - [func \(o \*Orchestrator\) KillWorker\(workerID string\) bool](<#Orchestrator.KillWorker>)
   - [func \(o \*Orchestrator\) PlanProgress\(ctx context.Context, planID string\) \(Progress, error\)](<#Orchestrator.PlanProgress>)
   - [func \(o \*Orchestrator\) SetBaseContext\(ctx context.Context\)](<#Orchestrator.SetBaseContext>)
@@ -200,6 +202,20 @@ func (e *ErrSpendCapExceeded) Error() string
 
 
 
+<a name="ImportPlanOpts"></a>
+## type [ImportPlanOpts](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/orch/plan_import.go#L13-L18>)
+
+ImportPlanOpts is one plan\-import request.
+
+```go
+type ImportPlanOpts struct {
+    ProjectID string
+    Slug      string
+    Title     string
+    Markdown  string
+}
+```
+
 <a name="Option"></a>
 ## type [Option](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/orch/orchestrator.go#L237>)
 
@@ -349,6 +365,17 @@ func (o *Orchestrator) HandleContextEnd(ctx context.Context, a *agent.Agent, pla
 ```
 
 HandleContextEnd is called when a worker signals it has hit its own "manual end" \(e.g. the underlying CLI's own end\-of\-context marker, or an operator\-visible equivalent\) rather than a stall or a normal turn completion. Per decision "context\-management": kill the worker and re\-dispatch fresh from plan\-scoped context — this is cheap because all durable state lives in the store, not in the worker's own memory. The caller \(DispatchNext's dispatch loop or an equivalent driver\) is responsible for actually re\-dispatching; HandleContextEnd's job is only to kill cleanly and release the task claim so it becomes ready again.
+
+<a name="Orchestrator.ImportPlan"></a>
+### func \(\*Orchestrator\) [ImportPlan](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/orch/plan_import.go#L28>)
+
+```go
+func (o *Orchestrator) ImportPlan(ctx context.Context, opts ImportPlanOpts) (string, error)
+```
+
+ImportPlan validates a markdown plan, materializes its tasks and dependency edges, and activates it — in one transaction.
+
+This is the single ingress. There is no separate "legacy" path: a plan with no dependency annotations materializes a chain of edges from document order, so a linear plan is the DEGENERATE CASE of a DAG rather than a second code path. Dispatch then walks task\_deps for both, which is the whole point of the integration.
 
 <a name="Orchestrator.KillWorker"></a>
 ### func \(\*Orchestrator\) [KillWorker](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/orch/orchestrator.go#L226>)
