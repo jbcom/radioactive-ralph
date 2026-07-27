@@ -19,12 +19,18 @@ import (
 const currentSchemaVersion = 2
 
 // migrationBusyAttempts and migrationBusyBackoff bound how long a losing
-// concurrent opener waits for the winner's DDL to commit. Each retry re-reads
-// user_version inside its own transaction, so the wait ends as soon as the
-// winner commits rather than running the full budget.
+// concurrent opener waits for the winner's DDL to commit.
+//
+// Like the WAL switch, this is a backstop on top of the DSN's
+// busy_timeout(5000): SQLite already blocks for the lock, so these retries only
+// cover the handoff right after the winner commits. Each retry re-reads
+// user_version inside its own transaction and returns as soon as it sees the
+// bumped version, so a couple of quick attempts suffice. A long backoff here
+// would stack onto busy_timeout and make one contended Open take tens of
+// seconds.
 const (
-	migrationBusyAttempts = 20
-	migrationBusyBackoff  = 25 * time.Millisecond
+	migrationBusyAttempts = 3
+	migrationBusyBackoff  = 20 * time.Millisecond
 )
 
 // ErrSchemaNewerThanBinary means the database has been migrated by a newer

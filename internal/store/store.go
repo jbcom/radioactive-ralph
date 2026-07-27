@@ -160,14 +160,18 @@ func Open(ctx context.Context, opts Options) (*Store, error) {
 }
 
 // journalModeWALAttempts and journalModeWALBackoff bound the retry window for
-// the one-time WAL switch. Concurrent first-openers of the same fresh database
-// can race here: whoever loses sees SQLITE_BUSY while the winner holds the
-// database lock. The winner's switch is persistent, so a loser only needs to
-// wait long enough to observe the mode it wanted, which is why the wait is
-// short and finite rather than an unbounded block.
+// the one-time WAL switch.
+//
+// This is a thin BACKSTOP, not a second timeout. The DSN already sets
+// busy_timeout(5000), so SQLite itself blocks up to 5s waiting for the lock
+// before it ever returns SQLITE_BUSY; these retries only cover the narrow case
+// where a concurrent first-opener commits the mode switch right as this one
+// gives up. Stacking a long backoff on top of busy_timeout would make a single
+// contended Open take tens of seconds — the winner's switch is persistent, so a
+// loser needs one or two quick re-reads, not a long wait.
 const (
-	journalModeWALAttempts = 20
-	journalModeWALBackoff  = 25 * time.Millisecond
+	journalModeWALAttempts = 3
+	journalModeWALBackoff  = 20 * time.Millisecond
 
 	// SQLite primary result codes for the two retryable lock conditions.
 	sqlite3BusyCode   = 5
