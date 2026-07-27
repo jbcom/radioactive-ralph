@@ -4,6 +4,7 @@ package contain
 
 import (
 	"fmt"
+	"math"
 	"os"
 	"syscall"
 	"unsafe"
@@ -143,7 +144,11 @@ func RunHelper(root string, command []string) error {
 		return err
 	}
 	// syscall.Exec replaces this image; the Landlock domain is inherited.
-	if err := syscall.Exec(command[0], command, os.Environ()); err != nil {
+	// G204: launching a caller-supplied command is the ENTIRE PURPOSE of this
+	// helper — it exists to exec the provider CLI under containment. The argv
+	// comes from Ralph's own resolved binding, not from provider output, and it
+	// is passed as a slice (no shell), so there is nothing to inject into.
+	if err := syscall.Exec(command[0], command, os.Environ()); err != nil { //nolint:gosec // see above
 		return fmt.Errorf("contain: exec %s under containment: %w", command[0], err)
 	}
 	return nil
@@ -162,8 +167,11 @@ func restrictSelfToRoot(root string) error {
 	// passed — create_ruleset returns EINVAL on an unknown bit.
 	handled := fsWriteBits & fsABI6Bits
 	attr := landlockRulesetAttr{HandledAccessFS: handled}
+	// G103: Landlock has no libc wrapper in Go's syscall package, so the
+	// ruleset attr must be passed as a raw pointer. attr is a local struct of
+	// fixed-size integers that outlives the call.
 	fd, _, errno := syscall.Syscall(sysLandlockCreateRuleset,
-		uintptr(unsafe.Pointer(&attr)), unsafe.Sizeof(attr), 0)
+		uintptr(unsafe.Pointer(&attr)), unsafe.Sizeof(attr), 0) //nolint:gosec // raw syscall is the only Landlock interface
 	if errno != 0 {
 		return fmt.Errorf("contain: create landlock ruleset: %w", errno)
 	}
@@ -201,12 +209,20 @@ func allowWritesBeneath(rulesetFd uintptr, dir string, handled uint64) error {
 
 	// allowed_access MUST be a subset of handled_access_fs or add_rule returns
 	// EINVAL — the kernel's documented masking requirement.
+	// G115: the kernel's landlock_path_beneath_attr declares parent_fd as
+	// __s32, so the narrowing is required by the ABI rather than incidental. A
+	// negative or out-of-range fd cannot be a real descriptor, so it is refused
+	// instead of silently wrapping to some other fd number.
+	if dirFd < 0 || dirFd > math.MaxInt32 {
+		return fmt.Errorf("contain: descriptor for %s (%d) is outside the range "+
+			"landlock_path_beneath_attr.parent_fd can represent", dir, dirFd)
+	}
 	rule := landlockPathBeneathAttr{
 		AllowedAccess: handled,
 		ParentFd:      int32(dirFd),
 	}
 	if _, _, errno := syscall.Syscall6(sysLandlockAddRule, rulesetFd,
-		landlockRuleTypePathBeneath, uintptr(unsafe.Pointer(&rule)), 0, 0, 0); errno != 0 {
+		landlockRuleTypePathBeneath, uintptr(unsafe.Pointer(&rule)), 0, 0, 0); errno != 0 { //nolint:gosec // raw syscall is the only Landlock interface
 		return fmt.Errorf("contain: add landlock rule for %s: %w", dir, errno)
 	}
 	return nil
