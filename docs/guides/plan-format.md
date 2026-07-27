@@ -135,11 +135,19 @@ both are useful restrictions: several aliases can share one type (a
 round-robin pool of `claude` bindings), so "any claude" and "this specific
 pool member" mean different things.
 
-Like a capability requirement, a task bound to a provider outside its list
-moves to `blocked_capability` with the allowed names recorded as its reason,
-rather than running somewhere the plan says it must not. Both are the same
-kind of refusal — *this provider may not do this work* — so they share one
-status instead of splitting into two an operator has to learn separately.
+A task whose resolved provider is outside its list is **not dispatched**, and
+the refusal is recorded as a `worker.admission_refused` event naming the
+allowed providers. Where the project is bound to a *pool*, dispatch rotates
+through it first: a `[claude, codex]` pool can still run a codex-only task, so
+the restriction is about the work rather than about which member the rotation
+happened to reach.
+
+The task stays `pending` rather than becoming `blocked_capability`, and the
+difference from `requires` is deliberate. `providers` names operator
+**configuration** — binding the project to an allowed provider fixes it, so a
+durable block would leave an operator clearing a state their config edit had
+already resolved. `requires` is different: no configuration change makes a
+provider gain a capability it does not have, so that one does block.
 
 Unlike `requires`, there is no closed vocabulary here: provider names are
 operator-chosen configuration, so an unrecognized name is indistinguishable

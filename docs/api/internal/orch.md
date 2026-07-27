@@ -396,7 +396,7 @@ func (o *Orchestrator) PlanProgress(ctx context.Context, planID string) (Progres
 PlanProgress computes Progress for planID by parsing its stored markdown and comparing the full step\-id universe \(plan.Plan.StepIDs\) against the store's done\-set \(the same done\-set DispatchNext feeds into plan.DecomposeRefs\).
 
 <a name="Orchestrator.SetBaseContext"></a>
-### func \(\*Orchestrator\) [SetBaseContext](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/orch/orchestrator.go#L816>)
+### func \(\*Orchestrator\) [SetBaseContext](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/orch/orchestrator.go#L837>)
 
 ```go
 func (o *Orchestrator) SetBaseContext(ctx context.Context)
@@ -414,7 +414,7 @@ func (o *Orchestrator) VerifyAndComplete(ctx context.Context, planID, taskID str
 VerifyAndComplete is THE BACKBONE: it never trusts a worker's termination or self\-report. It checks ev against task's acceptance criteria — re\-running mechanical checks in pure Go — and only marks the task done in the store if verification passes. Otherwise it marks the task failed \(retryable, per the task's normal retry budget\) and emits a worker.verification\_failed event carrying the rejection reason.
 
 <a name="Orchestrator.Wait"></a>
-### func \(\*Orchestrator\) [Wait](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/orch/orchestrator.go#L838>)
+### func \(\*Orchestrator\) [Wait](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/orch/orchestrator.go#L859>)
 
 ```go
 func (o *Orchestrator) Wait()

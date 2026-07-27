@@ -154,3 +154,12 @@ func (m *TaskMetadata) DependsOn() (ids []string, stated bool) {
 	}
 	return *m.After, true
 }
+
+// AllowedProviders returns the task's provider restriction, tolerating a nil
+// receiver so dispatch can ask without a nil check at every call site.
+func (m *TaskMetadata) AllowedProviders() []string {
+	if m == nil {
+		return nil
+	}
+	return m.Providers
+}
