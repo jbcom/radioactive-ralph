@@ -182,8 +182,6 @@ func TestNewServerValidation(t *testing.T) {
 func TestRoundTripStatus(t *testing.T) {
 	h := &fakeHandler{
 		statusReply: StatusReply{
-			RepoPath:      "/tmp/repo",
-			PID:           12345,
 			ActiveWorkers: 3,
 			ReadyTasks:    2,
 			ApprovalTasks: 1,
@@ -205,7 +203,10 @@ func TestRoundTripStatus(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Status: %v", err)
 	}
-	if reply.RepoPath != "/tmp/repo" || reply.PID != 12345 {
+	// Round-trip an operator-visible counter rather than the removed host
+	// identifiers: the point of the test is that the reply survives the wire,
+	// not which field carries it.
+	if reply.ActiveWorkers != 3 || reply.FailedTasks != 4 {
 		t.Errorf("reply = %+v", reply)
 	}
 	if h.statusCount.Load() != 1 {

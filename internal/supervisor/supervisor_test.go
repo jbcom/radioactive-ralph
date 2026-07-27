@@ -71,8 +71,10 @@ func TestRun_StartsAndAnswersStatus(t *testing.T) {
 	if err != nil {
 		t.Fatalf("client.Status: %v", err)
 	}
-	if status.PID == 0 {
-		t.Errorf("status.PID = 0, want nonzero")
+	// A live supervisor answers with a populated reply. ProtoVersion is the
+	// liveness marker now that the host pid is off the wire.
+	if status.ProtoVersion == 0 {
+		t.Errorf("status.ProtoVersion = 0, want the supervisor's wire version")
 	}
 	_ = client.Close()
 
