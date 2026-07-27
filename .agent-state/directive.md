@@ -187,6 +187,26 @@ tags before deletion: `archive/plan-v2-dag`, `archive/release-022-recovery-scrat
         error byte for byte — that match is what identified the cause rather than
         a story that merely fits. ~1 run in 3000.
 
+- [ ] [WAIT-USER] Remote naming is backwards and needs the user's call before I
+      touch it. VERIFIED 2026-07-27: every push this session went to `github`
+      (git@github.com:jbcom/radioactive-ralph.git) — correct. Gitea is mirroring
+      fine: `main` byte-identical on both (20c68f04) and the branch SETS match
+      exactly. But `origin` points at Gitea
+      (gitea@git.local.jonbogaty.com:jbcom/radioactive-ralph.git), so the
+      DEFAULT target of an unqualified `git push`/`git pull`/`gh` is the MIRROR,
+      not the source of truth. I have been naming `github` explicitly on every
+      command; anything that falls back to the default writes to the wrong
+      place. The two branches showing "diverged" (feat/dispatch-walks-graph,
+      feat/dumb-client-store-boundary) are just branches I force-pushed today
+      with Gitea still holding the pre-rewrite SHAs — mirror lag on rewritten
+      history, no content lost, no conflict.
+      Proposed: rename so the safe target is the default — `origin`→GitHub,
+      `gitea`→the mirror. Blocked on two answers, both outward-facing:
+      (1) is Gitea PULLING from GitHub, or does something push Gitea→GitHub?
+      No mirror workflow exists in .github/workflows/, which suggests a
+      Gitea-side pull mirror — but if the flow is reversed, renaming is not
+      enough. (2) rename in all 8 worktrees or only the primary checkout?
+
 - [ ] Issue #204 remainder — after #219 + #220 land, three criteria are left:
       1. `init_cmd.go` is the last direct store user. Beyond project
          resolve/create it pulls in ~90 lines of `vconfig` layer resolution
