@@ -411,11 +411,18 @@ tags before deletion: `archive/plan-v2-dag`, `archive/release-022-recovery-scrat
               (exec works without restrict_self), and the TSYNC issue.
             Lands with its own behavioral proof — outside-write refused,
             inside-write allowed, AND exec working — or it does not land.
-      - [ ] Windows containment (job object + restricted token, or
-            AppContainer). Same fail-closed contract and same evidence bar.
-            Not startable from this host — needs a Windows machine or a CI job
-            to verify, and an unverified containment claim is worse than the
-            honest ErrContainmentUnavailable it would replace.
+      - [x] Windows containment — NOT NEEDED, closed as a DECISION rather
+            than left as a gap (PR #251). No provider can run on native
+            Windows: agent.Start allocates a pty via creack/pty, which returns
+            ErrPTYUnsupported, and the Windows SCM safety spec says it
+            outright — "Native Windows provider workers are already
+            unsupported". Windows operators run under WSL, which is Linux, so
+            Linux containment is what covers them. Building it would guard a
+            code path that cannot execute, i.e. dead code, which this repo
+            treats as a defect. A test records the reasoning and FAILS if
+            Available() ever reports true on Windows — meaning a provider path
+            was added and the matrix needs revisiting; it asserts the CONTRACT
+            rather than the platform so it stays meaningful if that happens.
 
 - [x] `desktop_launch.go` — DONE (PR #246). Was the LAST CLI store reader.
       It resolves the project for a Finder/Explorer launch before any supervisor
