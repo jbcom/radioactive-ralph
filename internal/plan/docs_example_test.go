@@ -107,3 +107,34 @@ func TestDocumentedFailuresAreRefused(t *testing.T) {
 		t.Fatal("the guide says two blocks on one step are refused, but it parsed")
 	}
 }
+
+// TestAnnotatedStepRequiresAnExplicitID anchors the guide's `id` row.
+//
+// The positional-id default applies only to a step with NO ralph-task block.
+// Inside a block the parser REJECTS a missing or empty id, so an operator
+// reading "defaults to the step's positional id" and omitting it got a parse
+// error instead of the documented fallback.
+func TestAnnotatedStepRequiresAnExplicitID(t *testing.T) {
+	for _, tc := range []struct{ name, body string }{
+		{"omitted", `{"team": "alpha"}`},
+		{"empty", `{"id": "", "team": "alpha"}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			md := "# Group\n\n- step\n\n   ```ralph-task\n   " + tc.body + "\n   ```\n"
+			if _, err := Parse([]byte(md)); err == nil {
+				t.Fatal("a ralph-task block with no id parsed; the guide's id row " +
+					"must not promise a positional default that does not apply here")
+			}
+		})
+	}
+
+	// The control: a step with NO block does get the positional default, which
+	// is the case the guide's fallback describes.
+	parsed, err := Parse([]byte("# Group\n\n- step\n"))
+	if err != nil {
+		t.Fatalf("unannotated step failed to parse: %v", err)
+	}
+	if len(parsed.Groups) == 0 || len(parsed.Groups[0].Steps) == 0 {
+		t.Fatal("unannotated step produced no steps")
+	}
+}

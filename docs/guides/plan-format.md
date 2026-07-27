@@ -107,9 +107,9 @@ than in pieces.
 
 | Field | Status | Meaning |
 |---|---|---|
-| `id` | **enforced** | stable task id. Defaults to the step's positional id (`0.1`). Must be unique within the plan. |
+| `id` | **enforced** | stable task id, **required whenever a `ralph-task` block is present** — the parser rejects a block whose `id` is missing or empty. A step with NO block gets the positional id (`0.1`). Must be unique within the plan. |
 | `after` | **enforced** | dependency edges (see above). |
-| `team` | **enforced** | slash-delimited path grouping tasks in the operator views. |
+| `team` | **persisted** | slash-delimited path, stored as the task's `team_path`. Nothing consumes it yet: `TeamRollups` exists but has no caller, and the operator snapshot does not expose a team field, so it does not currently affect any view. |
 | `binding` | parsed | pins provider identity: `mode`, `alias`, `provider`, `model`, `effort`, `calibration`, `repetitions`, `fixture`. |
 | `requires` | parsed | capability keys the bound provider must satisfy. |
 | `providers` | parsed | restricts the task to a subset of configured providers. |
