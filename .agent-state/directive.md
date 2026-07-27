@@ -198,9 +198,15 @@ tags before deletion: `archive/plan-v2-dag`, `archive/release-022-recovery-scrat
       2. `StatusReply.RepoPath`, `StatusReply.PID`, and
          `WorkerSummary.ProviderSessionID` remain declared on the live
          `CmdStatus` wire contract, with PID still populated by `os.Getpid()`.
-      3. Claude auth failures are unclassified — `internal/provider` is untouched
-         and only Codex has a classifier
-         (`codex_diagnostics.go:classifyCodexFailure`).
+      3. DONE (PR #230). Claude failure classification shipped, keyed on the
+         result frame's api_error_status. The real-CLI capture REFUTED the
+         assumed shape: a rejected key emits
+         {"is_error":true,"subtype":"success","api_error_status":401}, so
+         subtype says SUCCESS on a hard failure and subtype-keyed logic reads
+         it as a completed turn. Categories reach the durable surface
+         (provider_auth non-retryable, provider_throttled, provider_unavailable)
+         so classification changes what an operator sees, not just an internal
+         error. Unrecognized statuses stay generic on purpose.
       Note for whoever picks this up: `ensureProjectKnown` must stay AFTER
       supervisor discovery in client.go. Moving it earlier breaks the first-run
       wizard, which exists for the operator who has no supervisor yet —
