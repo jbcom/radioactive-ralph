@@ -177,7 +177,7 @@ func TestQueryNewClientOldHandler(t *testing.T) {
 func TestQueryOldClientNewSupervisor(t *testing.T) {
 	h := &queryFakeHandler{
 		fakeHandler: fakeHandler{
-			statusReply: StatusReply{PID: 42, ProtoVersion: ProtoVersion},
+			statusReply: StatusReply{ActiveWorkers: 42, ProtoVersion: ProtoVersion},
 		},
 	}
 	sock, _, cleanup := startServer(t, h)
@@ -202,7 +202,7 @@ func TestQueryOldClientNewSupervisor(t *testing.T) {
 	if err := json.Unmarshal(resp.Data, &status); err != nil {
 		t.Fatalf("decode legacy status: %v", err)
 	}
-	if status.PID != 42 || status.ProtoVersion != ProtoVersion {
+	if status.ActiveWorkers != 42 || status.ProtoVersion != ProtoVersion {
 		t.Fatalf("legacy status payload = %+v", status)
 	}
 }
