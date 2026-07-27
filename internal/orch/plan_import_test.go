@@ -323,3 +323,45 @@ func TestImportPersistsOutputReservations(t *testing.T) {
 			"in the plan markdown must reach the reservation table and be enforced", err)
 	}
 }
+
+// TestFanoutWithConflictingOutputsStillMakesProgress is the livelock. A native
+// fan-out group claims every eligible task under ONE worker; when two of them
+// declare the same output, the second claim returns ErrOutputReserved. Treating
+// that as fatal made dispatchFanoutGroup release every prior claim and return
+// an error, so the next pass repeated the identical sequence and NEITHER task
+// could ever run.
+//
+// A reservation conflict is temporary by construction — the holder is running
+// and will finish. It must be a SKIP, exactly like losing a claim race, not a
+// fault.
+func TestFanoutWithConflictingOutputsStillMakesProgress(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	projectID := mustCreateTestProject(t, s, "fanout-conflict")
+
+	runner := &fakeRunner{results: []provider.Result{
+		{AssistantOutput: "first"}, {AssistantOutput: "second"},
+	}}
+	o := New(s,
+		WithRunnerFactory(func(provider.Binding) (provider.Runner, error) { return runner, nil }),
+		WithBindingResolver(fakeBindingResolver("claude", true)), // NativeFanout
+	)
+	planID, err := o.ImportPlan(ctx, ImportPlanOpts{
+		ProjectID: projectID, Slug: "conflict", Title: "Conflict", Markdown: sharedOutputPlan,
+	})
+	if err != nil {
+		t.Fatalf("ImportPlan: %v", err)
+	}
+
+	dispatched, err := o.DispatchNext(ctx, projectID, planID)
+	if err != nil {
+		t.Fatalf("DispatchNext returned an error for a reservation conflict: %v — a "+
+			"conflict is temporary (the holder is running and will finish), so it "+
+			"must skip like a lost claim race, not fault", err)
+	}
+	o.Wait()
+	if dispatched == 0 {
+		t.Fatal("nothing dispatched: the fan-out group livelocked on its own " +
+			"reservation conflict, so neither task can ever run")
+	}
+}

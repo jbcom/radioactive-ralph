@@ -358,10 +358,11 @@ func (s *Store) ClaimNextReady(ctx context.Context, planID, sessionID, workerID 
 		  AND NOT EXISTS (
 		    SELECT 1
 		    FROM task_output_reservations mine
+		    JOIN plans mp ON mp.id = mine.plan_id
 		    JOIN task_output_reservations theirs
-		      ON theirs.plan_id = mine.plan_id
-		     AND theirs.path    = mine.path
-		     AND theirs.task_id <> mine.task_id
+		      ON theirs.path = mine.path
+		     AND NOT (theirs.plan_id = mine.plan_id AND theirs.task_id = mine.task_id)
+		    JOIN plans tp ON tp.id = theirs.plan_id AND tp.project_id = mp.project_id
 		    JOIN tasks holder
 		      ON holder.plan_id = theirs.plan_id
 		     AND holder.id      = theirs.task_id

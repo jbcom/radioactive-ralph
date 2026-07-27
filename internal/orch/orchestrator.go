@@ -1089,7 +1089,14 @@ func (o *Orchestrator) claimStepTask(ctx context.Context, planID string, _ *plan
 
 	claimed, err := o.store.ClaimTask(ctx, planID, task.ID, sessionID, workerID)
 	if err != nil {
-		if errors.Is(err, store.ErrNoReadyTask) {
+		// Both of these mean "not claimable RIGHT NOW", not "faulted". A lost
+		// claim race resolves when the other dispatcher finishes; an output
+		// reservation resolves when the holder finishes. Treating a reservation
+		// as fatal livelocked native fan-out: the group claims every eligible
+		// task under one worker, so two tasks sharing an output made
+		// dispatchFanoutGroup release every prior claim and error, and the next
+		// pass repeated the identical sequence forever.
+		if errors.Is(err, store.ErrNoReadyTask) || errors.Is(err, store.ErrOutputReserved) {
 			return nil, nil
 		}
 		return nil, fmt.Errorf("orch: claim %s: %w", task.ID, err)

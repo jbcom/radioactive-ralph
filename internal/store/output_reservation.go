@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"path/filepath"
 )
 
 // ErrOutputReserved reports a claim refused because another RUNNING task in the
@@ -35,6 +36,7 @@ func (s *Store) ReserveTaskOutput(ctx context.Context, planID, taskID, path, mod
 func (s *Store) reserveTaskOutputOn(
 	ctx context.Context, ex execer, planID, taskID, path, mode string,
 ) error {
+	path = canonicalReservationPath(path)
 	if path == "" {
 		return fmt.Errorf("store: output path required for task %s", taskID)
 	}
@@ -64,6 +66,7 @@ func (s *Store) ReserveTaskInput(ctx context.Context, planID, taskID, path, sha2
 func (s *Store) reserveTaskInputOn(
 	ctx context.Context, ex execer, planID, taskID, path, sha256 string,
 ) error {
+	path = canonicalReservationPath(path)
 	if path == "" {
 		return fmt.Errorf("store: input path required for task %s", taskID)
 	}
@@ -90,13 +93,22 @@ func (s *Store) outputReservationConflict(
 	ctx context.Context, ex execer, planID, taskID string,
 ) (string, error) {
 	var conflictPath string
+	// Scoped to the PROJECT, not the plan. A reservation protects a filesystem
+	// path in the project checkout, and the supervisor dispatches every active
+	// plan concurrently — so a plan-scoped check let two plans' workers write
+	// the same path at the same time, defeating the exclusivity outright.
+	//
+	// Not scoped WIDER than the project either: separate projects are separate
+	// checkouts, so the same relative path names a different file and must not
+	// conflict.
 	err := ex.QueryRowContext(ctx, `
 		SELECT mine.path
 		FROM task_output_reservations mine
+		JOIN plans mp        ON mp.id = mine.plan_id
 		JOIN task_output_reservations theirs
-		  ON theirs.plan_id = mine.plan_id
-		 AND theirs.path    = mine.path
-		 AND theirs.task_id <> mine.task_id
+		  ON theirs.path = mine.path
+		 AND NOT (theirs.plan_id = mine.plan_id AND theirs.task_id = mine.task_id)
+		JOIN plans tp        ON tp.id = theirs.plan_id AND tp.project_id = mp.project_id
 		JOIN tasks holder
 		  ON holder.plan_id = theirs.plan_id
 		 AND holder.id      = theirs.task_id
@@ -112,4 +124,27 @@ func (s *Store) outputReservationConflict(
 		return "", fmt.Errorf("store: check output reservations for %s: %w", taskID, err)
 	}
 	return conflictPath, nil
+}
+
+// canonicalReservationPath normalizes a declared project-relative path so two
+// spellings of the same file reserve the same string.
+//
+// The conflict query compares path TEXT, so without this "build/out.txt" and
+// "build/./out.txt" name one file but reserve two different rows — both claims
+// succeed and both workers write it, defeating exclusivity for no better reason
+// than how the plan happened to be typed.
+//
+// Lexical only, and deliberately so: this runs inside the claim transaction's
+// hot path and must not touch the filesystem. Symlink-level aliasing is a
+// separate concern handled by the orchestrator's containment check, which
+// resolves against the real checkout.
+func canonicalReservationPath(path string) string {
+	if path == "" {
+		return ""
+	}
+	cleaned := filepath.ToSlash(filepath.Clean(path))
+	if cleaned == "." {
+		return ""
+	}
+	return cleaned
 }

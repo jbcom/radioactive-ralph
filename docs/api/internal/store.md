@@ -948,7 +948,7 @@ func (s *Store) ApplyProjectConfig(ctx context.Context, projectID string, upsert
 ApplyProjectConfig atomically deletes and upserts a set of DB\-resident project config keys. Deletes run before upserts, so a key present in both collections ends with the upserted value. This is the mutation primitive for replacing logical config selections whose old aliases must not survive beside their canonical key.
 
 <a name="Store.ApproveTask"></a>
-### func \(\*Store\) [ApproveTask](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/tasks.go#L842>)
+### func \(\*Store\) [ApproveTask](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/tasks.go#L843>)
 
 ```go
 func (s *Store) ApproveTask(ctx context.Context, planID, taskID string) (found, changed bool, err error)
@@ -1136,7 +1136,7 @@ func (s *Store) GetProjectConfig(ctx context.Context, projectID string) (map[str
 GetProjectConfig returns all DB\-resident config key/value pairs for a project. Values are stored as JSON\-encoded scalars/arrays/objects \(the caller decodes\); this layer treats them as opaque strings.
 
 <a name="Store.GetTask"></a>
-### func \(\*Store\) [GetTask](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/tasks.go#L432>)
+### func \(\*Store\) [GetTask](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/tasks.go#L433>)
 
 ```go
 func (s *Store) GetTask(ctx context.Context, planID, id string) (*Task, error)
@@ -1239,7 +1239,7 @@ func (s *Store) ListRunningWorkers(ctx context.Context) ([]RunningWorker, error)
 ListRunningWorkers returns every worker row currently status='running', with the worker id and its current plan/task. It is the read backing the status reply's per\-worker detail so a client \(the GUI\) can name a specific worker to kill. Workers with no assigned task are still listed \(PlanID/TaskID empty\).
 
 <a name="Store.ListTaskEvents"></a>
-### func \(\*Store\) [ListTaskEvents](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/tasks.go#L494>)
+### func \(\*Store\) [ListTaskEvents](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/tasks.go#L495>)
 
 ```go
 func (s *Store) ListTaskEvents(ctx context.Context, planID, taskID string, limit int) ([]Event, error)
@@ -1259,7 +1259,7 @@ ListTaskGroupPaths returns task id \-\> leaf\-group path for one plan.
 Dispatch needs every ready task's group in one query rather than N lookups, and getting it from here rather than re\-parsing the plan markdown is the point: recovering positional information by re\-parsing is exactly the dependence the graph walk removes.
 
 <a name="Store.ListTasks"></a>
-### func \(\*Store\) [ListTasks](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/tasks.go#L453>)
+### func \(\*Store\) [ListTasks](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/tasks.go#L454>)
 
 ```go
 func (s *Store) ListTasks(ctx context.Context, planID string, statuses []TaskStatus) ([]Task, error)
@@ -1268,7 +1268,7 @@ func (s *Store) ListTasks(ctx context.Context, planID string, statuses []TaskSta
 ListTasks returns tasks for one plan, optionally filtered by status.
 
 <a name="Store.MarkBlocked"></a>
-### func \(\*Store\) [MarkBlocked](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/tasks.go#L712>)
+### func \(\*Store\) [MarkBlocked](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/tasks.go#L713>)
 
 ```go
 func (s *Store) MarkBlocked(ctx context.Context, planID, taskID, sessionID string, payload EventPayload) error
@@ -1295,7 +1295,7 @@ func (s *Store) MarkBlockedInput(ctx context.Context, planID, taskID, reason str
 MarkBlockedInput records a fail\-closed immutable\-input admission failure.
 
 <a name="Store.MarkDone"></a>
-### func \(\*Store\) [MarkDone](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/tasks.go#L524>)
+### func \(\*Store\) [MarkDone](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/tasks.go#L525>)
 
 ```go
 func (s *Store) MarkDone(ctx context.Context, planID, taskID, sessionID string, evidenceJSON string) ([]Task, error)
@@ -1304,7 +1304,7 @@ func (s *Store) MarkDone(ctx context.Context, planID, taskID, sessionID string, 
 MarkDone transitions a running task to done, logs the event, and returns the set of newly\-ready downstream tasks.
 
 <a name="Store.MarkFailed"></a>
-### func \(\*Store\) [MarkFailed](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/tasks.go#L592>)
+### func \(\*Store\) [MarkFailed](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/tasks.go#L593>)
 
 ```go
 func (s *Store) MarkFailed(ctx context.Context, planID, taskID, sessionID, reason string, maxRetries int) (retried bool, err error)
@@ -1313,7 +1313,7 @@ func (s *Store) MarkFailed(ctx context.Context, planID, taskID, sessionID, reaso
 MarkFailed transitions a running task, owned by sessionID, to failed or retries. See MarkFailedWithPayload.
 
 <a name="Store.MarkFailedWithPayload"></a>
-### func \(\*Store\) [MarkFailedWithPayload](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/tasks.go#L608>)
+### func \(\*Store\) [MarkFailedWithPayload](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/tasks.go#L609>)
 
 ```go
 func (s *Store) MarkFailedWithPayload(ctx context.Context, planID, taskID, sessionID string, payload EventPayload, maxRetries int) (retried bool, err error)
@@ -1467,7 +1467,7 @@ func (s *Store) RecordTaskProviderSession(ctx context.Context, planID, taskID, c
 RecordTaskProviderSession stores the session identifier returned by the provider after a turn. Both the live task claim and the execution metadata must still identify claimingSessionID; otherwise this is a stale post\-run write from a reclaimed worker.
 
 <a name="Store.ReleaseClaim"></a>
-### func \(\*Store\) [ReleaseClaim](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/tasks.go#L683>)
+### func \(\*Store\) [ReleaseClaim](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/tasks.go#L684>)
 
 ```go
 func (s *Store) ReleaseClaim(ctx context.Context, planID, taskID, sessionID, reason string) error
@@ -1476,7 +1476,7 @@ func (s *Store) ReleaseClaim(ctx context.Context, planID, taskID, sessionID, rea
 ReleaseClaim requeues a running task owned by sessionID back to pending WITHOUT charging a retry, for SYSTEM\-level aborts \(e.g. a fan\-out group whose later claim failed\) as opposed to task\-execution failures. Using MarkFailed here would penalize the retry budget for something the task never got a chance to attempt, and could terminally fail an otherwise\-valid task after a few transient orchestrator hiccups. Owner\-guarded like MarkFailed: a task no longer running under sessionID yields ErrTaskNotOwnedRunning \(benign — someone else owns it now\).
 
 <a name="Store.ReserveTaskInput"></a>
-### func \(\*Store\) [ReserveTaskInput](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/output_reservation.go#L55>)
+### func \(\*Store\) [ReserveTaskInput](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/output_reservation.go#L57>)
 
 ```go
 func (s *Store) ReserveTaskInput(ctx context.Context, planID, taskID, path, sha256 string) error
@@ -1485,7 +1485,7 @@ func (s *Store) ReserveTaskInput(ctx context.Context, planID, taskID, path, sha2
 ReserveTaskInput records that taskID reads path, pinned to sha256 when the plan declared a hash. An empty hash means "declared but unpinned".
 
 <a name="Store.ReserveTaskOutput"></a>
-### func \(\*Store\) [ReserveTaskOutput](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/output_reservation.go#L23>)
+### func \(\*Store\) [ReserveTaskOutput](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/output_reservation.go#L24>)
 
 ```go
 func (s *Store) ReserveTaskOutput(ctx context.Context, planID, taskID, path, mode string) error

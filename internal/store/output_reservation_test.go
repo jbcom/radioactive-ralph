@@ -177,3 +177,83 @@ func TestReadyPartitionsStillReportsAReservedTask(t *testing.T) {
 			"temporarily-unclaimable task look unsatisfied")
 	}
 }
+
+// TestReservationsSpanEveryPlanInTheProject is the scoping fix. Reservations
+// protect a FILESYSTEM PATH in the project checkout, and the supervisor
+// dispatches every active plan concurrently — so scoping the conflict check to
+// one plan let two plans' workers write the same path at the same time, which
+// is exactly what the reservation exists to prevent.
+func TestReservationsSpanEveryPlanInTheProject(t *testing.T) {
+	ctx := context.Background()
+	s := openTestStore(t)
+	projectID := mustCreateProject(t, s, "cross-plan")
+
+	planA := seedReadyGraph(t, s, projectID, "plan-a", []GraphTaskSpec{readySpec("a", "0")})
+	planB := seedReadyGraph(t, s, projectID, "plan-b", []GraphTaskSpec{readySpec("b", "0")})
+	reserveOutput(t, s, planA, "a", "shared/artifact.txt")
+	reserveOutput(t, s, planB, "b", "shared/artifact.txt")
+
+	sessionA, workerA := mustCreateSessionAndWorker(t, s, "xp-a")
+	if _, err := s.ClaimTask(ctx, planA, "a", sessionA, workerA); err != nil {
+		t.Fatalf("claim in plan A: %v", err)
+	}
+	sessionB, workerB := mustCreateSessionAndWorker(t, s, "xp-b")
+	if _, err := s.ClaimTask(ctx, planB, "b", sessionB, workerB); !errors.Is(err, ErrOutputReserved) {
+		t.Fatalf("claim in plan B err = %v, want ErrOutputReserved — the supervisor "+
+			"dispatches every active plan, so two plans' workers would otherwise "+
+			"write the same checkout path concurrently", err)
+	}
+}
+
+// TestReservationsIgnoreAnotherProjectsPath keeps the widening bounded. Two
+// projects are different checkouts, so the same relative path is a different
+// file and must not conflict.
+func TestReservationsIgnoreAnotherProjectsPath(t *testing.T) {
+	ctx := context.Background()
+	s := openTestStore(t)
+	projectA := mustCreateProject(t, s, "proj-a")
+	projectB := mustCreateProject(t, s, "proj-b")
+
+	planA := seedReadyGraph(t, s, projectA, "pa", []GraphTaskSpec{readySpec("a", "0")})
+	planB := seedReadyGraph(t, s, projectB, "pb", []GraphTaskSpec{readySpec("b", "0")})
+	reserveOutput(t, s, planA, "a", "build/out.txt")
+	reserveOutput(t, s, planB, "b", "build/out.txt")
+
+	sessionA, workerA := mustCreateSessionAndWorker(t, s, "pa")
+	if _, err := s.ClaimTask(ctx, planA, "a", sessionA, workerA); err != nil {
+		t.Fatalf("claim in project A: %v", err)
+	}
+	sessionB, workerB := mustCreateSessionAndWorker(t, s, "pb")
+	if _, err := s.ClaimTask(ctx, planB, "b", sessionB, workerB); err != nil {
+		t.Fatalf("claim in a DIFFERENT project was refused: %v — separate checkouts "+
+			"mean the same relative path is a different file", err)
+	}
+}
+
+// TestReservationsCanonicalizePaths is the spelling fix. The conflict query
+// compares path TEXT, so "build/out.txt" and "build/./out.txt" name the same
+// file but reserve different strings — both claims succeed and both workers
+// write it. Canonicalizing at reserve time makes the text comparison mean what
+// it looks like it means.
+func TestReservationsCanonicalizePaths(t *testing.T) {
+	ctx := context.Background()
+	s := openTestStore(t)
+	projectID := mustCreateProject(t, s, "canonical")
+	planID := seedReadyGraph(t, s, projectID, "canon", []GraphTaskSpec{
+		readySpec("first", "0"),
+		readySpec("second", "0"),
+	})
+	reserveOutput(t, s, planID, "first", "build/out.txt")
+	// Same file, different spelling.
+	reserveOutput(t, s, planID, "second", "build/./out.txt")
+
+	sessionA, workerA := mustCreateSessionAndWorker(t, s, "canon-a")
+	if _, err := s.ClaimTask(ctx, planID, "first", sessionA, workerA); err != nil {
+		t.Fatalf("first claim: %v", err)
+	}
+	sessionB, workerB := mustCreateSessionAndWorker(t, s, "canon-b")
+	if _, err := s.ClaimTask(ctx, planID, "second", sessionB, workerB); !errors.Is(err, ErrOutputReserved) {
+		t.Fatalf("second claim err = %v, want ErrOutputReserved — "+
+			"\"build/./out.txt\" and \"build/out.txt\" are the same file", err)
+	}
+}
