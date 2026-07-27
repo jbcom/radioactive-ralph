@@ -165,9 +165,20 @@ tags before deletion: `archive/plan-v2-dag`, `archive/release-022-recovery-scrat
       237, 238, 239, 240, 245, 246, 247, 250, 251). ALL review threads are
       RESOLVED as of 2026-07-27 16:20Z. The only thing between them and merge
       is macOS CI.
-      BLOCKER (external, not repo-side): every macOS job — Test/GUI/Package GUI
-      (macos-latest) and Package GUI (macos-15-intel) — is QUEUED and NONE has
-      started across the last 40 CI runs. ubuntu, windows, CodeQL, E2E and GUI
+      BLOCKER: every macOS job — Test/GUI/Package GUI (macos-latest) and
+      Package GUI (macos-15-intel) — is QUEUED and NONE has started across the
+      last 40+ CI runs.
+      PARTLY REPO-SIDE, and fixed in PR #252: ci.yml had NO concurrency group,
+      so every push started a full run (four macOS jobs among them) while every
+      superseded run kept its queued slots. Measured: chore/directive-sync alone
+      had EIGHT queued CI runs, seven obsolete, holding 28 macOS jobs for work
+      that no longer existed. #252 adds one-in-flight-per-PR with main EXCLUDED
+      (its runs gate releases; github.run_id makes each unique so nothing can
+      cancel them). PROVEN LIVE: an empty second push cancelled the prior run
+      (conclusion=cancelled), leaving exactly one in flight.
+      Whether that ALONE unblocks macOS is NOT yet known — the queue was still
+      12 CI runs deep right after. If macOS still refuses to start once the
+      superseded runs drain, the remaining cause is upstream. ubuntu, windows, CodeQL, E2E and GUI
       (ubuntu) all pass. githubstatus.com reports all systems operational and
       the repo is PUBLIC (macOS minutes are free and unmetered), so this is
       GitHub-side runner capacity, not billing and not a workflow defect. Four
