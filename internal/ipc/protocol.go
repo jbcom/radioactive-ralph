@@ -245,6 +245,14 @@ type ProjectFingerprint struct {
 type ProjectEnsureArgs struct {
 	Fingerprints []ProjectFingerprint `json:"fingerprints"`
 	DisplayName  string               `json:"display_name"`
+	// ResolveOnly answers "is this a project I already know?" WITHOUT creating
+	// one on a miss, returning an empty ProjectID instead.
+	//
+	// It exists for the desktop-launch path, whose working directory is
+	// whatever a file manager handed it — usually not a repo, sometimes "/".
+	// Create-on-miss there would register that directory as a durable,
+	// operator-visible project just because someone double-clicked an icon.
+	ResolveOnly bool `json:"resolve_only,omitempty"`
 }
 
 // ProjectEnsureReply reports the resolved project and whether this call created
