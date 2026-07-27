@@ -56,6 +56,7 @@ const (
 	CmdPlanSetStatus = "plan-set-status"
 	CmdTaskApprove   = "task-approve"
 	CmdWorkerKill    = "worker-kill"
+	CmdProjectEnsure = "project-ensure"
 
 	// v3 — project-scoped, content-safe query surface.
 	CmdObserveSnapshot         = "observe-snapshot"
@@ -219,6 +220,38 @@ type PlanSetStatusReply struct {
 type TaskApproveArgs struct {
 	PlanID string `json:"plan_id"`
 	TaskID string `json:"task_id"`
+}
+
+// ProjectFingerprint is one identity signal for a project, computed by the
+// CLIENT from its own working directory (absolute path, git root commit, git
+// remote) and sent to the supervisor to resolve or create the project.
+//
+// The client computing these is not a boundary violation: they are derived from
+// the caller's own filesystem, not read from the store. What the client must
+// not do is open the database to look them up — that is the supervisor's job.
+type ProjectFingerprint struct {
+	Kind  string `json:"kind"`
+	Value string `json:"value"`
+}
+
+// ProjectEnsureArgs resolves the calling directory to a project, creating it
+// when no fingerprint matches (CmdProjectEnsure).
+//
+// One command rather than separate resolve/create/touch calls: the sequence is
+// a single logical operation with a race between the resolve and the create,
+// and splitting it across three round trips would let two concurrent clients
+// each observe "not found" and both create. DisplayName is used only on the
+// create path.
+type ProjectEnsureArgs struct {
+	Fingerprints []ProjectFingerprint `json:"fingerprints"`
+	DisplayName  string               `json:"display_name"`
+}
+
+// ProjectEnsureReply reports the resolved project and whether this call created
+// it, so the client can tell the operator which happened.
+type ProjectEnsureReply struct {
+	ProjectID string `json:"project_id"`
+	Created   bool   `json:"created"`
 }
 
 // WorkerKillArgs kills a running worker (CmdWorkerKill) via the same

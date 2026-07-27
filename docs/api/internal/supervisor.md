@@ -30,6 +30,7 @@ Package supervisor implements the \`\-\-supervisor\` process: the single durable
   - [func \(s \*Supervisor\) HandleObserveTaskDescriptions\(ctx context.Context, args ipc.ObserveTaskDescriptionsArgs\) \(\*ipc.ObserveTaskDescriptionsReply, error\)](<#Supervisor.HandleObserveTaskDescriptions>)
   - [func \(s \*Supervisor\) HandlePlanImport\(ctx context.Context, args ipc.PlanImportArgs\) \(ipc.PlanImportReply, error\)](<#Supervisor.HandlePlanImport>)
   - [func \(s \*Supervisor\) HandlePlanSetStatus\(ctx context.Context, args ipc.PlanSetStatusArgs\) \(ipc.PlanSetStatusReply, error\)](<#Supervisor.HandlePlanSetStatus>)
+  - [func \(s \*Supervisor\) HandleProjectEnsure\(ctx context.Context, args ipc.ProjectEnsureArgs\) \(\*ipc.ProjectEnsureReply, error\)](<#Supervisor.HandleProjectEnsure>)
   - [func \(s \*Supervisor\) HandleReloadConfig\(\_ context.Context\) error](<#Supervisor.HandleReloadConfig>)
   - [func \(s \*Supervisor\) HandleStatus\(ctx context.Context\) \(ipc.StatusReply, error\)](<#Supervisor.HandleStatus>)
   - [func \(s \*Supervisor\) HandleStop\(\_ context.Context, \_ ipc.StopArgs\) error](<#Supervisor.HandleStop>)
@@ -209,6 +210,19 @@ func (s *Supervisor) HandlePlanSetStatus(ctx context.Context, args ipc.PlanSetSt
 ```
 
 HandlePlanSetStatus changes a plan's lifecycle status, validated to the allowed operator transitions.
+
+<a name="Supervisor.HandleProjectEnsure"></a>
+### func \(\*Supervisor\) [HandleProjectEnsure](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/supervisor/project.go#L23-L26>)
+
+```go
+func (s *Supervisor) HandleProjectEnsure(ctx context.Context, args ipc.ProjectEnsureArgs) (*ipc.ProjectEnsureReply, error)
+```
+
+HandleProjectEnsure resolves the caller's directory to a project, creating it when no accumulated fingerprint matches.
+
+This exists so a client never opens the store to identify itself. The client computes its own fingerprints \(absolute path, git root commit, git remote\) from its working directory — local facts, not store reads — and the supervisor, the single writer of record, does the resolve/create/touch.
+
+Resolve\-create\-touch is ONE command rather than three: there is a race between "not found" and "create", and three round trips would let two concurrent clients in the same directory each observe not\-found and both create a project for it.
 
 <a name="Supervisor.HandleReloadConfig"></a>
 ### func \(\*Supervisor\) [HandleReloadConfig](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/supervisor/supervisor.go#L417>)

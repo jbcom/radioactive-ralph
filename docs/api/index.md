@@ -36,6 +36,7 @@ internal/observe
 internal/onboard
 internal/orch
 internal/plan
+internal/projectid
 internal/provider
 internal/provider/claudesession
 internal/provider/claudesession/cassette

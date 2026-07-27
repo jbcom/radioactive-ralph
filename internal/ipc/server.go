@@ -84,6 +84,14 @@ type DriveHandler interface {
 	HandleTaskApprove(ctx context.Context, args TaskApproveArgs) error
 	// HandleWorkerKill kills a running worker via kill-and-reclaim.
 	HandleWorkerKill(ctx context.Context, args WorkerKillArgs) error
+	// HandleProjectEnsure resolves the caller's directory to a project,
+	// creating it when no fingerprint matches. It is a drive command because
+	// resolve-or-create is a write, and one command because splitting the
+	// sequence would let two concurrent clients both create.
+	HandleProjectEnsure(
+		ctx context.Context,
+		args ProjectEnsureArgs,
+	) (*ProjectEnsureReply, error)
 }
 
 // QueryHandler is the OPTIONAL v3 content-safe query surface. Keeping it
@@ -472,7 +480,7 @@ func (s *Server) handleConn(conn net.Conn) {
 		// Final frame: single Response signals end-of-stream.
 		s.writeResponse(conn, Response{Ok: attachErr == nil, Error: errString(attachErr)})
 
-	case CmdPlanImport, CmdPlanSetStatus, CmdTaskApprove, CmdWorkerKill:
+	case CmdPlanImport, CmdPlanSetStatus, CmdTaskApprove, CmdWorkerKill, CmdProjectEnsure:
 		s.dispatchDrive(ctx, conn, req)
 
 	case CmdObserveSnapshot, CmdObserveMessages, CmdObserveTaskDescriptions:
@@ -604,6 +612,13 @@ func (s *Server) dispatchDrive(ctx context.Context, conn net.Conn, req Request) 
 		}
 		err := dh.HandleWorkerKill(ctx, args)
 		s.writeResult(conn, OKReply{OK: err == nil}, err)
+	case CmdProjectEnsure:
+		var args ProjectEnsureArgs
+		if !s.decodeArgs(conn, req.Args, &args) {
+			return
+		}
+		reply, err := dh.HandleProjectEnsure(ctx, args)
+		s.writeResult(conn, reply, err)
 	}
 }
 
