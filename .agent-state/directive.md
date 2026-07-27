@@ -389,11 +389,19 @@ tags before deletion: `archive/plan-v2-dag`, `archive/release-022-recovery-scrat
       its own macOS/Linux/Windows matrix. Deliberately out of scope for the DAG
       work; this is the follow-up that was promised.
 
-- [ ] `desktop_launch.go` is the LAST CLI store reader (verified: 1 import).
+- [x] `desktop_launch.go` — DONE (PR #246). Was the LAST CLI store reader.
       It resolves the project for a Finder/Explorer launch before any supervisor
       is known to be running, which is why it was exempted rather than fixed
-      with init. The self-verifying boundary gate still lists it, so paying this
-      debt forces removing the entry.
+      with init: it needs NON-MUTATING resolution, because a file-manager launch
+      has an arbitrary cwd (often not a repo, sometimes "/") and project-ensure
+      creates on a miss — which would register that directory as a durable
+      project just because someone double-clicked an icon. Fixed by adding
+      ProjectEnsureArgs.ResolveOnly, which skips the accumulate/touch writes on
+      the FOUND path too, not only the create on the miss path: a "resolve" that
+      still mutates rows is not one. The gate proved it again — removing the
+      import made the boundary test demand the exemption be deleted. Only
+      supervisor_cmd.go and binding_resolver.go remain exempt, both
+      supervisor-side by design, so a new entry now means a NEW violation.
 
 - [ ] Five ralph-task metadata fields PARSE AND PERSIST but have ZERO consumers
       (verified by grep across internal/orch and internal/store): `requires`,
