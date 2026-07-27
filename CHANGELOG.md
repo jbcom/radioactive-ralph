@@ -13,6 +13,14 @@ shipped. That means historical sections may still mention MCP, plugins,
 supervisors, or the archived Python implementation even though those are no
 longer part of the live contract.
 
+## [0.25.0](https://github.com/jbcom/radioactive-ralph/compare/v0.24.0...v0.25.0) (2026-07-27)
+
+
+### Features
+
+* **store:** add ClaimTask, the exact named claim ([#216](https://github.com/jbcom/radioactive-ralph/issues/216)) ([561f93e](https://github.com/jbcom/radioactive-ralph/commit/561f93eadc6a5f10e21bb4d9eecaf7f0cc86c461))
+* **store:** plan-graph task metadata and provenance ([#215](https://github.com/jbcom/radioactive-ralph/issues/215)) ([bdda55e](https://github.com/jbcom/radioactive-ralph/commit/bdda55e38820e8f053d108e86f18a33c8a5bb89f))
+
 ## [0.24.0](https://github.com/jbcom/radioactive-ralph/compare/v0.23.0...v0.24.0) (2026-07-27)
 
 
