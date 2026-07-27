@@ -759,11 +759,22 @@ the project root. This is CWE-22 (and CWE-367).
    fast-fail, not the security boundary. Re-run `secureProjectPath` immediately before the
    dispatch that will write, and again in `verifyTaskCompletionFilesystem` — which the
    branch already does for the completion side.
-3. **Close the write-time race with `openat`-style semantics.** For the file-existence and
-   hash-pin reads, open with `os.OpenFile(resolved, os.O_RDONLY|syscall.O_NOFOLLOW, 0)` and
-   hash from the `*os.File`, so the bytes checked are the bytes of the inode opened — not a
-   path re-resolved afterward. `os.ReadFile(path)` in `validateV2Inputs` re-resolves and is
-   racy.
+3. **Read through a build-tagged no-follow helper.** For the file-existence and hash-pin
+   reads, open with no-follow semantics and hash from the returned `*os.File`, so the bytes
+   checked are the bytes of the inode opened rather than a path re-resolved afterward.
+   `os.ReadFile(path)` in `validateV2Inputs` re-resolves and is racy.
+
+   `syscall.O_NOFOLLOW` is **Unix-only** and must not appear in portable code — Ralph
+   targets macOS, Linux, and Windows. The repository already ships exactly the right
+   pattern in `internal/provider/result_open_{unix,windows,unsupported}.go`:
+
+   - `//go:build darwin || linux` → `unix.O_RDONLY|unix.O_CLOEXEC|unix.O_NOFOLLOW|unix.O_NONBLOCK`
+   - `//go:build windows` → `windows.FILE_ATTRIBUTE_NORMAL|windows.FILE_FLAG_OPEN_REPARSE_POINT`
+   - `//go:build !darwin && !linux && !windows` → **fails closed**, no pathname fallback
+
+   Reuse that trio's shape rather than inventing a second one, and keep the
+   fail-closed default: a platform without a safe open must refuse the read, never
+   degrade to `os.ReadFile`.
 
 Additionally, tighten `resolveThroughExistingAncestor`: it walks up to the first existing
 ancestor and re-joins the non-existent suffix, so a symlink created *in that suffix gap*
@@ -816,7 +827,13 @@ The branch's `verify.go` calls `verifyV2CompletionFilesystem` twice — once bef
 `acceptanceCheck` and once after, with the second producing *"v2 contract changed during
 acceptance"*. This is a race *detector*, not a race *fix*: it narrows the window without
 closing it, and doubles the filesystem cost of every completion. Discard the second call.
-The §E.4 fixes (resolved paths + `O_NOFOLLOW` opens) address the actual race.
+Discarding the second call loses nothing §E.4 provides, because the two address
+different things. §E.4 (resolved paths + no-follow opens) hardens **Ralph's own reads
+and completion checks** — the bytes Ralph hashes are the bytes of the inode it opened.
+It does **not** close the provider write-side race, which stays out of scope per the
+correction in §E.4: a separate process writing through a pathname minutes later is
+outside anything Ralph can enforce from its own address space. The discarded second
+check narrowed that window without closing it either, at double the filesystem cost.
 
 ### E.6 `Plan.V2 bool` and every `parsed.V2` fork
 
