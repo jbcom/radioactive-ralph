@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/jbcom/radioactive-ralph/internal/provider"
 	"github.com/jbcom/radioactive-ralph/internal/store"
 )
 
@@ -170,5 +171,99 @@ func TestImportPlanRejectsInvalidMarkdownBeforeWriting(t *testing.T) {
 	}
 	if n != 0 {
 		t.Fatalf("a rejected import left %d plan row(s)", n)
+	}
+}
+
+// acceptancePlan carries an `accept:` marker, which derives a MECHANICAL
+// acceptance check — rerun the command and require it to pass.
+const acceptancePlan = "# Acceptance\n\n" +
+	"1. build the thing `accept: go build ./...`\n"
+
+// TestImportDerivesAcceptanceCriteria is a verification-integrity regression.
+// VerifyAndComplete reads only the STORED acceptance_json; an empty value
+// selects judgment-only verification, so a graph import that dropped the
+// derived criteria would let non-empty worker evidence complete a task without
+// ever rerunning the command the plan demanded.
+func TestImportDerivesAcceptanceCriteria(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	projectID := mustCreateTestProject(t, s, "acceptance-import")
+	o := New(s, WithBindingResolver(fakeBindingResolver("codex", false)))
+
+	planID, err := o.ImportPlan(ctx, ImportPlanOpts{
+		ProjectID: projectID, Slug: "acc", Title: "Acc", Markdown: acceptancePlan,
+	})
+	if err != nil {
+		t.Fatalf("ImportPlan: %v", err)
+	}
+
+	tasks, err := s.ListTasks(ctx, planID, nil)
+	if err != nil {
+		t.Fatalf("ListTasks: %v", err)
+	}
+	if len(tasks) != 1 {
+		t.Fatalf("got %d tasks, want 1", len(tasks))
+	}
+	if tasks[0].AcceptanceJSON == "" {
+		t.Fatal("imported task has empty acceptance_json; VerifyAndComplete would " +
+			"fall back to judgment-only and complete the task without rerunning " +
+			"the command the plan declared")
+	}
+	if !strings.Contains(tasks[0].AcceptanceJSON, "go build") {
+		t.Fatalf("acceptance_json = %q, want it to carry the declared command",
+			tasks[0].AcceptanceJSON)
+	}
+}
+
+// TestDispatchUsesTheImportedGraphID is the regression for a duplicate-node
+// bug the graph ingress introduced. Import created the annotated task "build";
+// dispatch derived its own POSITIONAL id "0.0" and materialized a SECOND task
+// for the same step. The plan then held two nodes for one piece of work, and
+// claiming "build" left it marked running with no worker launched, because a
+// non-positional id had no StepRef to parse back into.
+//
+// One id rule, shared by import and dispatch, is what prevents that.
+func TestDispatchUsesTheImportedGraphID(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	projectID := mustCreateTestProject(t, s, "graph-id-dispatch")
+	runner := &bindingRecordingRunner{}
+	o := New(s,
+		WithRunnerFactory(func(provider.Binding) (provider.Runner, error) { return runner, nil }),
+		WithBindingResolver(fakeBindingResolver("codex", false)),
+	)
+
+	md := "# Build\n\n1. build the thing\n\n" +
+		"   ```ralph-task\n   {\"id\": \"build\"}\n   ```\n"
+	planID, err := o.ImportPlan(ctx, ImportPlanOpts{
+		ProjectID: projectID, Slug: "b", Title: "B", Markdown: md,
+	})
+	if err != nil {
+		t.Fatalf("ImportPlan: %v", err)
+	}
+
+	dispatched, err := o.DispatchNext(ctx, projectID, planID)
+	if err != nil {
+		t.Fatalf("DispatchNext: %v", err)
+	}
+	o.Wait()
+	if dispatched != 1 {
+		t.Fatalf("dispatched = %d, want 1 — an annotated task must actually run", dispatched)
+	}
+
+	tasks, err := s.ListTasks(ctx, planID, nil)
+	if err != nil {
+		t.Fatalf("ListTasks: %v", err)
+	}
+	if len(tasks) != 1 {
+		ids := make([]string, 0, len(tasks))
+		for _, task := range tasks {
+			ids = append(ids, task.ID)
+		}
+		t.Fatalf("tasks = %v, want exactly [build] — dispatch materialized a "+
+			"duplicate positional node for a step import had already created", ids)
+	}
+	if tasks[0].ID != "build" {
+		t.Fatalf("task id = %q, want the explicit graph id", tasks[0].ID)
 	}
 }

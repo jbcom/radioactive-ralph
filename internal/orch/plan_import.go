@@ -93,10 +93,7 @@ func graphSpecs(parsed *plan.Plan) ([]store.GraphTaskSpec, error) {
 	ids := make([]string, len(nodes))
 	byID := map[string]int{}
 	for i, n := range nodes {
-		id := n.ref.ID()
-		if n.step.Metadata != nil && n.step.Metadata.ID != "" {
-			id = n.step.Metadata.ID
-		}
+		id := stepTaskID(n.ref, n.step)
 		if prev, dup := byID[id]; dup {
 			return nil, fmt.Errorf(
 				"orch: duplicate task id %q (steps %d and %d)", id, prev, i)
@@ -134,10 +131,20 @@ func graphSpecs(parsed *plan.Plan) ([]store.GraphTaskSpec, error) {
 		if n.step.Metadata != nil {
 			team = n.step.Metadata.Team
 		}
+		// Acceptance is derived at IMPORT, not left to dispatch. VerifyAndComplete
+		// reads only the stored acceptance_json, and an empty value selects
+		// judgment-only verification — so a task imported without its criteria
+		// could be completed by non-empty worker evidence alone, never rerunning
+		// the command or checking the file the plan demanded.
+		acceptance, err := defaultAcceptanceJSON(n.step)
+		if err != nil {
+			return nil, fmt.Errorf("orch: build acceptance for %q: %w", ids[i], err)
+		}
 		specs = append(specs, store.GraphTaskSpec{
 			CreateTaskOpts: store.CreateTaskOpts{
 				ID:               ids[i],
 				Description:      n.step.Text,
+				AcceptanceJSON:   acceptance,
 				RequiresApproval: n.step.RequiresApproval,
 			},
 			DependsOn:    deps,
@@ -216,4 +223,22 @@ func documentOrderEdges(parsed *plan.Plan, ids []string) [][]string {
 	}
 	visit(parsed.Groups)
 	return edges
+}
+
+// stepTaskID is THE rule mapping a plan step to its store task id: an explicit
+// `id` from the step's ralph-task metadata when present, else the positional
+// StepRef id every plan used before that grammar existed.
+//
+// Import and dispatch MUST agree on this. When they disagreed, importing a step
+// annotated `{"id":"build"}` created task "build", and dispatch then
+// materialized a SECOND positional task "0.0" for the same step — so the plan
+// held a duplicate node, and whichever one ClaimNextReady happened to pick
+// determined whether the run made sense. Worse, claiming "build" left it
+// running with no worker launched, because the caller could not parse a
+// non-positional id back into a StepRef.
+func stepTaskID(ref plan.StepRef, step plan.Step) string {
+	if step.Metadata != nil && step.Metadata.ID != "" {
+		return step.Metadata.ID
+	}
+	return ref.ID()
 }
