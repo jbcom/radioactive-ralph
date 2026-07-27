@@ -99,12 +99,18 @@ type StreamEvent struct {
 }
 
 // StatusReply is the data payload for CmdStatus responses.
+//
+// It deliberately carries NO supervisor-host identifiers. An absolute repo path
+// and an OS process id describe the machine Ralph runs on, not the work an
+// operator is watching, and this payload goes to every attached client. Nothing
+// in the TUI, GUI, or CLI ever read them. A field that nothing populates and
+// nothing reads is not harmless on a wire contract — it invites a future
+// implementer to fill it in, and the leak arrives without anyone deciding to
+// add it.
 type StatusReply struct {
 	// ProtoVersion is the supervisor's supported wire version, so a client
 	// can detect drive-command availability without trial-and-error.
 	ProtoVersion  int             `json:"proto_version,omitempty"`
-	RepoPath      string          `json:"repo_path"`
-	PID           int             `json:"pid"`
 	Uptime        time.Duration   `json:"uptime_ns"`
 	ActiveWorkers int             `json:"active_workers"`
 	ReadyTasks    int             `json:"ready_tasks"`
@@ -123,11 +129,10 @@ type WorkerSummary struct {
 	// WorkerID is the store worker-row id — the value a client passes to the
 	// worker-kill drive command to target THIS worker. Distinct from any
 	// provider-session id.
-	WorkerID          string `json:"worker_id"`
-	PlanID            string `json:"plan_id"`
-	TaskID            string `json:"task_id"`
-	Provider          string `json:"provider,omitempty"`
-	ProviderSessionID string `json:"provider_session_id,omitempty"`
+	WorkerID string `json:"worker_id"`
+	PlanID   string `json:"plan_id"`
+	TaskID   string `json:"task_id"`
+	Provider string `json:"provider,omitempty"`
 }
 
 // EnqueueArgs is the client's payload when pushing work via CmdEnqueue.
