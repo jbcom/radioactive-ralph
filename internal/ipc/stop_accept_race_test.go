@@ -3,6 +3,7 @@ package ipc
 import (
 	"io"
 	"log/slog"
+	"net"
 	"testing"
 	"time"
 )
@@ -93,4 +94,60 @@ func TestStopIsIdempotentAfterAcceptShutdown(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("second Stop hung; it must be a no-op")
 	}
+}
+
+// TestStopReturnsEvenWhenTheAcceptLoopWillNotRetire is the follow-up finding:
+// bounding the WAIT is not the same as bounding Stop.
+//
+// The first version timed out waiting for the accept loop and then fell
+// through to the synchronous listener.Close() — the very call documented as
+// able to block forever in exactly that state. So a failed wake-up dial or a
+// slow scheduler still wedged shutdown, with the timeout providing only the
+// appearance of a bound.
+//
+// Stop must return within its bound whether or not retirement succeeds. When
+// it does not, closing the listener moves to a detached goroutine: leaking one
+// blocked goroutine in a process that is shutting down anyway is strictly
+// better than never shutting down.
+func TestStopReturnsEvenWhenTheAcceptLoopWillNotRetire(t *testing.T) {
+	srv := startStopRaceServer(t)
+	time.Sleep(50 * time.Millisecond)
+
+	// Reproduce the Windows failure portably. On Unix, closing a listener out
+	// from under a parked Accept() returns immediately, so the bug cannot occur
+	// here naturally — substituting a listener whose Close blocks forever is
+	// what makes this test meaningful on every platform rather than only on the
+	// one that can actually deadlock.
+	srv.listener = blockingCloseListener{Listener: srv.listener}
+	srv.acceptDone = make(chan struct{})
+
+	start := time.Now()
+	done := make(chan error, 1)
+	go func() { done <- srv.Stop() }()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("Stop: %v", err)
+		}
+		// Generous, but far below "forever" — the point is that Stop returns at
+		// all when retirement cannot complete.
+		if elapsed := time.Since(start); elapsed > 3*acceptRetireTimeout {
+			t.Fatalf("Stop took %s; it must return on its own bound rather than "+
+				"waiting on a close that may never finish", elapsed)
+		}
+	case <-time.After(15 * time.Second):
+		t.Fatal("Stop never returned when the accept loop could not be retired — " +
+			"the timeout only bounded the WAIT, not Stop itself")
+	}
+}
+
+// blockingCloseListener stands in for winio's named-pipe listener in the state
+// where its Close never returns.
+type blockingCloseListener struct {
+	net.Listener
+}
+
+func (blockingCloseListener) Close() error {
+	select {} // never returns, exactly like the deadlocked win32PipeListener.Close
 }

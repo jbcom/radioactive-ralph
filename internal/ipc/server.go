@@ -258,10 +258,11 @@ func (s *Server) markStopConn(conn net.Conn) {
 // complete a parked Accept() on every transport, where closing the listener is
 // exactly the operation that deadlocks on Windows.
 //
-// Bounded on purpose. If the dial or the loop's exit takes longer than
-// acceptRetireTimeout, fall through and close the listener anyway — a slow
-// shutdown is recoverable, refusing to shut down is not.
-func (s *Server) retireAcceptLoop() {
+// Reports whether retirement actually completed. The caller MUST honor a false
+// return: an Accept() may still be in flight, which is exactly the state where
+// the Windows listener close can block forever, so the close cannot be done
+// synchronously on that path.
+func (s *Server) retireAcceptLoop() bool {
 	dialCtx, cancel := context.WithTimeout(context.Background(), acceptRetireTimeout)
 	defer cancel()
 	if conn, err := dialEndpoint(dialCtx, s.socketPath, acceptRetireTimeout); err == nil {
@@ -269,7 +270,9 @@ func (s *Server) retireAcceptLoop() {
 	}
 	select {
 	case <-s.acceptDone:
+		return true
 	case <-time.After(acceptRetireTimeout):
+		return false
 	}
 }
 
@@ -310,8 +313,24 @@ func (s *Server) Stop() error {
 		// for a client that never arrives and Close's wait for it to exit never
 		// returns. Observed as a 10-minute CI timeout with Stop parked in
 		// win32PipeListener.Close.
-		s.retireAcceptLoop()
-		_ = s.listener.Close()
+		if s.retireAcceptLoop() {
+			// Retired cleanly: no Accept() is in flight, so closing is safe and
+			// returns promptly.
+			_ = s.listener.Close()
+		} else {
+			// Retirement did NOT complete, so an Accept() may still be in
+			// flight — precisely the state where the Windows close can block
+			// forever. Bounding the WAIT is not the same as bounding Stop:
+			// falling through to a synchronous close here would let a failed
+			// wake-up dial or a slow scheduler wedge shutdown anyway, with the
+			// timeout providing only the APPEARANCE of a bound.
+			//
+			// Close on a detached goroutine instead. Leaking one blocked
+			// goroutine in a process that is shutting down regardless is
+			// strictly better than never shutting down.
+			s.logger.Warn("ipc accept loop did not retire; closing listener asynchronously")
+			go func() { _ = s.listener.Close() }()
+		}
 	}
 	// Close every live connection so any handler parked in a read/write returns
 	// at once — otherwise wg.Wait would block until each stuck conn hit its own
