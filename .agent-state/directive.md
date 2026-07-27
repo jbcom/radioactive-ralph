@@ -286,7 +286,17 @@ tags before deletion: `archive/plan-v2-dag`, `archive/release-022-recovery-scrat
       falling back. Validation is CONFIG-DRIVEN, unlike the archived branch's
       hardcoded per-provider model/effort tables, which would duplicate what
       BindingConfig already declares and drift on the first new model.
-      Remaining: 10 (calibration, needs 9), 11 (IPC + clients), 12. Full plan in
+      Increment 10 store layer SHIPPED (PR #236): calibrations are
+      content-addressed so re-probing one command line is idempotent, and a
+      CONFLICTING remeasurement FAILS rather than overwrites — tasks bind to a
+      calibration id to document what they ran on, so replacing the row when a
+      binary is upgraded would retroactively rewrite that history. Capabilities
+      and evidence are excluded from the address (they are what was observed,
+      not what was observed ABOUT; including them mints a new id per timestamp).
+      Attempts are stored per REPETITION because agreement across repetitions
+      IS the calibration signal and cannot be computed from a collapsed row.
+      The orch admission half needs increment 9's InvocationConfigHash (#234).
+      Remaining: 10-orch (needs #234), 11 (IPC + clients), 12. Full plan in
       `docs/superpowers/specs/2026-07-26-dag-integration-design.md`.
       Hard discards (unchanged) — note these name the SOURCE BRANCH's versions,
       NOT the reimplementations that shipped. The archived `CreatePlanGraph` is
