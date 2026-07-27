@@ -157,7 +157,8 @@ tags before deletion: `archive/plan-v2-dag`, `archive/release-022-recovery-scrat
       readiness POSITIONALLY, and `internal/orch` has zero `AddDep` calls. Work =
       grammar expresses edges -> persist into the existing table at import ->
       dispatch walks the graph. 12 ordered increments in
-      `scratchpad/dag-integration-design.md`. Hard discards: `plan_graph.go`
+      `docs/superpowers/specs/2026-07-26-dag-integration-design.md`. Hard
+      discards: `plan_graph.go`
       (duplicates CreatePlan+CreateTask+AddDep AND bypasses the cycle check),
       `graph_validate.go`, the `Task` metadata widening + `task_metadata_view.go`,
       `Plan.V2` and every `parsed.V2` fork, the 18-arg Codex expansion, and the
