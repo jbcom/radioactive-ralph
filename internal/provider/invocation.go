@@ -80,7 +80,7 @@ func validateExactlyHonorable(binding Binding, req Request, model string) error 
 		return fmt.Errorf("%w: binding %s resolves no model for tier %q",
 			ErrBindingCannotHonorRequest, binding.Name, req.Model)
 	}
-	if req.Model != "" && !bindingMapsModel(binding.Config, req.Model) {
+	if req.Model != "" && !bindingHonorsModel(binding.Config, req.Model, model) {
 		return fmt.Errorf("%w: binding %s does not map tier %q (it resolved to %q via fallback)",
 			ErrBindingCannotHonorRequest, binding.Name, req.Model, model)
 	}
@@ -91,27 +91,44 @@ func validateExactlyHonorable(binding Binding, req Request, model string) error 
 	return nil
 }
 
-// bindingMapsModel reports whether cfg explicitly maps the requested tier.
+// bindingHonorsModel reports whether resolved is what the request actually
+// asked for, rather than something substituted for it.
 //
-// A native claude binding maps every tier by construction — the tier names ARE
-// its model names — which is why resolveModel passes them through unchanged for
-// that type.
-func bindingMapsModel(cfg BindingConfig, model Model) bool {
-	switch cfg.Type {
-	case "", "claude":
-		return true
-	}
-	switch model {
+// The question is answered by comparing against the RESOLVED model, not by
+// inspecting the config's shape. resolveModel treats SonnetModel as a universal
+// fallback (see claude.go), so "the binding has a mapping for this tier" and
+// "the binding ran this tier" are different claims — and a strict pin cares
+// only about the second. Inferring from shape approved exactly the
+// substitutions strict mode exists to refuse:
+//
+//   - a claude-type binding short-circuited to honorable for EVERY tier, so a
+//     strict opus request against a binding configured only with SonnetModel
+//     ran sonnet while its provenance claimed opus;
+//   - a non-tier model counted as mapped merely for being non-empty, so a
+//     strict "gpt-4" against SonnetModel "gpt-5" ran gpt-5.
+//
+// An explicit tier mapping is authoritative when present: a binding that maps
+// opus to some model honors an opus request whatever that model is named.
+// Otherwise the resolution must have left the request unchanged.
+func bindingHonorsModel(cfg BindingConfig, requested Model, resolved string) bool {
+	switch requested {
 	case ModelHaiku:
-		return cfg.HaikuModel != ""
+		if cfg.HaikuModel != "" {
+			return true
+		}
 	case ModelSonnet:
-		return cfg.SonnetModel != ""
+		if cfg.SonnetModel != "" {
+			return true
+		}
 	case ModelOpus:
-		return cfg.OpusModel != ""
-	default:
-		// An explicit non-tier model is honored as written.
-		return model != ""
+		if cfg.OpusModel != "" {
+			return true
+		}
 	}
+	// No explicit mapping for this tier: honorable only if nothing was
+	// substituted — which for a native claude binding is the pass-through case
+	// where the tier name IS the model name.
+	return resolved == string(requested)
 }
 
 // bindingMapsEffort reports whether cfg explicitly maps the requested effort.

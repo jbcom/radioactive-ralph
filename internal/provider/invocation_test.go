@@ -194,3 +194,113 @@ func TestInvocationConfigHashChangesWithTheCommandLine(t *testing.T) {
 		t.Fatal("hash is not stable across calls")
 	}
 }
+
+// TestStrictClaudeBindingRefusesATierFallback is CodeRabbit's P1 on #234,
+// confirmed against the code rather than accepted on assertion.
+//
+// resolveModel treats SonnetModel as a UNIVERSAL fallback (claude.go:364), not
+// just the sonnet tier's mapping. bindingMapsModel short-circuited to true for
+// every claude-type binding, so strict mode approved a substitution it exists to
+// refuse: a task pinned to opus silently runs on the sonnet override.
+func TestStrictClaudeBindingRefusesATierFallback(t *testing.T) {
+	binding := Binding{
+		Name: "claude-pinned",
+		// HighEffort IS mapped, so only the MODEL axis can fail this test —
+		// otherwise the effort check catches it and the test passes for the
+		// wrong reason.
+		Config: BindingConfig{
+			Type: "claude", SonnetModel: "claude-sonnet-5", HighEffort: "high",
+		},
+	}
+	for _, model := range []Model{ModelOpus, ModelHaiku} {
+		t.Run(string(model), func(t *testing.T) {
+			// Loose resolution documents the substitution that actually happens.
+			loose, err := ResolveInvocation(binding, Request{Model: model, Effort: "high"})
+			if err != nil {
+				t.Fatalf("loose ResolveInvocation: %v", err)
+			}
+			if loose.Model != "claude-sonnet-5" {
+				t.Fatalf("loose Model = %q, want the sonnet fallback — if this changed, "+
+					"the strict case below is testing something else", loose.Model)
+			}
+
+			_, err = ResolveInvocation(binding, Request{
+				Model: model, Effort: "high", StrictBinding: true,
+			})
+			if err == nil {
+				t.Fatalf("strict binding accepted %s against a binding that only maps "+
+					"sonnet; the task would run on claude-sonnet-5 while its provenance "+
+					"claims %s", model, model)
+			}
+			if !errors.Is(err, ErrBindingCannotHonorRequest) {
+				t.Fatalf("err = %v, want ErrBindingCannotHonorRequest", err)
+			}
+		})
+	}
+}
+
+// TestStrictBindingRefusesASubstitutedCustomModel covers the same fallback on
+// the non-tier axis. A custom model was treated as mapped merely because it was
+// non-empty, so a strict request for "gpt-4" against SonnetModel "gpt-5"
+// succeeded and ran gpt-5.
+func TestStrictBindingRefusesASubstitutedCustomModel(t *testing.T) {
+	binding := Binding{
+		Name:   "codex-pool",
+		Config: BindingConfig{Type: "codex", Binary: "codex", SonnetModel: "gpt-5"},
+	}
+	_, err := ResolveInvocation(binding, Request{
+		Model: Model("gpt-4"), Effort: "default", StrictBinding: true,
+	})
+	if err == nil {
+		t.Fatal("strict binding accepted a custom model the binding substitutes away; " +
+			"the task would run gpt-5 while pinned to gpt-4")
+	}
+	if !errors.Is(err, ErrBindingCannotHonorRequest) {
+		t.Fatalf("err = %v, want ErrBindingCannotHonorRequest", err)
+	}
+}
+
+// TestStrictBindingAcceptsAnExactCustomModelOnAPassThroughBinding is the
+// control for the substitution check above: a custom model that survives
+// resolution UNCHANGED must still be honorable, or strict mode would refuse
+// every non-tier pin.
+//
+// A claude-type binding is the pass-through case — resolveModel returns the
+// requested name verbatim when no override displaces it. A codex binding cannot
+// appear here: with no SonnetModel it resolves a custom model to "" (nothing to
+// run), and with one it substitutes, so neither shape honors a custom pin.
+func TestStrictBindingAcceptsAnExactCustomModelOnAPassThroughBinding(t *testing.T) {
+	binding := Binding{
+		Name:   "claude-custom",
+		Config: BindingConfig{Type: "claude"},
+	}
+	inv, err := ResolveInvocation(binding, Request{
+		Model: Model("claude-opus-5-20260101"), Effort: "default", StrictBinding: true,
+	})
+	if err != nil {
+		t.Fatalf("strict binding refused a model it resolves exactly: %v", err)
+	}
+	if inv.Model != "claude-opus-5-20260101" {
+		t.Fatalf("Model = %q, want the requested model unchanged", inv.Model)
+	}
+}
+
+// TestStrictClaudeBindingAcceptsAnExactTierMapping is the control proving the
+// fix does not simply refuse every claude strict request.
+func TestStrictClaudeBindingAcceptsAnExactTierMapping(t *testing.T) {
+	binding := Binding{
+		Name: "claude-pinned",
+		Config: BindingConfig{
+			Type: "claude", OpusModel: "claude-opus-5", HighEffort: "high",
+		},
+	}
+	inv, err := ResolveInvocation(binding, Request{
+		Model: ModelOpus, Effort: "high", StrictBinding: true,
+	})
+	if err != nil {
+		t.Fatalf("strict binding refused an exactly-mapped tier: %v", err)
+	}
+	if inv.Model != "claude-opus-5" {
+		t.Fatalf("Model = %q, want the configured opus mapping", inv.Model)
+	}
+}
