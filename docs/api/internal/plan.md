@@ -38,6 +38,11 @@ Plans are markdown documents parsed with goldmark into an AST and decomposed heu
   - [func Decompose\(p \*Plan, done map\[string\]bool\) \(readyNow \[\]Step, parallel bool\)](<#Decompose>)
 - [type StepRef](<#StepRef>)
   - [func \(r StepRef\) ID\(\) string](<#StepRef.ID>)
+- [type TaskBinding](<#TaskBinding>)
+- [type TaskInput](<#TaskInput>)
+- [type TaskMetadata](<#TaskMetadata>)
+  - [func \(m \*TaskMetadata\) DependsOn\(\) \(ids \[\]string, stated bool\)](<#TaskMetadata.DependsOn>)
+- [type TaskOutput](<#TaskOutput>)
 - [type ValidationErrors](<#ValidationErrors>)
   - [func \(errs ValidationErrors\) Error\(\) string](<#ValidationErrors.Error>)
 
@@ -79,7 +84,7 @@ func ValidateForImport(md []byte) error
 ValidateForImport is the plan\-ingress contract. It rejects empty/no\-step documents and every ambiguity reported by Validate before a project or plan row is created. This is intentionally stricter than Parse, which remains useful for inspecting already\-stored historical input.
 
 <a name="Group"></a>
-## type [Group](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plan/parse.go#L40-L60>)
+## type [Group](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plan/types.go#L19-L39>)
 
 Group is a single heading's section. A Group either carries Steps \(it is a leaf: no child subheadings appear in its section\) or SubGroups \(it has child subheadings, which carry the ordering\) \-\- never both.
 
@@ -108,7 +113,7 @@ type Group struct {
 ```
 
 <a name="Plan"></a>
-## type [Plan](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plan/parse.go#L30-L35>)
+## type [Plan](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plan/types.go#L9-L14>)
 
 Plan is the parsed, nested representation of a plan document.
 
@@ -122,7 +127,7 @@ type Plan struct {
 ```
 
 <a name="Parse"></a>
-### func [Parse](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plan/parse.go#L88>)
+### func [Parse](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plan/parse.go#L34>)
 
 ```go
 func Parse(md []byte) (*Plan, error)
@@ -185,7 +190,7 @@ func (e PlanError) String() string
 
 
 <a name="Step"></a>
-## type [Step](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plan/parse.go#L64-L82>)
+## type [Step](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plan/types.go#L43-L67>)
 
 Step is a single unit of work: the list item text plus any trailing paragraph\(s\) of detail found alongside the list under the same heading.
 
@@ -208,6 +213,12 @@ type Step struct {
     // human-in-the-loop gate — the producer for the approval flow the
     // observe/drive surface already exposes.
     RequiresApproval bool
+
+    // Metadata is the decoded ```ralph-task block annotating this step, or nil
+    // when the step carries no such block. Nil is the common case: every plan
+    // written before this grammar existed has no annotated steps, and an
+    // unannotated step is a perfectly valid graph node.
+    Metadata *TaskMetadata
 }
 ```
 
@@ -247,6 +258,115 @@ func (r StepRef) ID() string
 ```
 
 ID returns a stable, deterministic string key for this step, suitable for use in a done\-set. It is derived purely from position in the plan tree \(e.g. "0.1.2"\), not from step text, so it stays stable across re\-parses of the same document and is independent of wording edits that don't change structure.
+
+<a name="TaskBinding"></a>
+## type [TaskBinding](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plan/types.go#L124-L133>)
+
+TaskBinding pins the provider identity for one task.
+
+```go
+type TaskBinding struct {
+    Mode        string `json:"mode"`
+    Alias       string `json:"alias"`
+    Provider    string `json:"provider"`
+    Model       string `json:"model"`
+    Effort      string `json:"effort"`
+    Calibration string `json:"calibration"`
+    Repetitions int    `json:"repetitions"`
+    Fixture     string `json:"fixture"`
+}
+```
+
+<a name="TaskInput"></a>
+## type [TaskInput](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plan/types.go#L137-L140>)
+
+TaskInput is a file this task reads, optionally pinned to an exact content hash so a changed input is detected rather than silently used.
+
+```go
+type TaskInput struct {
+    Path   string `json:"path"`
+    SHA256 string `json:"sha256"`
+}
+```
+
+<a name="TaskMetadata"></a>
+## type [TaskMetadata](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plan/types.go#L72-L121>)
+
+TaskMetadata is the decoded contents of a step's \`\`\`ralph\-task fenced block. It lets a plan author state execution facts the prose cannot: explicit dependency edges, a provider binding, and the files the step reads or writes.
+
+```go
+type TaskMetadata struct {
+    // ID is the stable task identifier. Without it a task's identity would be
+    // its document position, so inserting a step above would silently rename
+    // everything below and orphan every edge pointing at it.
+    ID  string `json:"id"`
+
+    // After holds the ids this task depends on. Its three states are DISTINCT
+    // and the distinction is load-bearing:
+    //
+    //   nil         — the key was omitted. Edges come from document order, the
+    //                 same as a step with no metadata block at all. Annotating a
+    //                 step (adding team:, binding:, …) must NOT silently change
+    //                 where it sits in the graph.
+    //   &[]string{} — explicitly empty. No incoming edges: a root, ready
+    //                 immediately. This is the only way to opt out of document
+    //                 order.
+    //   &[...]      — exactly these edges. Document order is not additionally
+    //                 applied; the author has taken ownership of this ordering.
+    //
+    // That is why this is *[]string and not []string: a plain slice cannot tell
+    // "omitted" from "explicitly none", and collapsing them would make the same
+    // plan import as two different graphs.
+    After *[]string `json:"after"`
+
+    // Team is a slash-delimited path used to group tasks in the operator views
+    // and to keep independent teams' work from being folded into one fan-out.
+    Team string `json:"team"`
+
+    // Binding pins how this task is executed.
+    Binding TaskBinding `json:"binding"`
+
+    // Requires names capability keys the bound provider must satisfy. A task
+    // whose requirements are unmet fails closed (blocked_capability) rather than
+    // running against a provider that cannot do the work.
+    Requires []string `json:"requires"`
+
+    // Providers restricts this task to a subset of configured providers.
+    Providers []string `json:"providers"`
+
+    // DifferentFrom names tasks that must not share this task's independence
+    // domain — for work whose value depends on being done by a different model.
+    DifferentFrom []string `json:"differentFrom"`
+
+    // Inputs are files this task reads, optionally pinned by hash.
+    Inputs []TaskInput `json:"inputs"`
+
+    // Outputs are files this task writes. An exclusive output cannot overlap a
+    // concurrently running task's declared paths.
+    Outputs []TaskOutput `json:"outputs"`
+}
+```
+
+<a name="TaskMetadata.DependsOn"></a>
+### func \(\*TaskMetadata\) [DependsOn](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plan/types.go#L151>)
+
+```go
+func (m *TaskMetadata) DependsOn() (ids []string, stated bool)
+```
+
+DependsOn reports the explicit dependency ids and whether the author stated them at all. Callers deriving edges must branch on stated: when it is false, document order supplies the edges.
+
+<a name="TaskOutput"></a>
+## type [TaskOutput](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plan/types.go#L143-L146>)
+
+TaskOutput is a file this task writes. Mode is currently always "exclusive".
+
+```go
+type TaskOutput struct {
+    Path string `json:"path"`
+    Mode string `json:"mode"`
+}
+```
 
 <a name="ValidationErrors"></a>
 ## type [ValidationErrors](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plan/validate.go#L38>)

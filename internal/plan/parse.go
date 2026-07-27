@@ -19,67 +19,13 @@
 package plan
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/yuin/goldmark"
 	"github.com/yuin/goldmark/ast"
 	"github.com/yuin/goldmark/text"
 )
-
-// Plan is the parsed, nested representation of a plan document.
-type Plan struct {
-	// Groups holds the top-level (heading level 1) groups in document
-	// order. Document order is dependency order: Groups[0] completes
-	// before Groups[1] starts, and so on.
-	Groups []Group
-}
-
-// Group is a single heading's section. A Group either carries Steps (it is
-// a leaf: no child subheadings appear in its section) or SubGroups (it has
-// child subheadings, which carry the ordering) -- never both.
-type Group struct {
-	// Heading is the trimmed text of the heading line.
-	Heading string
-
-	// Level is the heading level (1-6).
-	Level int
-
-	// Parallel is true when this leaf group's steps come from an
-	// unordered list (dispatchable together). It is false for an
-	// ordered-list leaf (steps run one at a time) and is meaningless
-	// (left false) for a non-leaf group.
-	Parallel bool
-
-	// Steps holds this leaf group's steps in document order. Empty for
-	// a non-leaf group.
-	Steps []Step
-
-	// SubGroups holds this group's child subheadings in document order.
-	// Empty for a leaf group.
-	SubGroups []Group
-}
-
-// Step is a single unit of work: the list item text plus any trailing
-// paragraph(s) of detail found alongside the list under the same heading.
-type Step struct {
-	// Text is the trimmed text of the list item itself, with any recognized
-	// trailing marker (see RequiresApproval) stripped off.
-	Text string
-
-	// Detail is the trimmed, newline-joined text of any paragraphs found
-	// in the same section as the list (narrative elaborating the step).
-	// Empty when there is no such detail.
-	Detail string
-
-	// RequiresApproval is true when the step carries the `[approval]` marker
-	// (case-insensitive, at the end of the list-item text). Such a step is
-	// materialized as a task in status 'ready_pending_approval': it is held
-	// out of dispatch until an operator approves it (GUI/IPC ApproveTask),
-	// which transitions it to 'ready' so it becomes claimable. This is the
-	// human-in-the-loop gate — the producer for the approval flow the
-	// observe/drive surface already exposes.
-	RequiresApproval bool
-}
 
 // Parse parses plan markdown into a Plan. Parse uses goldmark's core
 // parser only (block + inline); GFM extensions (tables, strikethrough,
@@ -193,7 +139,10 @@ func buildGroup(heading *ast.Heading, firstBodyNode, sectionEnd ast.Node, source
 		return g, nil
 	}
 
-	steps, parallel := parseLeafSection(firstBodyNode, sectionEnd, source)
+	steps, parallel, err := parseLeafSection(firstBodyNode, sectionEnd, source)
+	if err != nil {
+		return Group{}, err
+	}
 	g.Steps = steps
 	g.Parallel = parallel
 	return g, nil
@@ -205,7 +154,7 @@ func buildGroup(heading *ast.Heading, firstBodyNode, sectionEnd ast.Node, source
 // one step with detail" rule). If more than one list is present, the
 // first one found determines Parallel and subsequent lists' items are
 // appended to Steps in document order.
-func parseLeafSection(node, sectionEnd ast.Node, source []byte) (steps []Step, parallel bool) {
+func parseLeafSection(node, sectionEnd ast.Node, source []byte) (steps []Step, parallel bool, err error) {
 	var details []string
 	sawList := false
 
@@ -218,7 +167,19 @@ func parseLeafSection(node, sectionEnd ast.Node, source []byte) (steps []Step, p
 			}
 			for item := v.FirstChild(); item != nil; item = item.NextSibling() {
 				text, requiresApproval := parseStepMarkers(listItemText(item, source))
-				steps = append(steps, Step{Text: text, RequiresApproval: requiresApproval})
+				// A malformed metadata block fails the parse rather than being
+				// skipped: a step whose declared edges could not be read would
+				// otherwise silently fall back to document order, running in an
+				// order its author explicitly overrode.
+				metadata, metaErr := parseTaskMetadataBlock(item, source)
+				if metaErr != nil {
+					return nil, false, fmt.Errorf("step %q: %w", text, metaErr)
+				}
+				steps = append(steps, Step{
+					Text:             text,
+					RequiresApproval: requiresApproval,
+					Metadata:         metadata,
+				})
 			}
 		case *ast.Paragraph:
 			if t := strings.TrimSpace(string(v.Lines().Value(source))); t != "" {
@@ -234,7 +195,7 @@ func parseLeafSection(node, sectionEnd ast.Node, source []byte) (steps []Step, p
 		}
 	}
 
-	return steps, parallel
+	return steps, parallel, nil
 }
 
 // approvalMarker is the case-insensitive trailing tag that gates a step behind
