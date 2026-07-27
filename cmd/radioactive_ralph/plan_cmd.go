@@ -2,15 +2,17 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/jbcom/radioactive-ralph/internal/ipc"
-	"github.com/jbcom/radioactive-ralph/internal/orch"
+	"github.com/jbcom/radioactive-ralph/internal/observe"
 	"github.com/jbcom/radioactive-ralph/internal/plan"
-	"github.com/jbcom/radioactive-ralph/internal/store"
 	"github.com/jbcom/radioactive-ralph/internal/supervisor"
 	"github.com/jbcom/radioactive-ralph/internal/xdg"
 	"github.com/spf13/cobra"
@@ -48,11 +50,13 @@ func newPlanImportCmd() *cobra.Command {
 		Use:   "import <plan.md>",
 		Short: "Import a markdown plan file and activate it for the current project",
 		Long: "Reads a markdown plan file, creates a plan row for the current " +
-			"project from it, and marks the plan active. A running supervisor's " +
-			"dispatch loop then drives its ready steps; if no supervisor is " +
-			"running the plan is queued until one starts. The plan title is " +
-			"the file's first level-1 heading (falling back to the filename); " +
-			"pass --slug to override the derived slug.",
+			"project from it, and marks the plan active. The supervisor's " +
+			"dispatch loop then drives its ready steps. A RUNNING SUPERVISOR IS " +
+			"REQUIRED: the supervisor is the single writer of record for the " +
+			"store, so import refuses rather than writing a plan nothing is " +
+			"driving. The plan title is the file's first level-1 heading " +
+			"(falling back to the filename); pass --slug to override the " +
+			"derived slug.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runPlanImport(cmd.Context(), cmd, args[0], slug)
@@ -93,73 +97,141 @@ func runPlanImport(ctx context.Context, cmd *cobra.Command, planPath, slug strin
 		return err
 	}
 
-	// Prefer the supervisor's plan-import IPC command when one is reachable so
-	// the supervisor is the single writer of record (same code path the GUI
-	// uses). Fall back to a direct store write only when offline.
-	if client, ferr := supervisor.Find(stateRoot); ferr == nil {
-		defer func() { _ = client.Close() }()
-		reply, cerr := client.PlanImport(ctx, ipc.PlanImportArgs{
-			Markdown: markdown, Slug: slug, Title: title, Project: projectID,
-		})
-		if cerr != nil {
-			return fmt.Errorf("import plan via supervisor: %w", cerr)
-		}
-		fmt.Printf("radioactive_ralph: imported plan %q (%s) — active\n", reply.Title, reply.Slug)
-		return nil
-	}
-
-	st, err := store.Open(ctx, store.Options{DSN: store.DSN(storeDBPath(stateRoot))})
+	// The supervisor is the SINGLE writer of record for the store. There is no
+	// offline direct-write fallback: AGENTS.md specifies that the client
+	// "connects to the supervisor via its socket, initializes project config,
+	// and renders a read-only view. It refuses to run without a supervisor."
+	// A fallback that opened the DB directly would make the client a second
+	// writer to a supervisor-owned database — the exact ownership split the
+	// one-binary/supervisor-owned-state architecture exists to prevent — and it
+	// silently produced a plan nothing was driving.
+	client, err := supervisor.Find(stateRoot)
 	if err != nil {
-		return fmt.Errorf("open store: %w", err)
+		return fmt.Errorf(
+			"%w: plan import needs a running supervisor; start one with: %s",
+			errNoSupervisorListening, supervisorStartHint())
 	}
-	defer func() { _ = st.Close() }()
+	defer func() { _ = client.Close() }()
 
-	// The offline fallback must produce the SAME plan the supervisor would.
-	// CreatePlan + SetPlanStatus stores the markdown and nothing else, so a
-	// plan whose steps declare `after:` edges would import with none of them —
-	// an offline import and an online import of one file would run in different
-	// orders. ImportPlan materializes tasks, edges, metadata, and derived
-	// acceptance in one transaction, and activates on success.
-	//
-	// A freshly imported plan is meant to run: it lands active so the
-	// supervisor's periodic dispatch loop picks it up once one is started.
-	o := orch.New(st)
-	if _, err := o.ImportPlan(ctx, orch.ImportPlanOpts{
-		ProjectID: projectID,
-		Slug:      slug,
-		Title:     title,
-		Markdown:  markdown,
-	}); err != nil {
-		return fmt.Errorf("import plan: %w", err)
+	reply, err := client.PlanImport(ctx, ipc.PlanImportArgs{
+		Markdown: markdown, Slug: slug, Title: title, Project: projectID,
+	})
+	if err != nil {
+		return fmt.Errorf("import plan via supervisor: %w", err)
 	}
-
-	fmt.Printf("radioactive_ralph: imported plan %q (%s) — active\n", title, slug)
-	// "Active" only means "eligible for dispatch"; nothing actually drives it
-	// until a supervisor is running. Don't imply work has started when it
-	// hasn't — tell the operator how to start the supervisor if none is up.
-	if client, err := supervisor.Find(stateRoot); err != nil {
-		fmt.Fprintln(os.Stderr, "note: no supervisor is running, so the plan is queued but not yet being driven.")
-		fmt.Fprintln(os.Stderr, "      start one with: "+supervisorStartHint())
-	} else {
-		_ = client.Close()
-	}
+	fmt.Printf("radioactive_ralph: imported plan %q (%s) — active\n", reply.Title, reply.Slug)
 	return nil
 }
 
 func newPlanLsCmd() *cobra.Command {
 	var all bool
+	var asJSON bool
 	cmd := &cobra.Command{
 		Use:   "ls",
 		Short: "List plans for the current project",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return runPlanLs(cmd.Context(), cmd, all)
+			return runPlanLs(cmd.Context(), cmd, all, asJSON)
 		},
 	}
 	cmd.Flags().BoolVar(&all, "all", false, "list plans in every status, not just active/paused")
+	cmd.Flags().BoolVar(&asJSON, "json", false, "emit JSONL, one plan per line, for machine consumption")
 	return cmd
 }
 
-func runPlanLs(ctx context.Context, cmd *cobra.Command, all bool) error {
+// planSource is the plan-listing read boundary. It exists so the command is
+// testable without a live supervisor, and so plan_cmd.go cannot reach SQLite —
+// the architecture gate in internal/observe/client_boundary_test.go enforces
+// that this file never imports the store package.
+type planSource interface {
+	ListPlans(ctx context.Context, projectID string, all bool) ([]observe.Plan, error)
+}
+
+type livePlanSource struct{ stateRoot string }
+
+// ListPlans reads the project's plans through the supervisor's versioned query
+// surface.
+//
+// It PAGINATES to exhaustion before filtering. The snapshot caps a page at
+// MaxPageLimit, and filtering a truncated page is worse than truncating a
+// filtered one: with more than a page of plans, `plan ls` could print "no
+// plans" while an active plan sat on page two.
+//
+// It then sorts by UpdatedAt descending. The snapshot orders by plan id, but
+// this command has always shown most-recently-touched first — an operator who
+// just paused a plan expects to see it at the top, not wherever its id sorts.
+func (s *livePlanSource) ListPlans(
+	ctx context.Context,
+	projectID string,
+	all bool,
+) ([]observe.Plan, error) {
+	client, err := supervisor.Find(s.stateRoot)
+	if err != nil {
+		return nil, errNoSupervisorListening
+	}
+	defer func() { _ = client.Close() }()
+
+	return collectPlanPages(ctx, all, func(afterID string) (observe.PlanPage, error) {
+		reply, err := client.ObserveSnapshot(ctx, ipc.ObserveSnapshotArgs{
+			ProjectID:   projectID,
+			PlanLimit:   observe.MaxPageLimit,
+			PlanAfterID: afterID,
+		})
+		if err != nil {
+			return observe.PlanPage{}, err
+		}
+		return reply.Plans, nil
+	})
+}
+
+// collectPlanPages walks every snapshot page, applies the default status
+// filter, and orders the result the way `plan ls` has always ordered it.
+//
+// Split out from the transport so the three properties that actually broke are
+// testable without standing up a supervisor: exhausting pagination, keeping
+// drafts behind --all, and most-recently-updated-first.
+func collectPlanPages(
+	ctx context.Context,
+	all bool,
+	fetch func(afterID string) (observe.PlanPage, error),
+) ([]observe.Plan, error) {
+	var items []observe.Plan
+	afterID := ""
+	for {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		page, err := fetch(afterID)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, page.Items...)
+		if !page.HasMore || page.NextAfterID == "" {
+			break
+		}
+		afterID = page.NextAfterID
+	}
+
+	if !all {
+		// Default view: active and paused, matching what this command has
+		// always shown. Draft plans are NOT included — a draft is not something
+		// an operator is acting on, and --all is what widens the view.
+		kept := make([]observe.Plan, 0, len(items))
+		for _, plan := range items {
+			switch plan.Status {
+			case "active", "paused":
+				kept = append(kept, plan)
+			}
+		}
+		items = kept
+	}
+
+	sort.SliceStable(items, func(i, j int) bool {
+		return items[i].UpdatedAt.After(items[j].UpdatedAt)
+	})
+	return items, nil
+}
+
+func runPlanLs(ctx context.Context, cmd *cobra.Command, all, asJSON bool) error {
 	stateRoot, err := xdg.StateRoot()
 	if err != nil {
 		return fmt.Errorf("resolve state root: %w", err)
@@ -172,31 +244,46 @@ func runPlanLs(ctx context.Context, cmd *cobra.Command, all bool) error {
 	if err != nil {
 		return err
 	}
+	return runPlanLsWith(ctx, os.Stdout, &livePlanSource{stateRoot: stateRoot}, projectID, all, asJSON)
+}
 
-	st, err := store.Open(ctx, store.Options{DSN: store.DSN(storeDBPath(stateRoot))})
-	if err != nil {
-		return fmt.Errorf("open store: %w", err)
-	}
-	defer func() { _ = st.Close() }()
-
-	var statuses []store.PlanStatus
-	if all {
-		statuses = []store.PlanStatus{
-			store.PlanStatusDraft, store.PlanStatusActive, store.PlanStatusPaused,
-			store.PlanStatusDone, store.PlanStatusFailedPartial,
-			store.PlanStatusArchived, store.PlanStatusAbandoned,
-		}
-	}
-	plans, err := st.ListPlans(ctx, projectID, statuses)
+// runPlanLsWith is the testable core: it takes the source and writer so a test
+// can exercise both output shapes without a supervisor.
+func runPlanLsWith(
+	ctx context.Context,
+	out io.Writer,
+	src planSource,
+	projectID string,
+	all, asJSON bool,
+) error {
+	plans, err := src.ListPlans(ctx, projectID, all)
 	if err != nil {
 		return fmt.Errorf("list plans: %w", err)
 	}
-	if len(plans) == 0 {
-		fmt.Println("radioactive_ralph: no plans for this project")
+	if asJSON {
+		// JSONL rather than a wrapping array: a caller can stream it line by
+		// line, and an empty result is legitimately zero lines rather than a
+		// bare "[]" that has to be special-cased.
+		encoder := json.NewEncoder(out)
+		for _, plan := range plans {
+			if err := encoder.Encode(plan); err != nil {
+				return fmt.Errorf("encode plan: %w", err)
+			}
+		}
 		return nil
 	}
-	for _, p := range plans {
-		fmt.Printf("%-10s  %-24s  %s\n", p.Status, p.Slug, p.Title)
+	if len(plans) == 0 {
+		_, err := fmt.Fprintln(out, "radioactive_ralph: no plans for this project")
+		return err
+	}
+	for _, plan := range plans {
+		// A write failure here is real (a closed pipe, a full disk): reporting
+		// it beats printing a partial list and exiting 0.
+		if _, err := fmt.Fprintf(
+			out, "%-10s  %-24s  %s\n", plan.Status, plan.Slug, plan.Title,
+		); err != nil {
+			return fmt.Errorf("write plan list: %w", err)
+		}
 	}
 	return nil
 }
