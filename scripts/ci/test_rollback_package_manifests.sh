@@ -3,6 +3,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 TMP="$(mktemp -d)"
+CASE_SEQ=0
 trap 'rm -rf "$TMP"' EXIT
 
 cat > "$TMP/gh" <<'FAKEGH'
@@ -91,7 +92,14 @@ chmod +x "$TMP/gh"
 
 setup_remote() {
   prior_gui_state="${1:-present}"
-  CASE="$TMP/case-$RANDOM"
+  # A counter, not $RANDOM. $RANDOM draws from 0..32767 WITH replacement, so
+  # two of this script's setup_remote calls can collide on one directory; the
+  # second then runs `git remote add origin` against a seed repo that already
+  # has one, and the whole job fails with "remote origin already exists". Rare,
+  # nondeterministic, and indistinguishable from an infrastructure blip — the
+  # worst kind of CI failure. A counter cannot collide.
+  CASE_SEQ=$((CASE_SEQ + 1))
+  CASE="$TMP/case-$CASE_SEQ"
   FAKE_REMOTE="$CASE/pkgs.git"
   seed="$CASE/seed"
   mkdir -p "$CASE"
