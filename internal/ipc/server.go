@@ -19,6 +19,12 @@ import (
 // off instead of busy-spinning the accept goroutine.
 const acceptRetryDelay = 50 * time.Millisecond
 
+// acceptRetireTimeout bounds each phase of retiring the accept loop during
+// Stop. Shutdown must stay prompt even if the self-dial wakeup cannot complete,
+// so both the dial and the wait for the loop to exit fall through rather than
+// block.
+const acceptRetireTimeout = 2 * time.Second
+
 // defaultHeartbeatInterval is the heartbeat-touch cadence when a caller
 // leaves ServerOptions.HeartbeatInterval unset.
 const defaultHeartbeatInterval = 10 * time.Second
@@ -123,7 +129,10 @@ type Server struct {
 	heartbeatInterval time.Duration
 	wg                sync.WaitGroup
 	stopCh            chan struct{}
-	heartbeatCh       chan struct{}
+	// acceptDone closes when the accept loop has left Accept() for good, so
+	// Stop can close the listener with no accept request in flight.
+	acceptDone  chan struct{}
+	heartbeatCh chan struct{}
 
 	// conns tracks every accepted connection so Stop can close them all,
 	// unblocking any handler parked in a read/write immediately — so shutdown
@@ -190,6 +199,7 @@ func NewServer(opts ServerOptions) (*Server, error) {
 		logger:            logger,
 		heartbeatInterval: interval,
 		stopCh:            make(chan struct{}),
+		acceptDone:        make(chan struct{}),
 		heartbeatCh:       make(chan struct{}),
 		conns:             make(map[net.Conn]struct{}),
 	}, nil
@@ -239,6 +249,30 @@ func (s *Server) markStopConn(conn net.Conn) {
 	s.connsMu.Unlock()
 }
 
+// retireAcceptLoop unblocks the accept loop and waits for it to leave Accept(),
+// so the listener can be closed with no accept request in flight.
+//
+// stopCh is already closed by the time this runs, so the accept loop treats the
+// next connection as the shutdown signal and returns without serving it. The
+// wakeup is a real dial of our own endpoint: it is the one action guaranteed to
+// complete a parked Accept() on every transport, where closing the listener is
+// exactly the operation that deadlocks on Windows.
+//
+// Bounded on purpose. If the dial or the loop's exit takes longer than
+// acceptRetireTimeout, fall through and close the listener anyway — a slow
+// shutdown is recoverable, refusing to shut down is not.
+func (s *Server) retireAcceptLoop() {
+	dialCtx, cancel := context.WithTimeout(context.Background(), acceptRetireTimeout)
+	defer cancel()
+	if conn, err := dialEndpoint(dialCtx, s.socketPath, acceptRetireTimeout); err == nil {
+		_ = conn.Close()
+	}
+	select {
+	case <-s.acceptDone:
+	case <-time.After(acceptRetireTimeout):
+	}
+}
+
 // Start binds the socket and begins accepting connections in a background
 // goroutine. Safe to call once. Returns the listener error if bind fails.
 // The heartbeat interval comes from ServerOptions.HeartbeatInterval (set at
@@ -266,6 +300,17 @@ func (s *Server) Stop() error {
 		close(s.stopCh)
 	}
 	if s.listener != nil {
+		// Retire the accept loop BEFORE closing the listener. Closing a
+		// listener out from under a parked Accept() is safe on Unix, but the
+		// Windows named-pipe listener deadlocks: winio's Accept hands a
+		// response channel to an internal goroutine and then waits on it with
+		// no cancellation case, while that goroutine selects between "close
+		// requested" and "accept requested". With both ready the select picks
+		// at random — when close loses, the goroutine calls ConnectNamedPipe
+		// for a client that never arrives and Close's wait for it to exit never
+		// returns. Observed as a 10-minute CI timeout with Stop parked in
+		// win32PipeListener.Close.
+		s.retireAcceptLoop()
 		_ = s.listener.Close()
 	}
 	// Close every live connection so any handler parked in a read/write returns
@@ -301,6 +346,9 @@ func (s *Server) heartbeatLoop(interval time.Duration) {
 
 func (s *Server) acceptLoop() {
 	defer s.wg.Done()
+	// Signals Stop that no Accept() is in flight, so the listener is safe to
+	// close (see retireAcceptLoop).
+	defer close(s.acceptDone)
 	for {
 		conn, err := s.listener.Accept()
 		if err != nil {
@@ -327,6 +375,17 @@ func (s *Server) acceptLoop() {
 			case <-time.After(acceptRetryDelay):
 			}
 			continue
+		}
+		// Shutdown already began, so this connection is either Stop's own
+		// wakeup dial or a client that raced it. Close it and leave rather than
+		// spawning a handler Stop would immediately have to tear down. Leaving
+		// HERE — with no Accept() in flight — is what makes closing the listener
+		// safe (see retireAcceptLoop).
+		select {
+		case <-s.stopCh:
+			_ = conn.Close()
+			return
+		default:
 		}
 		s.wg.Add(1)
 		go func() {
