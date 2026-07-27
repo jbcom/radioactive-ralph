@@ -41,7 +41,11 @@ func Of(status string) Bucket {
 		return Running
 	// Needs attention (blocked on a dependency, awaiting approval, or a
 	// partial/paused plan an operator should look at).
-	case "blocked", "ready_pending_approval", "paused", "failed_partial":
+	// blocked_capability and blocked_input are fail-closed pre-dispatch blocks.
+	// They belong here rather than falling through to Muted: work that will
+	// never run without operator action must not look like benign pending work.
+	case "blocked", "blocked_capability", "blocked_input",
+		"ready_pending_approval", "paused", "failed_partial":
 		return Warn
 	// Terminal-failure / abandoned.
 	case "failed", "abandoned":

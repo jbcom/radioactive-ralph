@@ -23,6 +23,14 @@ const (
 	TaskStatusFailed               TaskStatus = "failed"
 	TaskStatusSkipped              TaskStatus = "skipped"
 	TaskStatusDecomposed           TaskStatus = "decomposed"
+
+	// TaskStatusBlockedCapability and TaskStatusBlockedInput are fail-closed
+	// pre-dispatch blocks: the task's declared capability requirements are
+	// unmet, or its immutable inputs failed admission. They are distinct states
+	// so an operator can tell the two causes apart, but both roll into
+	// StatusCounts.Blocked because a blocked task is blocked either way.
+	TaskStatusBlockedCapability TaskStatus = "blocked_capability"
+	TaskStatusBlockedInput      TaskStatus = "blocked_input"
 )
 
 // Task is a DAG node. No variant/persona columns — the orchestrator assigns
@@ -242,8 +250,14 @@ func (s *Store) StatusCounts(ctx context.Context) (StatusCounts, error) {
 			c.Running = n
 		case string(TaskStatusReadyPendingApproval):
 			c.Approval = n
-		case string(TaskStatusBlocked):
-			c.Blocked = n
+		// Three distinct statuses roll into one Blocked count: a task blocked on
+		// a dependency, on unmet capabilities, or on input admission is blocked
+		// as far as an operator is concerned. This accumulates rather than
+		// assigns, because each arrives as its own row from the GROUP BY.
+		case string(TaskStatusBlocked),
+			string(TaskStatusBlockedCapability),
+			string(TaskStatusBlockedInput):
+			c.Blocked += n
 		case string(TaskStatusFailed):
 			c.Failed = n
 		}
@@ -524,7 +538,14 @@ func (s *Store) MarkDone(ctx context.Context, planID, taskID, sessionID string, 
 // hard error: the stale report is correctly dropped instead of stomping the
 // current owner. Callers distinguish it via errors.Is and treat it as
 // "someone else owns this now; nothing to do."
-var ErrTaskNotOwnedRunning = errors.New("store: task not running under the reporting session (stale failure report)")
+var ErrTaskNotOwnedRunning = fmt.Errorf(
+	"%w under the reporting session (stale failure report)", ErrTaskNotRunning)
+
+// ErrTaskNotRunning reports an update attempted against a task that is not in
+// a live claim. ErrTaskNotOwnedRunning wraps it, so errors.Is against this
+// sentinel matches both "not running at all" and "running under someone else",
+// while callers that need the distinction can still test the narrower one.
+var ErrTaskNotRunning = errors.New("store: task is not running")
 
 // MarkFailed transitions a running task, owned by sessionID, to failed or
 // retries. See MarkFailedWithPayload.
