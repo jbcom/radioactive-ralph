@@ -351,7 +351,6 @@ func (s *Supervisor) HandleStatus(ctx context.Context) (ipc.StatusReply, error) 
 
 	return ipc.StatusReply{
 		ProtoVersion:  ipc.ProtoVersion, // advertise the drive-surface version
-		PID:           os.Getpid(),
 		Uptime:        time.Since(s.startedAt),
 		ActiveWorkers: len(running),
 		Workers:       workers,
