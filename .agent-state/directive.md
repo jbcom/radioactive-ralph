@@ -189,6 +189,11 @@ tags before deletion: `archive/plan-v2-dag`, `archive/release-022-recovery-scrat
       tasks so one fan-out worker read as three), **#216** (increment 3,
       `ClaimTask`, stacked on #215), **#210** (directive + spec), and **#219**
       (partial #204). All rebased onto v0.23.0.
+- [ ] [WAIT] PR #220 — `plan ls` through the query surface + `--json`, and
+      `plan import` loses its offline direct-store fallback (the client was a
+      second writer to a supervisor-owned DB, and silently produced a plan
+      nothing was driving). `plan_cmd.go` joins the architecture gate so it
+      cannot regress. Stacked on #219.
 - [ ] Issue #204 remainder — #219 lands the read model, projection, IPC query,
       and the opt-in per-plan task-label query, but does NOT close the issue.
       Still open: `init_cmd.go`/`client.go`/`plan_cmd.go` call `store.Open`
