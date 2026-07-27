@@ -87,12 +87,30 @@ grandchild case specifically.
 |---|---|---|
 | macOS | `sandbox-exec` (Seatbelt) | **Enforced**, with behavioral tests proving an outside write is refused by the kernel, including from a grandchild process. |
 | Linux | Landlock (5.13+), bubblewrap, user namespaces | **Not implemented.** Candidates exist; none is wired up or tested. |
-| Windows | Job object + restricted token, AppContainer | **Not implemented.** |
+| Windows (native) | — | **Not needed.** No provider can run there: `agent.Start` allocates a pty via `creack/pty`, which returns `ErrPTYUnsupported`, and the [Windows SCM safety spec](../superpowers/specs/2026-07-26-windows-scm-safety-disable-design.md) states it directly — *"Native Windows provider workers are already unsupported"*. Windows operators run Ralph under WSL, which is Linux. |
 
 Unimplemented platforms return `ErrContainmentUnavailable` rather than passing
 the command through. An untested containment claim is worse than an honest
 refusal, because callers rely on it. Each platform lands with its own proof that
 an outside write is actually refused, the way macOS's did, or it does not land.
+
+Native Windows is a **decision, not a gap**. Containment there would guard a
+code path that cannot execute, and this repo treats dead code as a defect. A
+test records the reasoning and fails if `Available()` ever reports true on
+Windows — which would mean a provider path was added and the matrix needs
+revisiting.
+
+Linux is genuinely open, and the shape is constrained by two measured facts:
+
+- Landlock enforces writes correctly, but **in-process use is unusable from Go**
+  below ABI 8. `LANDLOCK_RESTRICT_SELF_TSYNC` (all-thread enforcement) requires
+  ABI 8; below that `landlock_restrict_self` binds only the *calling thread*.
+  Measured on ABI 6: a thread created **before** the call writes outside the
+  root successfully. Go's runtime has threads running before any user code, so
+  that shape would ship a boundary with a hole — the same "reports success while
+  not containing" failure the temp-directory grant above had.
+- So Linux wants a **re-exec helper**: restrict, then `syscall.Exec` immediately,
+  leaving nothing alive but the domain, which *is* inherited across `execve`.
 
 ## Out of scope
 
