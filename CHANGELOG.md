@@ -13,6 +13,13 @@ shipped. That means historical sections may still mention MCP, plugins,
 supervisors, or the archived Python implementation even though those are no
 longer part of the live contract.
 
+## [0.24.0](https://github.com/jbcom/radioactive-ralph/compare/v0.23.0...v0.24.0) (2026-07-27)
+
+
+### Features
+
+* **observe:** machine-readable operator state (partial [#204](https://github.com/jbcom/radioactive-ralph/issues/204)) ([#219](https://github.com/jbcom/radioactive-ralph/issues/219)) ([7f79c11](https://github.com/jbcom/radioactive-ralph/commit/7f79c11bf8aaed481fd7cef6c9278dc26fb278fb))
+
 ## [0.23.0](https://github.com/jbcom/radioactive-ralph/compare/v0.22.4...v0.23.0) (2026-07-27)
 
 
