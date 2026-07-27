@@ -218,10 +218,19 @@ tags before deletion: `archive/plan-v2-dag`, `archive/release-022-recovery-scrat
       Gitea-side pull mirror — but if the flow is reversed, renaming is not
       enough. (2) rename in all 8 worktrees or only the primary checkout?
 
-- [ ] [WAIT] Issue #204 remainder — 2 of 3 criteria DONE; the third is split,
-      part 1 shipped and part 2 gated on #220 merging. Nothing actionable here
-      until that lands.
-      1. IN PROGRESS. The config surface shipped (branch
+- [x] Issue #204 — ALL THREE criteria DONE. #220 merged, unblocking part 2.
+      1. DONE. init no longer imports store: project resolution reuses
+         ensureProjectKnown, config resolution goes through
+         vconfig.ConfigSource. The self-verifying gate PROVED it — removing the
+         import made TestOperatorClientsDoNotImportStore fail demanding the
+         exemption be deleted. Two bugs surfaced while wiring: the drive surface
+         has TWO command lists (allow-list in handleConn AND the dispatchDrive
+         switch) so config commands were rejected as "unknown command" before
+         reaching their handler; and ipc.Client is ONE request per connection,
+         so a held client broke on its second call. Remaining CLI store readers
+         are desktop_launch.go (real debt) plus supervisor_cmd.go and
+         binding_resolver.go (supervisor-side, permanent).
+         History: the config surface shipped (branch
          feat/config-apply-over-ipc, PR pending — GitHub GraphQL rate limit was
          exhausted at the time, resets 05:38Z). vconfig.ConfigSource is the
          seam: the supervisor passes a store-backed source, the CLI an
