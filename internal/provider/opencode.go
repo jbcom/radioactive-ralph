@@ -65,17 +65,7 @@ func (OpencodeRunner) Run(ctx context.Context, binding Binding, req Request) (Re
 	}
 	defer cleanup()
 
-	args := []string{"run", combinePrompt(req), "--format", "json"}
-	if req.WorkingDir != "" {
-		args = append(args, "--dir", req.WorkingDir)
-	}
-	if model := resolveModel(binding.Config, req.Model); model != "" {
-		args = append(args, "--model", model)
-	}
-	if effort := resolveEffort(binding.Config, req.Effort); effort != "" {
-		args = append(args, "--variant", effort)
-	}
-	args = append(args, binding.Config.Args...)
+	args := opencodeArgs(binding, req)
 
 	opts := agent.Options{
 		Command:    binding.Config.Binary,
@@ -252,4 +242,31 @@ func parseOpencodeEvent(line []byte) (ev opencodeEvent, ok bool) {
 		return opencodeEvent{}, false
 	}
 	return ev, true
+}
+
+// opencodeArgs builds the opencode command line.
+//
+// Extracted so the argv is testable without spawning a CLI.
+func opencodeArgs(binding Binding, req Request) []string {
+	args := []string{
+		"run", combinePrompt(req), "--format", "json",
+		// Run without external plugins. A supervised turn must be reproducible
+		// from the plan alone: a plugin installed in the operator's environment
+		// would silently change what the agent can do, and the same plan would
+		// then behave differently on two machines for reasons nothing records.
+		// This is a determinism choice, not a permission one.
+		"--pure",
+	}
+	if req.WorkingDir != "" {
+		args = append(args, "--dir", req.WorkingDir)
+	}
+	if model := resolveModel(binding.Config, req.Model); model != "" {
+		args = append(args, "--model", model)
+	}
+	if effort := resolveEffort(binding.Config, req.Effort); effort != "" {
+		args = append(args, "--variant", effort)
+	}
+	// NOTE: --auto is deliberately NOT passed. See opencode_args_test.go.
+	args = append(args, binding.Config.Args...)
+	return args
 }

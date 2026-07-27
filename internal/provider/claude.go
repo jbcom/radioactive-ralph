@@ -66,26 +66,7 @@ func (ClaudeRunner) Run(ctx context.Context, binding Binding, req Request) (Resu
 	defer cleanup()
 
 	sessionID := uuid.NewString()
-	args := []string{
-		"-p",
-		"--input-format", "stream-json",
-		"--output-format", "stream-json",
-		"--verbose",
-		"--session-id", sessionID,
-	}
-	if req.SystemPrompt != "" {
-		args = append(args, "--append-system-prompt", req.SystemPrompt)
-	}
-	if model != "" {
-		args = append(args, "--model", model)
-	}
-	if effort != "" {
-		args = append(args, "--effort", effort)
-	}
-	for _, t := range req.AllowedTools {
-		args = append(args, "--allowed-tools", t)
-	}
-	args = append(args, binding.Config.Args...)
+	args := claudeArgs(binding, req, sessionID, model, effort)
 
 	opts := agent.Options{
 		Command:    binding.Config.Binary,
@@ -380,4 +361,39 @@ func newResultFile(pattern string) (path string, cleanup func(), err error) {
 	path = f.Name()
 	_ = f.Close()
 	return path, func() { _ = os.Remove(path) }, nil
+}
+
+// claudeArgs builds the claude command line.
+//
+// Extracted so the argv is testable without spawning a CLI — a command line is
+// exactly the kind of thing that should be asserted rather than eyeballed.
+func claudeArgs(binding Binding, req Request, sessionID, model, effort string) []string {
+	args := []string{
+		"-p",
+		"--input-format", "stream-json",
+		"--output-format", "stream-json",
+		"--verbose",
+		"--session-id", sessionID,
+		// Ralph drives claude head-authoritatively under its own pty. The
+		// Chrome integration would attach a browser to a session no operator is
+		// watching, so it is disabled explicitly rather than left to whatever
+		// the user's interactive config happens to say.
+		"--no-chrome",
+	}
+	if req.SystemPrompt != "" {
+		args = append(args, "--append-system-prompt", req.SystemPrompt)
+	}
+	if model != "" {
+		args = append(args, "--model", model)
+	}
+	if effort != "" {
+		args = append(args, "--effort", effort)
+	}
+	for _, t := range req.AllowedTools {
+		args = append(args, "--allowed-tools", t)
+	}
+	// NOTE: --permission-mode bypassPermissions is deliberately NOT passed.
+	// See the decision in claude_args_test.go.
+	args = append(args, binding.Config.Args...)
+	return args
 }
