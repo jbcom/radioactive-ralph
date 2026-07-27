@@ -32,7 +32,11 @@ func buildFakeClaude(t *testing.T) string {
 
 func TestSpawnAndSendMessageRoundTrip(t *testing.T) {
 	bin := buildFakeClaude(t)
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	// The context bounds the fake CLI's whole lifetime, so it must OUTLAST the
+	// per-event wait below. Inverted, the context tears down the CLI and closes
+	// s.Events() before the wait can fire, and the specific diagnostic that wait
+	// exists to produce is replaced by a generic closed-channel failure.
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
 	s, err := Spawn(ctx, Options{
@@ -55,9 +59,9 @@ func TestSpawnAndSendMessageRoundTrip(t *testing.T) {
 
 	// Expect: system init, assistant echo, result.
 	sawInit, sawAssistant, sawResult := false, false, false
-	// Below the ctx budget above, so a genuine failure to echo still fails HERE
-	// with the specific "timeout waiting for sentinel echo" rather than as a
-	// closed-channel side effect of the context expiring.
+	// Strictly below the 60s ctx budget above, so a genuine failure to echo
+	// fails HERE with the specific saw-init/assistant/result diagnostic rather
+	// than as a closed-channel side effect of the context expiring.
 	waitCh := time.After(30 * time.Second)
 	for !sawInit || !sawAssistant || !sawResult {
 		select {
@@ -150,9 +154,9 @@ func TestResumeSendsSentinelOnSpawn(t *testing.T) {
 
 	// We expect to see the echo of our sentinel user message come back
 	// as an assistant frame. Sentinel text is `SENTINEL: resuming task T42 …`.
-	// Below the ctx budget above, so a genuine failure to echo still fails HERE
-	// with the specific "timeout waiting for sentinel echo" rather than as a
-	// closed-channel side effect of the context expiring.
+	// Strictly below the 60s ctx budget above, so a genuine failure to echo
+	// fails HERE with the specific saw-init/assistant/result diagnostic rather
+	// than as a closed-channel side effect of the context expiring.
 	waitCh := time.After(30 * time.Second)
 	for {
 		select {

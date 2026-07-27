@@ -117,13 +117,22 @@ while :; do
   sleep 0.04
 done
 `)
-	// The margin between the emit interval (40ms) and the stall lease is what
-	// this test races. At a 400ms lease, ONE scheduling hiccup on a loaded
-	// machine exceeds it and the stall fires first — so the assertion below
-	// would report a stall where the code is correct, and the host's load
-	// decides the outcome rather than the behavior under test. A 3s lease is
-	// ~75 emit intervals: still far below the 1200ms turn deadline this test
-	// exists to prove wins, but well beyond any plausible scheduling gap.
+	// Two independent margins have to hold, and widening the wrong one silently
+	// guts the test:
+	//
+	//  1. emit interval (40ms) << stall lease — otherwise ONE scheduling hiccup
+	//     on a loaded machine trips the stall and the host's load decides the
+	//     outcome instead of the behavior under test. This is the flake that was
+	//     originally being fixed.
+	//  2. stall lease < turn deadline — otherwise the deadline wins no matter
+	//     what the lease does, and the assertion below passes even with progress
+	//     renewal completely broken. A previous fix set the lease to 3s against a
+	//     1200ms deadline and made exactly that mistake: the test still passed
+	//     with renewal disabled entirely.
+	//
+	// So the deadline moves out rather than the lease moving past it. An 800ms
+	// lease is 20 emit intervals (ample against scheduling noise) and stays well
+	// under the 6s turn deadline, which is what this test exists to prove wins.
 	start := time.Now()
 	_, err := DeclarativeRunner{}.Run(context.Background(), Binding{
 		Name:            "progress",
@@ -131,16 +140,23 @@ done
 		Config: BindingConfig{
 			Type:         declarativePlainStdout,
 			Binary:       bin,
-			TurnTimeout:  "1200ms",
-			StallTimeout: "3s",
+			TurnTimeout:  "6s",
+			StallTimeout: "800ms",
 		},
 	}, Request{WorkingDir: t.TempDir(), UserPrompt: "x"})
 	elapsed := time.Since(start)
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("error = %v, want total deadline", err)
 	}
-	if elapsed < 900*time.Millisecond || elapsed > 3*time.Second {
-		t.Fatalf("elapsed = %s, want progress beyond stall but bounded by total", elapsed)
+	// The lower bound is the load-bearing half: it must exceed the 800ms stall
+	// lease, proving the run survived PAST the point a non-renewing lease would
+	// have killed it. The upper bound only guards against the deadline not
+	// firing at all, so it is generous — a slow host may take a while to reap
+	// the process, and tightening it would reintroduce a load-sensitive
+	// assertion.
+	if elapsed < time.Second || elapsed > 30*time.Second {
+		t.Fatalf("elapsed = %s, want the run to outlive the 800ms stall lease "+
+			"(proving progress renewed it) and still end on the 6s total deadline", elapsed)
 	}
 }
 
