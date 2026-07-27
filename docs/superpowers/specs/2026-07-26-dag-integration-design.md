@@ -109,7 +109,7 @@ lines) is largely a reimplementation of `CreateTask`+`AddDep` inside one transac
 | `schema/0003_plan_v2.up.sql` → `task_metadata` table | **`schema/0003_plan_graph.up.sql`** (named for behavior). Keep — this is the durable execution-provenance record with no existing home. | — |
 | `schema/0003_plan_v2.up.sql` → `task_input_reservations`, `task_output_reservations` | Same migration. Keep. | — |
 | `schema/0003_plan_v2.up.sql` → `provider_calibrations`, `task_calibration_attempts` | Same migration (calibration is a blessed new concept). | — |
-| `plan_graph.go` → `CreatePlanGraph`, `CreatePlanGraphOpts`, `GraphTaskSpec`, `insertGraphPlan`, `insertGraphTask` | **Discard the atomic-create wrapper.** It re-implements `CreatePlan` + `CreateTask` + `AddDep` with raw SQL inside one tx, duplicating three existing methods and *bypassing `AddDep`'s cycle check* (it INSERTs into `task_deps` directly). Replace with: `orch.ImportPlan` calls `store.CreatePlan`, then `store.CreateTask` per node, then `store.AddDep` per edge. | `insertGraphPlan` duplicates `CreatePlan`'s INSERT verbatim including the `ErrDuplicateSlug` mapping. `insertGraphTask` duplicates `CreateTask`'s INSERT + `RequiresApproval` status logic. |
+| `plan_graph.go` → `CreatePlanGraph`, `CreatePlanGraphOpts`, `GraphTaskSpec`, `insertGraphPlan`, `insertGraphTask` | **Discard the atomic-create wrapper.** It re-implements `CreatePlan` + `CreateTask` + `AddDep` with raw SQL inside one tx, duplicating three existing methods and *bypassing `AddDep`'s cycle check* (it INSERTs into `task_deps` directly). **CORRECTED (see the note below §A.3): sequential `CreatePlan`/`CreateTask`/`AddDep` calls CANNOT be atomic** — each autocommits. Add `*Tx` variants and one `CreatePlanGraph` that composes them in a single transaction. | `insertGraphPlan` duplicates `CreatePlan`'s INSERT verbatim including the `ErrDuplicateSlug` mapping. `insertGraphTask` duplicates `CreateTask`'s INSERT + `RequiresApproval` status logic. |
 | `plan_graph.go` → `TaskExecutionMetadata`, `GetTaskExecutionMetadata`, `RecordTaskProvider`, `RecordTaskProviderSession`, `BindTaskCalibration`, `MarkBlockedCapability`, `MarkBlockedInput`, `markMetadataBlocked` | **`internal/store/task_metadata.go` (new, non-versioned)** — genuinely new: durable per-task execution provenance. | The name `plan_graph.go` for this file — it holds metadata, not the graph. The graph is `task_deps`, owned by `tasks.go`. |
 | `graph_validate.go` → `validateGraphSpecs` | Discard — only exists to validate `CreatePlanGraphOpts`, which is itself discarded. Its checks (unknown dep target, self-dep) are already enforced by `AddDep` + the FK on `task_deps`. | Whole file. |
 | `exact_claim.go` → `ClaimReadyTask` (claim one *named* dependency-ready task) | **`internal/store/tasks.go`**, beside `ClaimNextReady`. This is a real gap: `ClaimNextReady` picks whichever task the ORDER BY surfaces, and `orch.claimStepTask` has to paper over it — *"ClaimNextReady claimed a DIFFERENT ready task ... That's fine — it is still a valid step to dispatch, so resolve it back to its plan.Step via its ID"*. With explicit edges, dispatch wants a named claim. Name it `ClaimTask`. | `ErrOutputReserved` + the output-reservation predicate inside the claim tx, **for increment 1** — land it in the reservations increment so the claim change stays reviewable in isolation. |
@@ -124,6 +124,32 @@ lines) is largely a reimplementation of `CreateTask`+`AddDep` inside one transac
 | `workers.go` diff → `RunningWorker` + `TeamPath`/`Alias`/`Model`/`Effort`/`IndependenceDomain`/`AssignedSessionID`/`ProviderSessionID`, LEFT JOIN on `task_metadata` | **`internal/store/workers.go`**. Keep — `ListRunningWorkers` is a low-frequency operator-facing query, so the JOIN cost is fine here (unlike `GetTask`). | — |
 | `migrate.go` diff (+35) | **`internal/store/migrate.go`** — the only required change is `currentSchemaVersion = 2` → `3`. Inspect the branch's other +35 lines and take only what is needed. | Any `.down.sql` machinery if the branch added it — main is forward-only (`listMigrations(schema.FS, ".up.sql")`, no down path). |
 | `plan_v2_lifecycle_test.go`, `plan_v2_scheduling_test.go`, `plan_graph_test.go` | Fold into **`internal/store/tasks_test.go`** and **`internal/store/task_metadata_test.go`**. | All three filenames. |
+
+> **Correction — plan import must be transactional (Codex P2 on PR #210, accepted).**
+>
+> The row above originally said to replace `CreatePlanGraph` with sequential
+> `store.CreatePlan` → `store.CreateTask` → `store.AddDep` calls. That is wrong.
+> Verified against the tree: `CreatePlan` (`plans.go:68`), `CreateTask`
+> (`tasks.go:93`), and `AddDep` (`tasks.go:137`) each issue a bare
+> `s.db.ExecContext` and autocommit independently, and the package exposes **no**
+> `*Tx` variants to compose (`config.go`, `projects.go`, `reaper.go`, and
+> `tasks.go` all call `s.db.BeginTx` internally and keep the tx private).
+>
+> So a mid-import failure or context cancellation would leave a `draft` plan plus
+> whatever nodes already committed, and the retry would then hit
+> `ErrDuplicateSlug` instead of completing the graph — a plan permanently stuck
+> undispatchable, which is exactly the fail-closed-ingress property
+> `ValidateForImport` exists to guarantee.
+>
+> **Revised increment 5:** add unexported `createPlanTx`, `createTaskTx`, and
+> `addDepTx` carrying `*sql.Tx`, refactor the three public methods to be
+> one-statement wrappers over them (no duplicated SQL — same statements, one
+> owner), and add a single public `CreatePlanGraph(ctx, opts)` that opens one
+> transaction and calls them. Cycle checking stays in `addDepTx` so the graph
+> path cannot bypass it — the specific flaw that made the source branch's version
+> unsafe. `ImportPlan` calls `CreatePlanGraph` once. Increment 5's file list gains
+> `internal/store/plans.go` and `internal/store/tasks.go`; its test list gains a
+> case asserting that a failed import leaves **no** plan row behind.
 
 ### A.4 Clients + provider
 
@@ -333,11 +359,40 @@ The keystone. This is where a linear plan and a DAG plan become one path.
   `readySteps, refs, parallel := plan.DecomposeRefs(parsedPlan, done)` with
   `readyTasks, err := o.store.Ready(ctx, planID)`. `materializeStepTask` collapses to a
   `GetTask` (import already materialized). `claimStepTask` calls `ClaimTask` and drops the
-  *"ClaimNextReady claimed a DIFFERENT ready task"* fallback branch. `parallel` derives
-  from `len(readyTasks) > 1` rather than the leaf-group flag.
+  *"ClaimNextReady claimed a DIFFERENT ready task"* fallback branch.
+- **Native fan-out must stay group-scoped** — `parallel` must NOT derive from
+  `len(readyTasks) > 1`. See the correction note below.
 - **Test**: `go test ./internal/orch/ -race` — **every** `TestDispatchNext*` in §D must pass
-  unchanged.
+  unchanged, plus a new case asserting a ready wave spanning two leaf groups with
+  different bindings does NOT fan out as one group.
 - **Depends on**: 5. **This is the increment §D guards.**
+
+> **Correction — preserve leaf-group boundaries for native fan-out (Codex P1 on
+> PR #210, accepted).**
+>
+> Deriving `parallel` from `len(readyTasks) > 1` is wrong. Verified against the
+> tree: today `parallel` is a property of ONE leaf group (`decomposeGroups` in
+> `internal/plan/decompose.go` returns it per-group), and `dispatchFanoutGroup`
+> (`orchestrator.go:1144`) *"delegates an entire ready parallel step-group to ONE"*
+> provider — resolving a single binding via
+> `o.resolveBinding(ctx, projectID, parallel, …)` (`:469`) and using the first
+> task's group heading in the fan-out prompt (`:388`).
+>
+> Under a DAG, a ready wave can legitimately contain tasks from *different* leaf
+> groups with different bindings, team paths, and independence domains. Treating
+> the whole wave as one fan-out group would hand unrelated tasks to a single
+> provider under one group's heading — silently wrong dispatch, not just
+> suboptimal scheduling.
+>
+> **Revised:** carry each task's leaf-group identity through import (the
+> `task_metadata` row from increment 2 already persists team path and binding, so
+> add the group path there rather than re-parsing markdown). In `DispatchNext`,
+> partition the ready set by *compatible* group — same leaf group, same resolved
+> binding, same independence domain — and apply native fan-out only within one
+> partition. A partition of size 1, and any wave whose tasks do not share a
+> group, dispatches one task at a time exactly as a non-parallel group does
+> today. This keeps the degenerate case identical (§D.4 `fanout_test.go` must pass
+> unchanged) while making the DAG case correct.
 
 ---
 
@@ -659,9 +714,43 @@ the project root. This is CWE-22 (and CWE-367).
 
 Additionally, tighten `resolveThroughExistingAncestor`: it walks up to the first existing
 ancestor and re-joins the non-existent suffix, so a symlink created *in that suffix gap*
-after the check is invisible. Once (1) and (3) land, the residual window is closed by
-opening the parent directory and using `openat`-relative creation, or minimally by
-re-running containment immediately before the write.
+after the check is invisible.
+
+> **Correction — (1)–(3) do NOT close the write-time race (Codex P1 on PR #210,
+> accepted).**
+>
+> The paragraph above originally claimed the residual window is closed by
+> re-running containment immediately before the write. That is wrong, and the
+> distinction is important enough to state plainly rather than leave as an
+> implied guarantee.
+>
+> Steps (1)–(3) constrain **Ralph's own reads**: `O_NOFOLLOW` + hashing from the
+> `*os.File` means the bytes Ralph checks are the bytes of the inode it opened.
+> That is worth doing and those tests should land.
+>
+> They do **not** constrain the provider. The provider is a separate process that
+> later performs its own pathname-based `open("build/out.txt", O_CREAT|O_WRONLY)`.
+> A peer can replace a nonexistent suffix component, or a parent directory, with a
+> symlink *after* Ralph's pre-dispatch check returns and *before* the provider
+> writes. Returning a resolved string from `secureProjectPath` does not travel into
+> the provider's syscalls, and revalidating "immediately before dispatch" only
+> shrinks the window — it cannot eliminate it, because the write happens minutes
+> later inside another process.
+>
+> **Therefore:** treat declared-output containment as **best-effort validation, not
+> a security boundary**, and document it as such. Ralph's guarantee is
+> "a declared output that escapes the project root is *detected* at completion"
+> (`verifyTaskCompletionFilesystem` with `O_NOFOLLOW`), not "a provider cannot
+> write outside the project root." A real write-side guarantee requires an actual
+> containment primitive around the provider process — a sandbox profile, mount
+> namespace, or brokered file API — which is a separate design with its own
+> platform matrix (Ralph supports macOS, Linux, and Windows) and is explicitly out
+> of scope for the DAG integration. File it as follow-up work rather than implying
+> the path checks already deliver it.
+>
+> The CWE-22 fix in (1) remains necessary and sufficient for what it does claim:
+> refusing an absolute path outright instead of honoring it, and failing closed on
+> a resolution error.
 
 **Regression tests to add** (`internal/orch/task_paths_test.go`):
 `TestSecureProjectPathReturnsResolvedPath`,
