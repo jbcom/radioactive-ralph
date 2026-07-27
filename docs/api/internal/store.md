@@ -66,6 +66,7 @@ The schema is embedded under schema/\*.sql and applied in lexical order by Migra
   - [func \(s \*Store\) Backup\(ctx context.Context, destDir string\) \(string, error\)](<#Store.Backup>)
   - [func \(s \*Store\) BindTaskCalibration\(ctx context.Context, planID, taskID, calibrationID, capabilitySetJSON string\) error](<#Store.BindTaskCalibration>)
   - [func \(s \*Store\) ClaimNextReady\(ctx context.Context, planID, sessionID, workerID string\) \(\*Task, error\)](<#Store.ClaimNextReady>)
+  - [func \(s \*Store\) ClaimTask\(ctx context.Context, planID, taskID, sessionID, workerID string\) \(\*Task, error\)](<#Store.ClaimTask>)
   - [func \(s \*Store\) ClearWorkerTask\(ctx context.Context, workerID, status string\) error](<#Store.ClearWorkerTask>)
   - [func \(s \*Store\) Close\(\) error](<#Store.Close>)
   - [func \(s \*Store\) CloseSession\(ctx context.Context, sessionID string\) error](<#Store.CloseSession>)
@@ -249,7 +250,7 @@ var ErrTaskProviderSessionConflict = errors.New(
 ```
 
 <a name="DSN"></a>
-## func [DSN](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/store.go#L67>)
+## func [DSN](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/store.go#L73>)
 
 ```go
 func DSN(dbPath string) string
@@ -684,7 +685,7 @@ type OperatorWorkerClaim struct {
 ```
 
 <a name="Options"></a>
-## type [Options](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/store.go#L86-L96>)
+## type [Options](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/store.go#L92-L102>)
 
 Options configures Open.
 
@@ -809,7 +810,7 @@ type StatusCounts struct {
 ```
 
 <a name="Store"></a>
-## type [Store](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/store.go#L40-L44>)
+## type [Store](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/store.go#L40-L50>)
 
 Store is the user\-level store handle. It wraps a \*sql.DB plus a deterministic clock \+ UUID provider \(test\-swappable\).
 
@@ -820,7 +821,7 @@ type Store struct {
 ```
 
 <a name="Open"></a>
-### func [Open](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/store.go#L99>)
+### func [Open](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/store.go#L105>)
 
 ```go
 func Open(ctx context.Context, opts Options) (*Store, error)
@@ -900,6 +901,19 @@ func (s *Store) ClaimNextReady(ctx context.Context, planID, sessionID, workerID 
 
 ClaimNextReady is the atomic "claim the next ready task for this worker" operation. Returns the claimed task, or ErrNoReadyTask if none. Uses BEGIN \(with \_txlock=immediate at the DSN level\) \+ UPDATE with a checked RowsAffected so two parallel workers never claim the same task.
 
+<a name="Store.ClaimTask"></a>
+### func \(\*Store\) [ClaimTask](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/claim.go#L30-L33>)
+
+```go
+func (s *Store) ClaimTask(ctx context.Context, planID, taskID, sessionID, workerID string) (*Task, error)
+```
+
+ClaimTask atomically claims one NAMED dependency\-ready task.
+
+It is the graph counterpart to ClaimNextReady, which picks whichever ready task its ORDER BY surfaces. That substitution forced the orchestrator to reconcile afterward — claiming a different task than the one it intended and then resolving it back to a plan step by id. With explicit edges the dispatcher knows which task it wants, so the claim must be exact: this never substitutes a different task, and returns ErrNoReadyTask when the named one is not claimable.
+
+The readiness predicate is deliberately identical to ClaimNextReady's, minus the ordering and LIMIT: same claimable statuses, same NOT EXISTS walk over task\_deps. Two predicates that must agree but are written twice would drift, so any change here belongs in both.
+
 <a name="Store.ClearWorkerTask"></a>
 ### func \(\*Store\) [ClearWorkerTask](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/workers.go#L224>)
 
@@ -910,7 +924,7 @@ func (s *Store) ClearWorkerTask(ctx context.Context, workerID, status string) er
 ClearWorkerTask clears the active task from one worker row and marks it idle or terminated \(status defaults to "idle" when empty\).
 
 <a name="Store.Close"></a>
-### func \(\*Store\) [Close](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/store.go#L246>)
+### func \(\*Store\) [Close](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/store.go#L257>)
 
 ```go
 func (s *Store) Close() error
@@ -982,7 +996,7 @@ func (s *Store) CreateWorker(ctx context.Context, o WorkerOpts) (string, error)
 CreateWorker registers a newly\-spawned agent subprocess against a session. Returns the worker row id. Successor to plandag's CreateSessionVariant — no persona; carries the provider capability \(native\_fanout\) instead of a variant name \(§9/§10 of the design\).
 
 <a name="Store.DB"></a>
-### func \(\*Store\) [DB](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/store.go#L252>)
+### func \(\*Store\) [DB](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/store.go#L263>)
 
 ```go
 func (s *Store) DB() *sql.DB
