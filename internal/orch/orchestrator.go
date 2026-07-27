@@ -921,7 +921,7 @@ func (o *Orchestrator) spawnWorkerRows(ctx context.Context, binding provider.Bin
 // loop can gate-check a step without paying the worker-row cost for a task that
 // isn't claimable yet.
 func (o *Orchestrator) materializeStepTask(ctx context.Context, planID string, ref plan.StepRef, step plan.Step) (*store.Task, error) {
-	taskID := ref.ID()
+	taskID := stepTaskID(ref, step)
 	if existing, err := o.store.GetTask(ctx, planID, taskID); err == nil {
 		return existing, nil
 	}
@@ -960,33 +960,31 @@ func (o *Orchestrator) stepGateBlocks(ctx context.Context, planID string, ref pl
 	return task.Status == store.TaskStatusReadyPendingApproval, nil
 }
 
-func (o *Orchestrator) claimStepTask(ctx context.Context, planID string, p *plan.Plan, ref plan.StepRef, step plan.Step, sessionID, workerID string) (*dispatchedStep, error) {
-	taskID := ref.ID()
-	if _, err := o.materializeStepTask(ctx, planID, ref, step); err != nil {
+// claimStepTask claims the SPECIFIC task dispatch selected for ref.
+//
+// It claims BY NAME rather than asking the store for "whatever is next".
+// Dispatch already chose this step and resolved its text; letting the store
+// substitute a different ready task would pair one task's row with another
+// task's instructions. That was survivable while ids were positional and the
+// caller could re-derive a step from the id — and became a hard bug the moment
+// ids can come from plan metadata, because a non-positional id has no StepRef
+// to parse back into, leaving the task marked running with no worker launched.
+//
+// Returns (nil, nil) when the task is not claimable right now — another
+// dispatcher won the race, or the approval gate still holds it. Not an error:
+// the caller moves on and the next pass retries.
+func (o *Orchestrator) claimStepTask(ctx context.Context, planID string, _ *plan.Plan, ref plan.StepRef, step plan.Step, sessionID, workerID string) (*dispatchedStep, error) {
+	task, err := o.materializeStepTask(ctx, planID, ref, step)
+	if err != nil {
 		return nil, err
 	}
 
-	claimed, err := o.store.ClaimNextReady(ctx, planID, sessionID, workerID)
+	claimed, err := o.store.ClaimTask(ctx, planID, task.ID, sessionID, workerID)
 	if err != nil {
-		if err == store.ErrNoReadyTask { //nolint:errorlint // sentinel comparison mirrors store's own doc'd usage
+		if errors.Is(err, store.ErrNoReadyTask) {
 			return nil, nil
 		}
-		return nil, fmt.Errorf("orch: claim %s: %w", taskID, err)
-	}
-	if claimed.ID != taskID {
-		// ClaimNextReady claimed a DIFFERENT ready task (e.g. sequence
-		// ordering picked another id first). That's fine — it is still a
-		// valid step to dispatch, so resolve it back to its plan.Step via
-		// its ID.
-		resolvedRef, ok := parseStepRefID(claimed.ID)
-		if !ok {
-			return nil, fmt.Errorf("orch: claimed task %q is not a plan step id", claimed.ID)
-		}
-		resolvedStep, _, err := p.StepAt(resolvedRef)
-		if err != nil {
-			return nil, fmt.Errorf("orch: resolve claimed step %q: %w", claimed.ID, err)
-		}
-		return &dispatchedStep{ref: resolvedRef, step: resolvedStep, task: claimed}, nil
+		return nil, fmt.Errorf("orch: claim %s: %w", task.ID, err)
 	}
 	return &dispatchedStep{ref: ref, step: step, task: claimed}, nil
 }

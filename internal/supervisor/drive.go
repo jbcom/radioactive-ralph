@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/jbcom/radioactive-ralph/internal/ipc"
+	"github.com/jbcom/radioactive-ralph/internal/orch"
 	"github.com/jbcom/radioactive-ralph/internal/plan"
 	"github.com/jbcom/radioactive-ralph/internal/store"
 )
@@ -58,20 +59,23 @@ func (s *Supervisor) HandlePlanImport(ctx context.Context, args ipc.PlanImportAr
 		slug = plan.Slug(title)
 	}
 
-	planID, err := s.store.CreatePlan(ctx, store.CreatePlanOpts{
-		ProjectID:      args.Project,
-		Slug:           slug,
-		Title:          title,
-		SourceMarkdown: args.Markdown,
+	// Route through the graph ingress, NOT CreatePlan + SetPlanStatus. This is
+	// the only user-facing import path alongside the CLI, so bypassing
+	// ImportPlan meant a plan declaring `after:` edges imported with none of
+	// them: user-authored ordering was silently discarded and the plan ran in
+	// document order. ImportPlan also materializes tasks, metadata, and derived
+	// acceptance criteria in one transaction.
+	planID, err := s.orch.ImportPlan(ctx, orch.ImportPlanOpts{
+		ProjectID: args.Project,
+		Slug:      slug,
+		Title:     title,
+		Markdown:  args.Markdown,
 	})
 	if err != nil {
 		if isDuplicateSlug(err) {
 			return zero, &codedError{ipc.CodeConflict, err.Error()}
 		}
-		return zero, fmt.Errorf("supervisor: create plan: %w", err)
-	}
-	if err := s.store.SetPlanStatus(ctx, planID, store.PlanStatusActive); err != nil {
-		return zero, fmt.Errorf("supervisor: activate plan: %w", err)
+		return zero, fmt.Errorf("supervisor: import plan: %w", err)
 	}
 	return ipc.PlanImportReply{PlanID: planID, Slug: slug, Title: title}, nil
 }
