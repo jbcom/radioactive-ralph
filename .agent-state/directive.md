@@ -373,6 +373,37 @@ tags before deletion: `archive/plan-v2-dag`, `archive/release-022-recovery-scrat
 
 ## Rolling improvement queue (directive 0 appends here)
 
+- [ ] LEFTOVERS AUDIT (2026-07-28). Prompted by the right question — I had
+      verified the merged branches were ABSORBED, which is not the same as
+      their WORK being finished. Audited main for unfinished scope and found
+      three genuine items, each verified against the code rather than inferred:
+
+- [ ] Provider write-side containment. `secureProjectPath` is best-effort
+      VALIDATION and says so: it constrains Ralph's own reads and what Ralph
+      will dispatch, and #228 added DETECTION at completion. It does NOT stop a
+      provider — a separate process opening by pathname minutes later — from
+      writing outside the checkout, because no string Ralph returns travels
+      into that process's syscalls. Verified open: grep for
+      sandbox/namespace/seccomp/landlock in internal/agent finds NOTHING. A real
+      guarantee needs a containment primitive around the provider process with
+      its own macOS/Linux/Windows matrix. Deliberately out of scope for the DAG
+      work; this is the follow-up that was promised.
+
+- [ ] `desktop_launch.go` is the LAST CLI store reader (verified: 1 import).
+      It resolves the project for a Finder/Explorer launch before any supervisor
+      is known to be running, which is why it was exempted rather than fixed
+      with init. The self-verifying boundary gate still lists it, so paying this
+      debt forces removing the entry.
+
+- [ ] Five ralph-task metadata fields PARSE AND PERSIST but have ZERO consumers
+      (verified by grep across internal/orch and internal/store): `requires`,
+      `providers`, `differentFrom`, `inputs`, `outputs`. `inputs`/`outputs` are
+      partially consumed — #228 enforces path containment and #229 enforces
+      output reservations — but nothing reads `requires`, `providers`, or
+      `differentFrom` at all. docs/guides/plan-format.md already tells operators
+      which fields are enforced vs merely parsed, so this is honest rather than
+      broken; it is the work those fields were added for.
+
 - [x] Two LOAD-SENSITIVE timing tests — FIXED (PR #237). Both verified not
       caused by the branch that surfaced them (each passed 3/3 and 4/4 in
       isolation on that same branch):
