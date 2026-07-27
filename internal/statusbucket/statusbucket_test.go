@@ -30,6 +30,10 @@ func TestOf_CoversEveryRealStatus(t *testing.T) {
 		{string(store.TaskStatusReady), Muted},
 		{string(store.TaskStatusReadyPendingApproval), Warn},
 		{string(store.TaskStatusBlocked), Warn},
+		// Fail-closed pre-dispatch blocks. Warn, not Muted: work that will not
+		// run without operator action must not read as benign pending work.
+		{string(store.TaskStatusBlockedCapability), Warn},
+		{string(store.TaskStatusBlockedInput), Warn},
 		{string(store.TaskStatusRunning), Running},
 		{string(store.TaskStatusDone), Good},
 		{string(store.TaskStatusFailed), Bad},
