@@ -1,9 +1,37 @@
 package ipc
 
 import (
+	"io"
+	"log/slog"
 	"testing"
 	"time"
 )
+
+// startStopRaceServer builds and starts a server for these tests.
+//
+// Deliberately NOT reusing the helper in server_safety_test.go: that file is
+// //go:build !windows, and the deadlock these tests exist for is
+// Windows-only — a helper unavailable on the one platform that can fail is no
+// helper at all.
+func startStopRaceServer(t *testing.T) *Server {
+	t.Helper()
+	dir := shortTempDir(t)
+	socketPath, heartbeatPath := ServiceEndpoint(dir)
+	srv, err := NewServer(ServerOptions{
+		SocketPath:        socketPath,
+		HeartbeatPath:     heartbeatPath,
+		HeartbeatInterval: 20 * time.Millisecond,
+		Handler:           &fakeHandler{},
+		Logger:            slog.New(slog.NewTextHandler(io.Discard, nil)),
+	})
+	if err != nil {
+		t.Fatalf("NewServer: %v", err)
+	}
+	if err := srv.Start(); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	return srv
+}
 
 // TestStopReturnsPromptlyWithAnAcceptInFlight pins the shutdown contract that a
 // CI hang exposed: Stop must return quickly when the accept loop is parked in
@@ -26,7 +54,7 @@ import (
 // detectable — a deadlocked Stop fails this in seconds instead of hanging the
 // whole package for ten minutes.
 func TestStopReturnsPromptlyWithAnAcceptInFlight(t *testing.T) {
-	srv, _ := newTestServer(t, &fakeHandler{})
+	srv := startStopRaceServer(t)
 
 	// Let the accept loop actually reach Accept() — the race only exists once a
 	// request is queued with the listener goroutine.
@@ -49,7 +77,7 @@ func TestStopReturnsPromptlyWithAnAcceptInFlight(t *testing.T) {
 // second Stop must still be a clean no-op, not a double-close panic or a wait
 // on a goroutine that has already exited.
 func TestStopIsIdempotentAfterAcceptShutdown(t *testing.T) {
-	srv, _ := newTestServer(t, &fakeHandler{})
+	srv := startStopRaceServer(t)
 	time.Sleep(50 * time.Millisecond)
 
 	if err := srv.Stop(); err != nil {
