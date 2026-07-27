@@ -161,30 +161,32 @@ tags before deletion: `archive/plan-v2-dag`, `archive/release-022-recovery-scrat
       backstop (240ms/Open, 44x reduction).
 - [x] PR #210 — MERGED. Directive re-armed + the DAG integration spec landed.
 - [x] DAG increment 4 (#217) — MERGED, released v0.23.0.
-- [ ] [WAIT] Five PRs open, all 0-failure / 0-unresolved, two stacked chains:
-      **#215 → #216 → #221** and **#219 → #220**.
-      - #215 (increment 2) `0003_plan_graph` + `task_metadata`. Review caught two
-        bugs I introduced (`MarkBlocked*` not checking RowsAffected so a
-        pre-migration task went unclaimable with its reason dropped;
-        `ActiveWorkers` counting tasks so one fan-out worker read as three), plus
-        a missing `calibration_id` FK and `blocked_input` missing from the
-        re-mark allow-list.
-      - #216 (increment 3) `ClaimTask`, the exact named claim.
-      - #221 (increment 5, THE KEYSTONE) `CreatePlanGraph` + `ImportPlan`. The
-        five store writes now take an `execer` so one implementation serves both
-        the autocommit and transactional paths — the source branch's version
-        drifted exactly here and silently dropped `AddDep`'s cycle check. The
-        check runs on the transaction so an intra-import cycle is caught;
-        verified by pointing it at `s.db`, which then accepts `a→b→a`.
-        `documentOrderEdges` restates `plan.Decompose`'s positional rules as
-        edges, so a linear plan is the degenerate DAG through one path.
-      - #219 (partial #204) read model + projection + IPC query + the opt-in
-        per-plan task-label query. Review caught a cross-project id leak in the
-        LIVE stream (`EventsAfter` forwarded another project's plan/task ids;
-        the snapshot already masked them) and an unbounded description scan.
-      - #220 `plan ls --json`, `plan import` fails closed without a supervisor,
-        and project identity resolves over a new `project-ensure` drive command
-        with the identity computation extracted to `internal/projectid`.
+- [ ] [WAIT] Eight PRs open. **#215 (increment 2) MERGED.** Chain:
+      **#216 -> #221 -> #225 -> #228**, plus independents #220, #222, #224, #226.
+      Reconciliation lesson (2026-07-27): after a stacked parent squash-merges,
+      REBUILD the child from main and cherry-pick only its unique commits —
+      never rebase it. Rebasing #220 replayed all eight of #219's commits against
+      the squash of themselves; `git merge-base --is-ancestor <parent-head>
+      <child-head>` proved exactly two commits were unique, and reset+cherry-pick
+      applied them with zero conflicts. The squash rewrites the parent's history
+      into one commit the child no longer shares ancestry with, so git cannot
+      tell the duplicates apart. Same treatment rebuilt #215/#216/#221/#225.
+      - #224 fixes a REAL Windows deadlock, not a flake: winio's Accept waits on
+        an internal goroutine with no cancellation case while that goroutine
+        selects between close and accept; when close loses the coin flip it calls
+        ConnectNamedPipe for a client that never arrives and Close never returns.
+        Hit TWICE in one afternoon (PR #221 and #225 runs), both
+        TestAcquire_SecondFailsWhileFirstHolds, both parked in
+        win32PipeListener.Close. Stop now retires the accept loop before closing
+        the listener. Cannot be reproduced on darwin, so the Windows CI leg is
+        the real check.
+      - #226 fixes a genuine CI flake masquerading as infrastructure:
+        `$TMP/case-$RANDOM` across five setup_remote calls, $RANDOM drawing
+        0..32767 WITH replacement, so a collision makes `git remote add origin`
+        fail with "remote origin already exists". Pinning CASE reproduces the CI
+        error byte for byte — that match is what identified the cause rather than
+        a story that merely fits. ~1 run in 3000.
+
 - [ ] Issue #204 remainder — after #219 + #220 land, three criteria are left:
       1. `init_cmd.go` is the last direct store user. Beyond project
          resolve/create it pulls in ~90 lines of `vconfig` layer resolution
@@ -203,28 +205,38 @@ tags before deletion: `archive/plan-v2-dag`, `archive/release-022-recovery-scrat
       supervisor discovery in client.go. Moving it earlier breaks the first-run
       wizard, which exists for the operator who has no supervisor yet —
       `TestE2E_FirstRunWizardDeclinePath` is the guard.
-- [ ] DAG integration — increments 5-12. Central verified finding: **main already has the DAG store
-      layer.** `task_deps` ships in 0001_initial with cycle prevention in
-      `AddDep`; `Ready`/`ClaimNextReady` already walk the edges. The gap is
-      confined to the orchestrator — `DispatchNext` re-parses markdown and derives
-      readiness POSITIONALLY, and `internal/orch` has zero `AddDep` calls. Work =
-      grammar expresses edges -> persist into the existing table at import ->
-      dispatch walks the graph. 12 ordered increments in
+- [ ] DAG integration — increments 8-12 remain. Central verified finding stands:
+      **main already had the DAG store layer** (`task_deps` in 0001_initial,
+      cycle prevention in `AddDep`, `Ready`/`ClaimNextReady` already walking the
+      edges). The gap was confined to the orchestrator. Shipped/open:
+      increment 1 = #212 (WAL + migration races, merged); 2 = #215 (schema 0003 +
+      task_metadata, MERGED); 3 = #216 (`ClaimTask`); 4 = #217 (plan model learns
+      edges, merged); 5 = #221 (`CreatePlanGraph` + `ImportPlan`, the keystone);
+      6 = #225 (dispatch walks the graph); 7 = #228 (CWE-22 path containment).
+      Increment 6's real lesson: partitioning the ready wave by persisted
+      `group_path` is load-bearing, because native fan-out delegates a whole
+      partition to ONE provider under one heading and binding — deciding to fan
+      out from `len(ready) > 1` would hand one worker tasks from unrelated
+      groups. It also surfaced a compatibility gap the spec had not anticipated:
+      sourcing readiness from `task_deps` made `ImportPlan` a PRECONDITION, so
+      any plan written by `CreatePlan` directly (or predating the graph) silently
+      never dispatched — no error, no event. Dispatch now materializes the graph
+      on first sight, which the E2E test caught.
+      Increment 7's scope limit is stated rather than implied, per Codex's
+      accepted P1 on #210: declared-path containment is best-effort VALIDATION,
+      not a write-side boundary. It constrains Ralph's reads and what Ralph will
+      dispatch; it does NOT constrain the provider, a separate process opening by
+      pathname minutes later. Ralph's guarantee is DETECTION at completion. A
+      real write-side guarantee needs a sandbox/namespace/brokered-FS primitive
+      around the provider process — separate work, filed as follow-up.
+      Remaining: 8 (output reservations), 9 (provider invocation + capabilities),
+      10 (calibration), 11 (IPC + clients), 12. Full plan in
       `docs/superpowers/specs/2026-07-26-dag-integration-design.md`.
-      Increment 1 = PR #212 (WAL + migration races). Increment 2 =
-      `0003_plan_graph.up.sql` (WRITTEN, in the rr-dag-reland worktree, with
-      `group_path` added since increment 6's fan-out partitioning needs it
-      persisted rather than re-derived from markdown) + `store/task_metadata.go`.
-      Verified salvage constraints: `ErrTaskNotRunning` moves to `tasks.go`;
-      `TeamRollups` SURVIVES the `task_metadata_view.go` discard (consumed by
-      supervisor.go:349 + gui/team.go + views.go:262); keep main's `isSQLiteBusy`
-      from #212 (broader than the archive's — handles SQLITE_LOCKED too).
-      Hard discards: `plan_graph.go`'s `CreatePlanGraph`
-      (duplicates CreatePlan+CreateTask+AddDep AND bypasses the cycle check),
-      `graph_validate.go`, `enrichTaskMetadata` + the `Task` widening,
-      `Plan.V2` and every `parsed.V2` fork, the Codex arg expansion, and the
-      double filesystem verification in `VerifyAndComplete`. CWE-22 located in
-      `secureProjectPath` with a fix specified — must land fixed.
+      Hard discards (unchanged): the source branch's `CreatePlanGraph`
+      (duplicated CreatePlan+CreateTask+AddDep AND bypassed the cycle check),
+      `graph_validate.go`, `enrichTaskMetadata` + the `Task` widening, `Plan.V2`
+      and every `parsed.V2` fork, the Codex arg expansion, and the double
+      filesystem verification in `VerifyAndComplete`.
 - [ ] Deferred provider CLI flag decisions, own PR with real-CLI verification:
       claude `--permission-mode bypassPermissions` (a security posture change —
       arguable since claude.go:122 already treats a permission prompt as a KILL,
@@ -232,12 +244,18 @@ tags before deletion: `archive/plan-v2-dag`, `archive/release-022-recovery-scrat
       opencode `--pure --auto`. DISCARDED separately: the `defaultOpencodeProvider`
       NativeFanout true->false flip, which regresses a capability main documents
       as verified against installed opencode 1.18.3.
-- [ ] Windows shutdown flake in `TestRun_SecondRunRefuses`
+- [x] Windows shutdown flake in `TestRun_SecondRunRefuses`
       (supervisor_test.go:133). Pre-existing — PR #209 changed only COMMENTS in
       internal/supervisor/supervisor.go, and the file's own comments at :17/:153
       document this named-pipe timing flake while :158 calls this very test the
-      "deterministic" alternative, which the failure disproves. Root-cause the
-      cancel-and-collect tail rather than raising the 15s bound again.
+      "deterministic" alternative, which the failure disproves. RESOLVED: my
+      initial "pre-existing flake" call was WRONG — evidence refuted it (main
+      green, PR #209 zero failures across 10 runs, both failures on the one PR
+      touching store.Open). Root cause was mine: retry loops stacked on the DSN's
+      busy_timeout(5000), ~10.5s of backoff against a 15s bound. Fixed in #212 to
+      a 3-attempt/20ms backstop (240ms per Open, 44x reduction). The SEPARATE
+      Windows hang in TestAcquire_SecondFailsWhileFirstHolds is the winio
+      deadlock, fixed by #224.
 
 ## Rolling improvement queue (directive 0 appends here)
 
