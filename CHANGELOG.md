@@ -13,6 +13,18 @@ shipped. That means historical sections may still mention MCP, plugins,
 supervisors, or the archived Python implementation even though those are no
 longer part of the live contract.
 
+## [0.26.0](https://github.com/jbcom/radioactive-ralph/compare/v0.25.0...v0.26.0) (2026-07-27)
+
+
+### Features
+
+* import plans as graphs — the linear/DAG keystone ([#221](https://github.com/jbcom/radioactive-ralph/issues/221)) ([9ba6096](https://github.com/jbcom/radioactive-ralph/commit/9ba6096103ace682be6a1a2b588d93b55d88d55e))
+
+
+### Bug Fixes
+
+* **ipc:** drop host identifiers from StatusReply (closes [#204](https://github.com/jbcom/radioactive-ralph/issues/204) criterion 2) ([#231](https://github.com/jbcom/radioactive-ralph/issues/231)) ([2eb8d24](https://github.com/jbcom/radioactive-ralph/commit/2eb8d24ec3f0b3136c9a123154974587f204a7ed))
+
 ## [0.25.0](https://github.com/jbcom/radioactive-ralph/compare/v0.24.0...v0.25.0) (2026-07-27)
 
 
