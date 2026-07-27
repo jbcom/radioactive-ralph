@@ -29,6 +29,7 @@ internal/a2a
 internal/agent
 internal/agentdetect
 internal/contain
+internal/contain/internal/containhelper
 internal/doctor
 internal/genesis
 internal/gui

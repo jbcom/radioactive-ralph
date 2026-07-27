@@ -7,11 +7,33 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 
 	"github.com/jbcom/radioactive-ralph/internal/contain"
 )
+
+// requireContainableAgent skips where a containment root cannot be honored
+// from a go test binary.
+//
+// On Linux, Wrap re-execs the CALLING binary as a containment helper. Under
+// `go test` that is the test binary, which has no MaybeRunHelper in main() —
+// so the provider never runs and every filesystem assertion silently reads the
+// absent file as successful containment. internal/contain covers the Linux
+// boundary end-to-end with a purpose-built helper; these tests cover the
+// AGENT's wiring, which is exercised on the platform whose Wrap needs no
+// cooperation from the wrapped binary.
+func requireContainableAgent(t *testing.T) {
+	t.Helper()
+	if !contain.Available() {
+		t.Skip("no write containment primitive on this platform")
+	}
+	if runtime.GOOS != "darwin" {
+		t.Skip("agent-level containment assertions need a Wrap that does not " +
+			"re-exec the calling binary; see internal/contain for the Linux proof")
+	}
+}
 
 // TestContainmentRootStopsAProviderWritingOutsideTheCheckout is the end-to-end
 // proof that the guarantee reaches a real provider process.
@@ -20,9 +42,7 @@ import (
 // it. A containment package nothing calls is the same false assurance as the
 // validation layer it was written to supplement.
 func TestContainmentRootStopsAProviderWritingOutsideTheCheckout(t *testing.T) {
-	if !contain.Available() {
-		t.Skip("no write containment primitive on this platform")
-	}
+	requireContainableAgent(t)
 	root := t.TempDir()
 	outside := filepath.Join(t.TempDir(), "escaped.txt")
 
@@ -46,9 +66,7 @@ func TestContainmentRootStopsAProviderWritingOutsideTheCheckout(t *testing.T) {
 // TestContainmentRootStillAllowsWritesInsideTheCheckout is the control: a
 // boundary that blocked the task's own working tree would fail every turn.
 func TestContainmentRootStillAllowsWritesInsideTheCheckout(t *testing.T) {
-	if !contain.Available() {
-		t.Skip("no write containment primitive on this platform")
-	}
+	requireContainableAgent(t)
 	root := t.TempDir()
 	inside := filepath.Join(root, "result.txt")
 
@@ -94,9 +112,7 @@ func TestNoContainmentRootLeavesTheProcessUnwrapped(t *testing.T) {
 // TestContainmentRootMustBeAbsolute fails closed rather than guarding a
 // directory resolved against whatever cwd the process inherits.
 func TestContainmentRootMustBeAbsolute(t *testing.T) {
-	if !contain.Available() {
-		t.Skip("no write containment primitive on this platform")
-	}
+	requireContainableAgent(t)
 	_, err := Start(context.Background(), Options{
 		Command:         "/bin/echo",
 		Args:            []string{"hi"},

@@ -74,3 +74,19 @@ func (p Policy) Wrap(name string, args []string) (string, []string, error) {
 // Callers check it to decide policy — refuse to dispatch, or proceed with the
 // weaker validation-only guarantee — rather than discovering at Wrap time.
 func Available() bool { return available() }
+
+// MaybeRunHelper handles a containment-helper re-invocation, if this argv is
+// one. It returns handled=false for a normal invocation.
+//
+// main() must call this FIRST, before flags, config, or logging: the helper's
+// entire job is to restrict and exec, and any work done before that either
+// escapes the restriction or is discarded by the exec.
+//
+// On success it never returns — the process is replaced by the provider.
+func MaybeRunHelper(argv []string) (handled bool, err error) {
+	root, command, ok := isHelperInvocation(argv)
+	if !ok {
+		return false, nil
+	}
+	return true, runHelper(root, command)
+}

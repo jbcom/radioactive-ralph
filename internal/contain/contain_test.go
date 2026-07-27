@@ -131,6 +131,13 @@ func requireEnforcement(t *testing.T) {
 
 // runContained executes one shell command under the policy and reports whether
 // it succeeded.
+//
+// On platforms whose Wrap re-execs THIS binary as a containment helper (linux),
+// the wrapped argv[0] is replaced with a purpose-built helper. Running the go
+// test binary instead makes it reject the helper flag and never run the
+// command at all — which every "did the file appear?" assertion then reads as
+// successful containment. That false pass is the failure mode these tests exist
+// to rule out, so it must not be reachable.
 func runContained(t *testing.T, root, script string) error {
 	t.Helper()
 	p, err := NewPolicy(root)
@@ -141,12 +148,28 @@ func runContained(t *testing.T, root, script string) error {
 	if err != nil {
 		t.Fatalf("Wrap: %v", err)
 	}
+	if selfExec, _ := os.Executable(); name == selfExec {
+		name = buildContainHelper(t)
+	}
 	cmd := exec.CommandContext(context.Background(), name, args...) //nolint:gosec // test-owned
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Logf("contained command output: %s", out)
 	}
 	return err
+}
+
+// buildContainHelper compiles the stand-in helper command, whose main() calls
+// MaybeRunHelper the way the real CLI entry point does.
+func buildContainHelper(t *testing.T) string {
+	t.Helper()
+	bin := filepath.Join(t.TempDir(), "containhelper")
+	build := exec.Command("go", "build", "-o", bin,
+		"github.com/jbcom/radioactive-ralph/internal/contain/internal/containhelper") //nolint:gosec // test-owned
+	if out, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build containment helper: %v\n%s", err, out)
+	}
+	return bin
 }
 
 func shellQuote(s string) string { return "'" + s + "'" }
@@ -167,6 +190,10 @@ func shellQuote(s string) string { return "'" + s + "'" }
 // to be.
 func TestPolicyGrantsNothingOutsideTheRoot(t *testing.T) {
 	requireEnforcement(t)
+	if runtime.GOOS != "darwin" {
+		t.Skip("asserts the Seatbelt profile's grants; other platforms encode " +
+			"their boundary differently and have their own guards")
+	}
 	p, err := NewPolicy(t.TempDir())
 	if err != nil {
 		t.Fatalf("NewPolicy: %v", err)

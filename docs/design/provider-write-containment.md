@@ -86,7 +86,7 @@ grandchild case specifically.
 | Platform | Primitive | Status |
 |---|---|---|
 | macOS | `sandbox-exec` (Seatbelt) | **Enforced**, with behavioral tests proving an outside write is refused by the kernel, including from a grandchild process. |
-| Linux | Landlock (5.13+), bubblewrap, user namespaces | **Not implemented.** Candidates exist; none is wired up or tested. |
+| Linux | Landlock (5.13+) via a re-exec helper | **Enforced**, with behavioral tests proving an outside write is refused, an inside write lands, and a grandchild stays contained. |
 | Windows (native) | — | **Not needed.** No provider can run there: `agent.Start` allocates a pty via `creack/pty`, which returns `ErrPTYUnsupported`, and the [Windows SCM safety spec](../superpowers/specs/2026-07-26-windows-scm-safety-disable-design.md) states it directly — *"Native Windows provider workers are already unsupported"*. Windows operators run Ralph under WSL, which is Linux. |
 
 Unimplemented platforms return `ErrContainmentUnavailable` rather than passing
@@ -94,23 +94,52 @@ the command through. An untested containment claim is worse than an honest
 refusal, because callers rely on it. Each platform lands with its own proof that
 an outside write is actually refused, the way macOS's did, or it does not land.
 
-Native Windows is a **decision, not a gap**. Containment there would guard a
+Linux and macOS are both enforced. Native Windows is a **decision, not a gap**. Containment there would guard a
 code path that cannot execute, and this repo treats dead code as a defect. A
 test records the reasoning and fails if `Available()` ever reports true on
 Windows — which would mean a provider path was added and the matrix needs
 revisiting.
 
-Linux is genuinely open, and the shape is constrained by two measured facts:
+### Linux: why a re-exec helper
 
-- Landlock enforces writes correctly, but **in-process use is unusable from Go**
-  below ABI 8. `LANDLOCK_RESTRICT_SELF_TSYNC` (all-thread enforcement) requires
-  ABI 8; below that `landlock_restrict_self` binds only the *calling thread*.
-  Measured on ABI 6: a thread created **before** the call writes outside the
-  root successfully. Go's runtime has threads running before any user code, so
-  that shape would ship a boundary with a hole — the same "reports success while
-  not containing" failure the temp-directory grant above had.
-- So Linux wants a **re-exec helper**: restrict, then `syscall.Exec` immediately,
-  leaving nothing alive but the domain, which *is* inherited across `execve`.
+Landlock is applied by a process to **itself**, which forces the shape.
+
+Below ABI 8 there is no `LANDLOCK_RESTRICT_SELF_TSYNC`, so
+`landlock_restrict_self` binds only the *calling thread*. Measured on ABI 6: a
+thread created **before** the call writes outside the root successfully. Go's
+runtime already has threads running before any user code, so restricting
+in-process from Go would ship a boundary with a hole — the same "reports success
+while not containing" failure as the temp-directory grant above.
+
+`execve` closes it. It replaces the process image with a single thread, and the
+Landlock domain **is** inherited across it. So `Wrap` re-invokes Ralph's own
+binary with a sentinel flag; that helper restricts itself and immediately execs
+the provider. Nothing survives but the restriction. `main()` handles the
+sentinel first, before flags or config — work done before the exec is either
+outside the restriction or discarded.
+
+### The handled-rights mask is the subtle part
+
+Landlock denies a **handled** right everywhere no rule grants it. So the set of
+handled rights must be exactly the mutating ones:
+
+```
+WRITE_FILE REMOVE_DIR REMOVE_FILE MAKE_* REFER TRUNCATE   // handled
+EXECUTE READ_FILE READ_DIR IOCTL_DEV                       // deliberately NOT
+```
+
+An earlier draft used a mask written as "all write bits", `0x7fe`. Bit 2 is
+`READ_FILE` and bit 3 is `READ_DIR`, so that mask handled two *read* rights and
+granted them only under the root — making every file outside it unreadable,
+including the provider binary and the dynamic loader. `execve` then failed with
+`EACCES`, a symptom that points at exec permissions and says nothing about
+reads.
+
+Three tests guard the mask directly rather than only end-to-end: it must handle
+no read/exec right, must stay within the ABI's defined bits (an undefined bit
+makes `create_ruleset` return `EINVAL`), and must cover every mutating right —
+a write right left *out* is a hole, since Landlock enforces only what it
+handles.
 
 ## Out of scope
 

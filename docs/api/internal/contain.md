@@ -21,6 +21,7 @@ The two layers are complementary. Validation catches the honest mistake early, w
 
 - [Variables](<#variables>)
 - [func Available\(\) bool](<#Available>)
+- [func MaybeRunHelper\(argv \[\]string\) \(handled bool, err error\)](<#MaybeRunHelper>)
 - [type Policy](<#Policy>)
   - [func NewPolicy\(root string\) \(Policy, error\)](<#NewPolicy>)
   - [func \(p Policy\) Wrap\(name string, args \[\]string\) \(string, \[\]string, error\)](<#Policy.Wrap>)
@@ -54,6 +55,19 @@ func Available() bool
 Available reports whether this platform can enforce a write boundary.
 
 Callers check it to decide policy — refuse to dispatch, or proceed with the weaker validation\-only guarantee — rather than discovering at Wrap time.
+
+<a name="MaybeRunHelper"></a>
+## func [MaybeRunHelper](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/contain/contain.go#L86>)
+
+```go
+func MaybeRunHelper(argv []string) (handled bool, err error)
+```
+
+MaybeRunHelper handles a containment\-helper re\-invocation, if this argv is one. It returns handled=false for a normal invocation.
+
+main\(\) must call this FIRST, before flags, config, or logging: the helper's entire job is to restrict and exec, and any work done before that either escapes the restriction or is discarded by the exec.
+
+On success it never returns — the process is replaced by the provider.
 
 <a name="Policy"></a>
 ## type [Policy](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/contain/contain.go#L40-L46>)
