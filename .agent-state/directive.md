@@ -159,40 +159,32 @@ tags before deletion: `archive/plan-v2-dag`, `archive/release-022-recovery-scrat
       loops stacked on the DSN's own `busy_timeout`, so one contended Open could
       burn >10s of backoff against a 15s test bound. Retries are now a 3-attempt
       backstop (240ms/Open, 44x reduction).
-- [ ] [WAIT] PR #210 — directive + DAG integration spec. 0 failures, 0 unresolved
-      threads, 9 checks still running. Absorbed 9 review findings including four
-      spec-consistency fixes: edge derivation is four distinct cases (an OMITTED
-      `after` keeps document order so annotation cannot silently reorder;
-      `after: []` is the explicit root opt-out), plan import is transactional
-      everywhere, `group_path` is a persisted contract, and containment is
-      documented as detection rather than a boundary.
-- [x] Issue #204 first tranche — SUPERSEDED by the [WAIT] entries for #219/#220
-      below. Three of the five original blockers are resolved: the 2 e2e
-      failures (the TUI/GUI had lost task labels; fixed via an opt-in plan-scoped
-      query rather than by widening the snapshot, because the privacy test
-      deliberately seeds a description of "/private/repository/source-plan.md"
-      to prove descriptions can carry paths), and `plan_cmd.go`'s direct store
-      access plus its missing `--json`. The remaining two are tracked as their
-      own item below.
-- [x] DAG increment 4 (#217) — MERGED as 736e31d, released v0.23.0. Plan model
-      learns dependency edges. Review found a REAL ordering-safety hole:
-      `encoding/json` keeps the LAST value for a duplicate key, so
-      `{"after":["prepare"],"after":[]}` parsed as an unconditioned root and
-      would dispatch BEFORE `prepare` — and a duplicate also hid a null from the
-      null-check, because that check unmarshals into a map which has already
-      collapsed the pair. Both reproduced, then fixed with a token-stream walk.
-- [ ] [WAIT] DAG increments 2-3 + observability — four PRs open, 0 failures:
-      **#215** (increment 2, task_metadata + group_path; review caught two bugs I
-      introduced — `MarkBlocked*` not checking RowsAffected so a pre-migration
-      task went unclaimable with its reason dropped, and `ActiveWorkers` counting
-      tasks so one fan-out worker read as three), **#216** (increment 3,
-      `ClaimTask`, stacked on #215), **#210** (directive + spec), and **#219**
-      (partial #204). All rebased onto v0.23.0.
-- [ ] [WAIT] PR #220 — `plan ls` through the query surface + `--json`, and
-      `plan import` loses its offline direct-store fallback (the client was a
-      second writer to a supervisor-owned DB, and silently produced a plan
-      nothing was driving). `plan_cmd.go` joins the architecture gate so it
-      cannot regress. Stacked on #219.
+- [x] PR #210 — MERGED. Directive re-armed + the DAG integration spec landed.
+- [x] DAG increment 4 (#217) — MERGED, released v0.23.0.
+- [ ] [WAIT] Five PRs open, all 0-failure / 0-unresolved, two stacked chains:
+      **#215 → #216 → #221** and **#219 → #220**.
+      - #215 (increment 2) `0003_plan_graph` + `task_metadata`. Review caught two
+        bugs I introduced (`MarkBlocked*` not checking RowsAffected so a
+        pre-migration task went unclaimable with its reason dropped;
+        `ActiveWorkers` counting tasks so one fan-out worker read as three), plus
+        a missing `calibration_id` FK and `blocked_input` missing from the
+        re-mark allow-list.
+      - #216 (increment 3) `ClaimTask`, the exact named claim.
+      - #221 (increment 5, THE KEYSTONE) `CreatePlanGraph` + `ImportPlan`. The
+        five store writes now take an `execer` so one implementation serves both
+        the autocommit and transactional paths — the source branch's version
+        drifted exactly here and silently dropped `AddDep`'s cycle check. The
+        check runs on the transaction so an intra-import cycle is caught;
+        verified by pointing it at `s.db`, which then accepts `a→b→a`.
+        `documentOrderEdges` restates `plan.Decompose`'s positional rules as
+        edges, so a linear plan is the degenerate DAG through one path.
+      - #219 (partial #204) read model + projection + IPC query + the opt-in
+        per-plan task-label query. Review caught a cross-project id leak in the
+        LIVE stream (`EventsAfter` forwarded another project's plan/task ids;
+        the snapshot already masked them) and an unbounded description scan.
+      - #220 `plan ls --json`, `plan import` fails closed without a supervisor,
+        and project identity resolves over a new `project-ensure` drive command
+        with the identity computation extracted to `internal/projectid`.
 - [ ] Issue #204 remainder — after #219 + #220 land, three criteria are left:
       1. `init_cmd.go` is the last direct store user. Beyond project
          resolve/create it pulls in ~90 lines of `vconfig` layer resolution
