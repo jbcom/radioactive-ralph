@@ -9,6 +9,8 @@ import (
 // driveFakeHandler embeds fakeHandler (v1) and adds the v2 DriveHandler
 // methods, recording calls and returning scripted results.
 type driveFakeHandler struct {
+	gotProjectEnsure ProjectEnsureArgs
+	projectEnsureErr error
 	fakeHandler
 
 	importReply  PlanImportReply
@@ -37,6 +39,18 @@ func (h *driveFakeHandler) HandleTaskApprove(_ context.Context, a TaskApproveArg
 func (h *driveFakeHandler) HandleWorkerKill(_ context.Context, a WorkerKillArgs) error {
 	h.gotKill = a
 	return h.killErr
+}
+
+// HandleProjectEnsure satisfies DriveHandler for the fake.
+func (h *driveFakeHandler) HandleProjectEnsure(
+	_ context.Context,
+	args ProjectEnsureArgs,
+) (*ProjectEnsureReply, error) {
+	h.gotProjectEnsure = args
+	if h.projectEnsureErr != nil {
+		return nil, h.projectEnsureErr
+	}
+	return &ProjectEnsureReply{ProjectID: "project-fake", Created: false}, nil
 }
 
 func dialTest(t *testing.T, socketPath string) *Client {

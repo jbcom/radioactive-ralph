@@ -5,10 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/jbcom/radioactive-ralph/internal/ipc"
-	"github.com/jbcom/radioactive-ralph/internal/store"
+	"github.com/jbcom/radioactive-ralph/internal/projectid"
 	"github.com/jbcom/radioactive-ralph/internal/supervisor"
 	"github.com/jbcom/radioactive-ralph/internal/tui"
 	"github.com/jbcom/radioactive-ralph/internal/xdg"
@@ -42,11 +43,12 @@ func runClientMode(ctx context.Context, cmd *cobra.Command) error {
 		return fmt.Errorf("resolve state root: %w", err)
 	}
 
-	projectID, err := ensureProjectKnown(ctx, cmd, stateRoot, cwd)
-	if err != nil {
-		return err
-	}
-
+	// Project identity is resolved AFTER supervisor discovery, not before.
+	// project-ensure is a supervisor drive command, and the first-run wizard
+	// below exists precisely for the operator who has no supervisor yet —
+	// resolving identity first would fail before the wizard could offer to
+	// install one, breaking the cold-start experience it provides.
+	//
 	// Fail fast with a clear, actionable message if no supervisor is
 	// listening at all, before opening the store or launching the TUI.
 	// This connection is used ONLY for that check (and, on the non-tty
@@ -82,6 +84,12 @@ func runClientMode(ctx context.Context, cmd *cobra.Command) error {
 		if err != nil {
 			return errNoSupervisorListening
 		}
+	}
+
+	projectID, err := ensureProjectKnown(ctx, cmd, stateRoot, cwd)
+	if err != nil {
+		_ = client.Close()
+		return err
 	}
 
 	if !tui.IsTerminal() {
@@ -120,44 +128,40 @@ func printStatus(ctx context.Context, client *ipc.Client, projectID string) erro
 // returns the resolved project ID either way so callers can scope
 // project-level reads (e.g. the TUI's plan list) without a second
 // fingerprint resolution.
-func ensureProjectKnown(ctx context.Context, cmd *cobra.Command, stateRoot, cwd string) (string, error) {
-	dbPath := storeDBPath(stateRoot)
-	st, err := store.Open(ctx, store.Options{DSN: store.DSN(dbPath)})
-	if err != nil {
-		return "", fmt.Errorf("open store: %w", err)
-	}
-	defer func() { _ = st.Close() }()
-
-	fps, err := store.Fingerprints(ctx, cwd)
+func ensureProjectKnown(ctx context.Context, _ *cobra.Command, stateRoot, cwd string) (string, error) {
+	// Identity signals come from the caller's OWN working directory — an
+	// absolute path plus two git facts. That is a local computation, not a
+	// store read, so the client may derive it (internal/projectid). What it
+	// must not do is open the database to resolve them: the supervisor is the
+	// single writer of record, and project-ensure is a write.
+	computed, err := projectid.Compute(ctx, cwd)
 	if err != nil {
 		return "", fmt.Errorf("compute project fingerprints: %w", err)
 	}
+	fps := make([]ipc.ProjectFingerprint, 0, len(computed))
+	for _, fp := range computed {
+		fps = append(fps, ipc.ProjectFingerprint{Kind: fp.Kind, Value: fp.Value})
+	}
 
-	projectID, found, err := st.ResolveProject(ctx, fps)
+	client, err := supervisor.Find(stateRoot)
+	if err != nil {
+		return "", fmt.Errorf(
+			"%w: identifying this project needs a running supervisor; start one with: %s",
+			errNoSupervisorListening, supervisorStartHint())
+	}
+	defer func() { _ = client.Close() }()
+
+	reply, err := client.ProjectEnsure(ctx, ipc.ProjectEnsureArgs{
+		Fingerprints: fps,
+		DisplayName:  filepath.Base(cwd),
+	})
 	if err != nil {
 		return "", fmt.Errorf("resolve project: %w", err)
 	}
-	if found {
-		if err := st.TouchProjectLastSeen(ctx, projectID); err != nil {
-			return "", fmt.Errorf("touch project: %w", err)
-		}
-		return projectID, nil
+	if reply.Created {
+		fmt.Fprintf(os.Stderr,
+			"radioactive_ralph: this directory is not yet a known project; registered it as %s\n",
+			reply.ProjectID)
 	}
-
-	fmt.Fprintln(os.Stderr, "radioactive_ralph: this directory is not yet a known project; running init...")
-	if err := runInitMode(ctx, cmd); err != nil {
-		return "", err
-	}
-
-	// runInitMode created the project against its own store handle;
-	// re-resolve against the same fingerprints to get the ID without
-	// runInitMode needing to change its signature/return value.
-	projectID, found, err = st.ResolveProject(ctx, fps)
-	if err != nil {
-		return "", fmt.Errorf("resolve project after init: %w", err)
-	}
-	if !found {
-		return "", fmt.Errorf("project not found immediately after init")
-	}
-	return projectID, nil
+	return reply.ProjectID, nil
 }
