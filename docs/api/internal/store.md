@@ -420,7 +420,7 @@ type EventPayload struct {
 ```
 
 <a name="Fingerprint"></a>
-## type [Fingerprint](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/projects.go#L24-L27>)
+## type [Fingerprint](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/projects.go#L23-L26>)
 
 Fingerprint is one accumulated identity signal for a project.
 
@@ -432,7 +432,7 @@ type Fingerprint struct {
 ```
 
 <a name="Fingerprints"></a>
-### func [Fingerprints](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/projects.go#L191>)
+### func [Fingerprints](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/projects.go#L190>)
 
 ```go
 func Fingerprints(ctx context.Context, dir string) ([]Fingerprint, error)
@@ -886,7 +886,7 @@ func (s *Store) AddDep(ctx context.Context, planID, taskID, dependsOn string) er
 AddDep wires task → depends\_on for the same plan. Rejects cycles.
 
 <a name="Store.AddProjectIdentifiers"></a>
-### func \(\*Store\) [AddProjectIdentifiers](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/projects.go#L88>)
+### func \(\*Store\) [AddProjectIdentifiers](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/projects.go#L87>)
 
 ```go
 func (s *Store) AddProjectIdentifiers(ctx context.Context, projectID string, fps []Fingerprint) error
@@ -1020,7 +1020,7 @@ Atomicity is the reason this exists rather than a caller looping over CreatePlan
 Every write goes through the same \*On helper the public single\-shot methods use, so there is one implementation of each statement. In particular edges go through addDepOn, which runs its cycle check on this transaction and therefore sees the edges written moments earlier by this same import.
 
 <a name="Store.CreateProject"></a>
-### func \(\*Store\) [CreateProject](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/projects.go#L53>)
+### func \(\*Store\) [CreateProject](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/projects.go#L52>)
 
 ```go
 func (s *Store) CreateProject(ctx context.Context, displayName string, fps []Fingerprint) (string, error)
@@ -1298,7 +1298,7 @@ func (s *Store) MaxEventID(ctx context.Context, projectID string) (int64, error)
 MaxEventID returns the highest event id for a project, or 0 if the project has no events. It gives an Attach client the initial cursor to resume from \(the client reads this — or the backlog's max id — then attaches with it\), so the client owns a single monotonic cursor and no event slips through the gap between a backlog read and the live stream. Scoping matches EventsAfter \(it includes plan\-linked rows\) so the two agree on project membership.
 
 <a name="Store.ProjectAbsPath"></a>
-### func \(\*Store\) [ProjectAbsPath](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/projects.go#L166>)
+### func \(\*Store\) [ProjectAbsPath](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/projects.go#L165>)
 
 ```go
 func (s *Store) ProjectAbsPath(ctx context.Context, projectID string) (path string, found bool, err error)
@@ -1415,7 +1415,7 @@ func (s *Store) ReleaseClaim(ctx context.Context, planID, taskID, sessionID, rea
 ReleaseClaim requeues a running task owned by sessionID back to pending WITHOUT charging a retry, for SYSTEM\-level aborts \(e.g. a fan\-out group whose later claim failed\) as opposed to task\-execution failures. Using MarkFailed here would penalize the retry budget for something the task never got a chance to attempt, and could terminally fail an otherwise\-valid task after a few transient orchestrator hiccups. Owner\-guarded like MarkFailed: a task no longer running under sessionID yields ErrTaskNotOwnedRunning \(benign — someone else owns it now\).
 
 <a name="Store.ResolveProject"></a>
-### func \(\*Store\) [ResolveProject](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/projects.go#L32>)
+### func \(\*Store\) [ResolveProject](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/projects.go#L31>)
 
 ```go
 func (s *Store) ResolveProject(ctx context.Context, fps []Fingerprint) (projectID string, found bool, err error)
@@ -1469,7 +1469,7 @@ func (s *Store) TeamRollups(ctx context.Context, projectID string) ([]TeamRollup
 TeamRollups summarizes task state by team path, optionally scoped to one project. This is an operator\-facing query, not a hot path, so the join cost is fine here.
 
 <a name="Store.TouchProjectLastSeen"></a>
-### func \(\*Store\) [TouchProjectLastSeen](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/projects.go#L146>)
+### func \(\*Store\) [TouchProjectLastSeen](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/projects.go#L145>)
 
 ```go
 func (s *Store) TouchProjectLastSeen(ctx context.Context, projectID string) error

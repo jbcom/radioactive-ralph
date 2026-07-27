@@ -5,10 +5,9 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"os/exec"
-	"path/filepath"
-	"strings"
 	"time"
+
+	"github.com/jbcom/radioactive-ralph/internal/projectid"
 )
 
 // Fingerprint identity kinds. A project is identified by the SET of these
@@ -189,58 +188,17 @@ func (s *Store) ProjectAbsPath(ctx context.Context, projectID string) (path stri
 // fingerprint whose git command fails (e.g. no origin remote configured)
 // is silently skipped rather than failing the whole call.
 func Fingerprints(ctx context.Context, dir string) ([]Fingerprint, error) {
-	abs, err := filepath.Abs(dir)
+	computed, err := projectid.Compute(ctx, dir)
 	if err != nil {
-		return nil, fmt.Errorf("store: abs path: %w", err)
+		return nil, err
 	}
-	abs = filepath.Clean(abs)
-
-	fps := []Fingerprint{{Kind: FingerprintKindAbsPath, Value: abs}}
-
-	if !isGitRepo(ctx, abs) {
-		return fps, nil
+	// Re-type into the store's own Fingerprint so the store's public surface is
+	// unchanged for existing callers. The computation itself lives in
+	// internal/projectid so a client can derive its own identity signals
+	// without importing the store — and therefore without opening SQLite.
+	fps := make([]Fingerprint, 0, len(computed))
+	for _, fp := range computed {
+		fps = append(fps, Fingerprint{Kind: fp.Kind, Value: fp.Value})
 	}
-
-	if sha, err := runGit(ctx, abs, "rev-list", "--max-parents=0", "HEAD"); err == nil {
-		if sha = strings.TrimSpace(sha); sha != "" {
-			// A repo can have multiple root commits (unlikely, but
-			// rev-list can print more than one). Use the first line only.
-			if nl := strings.IndexByte(sha, '\n'); nl >= 0 {
-				sha = sha[:nl]
-			}
-			fps = append(fps, Fingerprint{Kind: FingerprintKindGitRootCommit, Value: sha})
-		}
-	}
-
-	if remote, err := runGit(ctx, abs, "remote", "get-url", "origin"); err == nil {
-		if remote = strings.TrimSpace(remote); remote != "" {
-			fps = append(fps, Fingerprint{Kind: FingerprintKindGitRemote, Value: remote})
-		}
-	}
-
 	return fps, nil
-}
-
-// isGitRepo reports whether dir is inside a git working tree, via
-// `git rev-parse --is-inside-work-tree` rather than a bare .git stat so
-// worktrees and submodules are recognized correctly.
-func isGitRepo(ctx context.Context, dir string) bool {
-	out, err := runGit(ctx, dir, "rev-parse", "--is-inside-work-tree")
-	return err == nil && strings.TrimSpace(out) == "true"
-}
-
-// runGit runs `git <args...>` with cwd=dir and returns stdout. args are
-// always literal flags/subcommands supplied by this file, never
-// user-supplied strings, so the "subprocess launched with variable" gosec
-// finding is a false positive here — only dir (the working directory) is
-// caller-controlled.
-func runGit(ctx context.Context, dir string, args ...string) (string, error) {
-	//nolint:gosec // G204: args are hardcoded git subcommands/flags from this file, not user input
-	cmd := exec.CommandContext(ctx, "git", args...)
-	cmd.Dir = dir
-	out, err := cmd.Output()
-	if err != nil {
-		return "", err
-	}
-	return string(out), nil
 }
