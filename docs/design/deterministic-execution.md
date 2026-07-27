@@ -35,15 +35,20 @@ derived its own positional `0.0` and materialized a **second** task for the
 same step — a duplicate node, with whichever one got claimed deciding whether
 the run made sense.
 
-## Ordering is total, not incidental
+## Ordering is total for sequential steps, and NOT yet total for parallel ones
 
 Ready tasks are claimed in `sequence_ordinal` order with `created_at` as the
-tie-break. Both are recorded at import, so two runs of one plan visit ready
-tasks in the same order rather than in whatever order the storage engine
-happens to return rows.
+tie-break, so a sequential group is visited in author order rather than in
+whatever order the storage engine returns rows.
 
-Dependency edges make that ordering *correct*; the deterministic tie-break
-makes it *repeatable* when the edges leave a genuine choice.
+That is not yet a *total* order. Graph import does not set
+`sequence_ordinal` for parallel steps, and a whole plan is imported in one
+transaction, so simultaneously ready roots and parallel siblings can share a
+`created_at` — leaving the final tie to the storage engine. Dependency edges
+still make the ordering *correct*; what is missing is a genuinely total
+tie-break (a per-plan insertion ordinal) that would make the remaining
+choices *repeatable*. Until that exists, treat parallel-sibling order as
+unspecified rather than stable.
 
 ## Cycles are refused, not detected at runtime
 
@@ -58,12 +63,19 @@ is checked with `RowsAffected` — so two workers can never both believe they
 own one task. A guard that "found the task claimable" and then wrote without
 re-checking would be exactly the race this closes.
 
-Completion and failure carry the same guard: the write requires
-`claimed_by_session` to still match the reporting session, so a late report
-from a worker the reaper already reclaimed cannot overwrite the current
-owner's result. That is `ErrTaskNotOwnedRunning`, and it is treated as benign
-rather than fatal — the stale worker simply lost, and the current owner's
-attempt stands.
+Completion and failure carry the same guard at the STORE layer: `MarkDone` and
+`MarkFailed` require `claimed_by_session` to match the session they are given,
+and `ErrTaskNotOwnedRunning` is treated as benign rather than fatal — the
+stale worker simply lost.
+
+There is a live gap above that guard. `VerifyAndComplete` does not receive the
+reporting worker's session; it reads `task.ClaimedBySession` at verification
+time and passes THAT to `MarkDone`. So when worker A returns after the reaper
+reclaimed its task and worker B claimed it, A's result is written under B's
+session — the store guard is satisfied by a session that did not produce the
+evidence, and B's attempt is overwritten rather than preserved. Closing it
+means threading the reporting session from dispatch into verification so the
+guard compares against the worker that actually ran.
 
 ## Completion is orchestrator-verified
 
@@ -97,6 +109,8 @@ that names its own edges:
   measurement pinned to an exact command line — rather than to prevent.
 - **Filesystem contents between admission and use.** Declared-path
   containment is best-effort validation, not a write-side boundary: the
-  provider is a separate process writing by pathname minutes later. Ralph's
-  guarantee is that an escaping output is *detected* at completion, not that
-  it cannot happen.
+  provider is a separate process writing by pathname minutes later. A task
+  that declares `outputs` and then writes elsewhere is NOT currently detected
+  — no completion-time check reads those declarations. Ralph validates the
+  declared paths themselves at admission and nothing more, so `outputs` is a
+  statement of intent rather than an enforced boundary in either direction.
