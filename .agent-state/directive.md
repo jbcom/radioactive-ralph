@@ -388,13 +388,34 @@ tags before deletion: `archive/plan-v2-dag`, `archive/release-022-recovery-scrat
       have to enumerate every read/mach-lookup/network call each CLI version
       needs, and its first omission looks like a provider bug rather than a
       policy one.
-      - [ ] Linux containment (Landlock 5.13+, bubblewrap, or user namespaces).
-            Returns ErrContainmentUnavailable today. Lands with its own
-            behavioral proof that an outside write is refused, the way macOS's
-            did, or it does not land — an untested containment claim is worse
-            than an honest refusal because callers rely on it.
+      - [ ] [WAIT-AGENT] Linux containment — DELEGATED to stuck-loop-debugger
+            (2026-07-27) after several cycles failed to get exec working under
+            an enforced Landlock ruleset. Returns ErrContainmentUnavailable
+            today. Findings so far, all EMPIRICAL in golang:1.24-alpine on
+            kernel 6.12 (Landlock ABI 6):
+            * Landlock DOES enforce writes correctly in-process: a write outside
+              the root is refused, inside is allowed.
+            * IN-PROCESS Landlock is UNUSABLE FROM GO on ABI<8. TSYNC (all-thread
+              enforcement) needs ABI 8; below that restrict_self binds only the
+              CALLING thread. PROVEN: a thread created BEFORE restrict_self
+              writes outside the root successfully. Go's runtime has threads
+              running before any user code, so this would be a boundary with a
+              hole — the same "reports success while not containing" failure the
+              macOS TMPDIR grant had.
+            * Hence the design is RE-EXEC: restrict, then syscall.Exec
+              immediately, so nothing survives but the inherited domain.
+            * BLOCKER being diagnosed: syscall.Exec returns permission denied
+              AFTER restrict_self, even with EXECUTE (bit 0) NOT handled
+              (handled=0x7fe). Ruled out: seccomp/apparmor (reproduced
+              unconfined), missing allowed_access mask (applied), NNP alone
+              (exec works without restrict_self), and the TSYNC issue.
+            Lands with its own behavioral proof — outside-write refused,
+            inside-write allowed, AND exec working — or it does not land.
       - [ ] Windows containment (job object + restricted token, or
             AppContainer). Same fail-closed contract and same evidence bar.
+            Not startable from this host — needs a Windows machine or a CI job
+            to verify, and an unverified containment claim is worse than the
+            honest ErrContainmentUnavailable it would replace.
 
 - [x] `desktop_launch.go` — DONE (PR #246). Was the LAST CLI store reader.
       It resolves the project for a Finder/Explorer launch before any supervisor
