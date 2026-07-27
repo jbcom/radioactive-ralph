@@ -161,8 +161,8 @@ tags before deletion: `archive/plan-v2-dag`, `archive/release-022-recovery-scrat
       backstop (240ms/Open, 44x reduction).
 - [x] PR #210 — MERGED. Directive re-armed + the DAG integration spec landed.
 - [x] DAG increment 4 (#217) — MERGED, released v0.23.0.
-- [ ] [WAIT] Thirteen PRs open (222, 224, 225, 228, 229, 233, 234, 236, 237,
-      238, 239, 240, 245). MERGED in this arc: #215, #216, #219, #220, #221,
+- [ ] [WAIT] Fifteen PRs open (222, 224, 225, 228, 229, 233, 234, 236, 237,
+      238, 239, 240, 245, 246, 247). MERGED in this arc: #215, #216, #219, #220, #221,
       #226, #230, #231, #232, #235, plus releases through v0.29.1. Worktrees
       reconciled 2026-07-28: 23 -> 13, every one current with main
       (behind_main=0), and remotes renamed so origin=GitHub.
@@ -227,8 +227,10 @@ tags before deletion: `archive/plan-v2-dag`, `archive/release-022-recovery-scrat
          could leave a project holding both a new provider selection and the
          stale key it replaced); the SUPERVISOR resolves user scope because
          doing so may CREATE the project, which is a store write.
-         REMAINING: init_cmd.go still opens the store for PROJECT RESOLUTION,
-         which needs ProjectEnsure from #220. Land after #220 merges.
+         (An earlier "REMAINING: init_cmd.go still opens the store for PROJECT
+         RESOLUTION" note is stale and removed — that is the same claim the
+         DONE above resolves. It was written before #220 merged and shipped
+         ProjectEnsure; ensureProjectKnown now does the resolution.)
       2. DONE (PR #231). All three had ZERO production consumers — a grep
          across internal/ and cmd/ found only tests. RepoPath and
          ProviderSessionID were never populated at all. They describe the
@@ -407,10 +409,11 @@ tags before deletion: `archive/plan-v2-dag`, `archive/release-022-recovery-scrat
       (verified by grep across internal/orch and internal/store): `requires`,
       `providers`, `differentFrom`, `inputs`, `outputs`. `inputs`/`outputs` are
       partially consumed — #228 enforces path containment and #229 enforces
-      output reservations — but nothing reads `requires`, `providers`, or
-      `differentFrom` at all. docs/guides/plan-format.md already tells operators
-      which fields are enforced vs merely parsed, so this is honest rather than
-      broken; it is the work those fields were added for.
+      output reservations. As of PR #247 `requires` IS enforced (see the child
+      item below); `providers` and `differentFrom` still have no readers.
+      docs/guides/plan-format.md tells operators which fields are enforced vs
+      merely parsed, so this is honest rather than broken; it is the work those
+      fields were added for.
       - [x] `requires` — ENFORCED (PR #247). Closed capability vocabulary
             (`native_fanout`, `resume`, `append_system_prompt`) derived from
             BindingConfig rather than a per-provider table, checked in
