@@ -249,3 +249,32 @@ func TestPolicyGrantsNothingOutsideTheRoot(t *testing.T) {
 		t.Errorf("ROOT=%q, want %q", params["ROOT"], p.Root)
 	}
 }
+
+// TestPolicyRefusesANonDirectoryRoot fails closed on a root that cannot
+// represent a writable subtree.
+//
+// EvalSymlinks happily resolves a regular file, so NewPolicy accepted one and
+// produced a policy whose "root" is a single file. What the platform does with
+// that is undefined — macOS builds a subpath rule for a non-directory, and
+// Landlock opens it O_PATH and grants directory-creation rights beneath a plain
+// file. Neither is a boundary anyone reasoned about, and this package's stated
+// contract is to fail closed rather than guess.
+func TestPolicyRefusesANonDirectoryRoot(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "regular.txt")
+	if err := os.WriteFile(file, []byte("x"), 0o600); err != nil {
+		t.Fatalf("seed file: %v", err)
+	}
+	if _, err := NewPolicy(file); !errors.Is(err, ErrRootNotDirectory) {
+		t.Fatalf("err = %v, want ErrRootNotDirectory — a single file cannot be a "+
+			"writable subtree, so accepting it yields a boundary nobody defined", err)
+	}
+}
+
+// TestPolicyRefusesAMissingRoot covers the other invalid shape.
+func TestPolicyRefusesAMissingRoot(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "does-not-exist")
+	if _, err := NewPolicy(missing); err == nil {
+		t.Fatal("a nonexistent root was accepted; containment cannot be enforced " +
+			"against a directory that is not there")
+	}
+}

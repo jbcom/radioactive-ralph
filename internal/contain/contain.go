@@ -17,6 +17,7 @@ package contain
 import (
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 )
 
@@ -34,6 +35,15 @@ var ErrRootNotAbsolute = errors.New("contain: containment root must be an absolu
 // believes it is contained when it is not is making exactly the false
 // guarantee this package exists to replace.
 var ErrContainmentUnavailable = errors.New("contain: no write containment primitive on this platform")
+
+// ErrRootNotDirectory reports a containment root that resolves to something
+// other than a directory.
+//
+// EvalSymlinks resolves a regular file without complaint, and a single file
+// cannot represent a writable subtree: macOS would build a subpath rule for a
+// non-directory, and Landlock would grant directory-creation rights beneath a
+// plain file. Neither is a boundary anyone reasoned about, so this fails closed.
+var ErrRootNotDirectory = errors.New("contain: containment root is not a directory")
 
 // Policy is a resolved write boundary: the provider may write beneath Root and
 // nowhere else.
@@ -53,6 +63,13 @@ func NewPolicy(root string) (Policy, error) {
 	resolved, err := filepath.EvalSymlinks(root)
 	if err != nil {
 		return Policy{}, fmt.Errorf("contain: resolve containment root %q: %w", root, err)
+	}
+	info, err := os.Stat(resolved)
+	if err != nil {
+		return Policy{}, fmt.Errorf("contain: stat containment root %q: %w", resolved, err)
+	}
+	if !info.IsDir() {
+		return Policy{}, fmt.Errorf("%w: %q", ErrRootNotDirectory, resolved)
 	}
 	return Policy{Root: resolved}, nil
 }
