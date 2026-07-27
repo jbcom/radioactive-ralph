@@ -291,6 +291,14 @@ tags before deletion: `archive/plan-v2-dag`, `archive/release-022-recovery-scrat
       falling back. Validation is CONFIG-DRIVEN, unlike the archived branch's
       hardcoded per-provider model/effort tables, which would duplicate what
       BindingConfig already declares and drift on the first new model.
+      Increment 12 (docs) PARTIALLY SHIPPED (PR #238): the ralph-task grammar
+      was entirely undocumented despite shipping in #217/#221. The guide now
+      covers it with EXECUTABLE examples — docs_example_test.go runs the page's
+      example, the three-row after table, and the whole fails-closed list, so a
+      documented guarantee cannot drift from the parser. Fields are split by
+      ENFORCED (id, after, team) vs merely PARSED (binding, requires, providers,
+      differentFrom, inputs, outputs), verified against main rather than the
+      spec — listing the second group as working would be a lie.
       Increment 10 store layer SHIPPED (PR #236): calibrations are
       content-addressed so re-probing one command line is idempotent, and a
       CONFLICTING remeasurement FAILS rather than overwrites — tasks bind to a
@@ -353,7 +361,7 @@ tags before deletion: `archive/plan-v2-dag`, `archive/release-022-recovery-scrat
 
 ## Rolling improvement queue (directive 0 appends here)
 
-- [ ] Two LOAD-SENSITIVE timing tests, found 2026-07-27, both verified not
+- [x] Two LOAD-SENSITIVE timing tests — FIXED (PR #237). Both verified not
       caused by the branch that surfaced them (each passed 3/3 and 4/4 in
       isolation on that same branch):
       `internal/provider/claudesession.TestResumeSendsSentinelOnSpawn` and
@@ -363,9 +371,18 @@ tags before deletion: `archive/plan-v2-dag`, `archive/release-022-recovery-scrat
       instead of the code. Two independent tests failing the same way is a
       PATTERN, not two flakes. Fix on their own terms — inject a clock, or
       widen the margin between the two deadlines so scheduling cannot invert
-      them — NOT by weakening them as a ride-along on an unrelated PR. Cost of
-      leaving them: each one eventually fails CI on an unrelated PR and sends
-      someone hunting a bug that is not there, which happened twice today.
+      them. Fixed by widening the margins, NOT by faking a clock: what these
+      tests verify is that one REAL deadline beats another REAL deadline, and a
+      faked clock would verify the comparison while removing the wiring under
+      test. Declarative: 400ms stall lease -> 3s against a 40ms emit interval
+      (still far below the 1200ms turn deadline it proves wins). Sentinel: the
+      5s spawn ctx also bounded the FAKE CLI's life, so a slow machine killed it
+      before it echoed and surfaced as "events closed without echo" — a message
+      that reads like a missing sentinel rather than an expired budget, which is
+      what made it misleading; now 60s ctx with a 30s echo wait below it, so a
+      real failure reports "timeout waiting for sentinel echo". Both have
+      negative proofs: raising the turn timeout to 8s fails at 8.002s, and
+      suppressing the fake echo fails with the specific timeout message.
 
 Completed this arc (audits → fixes, all shipped):
 - [x] Orchestrator async-dispatch concurrency audit → panic containment #146.
