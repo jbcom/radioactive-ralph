@@ -161,40 +161,25 @@ tags before deletion: `archive/plan-v2-dag`, `archive/release-022-recovery-scrat
       backstop (240ms/Open, 44x reduction).
 - [x] PR #210 — MERGED. Directive re-armed + the DAG integration spec landed.
 - [x] DAG increment 4 (#217) — MERGED, released v0.23.0.
-- [ ] [WAIT] Fifteen PRs open (222, 224, 225, 228, 229, 233, 234, 236, 237,
-      238, 239, 240, 245, 246, 247). MERGED in this arc: #215, #216, #219, #220, #221,
-      #226, #230, #231, #232, #235, plus releases through v0.29.1. Worktrees
-      reconciled 2026-07-28: 23 -> 13, every one current with main
-      (behind_main=0), and remotes renamed so origin=GitHub.
+- [ ] [WAIT-CI] Fifteen PRs open (222, 224, 225, 228, 229, 233, 234, 236, 237,
+      238, 239, 240, 245, 246, 247). ALL review threads on ALL FIFTEEN are
+      RESOLVED as of 2026-07-27 16:20Z. The only thing between them and merge
+      is macOS CI.
+      BLOCKER (external, not repo-side): every macOS job — Test/GUI/Package GUI
+      (macos-latest) and Package GUI (macos-15-intel) — is QUEUED and NONE has
+      started across the last 40 CI runs. ubuntu, windows, CodeQL, E2E and GUI
+      (ubuntu) all pass. githubstatus.com reports all systems operational and
+      the repo is PUBLIC (macOS minutes are free and unmetered), so this is
+      GitHub-side runner capacity, not billing and not a workflow defect. Four
+      of the 25 required checks are macOS-only, so nothing can merge until the
+      pool frees. Watcher armed; route to other work rather than idling.
+      MERGED in this arc: #215, #216, #219, #220, #221, #226, #230, #231, #232,
+      #235, plus releases through v0.29.1. Worktrees reconciled 2026-07-28:
+      23 -> 13, every one current with main (behind_main=0), and remotes renamed
+      so origin=GitHub.
       Reconciliation lesson (2026-07-27): after a stacked parent squash-merges,
       REBUILD the child from main and cherry-pick only its unique commits —
-      never rebase it. Enumerate the unique set EXPLICITLY with
-      `git log --reverse --format=%H <pre-squash-parent-tip>..<child-head>`;
-      `git merge-base --is-ancestor` only confirms the precondition, it does not
-      select the commits. The squash rewrites the parent's history into one
-      commit the child no longer shares ancestry with, so git cannot tell the
-      duplicates apart. A DIRTY child whose only conflict is a GENERATED file
-      (docs/api/*) is the easy case: take main's version, rebase, regenerate.
-      Watcher lesson: poll REST, reserve GraphQL for real thread reads. Exhausting
-      GraphQL made `gh pr view --json state` return EMPTY, which an earlier
-      watcher counted as zero-open and reported "ALL MERGED" against a main that
-      never moved — a watcher must treat an empty response as UNKNOWN, never as
-      terminal.
-      - #224 fixes a REAL Windows deadlock, not a flake: winio's Accept waits on
-        an internal goroutine with no cancellation case while that goroutine
-        selects between close and accept; when close loses the coin flip it calls
-        ConnectNamedPipe for a client that never arrives and Close never returns.
-        Hit TWICE in one afternoon (PR #221 and #225 runs), both
-        TestAcquire_SecondFailsWhileFirstHolds, both parked in
-        win32PipeListener.Close. Stop now retires the accept loop before closing
-        the listener. Cannot be reproduced on darwin, so the Windows CI leg is
-        the real check.
-      - #226 fixes a genuine CI flake masquerading as infrastructure:
-        `$TMP/case-$RANDOM` across five setup_remote calls, $RANDOM drawing
-        0..32767 WITH replacement, so a collision makes `git remote add origin`
-        fail with "remote origin already exists". Pinning CASE reproduces the CI
-        error byte for byte — that match is what identified the cause rather than
-        a story that merely fits. ~1 run in 3000.
+      applies everywhere; git rewrote every upstream to origin/* automatically.
 
 - [x] Remote naming FIXED (2026-07-28, user-confirmed direction): origin=GitHub
       (source of truth), gitea=no-CI backup mirror. Previously origin pointed at
