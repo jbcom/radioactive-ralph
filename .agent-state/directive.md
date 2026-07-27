@@ -195,9 +195,15 @@ tags before deletion: `archive/plan-v2-dag`, `archive/release-022-recovery-scrat
          project-ensure command #220 adds. AGENTS.md already settles the design
          question: the client "initializes project config" over the socket and
          "refuses to run without a supervisor".
-      2. `StatusReply.RepoPath`, `StatusReply.PID`, and
-         `WorkerSummary.ProviderSessionID` remain declared on the live
-         `CmdStatus` wire contract, with PID still populated by `os.Getpid()`.
+      2. DONE (PR #231). All three had ZERO production consumers — a grep
+         across internal/ and cmd/ found only tests. RepoPath and
+         ProviderSessionID were never populated at all. They describe the
+         supervisor HOST (absolute path, OS pid), not the work, and went to
+         every attached client on every poll. Removed rather than left: a field
+         nothing populates and nothing reads invites a future implementer to
+         fill it in, which is exactly how RepoPath came to be declared. The four
+         referencing tests were about round-tripping and liveness, not these
+         fields; ActiveWorkers and ProtoVersion carry those properties now.
       3. DONE (PR #230). Claude failure classification shipped, keyed on the
          result frame's api_error_status. The real-CLI capture REFUTED the
          assumed shape: a rejected key emits
