@@ -76,8 +76,8 @@ func secureProjectPath(root, declared string) (string, error) {
 	if declared == "" {
 		return "", fmt.Errorf("%w: empty path", ErrTaskPathEscapesProject)
 	}
-	if filepath.IsAbs(declared) {
-		return "", fmt.Errorf("%w: %q is absolute; declared paths are project-relative",
+	if isRooted(declared) {
+		return "", fmt.Errorf("%w: %q is rooted; declared paths are project-relative",
 			ErrTaskPathEscapesProject, declared)
 	}
 
@@ -101,6 +101,42 @@ func secureProjectPath(root, declared string) (string, error) {
 		return "", fmt.Errorf("%w: %q resolves to %q", ErrTaskPathEscapesProject, declared, resolved)
 	}
 	return resolved, nil
+}
+
+// isRooted reports whether declared names a location from a filesystem root
+// rather than from the project directory.
+//
+// filepath.IsAbs alone is NOT enough, because it is PLATFORM-SPECIFIC: on
+// Windows "\etc\passwd" is not absolute (no drive), and on Unix
+// "C:\Windows" is not absolute either. A single IsAbs check therefore refuses
+// a path on one platform and admits the very same string on the other — and a
+// declared path is operator-supplied text that may well have been written on a
+// different OS than the one running it. Windows CI caught exactly this.
+//
+// So every rooted SHAPE is refused on every platform: leading slash or
+// backslash (POSIX absolute and Windows root-relative), a drive letter prefix,
+// and UNC.
+func isRooted(declared string) bool {
+	if declared == "" {
+		return false
+	}
+	if filepath.IsAbs(declared) {
+		return true
+	}
+	if declared[0] == '/' || declared[0] == '\\' {
+		// Covers POSIX absolute, Windows root-relative, and both UNC spellings.
+		return true
+	}
+	// Drive-relative or drive-absolute: "C:", "C:\x", "C:/x", and even "C:x",
+	// which resolves against that drive's current directory rather than ours.
+	if len(declared) >= 2 && declared[1] == ':' && isDriveLetter(declared[0]) {
+		return true
+	}
+	return false
+}
+
+func isDriveLetter(c byte) bool {
+	return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
 }
 
 // resolveThroughExistingAncestor resolves symlinks for a path that may not exist

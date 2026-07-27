@@ -61,7 +61,11 @@ func TestSecureProjectPathReturnsResolvedPath(t *testing.T) {
 // a plan name /etc/passwd as an "output" and have it treated as in-scope.
 func TestSecureProjectPathRefusesAbsolutePath(t *testing.T) {
 	root := realTempDir(t)
-	absolute := filepath.Join(string(filepath.Separator), "etc", "passwd")
+	// A literal POSIX absolute path, not filepath.Join(Separator, ...): on
+	// Windows that Join produces "\etc\passwd", which filepath.IsAbs calls
+	// RELATIVE (no drive). The test would then assert the wrong thing on the
+	// one platform where the distinction matters — see isRooted.
+	const absolute = "/etc/passwd"
 	if _, err := secureProjectPath(root, absolute); err == nil {
 		t.Fatalf("accepted absolute path %q; declared paths are project-relative", absolute)
 	}
@@ -236,7 +240,7 @@ func TestValidateTaskFilesystemRejectsAnEscapingDeclaration(t *testing.T) {
 	for name, decl := range map[string]taskFilesystemDecl{
 		"escaping input":  {Inputs: []taskInputDecl{{Path: "../outside.txt"}}},
 		"escaping output": {Outputs: []string{"../outside.txt"}},
-		"absolute output": {Outputs: []string{filepath.Join(string(filepath.Separator), "etc", "passwd")}},
+		"absolute output": {Outputs: []string{"/etc/passwd"}},
 	} {
 		t.Run(name, func(t *testing.T) {
 			if err := validateTaskFilesystem(root, decl); err == nil {
@@ -419,5 +423,36 @@ func TestResolutionFaultIsNotAContainmentRefusal(t *testing.T) {
 	if errors.Is(err, ErrTaskPathEscapesProject) {
 		t.Fatal("a resolution FAULT was reported as a containment refusal; the " +
 			"caller then blocks the task permanently for what may be transient")
+	}
+}
+
+// TestSecureProjectPathRefusesRootRelativeAndDriveAbsolute closes a real
+// cross-platform hole that Windows CI exposed.
+//
+// filepath.IsAbs is PLATFORM-SPECIFIC. On Windows "\etc\passwd" is not
+// "absolute" (it lacks a drive), and on Unix "C:\Windows" is not absolute
+// either — so a single IsAbs check refuses a path on one platform and admits
+// the very same string on the other. A declared path is operator-supplied text
+// that may have been written on a different OS than the one running it, so
+// containment has to refuse every shape of rooted path regardless of host.
+func TestSecureProjectPathRefusesRootRelativeAndDriveAbsolute(t *testing.T) {
+	root := realTempDir(t)
+	for _, rel := range []string{
+		"/etc/passwd",         // POSIX absolute
+		`\etc\passwd`,         // Windows root-relative (no drive)
+		`C:\Windows\system32`, // Windows drive-absolute
+		`C:/Windows/system32`, // drive-absolute, forward slashes
+		`\\server\share\file`, // UNC
+		"//server/share/file", // UNC, forward slashes
+	} {
+		t.Run(rel, func(t *testing.T) {
+			if _, err := secureProjectPath(root, rel); err == nil {
+				t.Fatalf("accepted %q; a declared path is project-relative on EVERY "+
+					"platform, and operator text may come from a different OS than "+
+					"the one running it", rel)
+			} else if !errors.Is(err, ErrTaskPathEscapesProject) {
+				t.Fatalf("err = %v, want ErrTaskPathEscapesProject", err)
+			}
+		})
 	}
 }
