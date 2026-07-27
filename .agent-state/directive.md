@@ -291,7 +291,7 @@ tags before deletion: `archive/plan-v2-dag`, `archive/release-022-recovery-scrat
       falling back. Validation is CONFIG-DRIVEN, unlike the archived branch's
       hardcoded per-provider model/effort tables, which would duplicate what
       BindingConfig already declares and drift on the first new model.
-      Increment 12 (docs) PARTIALLY SHIPPED (PRs #238, #239): the ralph-task grammar
+      Increment 12 (docs) PARTIALLY SHIPPED (PRs #238, #239, #240): the ralph-task grammar
       was entirely undocumented despite shipping in #217/#221. The guide now
       covers it with EXECUTABLE examples — docs_example_test.go runs the page's
       example, the three-row after table, and the whole fails-closed list, so a
