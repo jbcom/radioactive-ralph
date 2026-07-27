@@ -20,6 +20,7 @@ Package provider adapts configured CLI backends into radioactive\_ralph's provid
 - [func DefaultWatchdogConfig\(\) agent.WatchdogConfig](<#DefaultWatchdogConfig>)
 - [func StreamJSONWatchdogConfig\(\) agent.WatchdogConfig](<#StreamJSONWatchdogConfig>)
 - [func ValidateBinding\(binding Binding\) error](<#ValidateBinding>)
+- [func ValidateConfiguredTimeout\(field, raw string\) error](<#ValidateConfiguredTimeout>)
 - [func ValidateEvidenceBounds\(output string\) error](<#ValidateEvidenceBounds>)
 - [func WithTurnDeadline\(parent context.Context, timeout time.Duration\) \(context.Context, context.CancelFunc\)](<#WithTurnDeadline>)
 - [type Binding](<#Binding>)
@@ -93,6 +94,14 @@ var (
     // nonblocking open. It is static so path or provider-controlled bytes never
     // cross the error boundary.
     ErrAuthoritativeResultUnsafe = errors.New("provider: authoritative result was not an identity-stable regular file")
+
+    // ErrProviderOutputTooLarge is returned by the streaming sinks when a
+    // provider crosses the output ceiling mid-turn. It is separate from
+    // ErrAuthoritativeResultTooLarge, which is a post-hoc check on a completed
+    // result: this one fires while the process is still running so the caller
+    // can kill it, and it is retryable because a truncated turn carries no
+    // verdict about the work itself.
+    ErrProviderOutputTooLarge = errors.New("provider: output exceeded 16MiB limit while streaming")
 )
 ```
 
@@ -218,8 +227,21 @@ func ValidateBinding(binding Binding) error
 
 ValidateBinding validates the parts of a binding that can be checked without spawning a provider turn.
 
+<a name="ValidateConfiguredTimeout"></a>
+## func [ValidateConfiguredTimeout](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/timeouts.go#L70>)
+
+```go
+func ValidateConfiguredTimeout(field, raw string) error
+```
+
+ValidateConfiguredTimeout checks a configured duration string against the same bounds ResolveTurnLimits enforces, so callers that assemble a Binding can fail at configuration\-resolution time instead of at dispatch.
+
+This matters because dispatch admission claims the task BEFORE the runner resolves limits: a value like "banana" or "25h" would otherwise let the orchestrator claim the task, launch its goroutine, fail in the runner, and leave the task running until stale reclamation — which then repeats the same cycle forever without progressing. An empty string means "use the default" and is valid.
+
+field must be "turn\_timeout" or "stall\_timeout"; any other value is rejected so a caller cannot silently validate against the wrong ceiling.
+
 <a name="ValidateEvidenceBounds"></a>
-## func [ValidateEvidenceBounds](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/result_limits.go#L42>)
+## func [ValidateEvidenceBounds](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/result_limits.go#L50>)
 
 ```go
 func ValidateEvidenceBounds(output string) error
@@ -228,7 +250,7 @@ func ValidateEvidenceBounds(output string) error
 ValidateEvidenceBounds refuses provider\-controlled assistant output that is too large to cross Ralph's durable evidence boundary. Built\-in runners apply the same ceiling while parsing; the orchestrator calls this again so custom and declarative runners cannot bypass it.
 
 <a name="WithTurnDeadline"></a>
-## func [WithTurnDeadline](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/timeouts.go#L86>)
+## func [WithTurnDeadline](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/timeouts.go#L119>)
 
 ```go
 func WithTurnDeadline(parent context.Context, timeout time.Duration) (context.Context, context.CancelFunc)

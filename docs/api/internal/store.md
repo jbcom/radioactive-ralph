@@ -22,7 +22,7 @@ The schema is embedded under schema/\*.sql and applied in lexical order by Migra
 - [Constants](<#constants>)
 - [Variables](<#variables>)
 - [func DSN\(dbPath string\) string](<#DSN>)
-- [func Migrate\(db \*sql.DB\) error](<#Migrate>)
+- [func Migrate\(ctx context.Context, db \*sql.DB\) error](<#Migrate>)
 - [type A2AMessage](<#A2AMessage>)
 - [type AppendMessageOpts](<#AppendMessageOpts>)
 - [type CreatePlanOpts](<#CreatePlanOpts>)
@@ -133,6 +133,13 @@ var ErrNoReadyTask = errors.New("store: no ready task")
 var ErrPlanNotFound = errors.New("store: plan not found")
 ```
 
+<a name="ErrSchemaNewerThanBinary"></a>ErrSchemaNewerThanBinary means the database has been migrated by a newer radioactive\_ralph than this one. It is checked both before taking the migration lock and again inside it, because a newer binary can win the race in between.
+
+```go
+var ErrSchemaNewerThanBinary = errors.New(
+    "store: DB schema is newer than this binary supports; upgrade radioactive_ralph")
+```
+
 <a name="ErrTaskNotOwnedRunning"></a>ErrTaskNotOwnedRunning is returned by MarkFailed\* when the task is no longer both running AND claimed by the reporting session — i.e. it was reclaimed by the reaper and \(possibly\) reassigned to another worker between dispatch and this failure report. It is a BENIGN outcome, not a hard error: the stale report is correctly dropped instead of stomping the current owner. Callers distinguish it via errors.Is and treat it as "someone else owns this now; nothing to do."
 
 ```go
@@ -140,7 +147,7 @@ var ErrTaskNotOwnedRunning = errors.New("store: task not running under the repor
 ```
 
 <a name="DSN"></a>
-## func [DSN](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/store.go#L58>)
+## func [DSN](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/store.go#L67>)
 
 ```go
 func DSN(dbPath string) string
@@ -150,13 +157,13 @@ DSN builds the canonical modernc.org/sqlite DSN for the user\-level store databa
 
 \_txlock=immediate makes every transaction take the write lock up front, so a SELECT\-then\-UPDATE \(e.g. ClaimNextReady\) can never race another process into SQLITE\_BUSY\_SNAPSHOT — which busy\_timeout does NOT retry. busy\_timeout then actually serializes the concurrent writers instead of failing them immediately. synchronous=NORMAL is the documented\-safe pairing with WAL and avoids an fsync on every heartbeat/tick write.
 
-The path is percent\-encoded per the SQLite file: URI rules so a dbPath containing '?', '\#', or '%' is not misparsed as URI syntax and pointed at the wrong database.
+The path is percent\-encoded per the SQLite file: URI rules so a dbPath containing '?', '\#', or '%' is not misparsed as URI syntax and pointed at the wrong database. journal\_mode is deliberately NOT a DSN \_pragma. It is a database\-wide, persistent setting, but a DSN \_pragma runs on every newly opened pooled connection, and setting journal\_mode takes a lock on the database. With a pool, that turns each new connection into a lock acquisition that can lose to a concurrent writer and fail the open with SQLITE\_BUSY. Open sets it once, after Ping, via ensureJournalModeWAL.
 
 <a name="Migrate"></a>
-## func [Migrate](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/migrate.go#L23>)
+## func [Migrate](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/migrate.go#L48>)
 
 ```go
-func Migrate(db *sql.DB) error
+func Migrate(ctx context.Context, db *sql.DB) error
 ```
 
 Migrate brings db up to currentSchemaVersion by applying any pending \*.up.sql migrations in lexical order.
@@ -313,7 +320,7 @@ func Fingerprints(ctx context.Context, dir string) ([]Fingerprint, error)
 Fingerprints computes the identity fingerprints for a directory: always the cleaned absolute path, plus — best\-effort, if dir is a git repository — the root\-commit sha and any "origin" remote URL. A fingerprint whose git command fails \(e.g. no origin remote configured\) is silently skipped rather than failing the whole call.
 
 <a name="Options"></a>
-## type [Options](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/store.go#L78-L88>)
+## type [Options](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/store.go#L86-L96>)
 
 Options configures Open.
 
@@ -438,7 +445,7 @@ type StatusCounts struct {
 ```
 
 <a name="Store"></a>
-## type [Store](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/store.go#L37-L41>)
+## type [Store](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/store.go#L40-L44>)
 
 Store is the user\-level store handle. It wraps a \*sql.DB plus a deterministic clock \+ UUID provider \(test\-swappable\).
 
@@ -449,7 +456,7 @@ type Store struct {
 ```
 
 <a name="Open"></a>
-### func [Open](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/store.go#L91>)
+### func [Open](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/store.go#L99>)
 
 ```go
 func Open(ctx context.Context, opts Options) (*Store, error)
@@ -530,7 +537,7 @@ func (s *Store) ClearWorkerTask(ctx context.Context, workerID, status string) er
 ClearWorkerTask clears the active task from one worker row and marks it idle or terminated \(status defaults to "idle" when empty\).
 
 <a name="Store.Close"></a>
-### func \(\*Store\) [Close](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/store.go#L150>)
+### func \(\*Store\) [Close](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/store.go#L246>)
 
 ```go
 func (s *Store) Close() error
@@ -602,7 +609,7 @@ func (s *Store) CreateWorker(ctx context.Context, o WorkerOpts) (string, error)
 CreateWorker registers a newly\-spawned agent subprocess against a session. Returns the worker row id. Successor to plandag's CreateSessionVariant — no persona; carries the provider capability \(native\_fanout\) instead of a variant name \(§9/§10 of the design\).
 
 <a name="Store.DB"></a>
-### func \(\*Store\) [DB](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/store.go#L156>)
+### func \(\*Store\) [DB](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/store.go#L252>)
 
 ```go
 func (s *Store) DB() *sql.DB

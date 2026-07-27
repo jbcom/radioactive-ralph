@@ -111,9 +111,42 @@ func TestParseTaskMetadataRejects(t *testing.T) {
 			want: "more than one JSON value",
 		},
 		{
+			// The duplicate-key scan reads the token stream first, so it is what
+			// reports malformed input. Assert the input is refused rather than
+			// pinning which layer refuses it.
 			name: "malformed json",
 			body: `{"id": "a",}`,
-			want: "decode",
+			want: "ralph-task",
+		},
+		{
+			// encoding/json keeps the LAST value for a repeated key, so this
+			// would otherwise decode as an unconditioned root and dispatch
+			// before "prepare" — the exact ordering guarantee this grammar exists
+			// to provide.
+			name: "duplicate after key drops a dependency",
+			body: `{"id": "x", "after": ["prepare"], "after": []}`,
+			want: "repeats key",
+		},
+		{
+			// A duplicate can also hide a null from rejectNullMetadataFields,
+			// because the map decode that check relies on has already collapsed
+			// the pair.
+			name: "duplicate key hides a null",
+			body: `{"id": "x", "after": null, "after": []}`,
+			want: "repeats key",
+		},
+		{
+			// Nested objects get their own key scope, so a repeat inside binding
+			// must be caught too.
+			name: "duplicate nested binding key",
+			body: `{"id": "x", "binding": {"provider": "claude", "provider": "codex"}}`,
+			want: "repeats key",
+		},
+		{
+			// Objects inside arrays are scanned as well.
+			name: "duplicate key in an array element",
+			body: `{"id": "x", "inputs": [{"path": "a", "path": "b"}]}`,
+			want: "repeats key",
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

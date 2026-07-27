@@ -57,6 +57,16 @@ func parseTaskMetadataBlock(item ast.Node, source []byte) (*TaskMetadata, error)
 	}
 	rawJSON := raw.Bytes()
 
+	// Reject duplicate keys BEFORE decoding. encoding/json silently keeps the
+	// last value for a repeated key even with DisallowUnknownFields, which
+	// defeats the ordering guarantee this whole grammar exists to provide:
+	// {"id":"x","after":["prepare"],"after":[]} would decode as an
+	// unconditioned root and run before `prepare`. A duplicate can also hide a
+	// preceding null from rejectNullMetadataFields.
+	if err := rejectDuplicateKeys(rawJSON); err != nil {
+		return nil, err
+	}
+
 	decoder := json.NewDecoder(bytes.NewReader(rawJSON))
 	// A misspelled key is a plan bug, not a field to ignore: without this, a
 	// step annotated `"dependsOn"` instead of `"after"` would import with no
@@ -76,6 +86,79 @@ func parseTaskMetadataBlock(item ast.Node, source []byte) (*TaskMetadata, error)
 		return nil, fmt.Errorf("%s block requires a non-empty %q", taskMetadataLanguage, "id")
 	}
 	return &metadata, nil
+}
+
+// rejectDuplicateKeys refuses any object in the metadata that repeats a key, at
+// any nesting depth.
+//
+// encoding/json resolves a duplicate by silently keeping the last occurrence.
+// Here that is an ordering-safety hole rather than a style nit: a step declaring
+// {"after":["prepare"],"after":[]} decodes as an unconditioned root and would
+// dispatch before the task it depends on. A duplicate can also mask a null that
+// rejectNullMetadataFields would otherwise catch.
+//
+// The check walks the token stream rather than decoding into a map, because a
+// map decode has already collapsed the duplicate by the time it is observable.
+func rejectDuplicateKeys(raw []byte) error {
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	if err := checkJSONValue(decoder); err != nil {
+		return err
+	}
+	return nil
+}
+
+// checkJSONValue consumes exactly one JSON value, descending through containers
+// and enforcing key uniqueness within each object.
+func checkJSONValue(decoder *json.Decoder) error {
+	tok, err := decoder.Token()
+	if err != nil {
+		if errors.Is(err, io.EOF) {
+			return nil
+		}
+		return fmt.Errorf("scan %s JSON: %w", taskMetadataLanguage, err)
+	}
+	delim, isDelim := tok.(json.Delim)
+	if !isDelim {
+		return nil // scalar
+	}
+
+	switch delim {
+	case '{':
+		seen := map[string]struct{}{}
+		for {
+			keyTok, err := decoder.Token()
+			if err != nil {
+				return fmt.Errorf("scan %s object: %w", taskMetadataLanguage, err)
+			}
+			if d, ok := keyTok.(json.Delim); ok && d == '}' {
+				return nil
+			}
+			key, ok := keyTok.(string)
+			if !ok {
+				return fmt.Errorf("%s object key must be a string", taskMetadataLanguage)
+			}
+			if _, dup := seen[key]; dup {
+				return fmt.Errorf(
+					"%s block repeats key %q; a duplicate silently overrides the earlier value",
+					taskMetadataLanguage, key)
+			}
+			seen[key] = struct{}{}
+			if err := checkJSONValue(decoder); err != nil {
+				return err
+			}
+		}
+	case '[':
+		for decoder.More() {
+			if err := checkJSONValue(decoder); err != nil {
+				return err
+			}
+		}
+		if _, err := decoder.Token(); err != nil { // consume ']'
+			return fmt.Errorf("scan %s array: %w", taskMetadataLanguage, err)
+		}
+		return nil
+	}
+	return nil
 }
 
 // rejectNullMetadataFields refuses an explicit JSON null.
