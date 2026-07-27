@@ -175,28 +175,28 @@ tags before deletion: `archive/plan-v2-dag`, `archive/release-022-recovery-scrat
       legacy `StatusReply.RepoPath`/`PID`/`WorkerSummary.ProviderSessionID` remain
       in the live CmdStatus wire contract; Claude auth-failure classification not
       implemented (internal/provider untouched — only Codex has a classifier).
-- [ ] [WAIT] DAG increment 2 — COMMITTED on `feat/plan-graph-metadata`
-      (af7ca49, stacked on #212). `0003_plan_graph` migration + `task_metadata.go`
-      with `group_path`/`ListTaskGroupPaths`, `TeamRollups` rescued from the
-      `task_metadata_view.go` discard, `ErrTaskNotRunning` relocated to
-      `tasks.go` with `ErrTaskNotOwnedRunning` wrapping it, and the two new
-      blocked statuses folding into `StatusCounts.Blocked`. 25 packages green
-      cache-busted, -race clean, lint 0 issues; the four
-      must-not-change migration tests pass unchanged. Also added a guard for a
-      trap I hit: `schema/embed.go` globs `*.sql`, so a locally staged migration
-      is silently applied and every store test then fails with "DB schema is
-      newer than this binary supports" —
-      `TestCurrentSchemaVersionMatchesEmbeddedMigrations` now names the real
-      cause. Opens as a PR once #212 merges (it is the base).
-- [ ] [WAIT] DAG increment 3 — COMMITTED on `feat/plan-graph-named-claim`
-      (224ed6b), stacked on increment 2. `ClaimTask` is the exact named claim:
-      `ClaimNextReady` returns whichever task its ORDER BY surfaces, which forced
-      the orchestrator to reconcile a substituted task afterward. Same readiness
-      predicate minus ordering/LIMIT; `claimGate` serializes in-process claims so
-      a ready wave cannot turn queueing into SQLITE_BUSY. Output reservations
-      deferred to their own increment. 6 new tests incl. 12-goroutine uniqueness;
-      existing claim tests unchanged. Opens as a PR once its base merges.
-- [ ] DAG integration — increments 4-12. Central verified finding: **main already has the DAG store
+- [ ] [WAIT] DAG increments 2-4 — three PRs open, ALL with 0 failures and 0
+      unresolved threads, waiting only on CI:
+      - **#215** (increment 2) `0003_plan_graph` migration + `task_metadata.go`.
+        Review caught two real bugs I introduced: `MarkBlocked*` did not check
+        `RowsAffected`, so a task predating the migration (which does not
+        backfill) went unclaimable with its reason silently dropped — now fails
+        closed via `ErrTaskMetadataMissing` and rolls back; and `ActiveWorkers`
+        counted running tasks, so one fan-out worker holding three tasks reported
+        as three workers, which matters because the never-block invariant is
+        judged against worker counts. Also added the two blocked statuses to
+        `statusbucket` (they were falling through to `Muted`, showing
+        needs-attention work as benign) and regenerated the API docs.
+      - **#216** (increment 3) `ClaimTask`, the exact named claim. Stacked on
+        #215; the watcher retargets it to main once #215 lands.
+      - **#217** (increment 4) plan model learns dependency edges. Review found a
+        REAL ordering-safety hole: `encoding/json` keeps the LAST value for a
+        duplicate key, so `{"after":["prepare"],"after":[]}` parsed as an
+        unconditioned root and would dispatch BEFORE `prepare` — and a duplicate
+        also hid a null from the null-check, because that check unmarshals into a
+        map which has already collapsed the pair. Both reproduced, then fixed
+        with a token-stream walk rejecting repeats at any depth.
+- [ ] DAG integration — increments 5-12. Central verified finding: **main already has the DAG store
       layer.** `task_deps` ships in 0001_initial with cycle prevention in
       `AddDep`; `Ready`/`ClaimNextReady` already walk the edges. The gap is
       confined to the orchestrator — `DispatchNext` re-parses markdown and derives
