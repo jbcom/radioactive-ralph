@@ -264,7 +264,12 @@ tags before deletion: `archive/plan-v2-dag`, `archive/release-022-recovery-scrat
       Remaining: 8 (output reservations), 9 (provider invocation + capabilities),
       10 (calibration), 11 (IPC + clients), 12. Full plan in
       `docs/superpowers/specs/2026-07-26-dag-integration-design.md`.
-      Hard discards (unchanged): the source branch's `CreatePlanGraph`
+      Hard discards (unchanged) — note these name the SOURCE BRANCH's versions,
+      NOT the reimplementations that shipped. The archived `CreatePlanGraph` is
+      discarded; the one on main (#221) is a different function that composes
+      `createPlanOn`/`createTaskOn`/`addDepOn` through the `execer` interface so
+      it keeps AddDep's cycle check. Same name, opposite verdict:
+      the source branch's `CreatePlanGraph`
       (duplicated CreatePlan+CreateTask+AddDep AND bypassed the cycle check),
       `graph_validate.go`, `enrichTaskMetadata` + the `Task` widening, `Plan.V2`
       and every `parsed.V2` fork, the Codex arg expansion, and the double
@@ -280,11 +285,12 @@ tags before deletion: `archive/plan-v2-dag`, `archive/release-022-recovery-scrat
       (supervisor_test.go:133). Pre-existing — PR #209 changed only COMMENTS in
       internal/supervisor/supervisor.go, and the file's own comments at :17/:153
       document this named-pipe timing flake while :158 calls this very test the
-      "deterministic" alternative, which the failure disproves. RESOLVED: my
-      initial "pre-existing flake" call was WRONG — evidence refuted it (main
-      green, PR #209 zero failures across 10 runs, both failures on the one PR
-      touching store.Open). Root cause was mine: retry loops stacked on the DSN's
-      busy_timeout(5000), ~10.5s of backoff against a 15s bound. Fixed in #212 to
+      "deterministic" alternative. ROOT CAUSE (single, authoritative): retry
+      loops stacked on the DSN's busy_timeout(5000), producing ~10.5s of backoff
+      against a 15s bound. Mine, not pre-existing — I called it pre-existing
+      first and the evidence refuted that (main green, PR #209 zero failures
+      across 10 runs, both failures on the one PR touching store.Open). Fixed in
+      #212 to
       a 3-attempt/20ms backstop (240ms per Open, 44x reduction). The SEPARATE
       Windows hang in TestAcquire_SecondFailsWhileFirstHolds is the winio
       deadlock, fixed by #224.
