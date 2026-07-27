@@ -96,18 +96,28 @@ func resolveProviderTimeouts(ctx context.Context, st *store.Store, projectID str
 	if err != nil {
 		return "", "", fmt.Errorf("resolve project provider timeouts: %w", err)
 	}
-	turnTimeout, err := layeredTimeoutValue(turnTimeoutConfigKey, userCfg.Values, projectCfg.Values)
+	turnTimeout, err := layeredTimeoutValue(turnTimeoutConfigKey, "turn_timeout", userCfg.Values, projectCfg.Values)
 	if err != nil {
 		return "", "", err
 	}
-	stallTimeout, err := layeredTimeoutValue(stallTimeoutConfigKey, userCfg.Values, projectCfg.Values)
+	stallTimeout, err := layeredTimeoutValue(stallTimeoutConfigKey, "stall_timeout", userCfg.Values, projectCfg.Values)
 	if err != nil {
 		return "", "", err
 	}
 	return turnTimeout, stallTimeout, nil
 }
 
-func layeredTimeoutValue(key string, layers ...map[string]any) (string, error) {
+// layeredTimeoutValue resolves the last-writer-wins configured timeout across
+// layers and validates it against the provider's own bounds.
+//
+// The validation is the load-bearing part: dispatch admission claims a task
+// before the runner resolves its limits, so an unparseable or out-of-bounds
+// value ("banana", "25h") would let the orchestrator claim the task and launch
+// its goroutine, fail inside the runner, and leave the task running until stale
+// reclamation — which then repeats the identical cycle without ever making
+// progress. Rejecting here means a bad config fails binding resolution, before
+// anything is claimed. field names which ceiling applies.
+func layeredTimeoutValue(key, field string, layers ...map[string]any) (string, error) {
 	var resolved string
 	for _, layer := range layers {
 		value, exists := layer[key]
@@ -119,6 +129,9 @@ func layeredTimeoutValue(key string, layers ...map[string]any) (string, error) {
 			return "", fmt.Errorf("%s must be a non-empty duration string", key)
 		}
 		resolved = timeout
+	}
+	if err := provider.ValidateConfiguredTimeout(field, resolved); err != nil {
+		return "", fmt.Errorf("%s: %w", key, err)
 	}
 	return resolved, nil
 }

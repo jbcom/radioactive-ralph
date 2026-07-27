@@ -83,6 +83,44 @@ func TestStoreBindingResolverRejectsNonStringTimeout(t *testing.T) {
 	}
 }
 
+// TestStoreBindingResolverRejectsInvalidTimeoutBeforeDispatch pins WHERE a bad
+// configured timeout must fail. Dispatch admission claims the task before the
+// runner resolves its limits, so a value that is a well-formed string but not a
+// valid bounded duration would let the orchestrator claim the task, launch its
+// goroutine, fail inside the runner, and leave the task running until stale
+// reclamation — which repeats the identical cycle forever without progressing.
+// Binding resolution must therefore reject it, before anything is claimed.
+func TestStoreBindingResolverRejectsInvalidTimeoutBeforeDispatch(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		key   string
+		value string
+	}{
+		{"unparseable turn timeout", turnTimeoutConfigKey, "banana"},
+		{"turn timeout beyond ceiling", turnTimeoutConfigKey, "25h"},
+		{"negative turn timeout", turnTimeoutConfigKey, "-5m"},
+		{"unparseable stall timeout", stallTimeoutConfigKey, "soon"},
+		{"stall timeout beyond ceiling", stallTimeoutConfigKey, "48h"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			st := openBindingTestStore(t)
+			projectID, err := st.CreateProject(ctx, "bad-timeout-"+tc.name, []store.Fingerprint{
+				{Kind: store.FingerprintKindAbsPath, Value: t.TempDir()},
+			})
+			if err != nil {
+				t.Fatalf("CreateProject: %v", err)
+			}
+			if err := st.SetProjectConfig(ctx, projectID, tc.key, tc.value); err != nil {
+				t.Fatalf("set timeout: %v", err)
+			}
+			if _, err := storeBindingResolver(st)(ctx, projectID, false, orch.BindingDispatch); err == nil {
+				t.Fatalf("resolver accepted %s=%q; a task would be claimed and then loop forever", tc.key, tc.value)
+			}
+		})
+	}
+}
+
 // TestStoreBindingResolverHonorsProjectConfig proves stored virtual config
 // selects the provider: a project configured with provider="codex" resolves
 // to the codex binding, not the built-in claude default. Before this wiring

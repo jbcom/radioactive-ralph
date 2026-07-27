@@ -28,6 +28,14 @@ var (
 	// nonblocking open. It is static so path or provider-controlled bytes never
 	// cross the error boundary.
 	ErrAuthoritativeResultUnsafe = errors.New("provider: authoritative result was not an identity-stable regular file")
+
+	// ErrProviderOutputTooLarge is returned by the streaming sinks when a
+	// provider crosses the output ceiling mid-turn. It is separate from
+	// ErrAuthoritativeResultTooLarge, which is a post-hoc check on a completed
+	// result: this one fires while the process is still running so the caller
+	// can kill it, and it is retryable because a truncated turn carries no
+	// verdict about the work itself.
+	ErrProviderOutputTooLarge = errors.New("provider: output exceeded 16MiB limit while streaming")
 )
 
 type boundedResultBuffer struct {

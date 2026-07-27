@@ -56,6 +56,7 @@ func ClassifyFailure(err error) Failure {
 		errors.Is(err, agent.ErrOutputLineTooLong),
 		errors.Is(err, ErrAuthoritativeResultTooLarge),
 		errors.Is(err, ErrStructuredEvidenceTooLarge),
+		errors.Is(err, ErrProviderOutputTooLarge),
 		errors.Is(err, ErrStreamJSONLineTooLong):
 		return Failure{Category: FailureOutputLimit, Summary: "provider output exceeded a safety limit", Cause: err}
 	}

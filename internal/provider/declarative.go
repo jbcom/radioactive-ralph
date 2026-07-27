@@ -336,7 +336,11 @@ func runStreamJSONCommand(ctx context.Context, stallTimeout time.Duration, dir, 
 		return "", "", fmt.Errorf("provider: stdout pipe: %w", err)
 	}
 	var stderr strings.Builder
-	cmd.Stderr = progressWriter{Writer: &stderr, progress: progress}
+	var stderrN int
+	cmd.Stderr = progressWriter{
+		Writer: &stderr, progress: progress,
+		limit: maxAuthoritativeResultBytes, n: &stderrN,
+	}
 	if err := cmd.Start(); err != nil {
 		return "", "", fmt.Errorf("provider: start %s: %w", bin, err)
 	}
@@ -345,13 +349,39 @@ func runStreamJSONCommand(ctx context.Context, stallTimeout time.Duration, dir, 
 	var raw strings.Builder
 	scanner := bufio.NewScanner(progressReader{Reader: stdout, progress: progress})
 	scanner.Buffer(make([]byte, 0, 64*1024), declarativeStreamJSONLineMax)
+	// declarativeStreamJSONLineMax bounds a SINGLE line. The aggregates below
+	// need their own ceiling: a provider emitting many small frames renews the
+	// stall lease on every one, so without this the builders grow until the turn
+	// deadline — up to 24h under the configurable limits — and can OOM the
+	// supervisor. Crossing the ceiling FAILS the turn (retryable) rather than
+	// reporting partial frames as a success, matching the oversized-line policy
+	// immediately below.
+	var aggregateOverflow bool
 	for scanner.Scan() {
 		line := scanner.Text()
+		if raw.Len()+len(line)+1 > maxStructuredEvidenceBytes ||
+			assistant.Len() > maxAuthoritativeResultBytes {
+			aggregateOverflow = true
+			break
+		}
 		raw.WriteString(line)
 		raw.WriteByte('\n')
 		if text := extractDeclarativeAssistantText([]byte(line)); text != "" {
 			assistant.WriteString(text)
 		}
+	}
+	if aggregateOverflow {
+		// Same shutdown discipline as the oversized-line path: we stopped
+		// reading, so the CLI may block writing into a full pipe and a plain
+		// Wait would hang.
+		if cmd.Process != nil {
+			_ = killProcessTree(cmd.Process)
+		}
+		_ = cmd.Wait()
+		if cause := context.Cause(stallCtx); cause != nil {
+			return "", "", cause
+		}
+		return "", "", ErrProviderOutputTooLarge
 	}
 	if scanErr := scanner.Err(); scanErr != nil {
 		// We've stopped reading stdout, so the CLI may still be blocked WRITING the

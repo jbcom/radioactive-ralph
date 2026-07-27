@@ -57,14 +57,49 @@ func withProgressLease(parent context.Context, timeout time.Duration) (context.C
 	return ctx, progress, stop
 }
 
+// progressWriter renews the stall lease on observed output and enforces the
+// output ceiling AS IT STREAMS.
+//
+// The ceiling cannot wait for Run to return. Every write renews the lease, so a
+// process that emits continuously never stalls and runs until the total turn
+// deadline — with that deadline now independently configurable up to 24h, an
+// unbounded sink would let a noisy provider consume arbitrary memory and OOM the
+// supervisor long before the orchestrator's post-Run ValidateEvidenceBounds
+// could reject it. Bounding here converts that into a deterministic, retryable
+// turn failure, and the caller cancels the process as soon as Write reports it.
 type progressWriter struct {
 	io.Writer
 	progress func()
+
+	// limit is the maximum number of bytes this writer will accept. Zero means
+	// unlimited, for callers that have their own bounded sink.
+	limit int
+	// n is the running total of bytes accepted.
+	n *int
 }
 
 func (w progressWriter) Write(p []byte) (int, error) {
+	if w.limit > 0 && w.n != nil {
+		remaining := w.limit - *w.n
+		if remaining <= 0 {
+			return 0, ErrProviderOutputTooLarge
+		}
+		if len(p) > remaining {
+			// Accept what fits so the error names a real ceiling crossing
+			// rather than discarding a partial line silently, then refuse.
+			n, err := w.Writer.Write(p[:remaining])
+			*w.n += n
+			if err != nil {
+				return n, err
+			}
+			return n, ErrProviderOutputTooLarge
+		}
+	}
 	n, err := w.Writer.Write(p)
 	if n > 0 {
+		if w.n != nil {
+			*w.n += n
+		}
 		w.progress()
 	}
 	return n, err

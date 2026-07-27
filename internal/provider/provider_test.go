@@ -137,6 +137,53 @@ done
 	}
 }
 
+// TestDeclarativeOutputCeilingBoundsFirehoseBeforeTurnDeadline pins the
+// interaction between the two contracts. A provider emitting continuously
+// renews the stall lease on every write, so it can never stall — with the turn
+// deadline independently configurable up to 24h, an unbounded sink would let it
+// consume memory until the supervisor OOMs. The ceiling must therefore be
+// enforced AS THE OUTPUT STREAMS, not by the orchestrator's post-Run
+// ValidateEvidenceBounds.
+//
+// The turn timeout here is generous relative to how fast the fixture writes, so
+// a pass proves the ceiling ended the turn rather than the clock.
+func TestDeclarativeOutputCeilingBoundsFirehoseBeforeTurnDeadline(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell-script fake CLI is Unix-only")
+	}
+	// yes(1) is the cheapest available firehose: continuous output, no sleeps,
+	// so the stall lease is renewed constantly and only the ceiling can stop it.
+	bin := writeFakeCLI(t, "fake-firehose.sh", `#!/bin/sh
+exec yes 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+`)
+	start := time.Now()
+	_, err := DeclarativeRunner{}.Run(context.Background(), Binding{
+		Name:            "firehose",
+		BinaryFromLocal: true,
+		Config: BindingConfig{
+			Type:         declarativePlainStdout,
+			Binary:       bin,
+			TurnTimeout:  "120s",
+			StallTimeout: "30s",
+		},
+	}, Request{WorkingDir: t.TempDir(), UserPrompt: "x"})
+	elapsed := time.Since(start)
+
+	if !errors.Is(err, ErrProviderOutputTooLarge) {
+		t.Fatalf("error = %v, want ErrProviderOutputTooLarge", err)
+	}
+	// The ceiling is 16MiB; writing that much takes far less than the 120s turn
+	// budget, so a slow return would mean the bound is not doing the work.
+	if elapsed > 60*time.Second {
+		t.Fatalf("returned after %s, want the ceiling to end the turn well before the deadline", elapsed)
+	}
+	// The failure must classify as a bounded, non-secret output-limit category
+	// so it can be persisted as durable evidence.
+	if got := ClassifyFailure(err); got.Category != FailureOutputLimit {
+		t.Fatalf("category = %q, want %q", got.Category, FailureOutputLimit)
+	}
+}
+
 func TestDeclarativeSilenceTriggersTypedStallBeforeTotalDeadline(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("shell-script fake CLI is Unix-only")

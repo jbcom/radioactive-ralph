@@ -54,6 +54,39 @@ func ResolveTurnLimits(binding Binding, req Request) (TurnLimits, error) {
 	return TurnLimits{TurnTimeout: turn, StallTimeout: stall}, nil
 }
 
+// ValidateConfiguredTimeout checks a configured duration string against the same
+// bounds ResolveTurnLimits enforces, so callers that assemble a Binding can fail
+// at configuration-resolution time instead of at dispatch.
+//
+// This matters because dispatch admission claims the task BEFORE the runner
+// resolves limits: a value like "banana" or "25h" would otherwise let the
+// orchestrator claim the task, launch its goroutine, fail in the runner, and
+// leave the task running until stale reclamation — which then repeats the same
+// cycle forever without progressing. An empty string means "use the default"
+// and is valid.
+//
+// field must be "turn_timeout" or "stall_timeout"; any other value is rejected
+// so a caller cannot silently validate against the wrong ceiling.
+func ValidateConfiguredTimeout(field, raw string) error {
+	if raw == "" {
+		return nil
+	}
+	var maxBound time.Duration
+	switch field {
+	case "turn_timeout":
+		maxBound = MaxTurnTimeout
+	case "stall_timeout":
+		maxBound = MaxStallTimeout
+	default:
+		return fmt.Errorf("provider: unknown timeout field %q", field)
+	}
+	value, err := time.ParseDuration(raw)
+	if err != nil {
+		return fmt.Errorf("invalid %s %q: %w", field, raw, err)
+	}
+	return validateBoundedTimeout(field, value, maxBound)
+}
+
 func parseBoundedTimeout(providerName, field, raw string, fallback, maxBound time.Duration) (time.Duration, error) {
 	if raw == "" {
 		if err := validateBoundedTimeout(field, fallback, maxBound); err != nil {
