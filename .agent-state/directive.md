@@ -274,8 +274,19 @@ tags before deletion: `archive/plan-v2-dag`, `archive/release-022-recovery-scrat
       pathname minutes later. Ralph's guarantee is DETECTION at completion. A
       real write-side guarantee needs a sandbox/namespace/brokered-FS primitive
       around the provider process — separate work, filed as follow-up.
-      Remaining: 8 (output reservations), 9 (provider invocation + capabilities),
-      10 (calibration), 11 (IPC + clients), 12. Full plan in
+      Increment 9 SHIPPED (branch feat/provider-invocation, PR pending on the
+      GraphQL rate limit): Result.Invocation reports what a turn ACTUALLY ran as
+      rather than what was requested, and StrictBinding refuses a request the
+      binding cannot honor exactly. That closes a LIVE hole verified against
+      main first — resolveModel treats the sonnet override as a general
+      fallback, so a codex binding with only SonnetModel="gpt-5" answers a
+      request for OPUS with "gpt-5" and no error, meaning a pinned task runs on
+      the wrong model silently. Strictness is off by default and loose
+      resolution is byte-identical, since every existing plan relies on tiers
+      falling back. Validation is CONFIG-DRIVEN, unlike the archived branch's
+      hardcoded per-provider model/effort tables, which would duplicate what
+      BindingConfig already declares and drift on the first new model.
+      Remaining: 10 (calibration, needs 9), 11 (IPC + clients), 12. Full plan in
       `docs/superpowers/specs/2026-07-26-dag-integration-design.md`.
       Hard discards (unchanged) — note these name the SOURCE BRANCH's versions,
       NOT the reimplementations that shipped. The archived `CreatePlanGraph` is
