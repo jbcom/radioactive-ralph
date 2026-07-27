@@ -54,6 +54,7 @@ The schema is embedded under schema/\*.sql and applied in lexical order by Migra
 - [type Options](<#Options>)
 - [type Plan](<#Plan>)
 - [type PlanStatus](<#PlanStatus>)
+- [type ReadyPartition](<#ReadyPartition>)
 - [type RecordSpendOpts](<#RecordSpendOpts>)
 - [type RunningWorker](<#RunningWorker>)
 - [type SessionOpts](<#SessionOpts>)
@@ -111,6 +112,7 @@ The schema is embedded under schema/\*.sql and applied in lexical order by Migra
   - [func \(s \*Store\) ReadOperatorSnapshot\(ctx context.Context, q OperatorSnapshotQuery\) \(\*OperatorSnapshot, error\)](<#Store.ReadOperatorSnapshot>)
   - [func \(s \*Store\) ReadOperatorTaskDetail\(ctx context.Context, projectID, planID, taskID string\) \(OperatorTaskDetail, error\)](<#Store.ReadOperatorTaskDetail>)
   - [func \(s \*Store\) Ready\(ctx context.Context, planID string\) \(\[\]Task, error\)](<#Store.Ready>)
+  - [func \(s \*Store\) ReadyPartitions\(ctx context.Context, planID string\) \(\[\]ReadyPartition, error\)](<#Store.ReadyPartitions>)
   - [func \(s \*Store\) ReclaimStale\(ctx context.Context, staleAfter time.Duration\) \(reclaimed int, err error\)](<#Store.ReclaimStale>)
   - [func \(s \*Store\) ReclaimWorker\(ctx context.Context, workerID string\) \(found bool, err error\)](<#Store.ReclaimWorker>)
   - [func \(s \*Store\) RecordSpend\(ctx context.Context, o RecordSpendOpts\) error](<#Store.RecordSpend>)
@@ -793,6 +795,23 @@ const (
 )
 ```
 
+<a name="ReadyPartition"></a>
+## type [ReadyPartition](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/ready_partition.go#L16-L22>)
+
+ReadyPartition is one dispatchable wave slice: the tasks that are ready RIGHT NOW and share a leaf group.
+
+Dispatch cannot treat "several tasks are ready" as "several tasks may be delegated together". Native fan\-out hands a whole partition to ONE provider under one group heading, so the unit of fan\-out is the leaf group, not the ready set. Two tasks from different groups being simultaneously ready is the normal case for a DAG and says nothing about whether one worker may own both.
+
+```go
+type ReadyPartition struct {
+    // GroupPath is the persisted leaf-group identity shared by every task in
+    // Tasks (a dotted StepRef path such as "0.2"). Empty for tasks created
+    // without a task_metadata row.
+    GroupPath string
+    Tasks     []Task
+}
+```
+
 <a name="RecordSpendOpts"></a>
 ## type [RecordSpendOpts](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/spend.go#L9-L18>)
 
@@ -1354,6 +1373,19 @@ func (s *Store) Ready(ctx context.Context, planID string) ([]Task, error)
 ```
 
 Ready returns tasks that are ready to run — every dependency is in a terminal\-satisfied state \(\`done\`, \`skipped\`, or \`decomposed\`\) — and are in a claimable status: \`pending\` \(ungated\) or \`ready\` \(a task that WAS gated behind approval and has since been approved via ApproveTask\). A task still in \`ready\_pending\_approval\` is deliberately NOT returned: the approval gate holds it until an operator approves it. Result is ordered by created\_at for stable test output.
+
+<a name="Store.ReadyPartitions"></a>
+### func \(\*Store\) [ReadyPartitions](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/ready_partition.go#L36>)
+
+```go
+func (s *Store) ReadyPartitions(ctx context.Context, planID string) ([]ReadyPartition, error)
+```
+
+ReadyPartitions returns the currently\-ready tasks for planID, grouped by their persisted group\_path and ordered deterministically.
+
+Readiness is the SAME NOT EXISTS walk over task\_deps that Ready and ClaimNextReady use — this adds partitioning on top of it, it does not introduce a second notion of ready. The join to task\_metadata is a LEFT join on purpose: a task materialized by the plain CreateTask path has no metadata row, and dropping it here would make its plan silently unrunnable.
+
+Partitions come back in group\-path order, tasks within a partition in the same sequence\_ordinal/created\_at order ClaimNextReady picks them, so a caller that dispatches partition\-by\-partition reproduces author order.
 
 <a name="Store.ReclaimStale"></a>
 ### func \(\*Store\) [ReclaimStale](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/reaper.go#L27>)

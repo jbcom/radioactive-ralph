@@ -347,13 +347,15 @@ AbsorbDecisionLog reads workerID's XDG decision log \(if any\) and emits its con
 A missing decision log file is not an error — most workers write no decisions and that's fine; AbsorbDecisionLog is a no\-op in that case.
 
 <a name="Orchestrator.DispatchNext"></a>
-### func \(\*Orchestrator\) [DispatchNext](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/orch/orchestrator.go#L427>)
+### func \(\*Orchestrator\) [DispatchNext](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/orch/orchestrator.go#L434>)
 
 ```go
 func (o *Orchestrator) DispatchNext(ctx context.Context, projectID, planID string) (dispatched int, err error)
 ```
 
-DispatchNext loads the plan for planID, computes what's ready right now, and dispatches workers for as many ready steps as capacity \(maxParallel\) and spend caps allow. It returns the number of steps actually dispatched.
+DispatchNext loads the plan for planID, asks the store what is ready right now, and dispatches workers for as many ready steps as capacity \(maxParallel\) and spend caps allow. It returns the number of steps actually dispatched.
+
+Readiness comes from the dependency graph — the task\_deps walk in store.ReadyPartitions — not from recomputing positions out of the markdown. A plan with no annotations imports as a chain of edges, so a linear plan is the degenerate case of a DAG and dispatches exactly as it always did; a plan that fans into independent branches now releases those branches together instead of serializing them behind document order.
 
 DispatchNext does NOT wait for dispatched workers to finish — each dispatch runs its provider turn in its own goroutine, wired through agent.Watch for stall/prompt handling \(kill\+reclaim, never wait\), and reports its result back for VerifyAndComplete via the store's task/event log. The worker's termination or self\-reported result does NOT mark the task done.
 
@@ -396,7 +398,7 @@ func (o *Orchestrator) PlanProgress(ctx context.Context, planID string) (Progres
 PlanProgress computes Progress for planID by parsing its stored markdown and comparing the full step\-id universe \(plan.Plan.StepIDs\) against the store's done\-set \(the same done\-set DispatchNext feeds into plan.DecomposeRefs\).
 
 <a name="Orchestrator.SetBaseContext"></a>
-### func \(\*Orchestrator\) [SetBaseContext](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/orch/orchestrator.go#L815>)
+### func \(\*Orchestrator\) [SetBaseContext](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/orch/orchestrator.go#L856>)
 
 ```go
 func (o *Orchestrator) SetBaseContext(ctx context.Context)
@@ -414,7 +416,7 @@ func (o *Orchestrator) VerifyAndComplete(ctx context.Context, planID, taskID str
 VerifyAndComplete is THE BACKBONE: it never trusts a worker's termination or self\-report. It checks ev against task's acceptance criteria — re\-running mechanical checks in pure Go — and only marks the task done in the store if verification passes. Otherwise it marks the task failed \(retryable, per the task's normal retry budget\) and emits a worker.verification\_failed event carrying the rejection reason.
 
 <a name="Orchestrator.Wait"></a>
-### func \(\*Orchestrator\) [Wait](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/orch/orchestrator.go#L837>)
+### func \(\*Orchestrator\) [Wait](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/orch/orchestrator.go#L878>)
 
 ```go
 func (o *Orchestrator) Wait()

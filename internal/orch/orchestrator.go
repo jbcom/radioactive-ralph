@@ -414,9 +414,16 @@ type dispatchedStep struct {
 	task *store.Task
 }
 
-// DispatchNext loads the plan for planID, computes what's ready right now,
-// and dispatches workers for as many ready steps as capacity (maxParallel)
+// DispatchNext loads the plan for planID, asks the store what is ready right
+// now, and dispatches workers for as many ready steps as capacity (maxParallel)
 // and spend caps allow. It returns the number of steps actually dispatched.
+//
+// Readiness comes from the dependency graph — the task_deps walk in
+// store.ReadyPartitions — not from recomputing positions out of the markdown.
+// A plan with no annotations imports as a chain of edges, so a linear plan is
+// the degenerate case of a DAG and dispatches exactly as it always did; a plan
+// that fans into independent branches now releases those branches together
+// instead of serializing them behind document order.
 //
 // DispatchNext does NOT wait for dispatched workers to finish — each
 // dispatch runs its provider turn in its own goroutine, wired through
@@ -438,17 +445,13 @@ func (o *Orchestrator) DispatchNext(ctx context.Context, projectID, planID strin
 		return 0, fmt.Errorf("orch: parse plan markdown: %w", err)
 	}
 
-	done, err := o.doneSet(ctx, planID)
+	wave, err := o.loadReadyWave(ctx, planID, parsedPlan)
 	if err != nil {
 		return 0, err
 	}
-
-	readySteps, refs, parallel := plan.DecomposeRefs(parsedPlan, done)
-	if len(readySteps) == 0 {
+	if len(wave.partitions) == 0 {
 		return 0, nil
 	}
-
-	groupHeading := groupHeadingFor(parsedPlan, refs[0])
 
 	// Resolve the project's checkout dir ONCE for this dispatch pass. Every
 	// worker for this plan runs in the project's own tree, not the
@@ -458,13 +461,49 @@ func (o *Orchestrator) DispatchNext(ctx context.Context, projectID, planID strin
 		return 0, err
 	}
 
-	candidateLimit := len(readySteps)
-	if !parallel {
-		// A sequential leaf group only ever returns its first not-done
-		// step (see plan.Decompose), but guard explicitly anyway: never
-		// dispatch more than one step from a non-parallel group at once.
-		candidateLimit = 1
+	// Each partition is one leaf group. Fan-out may delegate a whole partition
+	// to one provider; it must never span two, because a fan-out turn runs
+	// under a single group heading and a single resolved binding.
+	for _, group := range wave.partitions {
+		if o.maxParallel > 0 && dispatched >= o.maxParallel {
+			break
+		}
+		n, err := o.dispatchReadyGroup(ctx, dispatchGroupArgs{
+			projectID: projectID, projectDir: projectDir, planID: planID,
+			parsedPlan: parsedPlan, storeTitle: storedPlan.Title,
+			group: group, alreadyDispatched: dispatched,
+		})
+		dispatched += n
+		if err != nil {
+			return dispatched, err
+		}
 	}
+	return dispatched, nil
+}
+
+// dispatchGroupArgs bundles what dispatchReadyGroup needs for one leaf group.
+type dispatchGroupArgs struct {
+	projectID, projectDir, planID string
+	parsedPlan                    *plan.Plan
+	storeTitle                    string
+	group                         readyGroup
+	// alreadyDispatched is how many workers earlier partitions in this pass
+	// admitted, so maxParallel bounds the PASS rather than each group.
+	alreadyDispatched int
+}
+
+// dispatchReadyGroup dispatches one leaf group from the ready wave: either as a
+// single native-fan-out turn owning the whole group, or as one Ralph-managed
+// worker per step.
+func (o *Orchestrator) dispatchReadyGroup(ctx context.Context, a dispatchGroupArgs) (dispatched int, err error) {
+	projectID, planID := a.projectID, a.planID
+	projectDir, parsedPlan := a.projectDir, a.parsedPlan
+	storedTitle := a.storeTitle
+	readySteps, refs := a.group.steps, a.group.refs
+	parallel := a.group.parallel
+	groupHeading := a.group.heading
+
+	candidateLimit := len(readySteps)
 
 	// Fan-out delegation: when the ready group is Parallel AND the binding
 	// resolved for it declares NativeFanout, one fan-out-capable worker
@@ -522,7 +561,7 @@ func (o *Orchestrator) DispatchNext(ctx context.Context, projectID, planID strin
 				releaseSlot()
 				return dispatched, fmt.Errorf("orch: binding capability changed between probe and dispatch")
 			}
-			n, err := o.dispatchFanoutGroup(ctx, projectID, projectDir, planID, parsedPlan, storedPlan.Title, groupHeading, binding, eligibleSteps, eligibleRefs, releaseSlot)
+			n, err := o.dispatchFanoutGroup(ctx, projectID, projectDir, planID, parsedPlan, storedTitle, groupHeading, binding, eligibleSteps, eligibleRefs, releaseSlot)
 			if err != nil {
 				// dispatchFanoutGroup only returns an error on a synchronous
 				// pre-launch failure (claim/spend); the async turn was never
@@ -535,10 +574,12 @@ func (o *Orchestrator) DispatchNext(ctx context.Context, projectID, planID strin
 	}
 
 	for i := 0; i < candidateLimit; i++ {
-		// maxParallel is an admission budget, not a prefix length. Keep scanning
-		// past approval- or spend-gated candidates and stop only after this pass
-		// has actually admitted the configured number of workers.
-		if o.maxParallel > 0 && dispatched >= o.maxParallel {
+		// maxParallel is an admission budget for the whole DISPATCH PASS, not a
+		// prefix length and not a per-group allowance — so it counts what earlier
+		// partitions already admitted. Keep scanning past approval- or spend-gated
+		// candidates and stop only after the pass has actually admitted the
+		// configured number of workers.
+		if o.maxParallel > 0 && a.alreadyDispatched+dispatched >= o.maxParallel {
 			break
 		}
 		// Skip a step still held behind the approval gate BEFORE acquiring a
@@ -569,7 +610,7 @@ func (o *Orchestrator) DispatchNext(ctx context.Context, projectID, planID strin
 
 		launched, err := o.dispatchReadyStep(ctx, dispatchStepArgs{
 			projectID: projectID, projectDir: projectDir, planID: planID,
-			parsedPlan: parsedPlan, storeTitle: storedPlan.Title, groupHeading: groupHeading,
+			parsedPlan: parsedPlan, storeTitle: storedTitle, groupHeading: groupHeading,
 			parallel: parallel, ref: refs[i], step: readySteps[i],
 		})
 		if err != nil {
@@ -962,8 +1003,9 @@ func (o *Orchestrator) stepGateBlocks(ctx context.Context, planID string, ref pl
 
 // claimStepTask claims the SPECIFIC task dispatch selected for ref.
 //
-// It claims BY NAME rather than asking the store for "whatever is next".
-// Dispatch already chose this step and resolved its text; letting the store
+// It claims BY NAME rather than asking the store for "whatever is next". The
+// graph walk already chose this task, resolved its step text, and (for fan-out)
+// decided which group it belongs to; letting the store
 // substitute a different ready task would pair one task's row with another
 // task's instructions. That was survivable while ids were positional and the
 // caller could re-derive a step from the id — and became a hard bug the moment
