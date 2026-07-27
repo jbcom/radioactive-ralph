@@ -298,13 +298,30 @@ tags before deletion: `archive/plan-v2-dag`, `archive/release-022-recovery-scrat
       `graph_validate.go`, `enrichTaskMetadata` + the `Task` widening, `Plan.V2`
       and every `parsed.V2` fork, the Codex arg expansion, and the double
       filesystem verification in `VerifyAndComplete`.
-- [ ] Deferred provider CLI flag decisions, own PR with real-CLI verification:
-      claude `--permission-mode bypassPermissions` (a security posture change —
-      arguable since claude.go:122 already treats a permission prompt as a KILL,
-      but it needs its own decision, not a DAG ride-along), claude `--no-chrome`,
-      opencode `--pure --auto`. DISCARDED separately: the `defaultOpencodeProvider`
-      NativeFanout true->false flip, which regresses a capability main documents
-      as verified against installed opencode 1.18.3.
+- [x] Deferred provider CLI flag decisions — DONE (branch
+      feat/provider-cli-flags, PR pending on the GraphQL rate limit). All four
+      verified present on the installed CLIs; the two that ship verified with
+      real successful turns, not from --help alone.
+      SHIPPED: claude `--no-chrome` (Ralph drives claude head-authoritatively
+      under its own pty, so the Chrome integration would attach a browser to a
+      session nobody is watching; passed explicitly because the default is
+      whatever the operator's interactive config says). opencode `--pure` (a
+      supervised turn must be reproducible from the plan alone — an
+      environment-installed plugin would silently change what the agent can do,
+      so one plan behaves differently on two machines for reasons nothing
+      records; a DETERMINISM choice, which is why it lands and --auto does not).
+      REFUSED: claude `--permission-mode bypassPermissions` and opencode
+      `--auto`. Neither is needed for the never-block invariant — the watchdog
+      already kills a prompting turn and reports FailureInteractivePrompt. What
+      they WOULD change is the blast radius of an agent running unattended
+      against a real checkout. opencode's own help calls its flag
+      "(dangerous!)". AGENTS.md sanctions "auto-resolves, DENIES, or
+      kills-and-reclaims" — deny is listed, bypass is not. Both refusals are
+      TESTS so they cannot be re-added as an oversight; binding config Args
+      still append last, so an operator can opt in visibly per binding.
+      Already-discarded (unchanged): the `defaultOpencodeProvider` NativeFanout
+      true->false flip, which regresses a capability main documents as verified
+      against installed opencode 1.18.3.
 - [x] Windows shutdown flake in `TestRun_SecondRunRefuses`
       (supervisor_test.go:133). Pre-existing — PR #209 changed only COMMENTS in
       internal/supervisor/supervisor.go, and the file's own comments at :17/:153
