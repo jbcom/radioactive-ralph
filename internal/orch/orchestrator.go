@@ -12,6 +12,7 @@ package orch
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"runtime/debug"
@@ -487,7 +488,7 @@ func (o *Orchestrator) DispatchNext(ctx context.Context, projectID, planID strin
 			eligibleSteps := make([]plan.Step, 0, candidateLimit)
 			eligibleRefs := make([]plan.StepRef, 0, candidateLimit)
 			for i := 0; i < candidateLimit; i++ {
-				gated, err := o.stepGateBlocks(ctx, planID, refs[i], readySteps[i])
+				gated, err := o.stepGateBlocks(ctx, planID, projectID, parallel, refs[i], readySteps[i])
 				if err != nil {
 					return dispatched, err
 				}
@@ -546,7 +547,7 @@ func (o *Orchestrator) DispatchNext(ctx context.Context, projectID, planID strin
 		// gated task is deliberately unclaimable, so without this pre-check every
 		// tick would allocate orphan session + worker rows ClaimNextReady can't
 		// use (see stepGateBlocks).
-		gated, err := o.stepGateBlocks(ctx, planID, refs[i], readySteps[i])
+		gated, err := o.stepGateBlocks(ctx, planID, projectID, parallel, refs[i], readySteps[i])
 		if err != nil {
 			return dispatched, err
 		}
@@ -944,20 +945,100 @@ func (o *Orchestrator) materializeStepTask(ctx context.Context, planID string, r
 	}); err != nil && !errors.Is(err, store.ErrDuplicateTask) {
 		return nil, fmt.Errorf("orch: materialize task %s: %w", taskID, err)
 	}
+	if err := o.materializeStepMetadata(ctx, planID, taskID, ref, step); err != nil {
+		return nil, err
+	}
 	return o.store.GetTask(ctx, planID, taskID)
 }
 
+// materializeStepMetadata writes the task's metadata row alongside the task
+// itself.
+//
+// The row is not optional bookkeeping: every fail-closed block reason
+// (MarkBlockedCapability, MarkBlockedInput) is recorded there, and a task
+// without one CANNOT be marked blocked — the store refuses rather than
+// silently making a task unclaimable with no recorded reason. Tasks
+// materialized here by dispatch previously got no row at all, so those paths
+// were unreachable for anything except an imported plan.
+//
+// A duplicate is the benign concurrent-dispatcher race, the same one CreateTask
+// tolerates above.
+func (o *Orchestrator) materializeStepMetadata(ctx context.Context, planID, taskID string, ref plan.StepRef, step plan.Step) error {
+	metadataJSON := ""
+	if step.Metadata != nil {
+		raw, err := json.Marshal(step.Metadata)
+		if err != nil {
+			return fmt.Errorf("orch: marshal metadata for %s: %w", taskID, err)
+		}
+		metadataJSON = string(raw)
+	}
+	teamPath := ""
+	if step.Metadata != nil {
+		teamPath = step.Metadata.Team
+	}
+	err := o.store.PutTaskMetadata(ctx, planID, taskID, ref.GroupID(), teamPath, metadataJSON)
+	if err != nil && !errors.Is(err, store.ErrDuplicateTaskMetadata) {
+		return fmt.Errorf("orch: materialize metadata for %s: %w", taskID, err)
+	}
+	return nil
+}
+
 // stepGateBlocks materializes ref's task (idempotent) and reports whether it is
-// currently held behind the approval gate (status ready_pending_approval), i.e.
-// not yet dispatchable. The dispatch loop calls this before allocating any
-// worker/session rows so a gated step never spawns rows that ClaimNextReady
-// can't use.
-func (o *Orchestrator) stepGateBlocks(ctx context.Context, planID string, ref plan.StepRef, step plan.Step) (bool, error) {
+// currently undispatchable — either held behind the approval gate (status
+// ready_pending_approval) or requiring a capability the bound provider does not
+// have. The dispatch loop calls this before allocating any worker/session rows
+// so a gated step never spawns rows that ClaimNextReady can't use.
+func (o *Orchestrator) stepGateBlocks(ctx context.Context, planID, projectID string, parallel bool, ref plan.StepRef, step plan.Step) (bool, error) {
 	task, err := o.materializeStepTask(ctx, planID, ref, step)
 	if err != nil {
 		return false, err
 	}
-	return task.Status == store.TaskStatusReadyPendingApproval, nil
+	if task.Status == store.TaskStatusReadyPendingApproval {
+		return true, nil
+	}
+	return o.capabilityGateBlocks(ctx, planID, projectID, parallel, task.ID, step)
+}
+
+// capabilityGateBlocks enforces a step's `requires` list against the provider it
+// would actually run on.
+//
+// The check happens HERE, next to the approval gate, rather than inside the
+// runner: by the time a turn starts, a session, a worker row, and a dispatch
+// slot have all been allocated to a task that can never succeed on this binding.
+// Blocking early keeps that capacity available to tasks that can run.
+//
+// Resolution uses BindingProbe so the check peeks at the provider without
+// consuming a pool cursor — the same reason the native-fan-out probe does.
+func (o *Orchestrator) capabilityGateBlocks(ctx context.Context, planID, projectID string, parallel bool, taskID string, step plan.Step) (bool, error) {
+	if step.Metadata == nil || len(step.Metadata.Requires) == 0 {
+		return false, nil
+	}
+	binding, err := o.resolveBinding(ctx, projectID, parallel, BindingProbe)
+	if err != nil {
+		return false, fmt.Errorf("orch: resolve binding for capability gate: %w", err)
+	}
+	capErr := provider.CheckRequirements(binding, step.Metadata.Requires)
+	if capErr == nil {
+		return false, nil
+	}
+	if !errors.Is(capErr, provider.ErrCapabilityUnmet) && !errors.Is(capErr, provider.ErrCapabilityUnknown) {
+		return false, capErr
+	}
+	// Record WHY before reporting blocked. A task made undispatchable without a
+	// recorded reason is indistinguishable from one merely waiting on capacity,
+	// and the plan stalls with nothing for an operator to act on. Failing to
+	// record is therefore fatal rather than swallowed.
+	if err := o.store.MarkBlockedCapability(ctx, planID, taskID, capErr.Error()); err != nil {
+		return false, fmt.Errorf("orch: record capability block for %s: %w", taskID, err)
+	}
+	_ = o.store.Emit(ctx, store.EmitOpts{
+		ProjectID:   projectID,
+		PlanID:      planID,
+		Kind:        "task.blocked_capability",
+		Stream:      "service",
+		PayloadJSON: mustPayloadJSON(store.EventPayload{Reason: capErr.Error()}),
+	})
+	return true, nil
 }
 
 // claimStepTask claims the SPECIFIC task dispatch selected for ref.

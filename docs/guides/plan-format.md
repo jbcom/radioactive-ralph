@@ -76,6 +76,46 @@ without stopping everything before it. Bracketed text that isn't the
 `[approval]` marker (e.g. a trailing `[WIP]`) is left untouched and does
 not gate the step.
 
+## Capability requirements
+
+A step can declare the provider capabilities it needs, in a `ralph-task`
+fence indented inside the step's list item:
+
+```markdown
+# Wide refactor
+
+- rename the symbol across every call site
+
+   ```ralph-task
+   {"id": "rename-all", "requires": ["native_fanout"]}
+   ```
+```
+
+Dispatch resolves the binding the step would run on and checks it
+**before** allocating a worker, a session, or a dispatch slot. A step
+whose requirements the binding cannot meet is moved to
+`blocked_capability` with the missing keys recorded as its blocked
+reason, rather than being run against a provider that cannot do the work.
+
+The vocabulary is closed — a key outside it is a typo, and a typo cannot
+be satisfied by any binding, so it blocks the step rather than passing
+silently:
+
+| Key | The binding must… |
+|-----|-------------------|
+| `native_fanout` | run a whole ready group in one turn (`native_fanout = true`) |
+| `resume` | continue a prior session (`supports_resume = true`) |
+| `append_system_prompt` | append to the system prompt rather than replace it (`use_append_system_prompt = true`) |
+
+Every key maps to something a binding declares in its config, so the two
+cannot drift apart. Steps that declare no `requires` are unaffected.
+
+Unblocking is a plan or configuration change — fix the key, or bind the
+project to a provider that has the capability — not something the
+supervisor retries its way out of. That is the point: a task that can
+never succeed on this binding says so immediately instead of stalling
+with no explanation.
+
 ## Validation
 
 `internal/plan.Validate` checks the document against the grammar (sibling

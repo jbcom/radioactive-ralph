@@ -59,6 +59,16 @@ var ErrTaskProviderSessionConflict = errors.New(
 // success after making it unclaimable.
 var ErrTaskMetadataMissing = errors.New("store: task has no execution metadata")
 
+// ErrDuplicateTaskMetadata reports a metadata row that already exists for this
+// task.
+//
+// Typed rather than left as a raw driver error because the race is BENIGN and
+// callers must be able to say so: two dispatchers materializing the same step,
+// or a step whose plan was imported with its metadata already written. Matching
+// on the driver's error text at the call site would couple every caller to
+// SQLite's wording.
+var ErrDuplicateTaskMetadata = errors.New("store: task metadata already exists")
+
 // GetTaskExecutionMetadata loads one task's scheduling/provenance record.
 func (s *Store) GetTaskExecutionMetadata(ctx context.Context, planID, taskID string) (TaskExecutionMetadata, error) {
 	var metadata TaskExecutionMetadata
@@ -107,6 +117,9 @@ func (s *Store) putTaskMetadataOn(
 		INSERT INTO task_metadata(plan_id, task_id, group_path, team_path, metadata_json)
 		VALUES (?, ?, ?, ?, ?)
 	`, planID, taskID, groupPath, teamPath, metadataJSON); err != nil {
+		if isUniqueViolation(err) {
+			return fmt.Errorf("%w: task %s", ErrDuplicateTaskMetadata, taskID)
+		}
 		return fmt.Errorf("store: put task metadata %s: %w", taskID, err)
 	}
 	return nil
