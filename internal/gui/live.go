@@ -2,139 +2,143 @@ package gui
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 
 	"github.com/jbcom/radioactive-ralph/internal/ipc"
-	"github.com/jbcom/radioactive-ralph/internal/orch"
-	"github.com/jbcom/radioactive-ralph/internal/store"
+	"github.com/jbcom/radioactive-ralph/internal/observe"
 	"github.com/jbcom/radioactive-ralph/internal/supervisor"
 )
 
-// liveController is the production Controller: reads forward to the shared store
-// and a fresh short-lived *ipc.Client per call (via supervisor.Find), and drive
-// actions forward to the client's v2 typed methods. It mirrors
-// tui.liveDataSource's lifecycle (ipc connections are one-shot: dial, one
-// request, close) and adds the drive half the read-only TUI never had.
-//
-// liveController is Fyne-free, so it lives in the untagged half of the package
-// and the wiring test below runs in the normal CGO-off test job.
 type liveController struct {
 	runtimeDir string
-	store      *store.Store
-	orch       *orch.Orchestrator
 	projectID  string
 }
 
-// NewLiveController builds the production Controller. runtimeDir is where the
-// supervisor socket lives (xdg.StateRoot()), st is the shared store, and
-// projectID scopes the plan/event reads.
-func NewLiveController(runtimeDir string, st *store.Store, projectID string) Controller {
-	return &liveController{
-		runtimeDir: runtimeDir,
-		store:      st,
-		orch:       orch.New(st),
-		projectID:  projectID,
-	}
+// NewLiveController builds the safe production GUI controller.
+func NewLiveController(runtimeDir, projectID string) Controller {
+	return &liveController{runtimeDir: runtimeDir, projectID: projectID}
 }
 
-// dial opens a fresh, short-lived supervisor connection for one call. Callers
-// Close it (defer immediately after a successful dial).
 func (l *liveController) dial() (*ipc.Client, error) {
-	c, err := supervisor.Find(l.runtimeDir)
+	client, err := supervisor.Find(l.runtimeDir)
 	if err != nil {
 		return nil, fmt.Errorf("gui: dial supervisor: %w", err)
 	}
-	return c, nil
+	return client, nil
 }
 
-func (l *liveController) Status(ctx context.Context) (ipc.StatusReply, error) {
-	c, err := l.dial()
+func (l *liveController) Snapshot(
+	ctx context.Context,
+	query observe.SnapshotQuery,
+) (*observe.Snapshot, error) {
+	if query.ProjectID == "" {
+		query.ProjectID = l.projectID
+	}
+	client, err := l.dial()
 	if err != nil {
-		return ipc.StatusReply{}, err
+		return nil, err
 	}
-	defer func() { _ = c.Close() }()
-	return c.Status(ctx)
-}
+	defer func() { _ = client.Close() }()
 
-func (l *liveController) ListPlans(ctx context.Context, projectID string) ([]store.Plan, error) {
-	if projectID == "" {
-		projectID = l.projectID
+	snapshot, err := client.ObserveSnapshot(ctx, query)
+	if err != nil {
+		if ipc.IsCode(err, ipc.CodeUnsupportedCommand) {
+			return nil, fmt.Errorf(
+				"gui: supervisor protocol v%d required; upgrade and restart supervisor: %w",
+				ipc.QueryProtoVersion,
+				err,
+			)
+		}
+		return nil, err
 	}
-	return l.store.ListPlans(ctx, projectID, nil)
-}
-
-func (l *liveController) PlanProgress(ctx context.Context, planID string) (orch.Progress, error) {
-	return l.orch.PlanProgress(ctx, planID)
-}
-
-func (l *liveController) ListTasks(ctx context.Context, planID string) ([]store.Task, error) {
-	return l.store.ListTasks(ctx, planID, nil)
-}
-
-func (l *liveController) ListProjectEvents(ctx context.Context, projectID string, limit int) ([]store.Event, error) {
-	if projectID == "" {
-		projectID = l.projectID
+	if err := observe.ValidateSnapshotResponse(snapshot, query); err != nil {
+		return nil, fmt.Errorf("gui: unsafe supervisor snapshot: %w", err)
 	}
-	return l.store.ListProjectEvents(ctx, projectID, limit)
+	return snapshot, nil
 }
 
-func (l *liveController) ListTaskEvents(ctx context.Context, planID, taskID string, limit int) ([]store.Event, error) {
-	return l.store.ListTaskEvents(ctx, planID, taskID, limit)
-}
+func (l *liveController) Attach(
+	ctx context.Context,
+	fn func(ipc.AttachEvent) error,
+) error {
+	seed, err := l.Snapshot(ctx, observe.SnapshotQuery{
+		ProjectID:  l.projectID,
+		PlanLimit:  1,
+		TaskLimit:  1,
+		EventLimit: 1,
+	})
+	if err != nil {
+		return fmt.Errorf("gui: seed attach cursor: %w", err)
+	}
 
-func (l *liveController) Attach(ctx context.Context, fn func(json.RawMessage) error) error {
-	c, err := l.dial()
+	client, err := l.dial()
 	if err != nil {
 		return err
 	}
-	defer func() { _ = c.Close() }()
-	// Seed the cursor to the current max so a launch/reconnect starts from "now"
-	// rather than replaying the whole project history — runAttach calls
-	// refreshNow() per frame, so replaying thousands of historical events would
-	// hammer the supervisor with redundant reads. A read error falls back to 0.
-	afterID, err := l.store.MaxEventID(ctx, l.projectID)
-	if err != nil {
-		afterID = 0
-	}
-	return c.Attach(ctx, ipc.AttachArgs{ProjectID: l.projectID, AfterID: afterID}, fn)
+	defer func() { _ = client.Close() }()
+	return client.AttachEvents(
+		ctx,
+		ipc.AttachArgs{
+			ProjectID: l.projectID,
+			AfterID:   seed.EventCursor,
+		},
+		fn,
+	)
 }
 
-func (l *liveController) ImportPlan(ctx context.Context, args ipc.PlanImportArgs) (ipc.PlanImportReply, error) {
-	c, err := l.dial()
+func (l *liveController) ImportPlan(
+	ctx context.Context,
+	args ipc.PlanImportArgs,
+) (ipc.PlanImportReply, error) {
+	client, err := l.dial()
 	if err != nil {
 		return ipc.PlanImportReply{}, err
 	}
-	defer func() { _ = c.Close() }()
-	return c.PlanImport(ctx, args)
+	defer func() { _ = client.Close() }()
+	return client.PlanImport(ctx, args)
 }
 
-func (l *liveController) SetPlanStatus(ctx context.Context, planID, status string) error {
-	c, err := l.dial()
+func (l *liveController) SetPlanStatus(
+	ctx context.Context,
+	planID, status string,
+) error {
+	client, err := l.dial()
 	if err != nil {
 		return err
 	}
-	defer func() { _ = c.Close() }()
-	_, err = c.PlanSetStatus(ctx, ipc.PlanSetStatusArgs{PlanID: planID, Status: status})
+	defer func() { _ = client.Close() }()
+	_, err = client.PlanSetStatus(
+		ctx,
+		ipc.PlanSetStatusArgs{PlanID: planID, Status: status},
+	)
 	return err
 }
 
-func (l *liveController) ApproveTask(ctx context.Context, planID, taskID string) error {
-	c, err := l.dial()
+func (l *liveController) ApproveTask(
+	ctx context.Context,
+	planID, taskID string,
+) error {
+	client, err := l.dial()
 	if err != nil {
 		return err
 	}
-	defer func() { _ = c.Close() }()
-	return c.TaskApprove(ctx, ipc.TaskApproveArgs{PlanID: planID, TaskID: taskID})
+	defer func() { _ = client.Close() }()
+	return client.TaskApprove(
+		ctx,
+		ipc.TaskApproveArgs{PlanID: planID, TaskID: taskID},
+	)
 }
 
-func (l *liveController) KillWorker(ctx context.Context, workerID string) error {
-	c, err := l.dial()
+func (l *liveController) KillWorker(
+	ctx context.Context,
+	workerID string,
+) error {
+	client, err := l.dial()
 	if err != nil {
 		return err
 	}
-	defer func() { _ = c.Close() }()
-	return c.WorkerKill(ctx, ipc.WorkerKillArgs{WorkerID: workerID})
+	defer func() { _ = client.Close() }()
+	return client.WorkerKill(ctx, ipc.WorkerKillArgs{WorkerID: workerID})
 }
 
 var _ Controller = (*liveController)(nil)

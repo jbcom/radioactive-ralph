@@ -45,10 +45,12 @@ func maybeLaunchDesktopGUI(ctx context.Context, _ *cobra.Command) (handled bool,
 	// A desktop launch (Finder / Explorer / a file manager) has an arbitrary
 	// working directory — usually NOT a repo. So resolve the project
 	// NON-MUTATINGLY: if the launch dir happens to be a known project, scope the
-	// GUI to it; otherwise open project-agnostic (empty id → the GUI lists every
-	// project). We must NOT auto-init the launch directory the way the CLI path
-	// does — that would register "/" (or wherever Finder launched us) as a
-	// bogus project.
+	// GUI to it; otherwise leave the scope empty and let the safe supervisor
+	// query fail closed with an actionable banner. We must NOT auto-init the
+	// launch directory the way the CLI path does — that would register "/"
+	// (or wherever Finder launched us) as a bogus project. A future
+	// supervisor-owned project-directory query will replace this temporary
+	// resolution seam.
 	projectID := ""
 	if fps, ferr := store.Fingerprints(ctx, cwd); ferr == nil {
 		if id, found, rerr := st.ResolveProject(ctx, fps); rerr == nil && found {
@@ -56,7 +58,7 @@ func maybeLaunchDesktopGUI(ctx context.Context, _ *cobra.Command) (handled bool,
 		}
 	}
 
-	ctrl := gui.NewLiveController(stateRoot, st, projectID)
+	ctrl := gui.NewLiveController(stateRoot, projectID)
 	return true, gui.Run(ctx, gui.Opts{Controller: ctrl, ProjectID: projectID})
 }
 

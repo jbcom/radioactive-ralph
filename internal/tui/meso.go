@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/jbcom/radioactive-ralph/internal/store"
+	"github.com/jbcom/radioactive-ralph/internal/observe"
 )
 
 // renderMeso renders the drill-into-a-plan view (spec §7 "meso"): the
@@ -31,17 +31,21 @@ func renderMeso(m Model) string {
 			if row == m.cursor {
 				marker = styleSelected.String()
 			}
-			statusStr := statusStyle(string(t.Status)).Render(string(t.Status))
+			statusStr := statusStyle(t.Status).Render(t.Status)
 			worker := ""
 			if t.ClaimedByWorkerID != "" {
 				worker = styleMuted.Render(" worker=" + t.ClaimedByWorkerID)
 			}
-			fmt.Fprintf(&b, "%s%-12s %-24s %s%s\n", marker, t.ID, statusStr, t.Description, worker)
+			fmt.Fprintf(&b, "%s%-12s %-24s %s%s\n", marker, t.ID, statusStr, m.snap.descriptions[t.ID], worker)
 			row++
 		}
 	}
 	if len(m.snap.tasks) == 0 {
 		b.WriteString(styleMuted.Render("no tasks yet"))
+		b.WriteString("\n")
+	}
+	if m.snap.tasksHasMore {
+		b.WriteString(styleMuted.Render("more tasks available; showing first bounded page"))
 		b.WriteString("\n")
 	}
 
@@ -54,15 +58,15 @@ func renderMeso(m Model) string {
 // unsequenced/leftover bucket.
 type taskGroup struct {
 	label string
-	tasks []store.Task
+	tasks []observe.Task
 }
 
 // flattenGroupedTasks returns tasks in the SAME order the meso view renders
 // them (ungrouped first, then each parallel group in first-seen order). The
 // meso cursor indexes this order, so drillIn MUST select from it too — using
 // the raw m.snap.tasks order would highlight one task but drill into another.
-func flattenGroupedTasks(tasks []store.Task) []store.Task {
-	out := make([]store.Task, 0, len(tasks))
+func flattenGroupedTasks(tasks []observe.Task) []observe.Task {
+	out := make([]observe.Task, 0, len(tasks))
 	for _, g := range groupTasks(tasks) {
 		out = append(out, g.tasks...)
 	}
@@ -71,18 +75,18 @@ func flattenGroupedTasks(tasks []store.Task) []store.Task {
 
 // groupTasks buckets tasks by parallel_group for meso rendering. Tasks
 // without a parallel_group render in document order under no label.
-func groupTasks(tasks []store.Task) []taskGroup {
-	var ungrouped []store.Task
-	byGroup := map[int64][]store.Task{}
+func groupTasks(tasks []observe.Task) []taskGroup {
+	var ungrouped []observe.Task
+	byGroup := map[int64][]observe.Task{}
 	var order []int64
 	seen := map[int64]bool{}
 
 	for _, t := range tasks {
-		if !t.ParallelGroup.Valid {
+		if t.ParallelGroup == nil {
 			ungrouped = append(ungrouped, t)
 			continue
 		}
-		g := t.ParallelGroup.Int64
+		g := *t.ParallelGroup
 		if !seen[g] {
 			seen[g] = true
 			order = append(order, g)

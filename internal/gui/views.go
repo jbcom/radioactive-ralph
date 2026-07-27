@@ -13,7 +13,7 @@ import (
 	"fyne.io/fyne/v2/dialog"
 	"fyne.io/fyne/v2/widget"
 	"github.com/jbcom/radioactive-ralph/internal/ipc"
-	"github.com/jbcom/radioactive-ralph/internal/store"
+	"github.com/jbcom/radioactive-ralph/internal/observe"
 )
 
 // The view layer is a PURE renderer: every build* function reads only the
@@ -31,16 +31,34 @@ import (
 // project-agnostic), whereas the plan list below is scoped to the launching
 // project — so the header explicitly labels the counts "all projects" to avoid
 // the operator trying to reconcile them with the visible per-project rows.
-func headerText(st ipc.StatusReply, statusErr error) string {
+func headerText(
+	summary observe.Summary,
+	capturedAt time.Time,
+	statusErr error,
+) string {
 	if statusErr != nil {
 		return "waiting for supervisor…  (" + noSupervisorHintFor(runtime.GOOS) + ")"
 	}
 	return fmt.Sprintf(
-		"connected · up %s   ·   all projects: plans %d active   workers %d   running %d   ready %d   approval %d   blocked %d   failed %d",
-		humanizeUptime(st.Uptime),
-		st.ActivePlans, st.ActiveWorkers, st.RunningTasks, st.ReadyTasks,
-		st.ApprovalTasks, st.BlockedTasks, st.FailedTasks,
+		"connected · observed %s   ·   project: plans %d   workers %d   running %d   ready %d   approval %d   blocked %d   failed %d",
+		capturedAt.Local().Format("15:04:05"),
+		summary.PlanTotal,
+		summary.ActiveWorkerCount,
+		guiStatusCount(summary.TaskStatusCounts, "running"),
+		guiStatusCount(summary.TaskStatusCounts, "ready"),
+		guiStatusCount(summary.TaskStatusCounts, "ready_pending_approval"),
+		guiStatusCount(summary.TaskStatusCounts, "blocked"),
+		guiStatusCount(summary.TaskStatusCounts, "failed"),
 	)
+}
+
+func guiStatusCount(counts []observe.StatusCount, status string) int {
+	for _, count := range counts {
+		if count.Status == status {
+			return count.Count
+		}
+	}
+	return 0
 }
 
 func noSupervisorHintFor(goos string) string {
@@ -192,12 +210,17 @@ func (u *ui) buildMacro(s snapshot) {
 			u.body.Add(u.importButton())
 		}
 	}
+	if s.plansHasMore {
+		u.body.Add(widget.NewLabel(
+			"More plans available; showing the first bounded page.",
+		))
+	}
 	u.addRecentActivity(s.projEvents)
 }
 
 // addRecentActivity renders the ambient project-wide event feed under the plan
 // list — the GUI twin of the TUI macro view's "recent events" section.
-func (u *ui) addRecentActivity(events []store.Event) {
+func (u *ui) addRecentActivity(events []observe.Event) {
 	u.body.Add(widget.NewSeparator())
 	u.body.Add(widget.NewLabelWithStyle("Recent activity", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}))
 	if len(events) == 0 {
@@ -205,10 +228,20 @@ func (u *ui) addRecentActivity(events []store.Event) {
 		return
 	}
 	for _, e := range events {
-		// Newest-first (ListProjectEvents contract); show local time + kind +
-		// actor, mirroring the micro timeline's format.
-		u.body.Add(widget.NewLabel(fmt.Sprintf("%s  %s  %s", e.OccurredAt.Local().Format("15:04:05"), e.Kind, e.Actor)))
+		u.body.Add(widget.NewLabel(safeEventLabel(e)))
 	}
+}
+
+func safeEventLabel(event observe.Event) string {
+	label := fmt.Sprintf(
+		"%s  %s",
+		event.OccurredAt.Local().Format("15:04:05"),
+		event.Kind,
+	)
+	if event.Failure != nil {
+		label += "  failure=" + string(event.Failure.Category)
+	}
+	return label
 }
 
 // buildMeso shows one plan's tasks with per-task status, plan-level drive
@@ -236,12 +269,17 @@ func (u *ui) buildMeso(s snapshot) {
 		open := u.button(taskLabel(t), func() { u.drillTo(planID, taskID) })
 		open.Alignment = widget.ButtonAlignLeading
 		row := container.NewHBox(statusChip(string(t.Status)), open)
-		if t.Status == store.TaskStatusReadyPendingApproval {
+		if t.Status == "ready_pending_approval" {
 			row.Add(widget.NewButton("Approve", func() {
 				u.drive("approve", func() error { return u.ctrl.ApproveTask(u.ctx, planID, taskID) })
 			}))
 		}
 		u.body.Add(row)
+	}
+	if s.tasksHasMore {
+		u.body.Add(widget.NewLabel(
+			"More tasks available; showing the first bounded page.",
+		))
 	}
 }
 
@@ -266,8 +304,10 @@ func (u *ui) buildMicro(s snapshot) {
 		return
 	}
 	for _, e := range s.events {
-		// Events are stored UTC; show them in the operator's local time.
-		u.body.Add(widget.NewLabel(fmt.Sprintf("%s  %s  %s", e.OccurredAt.Local().Format("15:04:05"), e.Kind, e.Actor)))
+		u.body.Add(widget.NewLabel(safeEventLabel(e)))
+	}
+	if s.eventsHasMore {
+		u.body.Add(widget.NewLabel("Older events are available."))
 	}
 }
 
@@ -360,15 +400,9 @@ func (u *ui) importButton() *widget.Button {
 	})
 }
 
-func taskLabel(t store.Task) string {
-	desc := t.Description
-	// Truncate on rune boundaries — byte-slicing could split a multi-byte
-	// UTF-8 character and render as garbage.
-	if r := []rune(desc); len(r) > 60 {
-		desc = string(r[:57]) + "…"
+func taskLabel(task observe.Task) string {
+	if task.ID != "" {
+		return task.ID
 	}
-	if desc == "" {
-		desc = t.ID
-	}
-	return desc
+	return task.CanonicalID
 }

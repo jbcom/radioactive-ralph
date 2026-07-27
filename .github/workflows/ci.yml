@@ -96,7 +96,7 @@ jobs:
 
           ready=0
           for _ in $(seq 1 30); do
-            if (cd "$project" && "$RALPH_BIN") 2>/dev/null | grep -q "supervisor is up"; then
+            if (cd "$project" && "$RALPH_BIN") 2>/dev/null | grep -q "captured_at="; then
               ready=1
               break
             fi
@@ -114,7 +114,7 @@ jobs:
 
           stopped=0
           for _ in $(seq 1 30); do
-            if ! (cd "$project" && "$RALPH_BIN") 2>/dev/null | grep -q "supervisor is up"; then
+            if ! (cd "$project" && "$RALPH_BIN") 2>/dev/null | grep -q "captured_at="; then
               stopped=1
               break
             fi
@@ -223,7 +223,7 @@ jobs:
             Push-Location $project
             try {
               $out = & $env:RALPH_BIN 2>$null
-              if (($out -join "`n") -match "supervisor is up") {
+              if (($out -join "`n") -match "captured_at=") {
                 $ready = $true
                 break
               }

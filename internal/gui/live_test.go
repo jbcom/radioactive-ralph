@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/jbcom/radioactive-ralph/internal/ipc"
+	"github.com/jbcom/radioactive-ralph/internal/observe"
 	"github.com/jbcom/radioactive-ralph/internal/store"
 	"github.com/jbcom/radioactive-ralph/internal/supervisor"
 )
@@ -45,11 +46,24 @@ func TestLiveController_ReadAndDriveRoundTrip(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 
-	ctrl := NewLiveController(stateRoot, st, projectID)
+	ctrl := NewLiveController(stateRoot, projectID)
 
-	// READ: Status round-trips.
-	if _, err := ctrl.Status(context.Background()); err != nil {
-		t.Fatalf("liveController.Status: %v", err)
+	// READ: the safe project snapshot round-trips.
+	snapshot, err := ctrl.Snapshot(
+		context.Background(),
+		observe.SnapshotQuery{
+			ProjectID:  projectID,
+			PlanLimit:  10,
+			TaskLimit:  10,
+			EventLimit: 10,
+		},
+	)
+	if err != nil {
+		t.Fatalf("liveController.Snapshot: %v", err)
+	}
+	if snapshot.Project.ID != projectID ||
+		snapshot.SchemaVersion != observe.SchemaVersion {
+		t.Fatalf("safe snapshot = %+v", snapshot)
 	}
 
 	// DRIVE: ImportPlan round-trips and lands the plan active in the store.

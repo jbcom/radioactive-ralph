@@ -3,6 +3,8 @@ package tui
 import (
 	"fmt"
 	"strings"
+
+	"github.com/jbcom/radioactive-ralph/internal/observe"
 )
 
 // renderMacro renders the top-level view (spec §7 "macro"): the project's
@@ -21,13 +23,16 @@ func renderMacro(m Model) string {
 	if m.err != nil {
 		b.WriteString(styleBad.Render("disconnected") + styleMuted.Render(" — retrying…") + "\n")
 	} else {
-		fmt.Fprintf(&b, "%s · up %s\n",
-			styleGood.Render("connected"), humanizeUptime(m.snap.status.Uptime))
+		fmt.Fprintf(&b, "%s · observed %s\n",
+			styleGood.Render("connected"), m.snap.capturedAt.Local().Format("15:04:05"))
 	}
 	fmt.Fprintf(&b, "active workers: %s   ready: %d  approval: %d  blocked: %d  running: %d  failed: %d\n\n",
-		styleRunning.Render(fmt.Sprintf("%d", m.snap.status.ActiveWorkers)),
-		m.snap.status.ReadyTasks, m.snap.status.ApprovalTasks,
-		m.snap.status.BlockedTasks, m.snap.status.RunningTasks, m.snap.status.FailedTasks)
+		styleRunning.Render(fmt.Sprintf("%d", m.snap.summary.ActiveWorkerCount)),
+		summaryStatusCount(m.snap.summary.TaskStatusCounts, "ready"),
+		summaryStatusCount(m.snap.summary.TaskStatusCounts, "ready_pending_approval"),
+		summaryStatusCount(m.snap.summary.TaskStatusCounts, "blocked"),
+		summaryStatusCount(m.snap.summary.TaskStatusCounts, "running"),
+		summaryStatusCount(m.snap.summary.TaskStatusCounts, "failed"))
 
 	if len(m.snap.plans) == 0 {
 		// Actionable empty state: a bare "no plans yet" leaves the operator
@@ -47,8 +52,12 @@ func renderMacro(m Model) string {
 		}
 		prog := m.snap.progress[p.ID]
 		progStr := styleMuted.Render(fmt.Sprintf("(%d/%d)", prog.Done, prog.Total))
-		statusStr := statusStyle(string(p.Status)).Render(string(p.Status))
+		statusStr := statusStyle(p.Status).Render(p.Status)
 		fmt.Fprintf(&b, "%s%-30s %-10s %s\n", marker, p.Title, statusStr, progStr)
+	}
+	if m.snap.plansHasMore {
+		b.WriteString(styleMuted.Render("(more plans available; showing first bounded page)"))
+		b.WriteString("\n")
 	}
 
 	b.WriteString("\n")
@@ -61,6 +70,10 @@ func renderMacro(m Model) string {
 	for _, ev := range m.snap.planEvent {
 		b.WriteString(styleMuted.Render(ev.OccurredAt.Format("15:04:05")) + " " + ev.Kind + "\n")
 	}
+	if m.snap.eventsHasMore {
+		b.WriteString(styleMuted.Render("(older events available)"))
+		b.WriteString("\n")
+	}
 
 	footerHint := "enter: drill into plan   q: quit"
 	if len(m.snap.plans) == 0 {
@@ -69,4 +82,13 @@ func renderMacro(m Model) string {
 	}
 	b.WriteString(renderFooter(m, footerHint))
 	return b.String()
+}
+
+func summaryStatusCount(counts []observe.StatusCount, status string) int {
+	for _, count := range counts {
+		if count.Status == status {
+			return count.Count
+		}
+	}
+	return 0
 }

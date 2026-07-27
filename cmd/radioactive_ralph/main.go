@@ -110,6 +110,8 @@ func newRootCmd(ctx context.Context, launchDesktop desktopLaunchFunc) *cobra.Com
 	root.AddCommand(newServiceCmd())
 	root.AddCommand(newPlanCmd())
 	root.AddCommand(newEventsCmd())
+	root.AddCommand(newStatusCmd())
+	root.AddCommand(newMessagesCmd())
 	root.AddCommand(newGUICmd())
 
 	return root

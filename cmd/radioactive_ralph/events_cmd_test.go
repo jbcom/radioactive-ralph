@@ -10,20 +10,20 @@ import (
 	"time"
 
 	"github.com/jbcom/radioactive-ralph/internal/ipc"
-	"github.com/jbcom/radioactive-ralph/internal/store"
+	"github.com/jbcom/radioactive-ralph/internal/observe"
 	"github.com/spf13/cobra"
 )
 
 // fakeEventSource scripts a backlog + a live stream for runEventsWith.
 type fakeEventSource struct {
-	backlog    []store.Event
+	backlog    []ipc.AttachEvent
 	maxID      int64
 	live       []ipc.AttachEvent
 	attachErr  error
 	gotAfterID int64 // records the cursor the live attach was called with
 }
 
-func (f *fakeEventSource) Backlog(_ context.Context, _ string, n int) ([]store.Event, int64, error) {
+func (f *fakeEventSource) Backlog(_ context.Context, _ string, n int) ([]ipc.AttachEvent, int64, error) {
 	if n <= 0 {
 		return nil, f.maxID, nil
 	}
@@ -43,8 +43,8 @@ func (f *fakeEventSource) AttachEvents(_ context.Context, args ipc.AttachArgs, f
 func TestRunEventsWith_BacklogThenLive(t *testing.T) {
 	at := time.Date(2026, 7, 17, 8, 30, 0, 0, time.UTC)
 	f := &fakeEventSource{
-		backlog: []store.Event{
-			{ID: 4, Kind: "task.claimed", TaskID: "t1", Actor: "worker-1", OccurredAt: at},
+		backlog: []ipc.AttachEvent{
+			{ID: 4, Kind: "task.claimed", TaskID: "t1", OccurredAt: at},
 			{ID: 5, Kind: "task.done", TaskID: "t1", OccurredAt: at},
 		},
 		maxID: 5,
@@ -135,78 +135,115 @@ func TestRunEventsWith_CtxCancelExitsClean(t *testing.T) {
 	}
 }
 
-// TestLiveEventSourceBacklogCursorFromSameRead proves the anti-race property:
-// with a backlog, the live cursor is the newest id from the SAME query that
-// produced the printed rows — not a separate MaxEventID read that could race a
-// concurrent supervisor insert and duplicate an event across the boundary.
-func TestLiveEventSourceBacklogCursorFromSameRead(t *testing.T) {
-	ctx := context.Background()
-	stateRoot := t.TempDir()
-	st, err := store.Open(ctx, store.Options{DSN: store.DSN(storeDBPath(stateRoot))})
-	if err != nil {
-		t.Fatalf("store.Open: %v", err)
+// TestLiveEventSourceBacklogCursorFromSameSnapshot proves the anti-race
+// property: the live cursor is the newest id from the SAME supervisor snapshot
+// that produced the printed rows, not a separate MaxEventID read.
+func TestLiveEventSourceBacklogCursorFromSameSnapshot(t *testing.T) {
+	client := &fakeObserveClient{snapshot: querySnapshotFixture(0)}
+	client.snapshot.RecentEvents = observe.EventPage{
+		Items: []observe.Event{
+			{ID: 3, Kind: "third"},
+			{ID: 2, Kind: "second"},
+		},
+		HasMore:      true,
+		NextBeforeID: 2,
 	}
-	projectID, err := st.CreateProject(ctx, "events-backlog", []store.Fingerprint{
-		{Kind: store.FingerprintKindAbsPath, Value: t.TempDir()},
-	})
-	if err != nil {
-		t.Fatalf("CreateProject: %v", err)
+	client.snapshot.EventCursor = 3
+	src := &liveEventSource{
+		dial: func() (eventClient, error) { return client, nil },
 	}
-	for i := 0; i < 3; i++ {
-		if err := st.Emit(ctx, store.EmitOpts{ProjectID: projectID, Kind: "tick"}); err != nil {
-			t.Fatalf("Emit: %v", err)
-		}
-	}
-	// The newest event's id is the cursor we expect.
-	newest, err := st.ListProjectEvents(ctx, projectID, 1)
-	if err != nil {
-		t.Fatalf("ListProjectEvents: %v", err)
-	}
-	wantCursor := newest[0].ID
-	_ = st.Close()
 
-	src := &liveEventSource{stateRoot: stateRoot}
-	events, cursor, err := src.Backlog(ctx, projectID, 2)
+	events, cursor, err := src.Backlog(context.Background(), "project-1", 2)
 	if err != nil {
 		t.Fatalf("Backlog: %v", err)
 	}
-	if cursor != wantCursor {
-		t.Errorf("cursor = %d, want %d (the newest id, taken from the backlog read itself)", cursor, wantCursor)
+	if cursor != 3 {
+		t.Errorf("cursor = %d, want newest snapshot event id 3", cursor)
 	}
-	// Backlog returns the 2 most recent, oldest-first; the LAST printed row's id
-	// must equal the cursor (no printed row exceeds it → no live duplicate).
-	if len(events) != 2 {
-		t.Fatalf("got %d backlog events, want 2", len(events))
+	if len(events) != 2 || events[0].ID != 2 || events[1].ID != 3 {
+		t.Fatalf("events = %+v, want oldest-first ids [2 3]", events)
 	}
-	if events[len(events)-1].ID != cursor {
-		t.Errorf("last backlog row id = %d, want it to equal the cursor %d", events[len(events)-1].ID, cursor)
+	wantQuery := ipc.ObserveSnapshotArgs{
+		ProjectID:  "project-1",
+		PlanLimit:  1,
+		TaskLimit:  1,
+		EventLimit: 2,
+	}
+	if client.snapshotQ != wantQuery {
+		t.Fatalf("snapshot query = %+v, want %+v", client.snapshotQ, wantQuery)
 	}
 }
 
-// TestLiveEventSourceBacklogEmptyTailsFromZero: an empty project with a backlog
-// request tails from 0 (nothing to duplicate).
-func TestLiveEventSourceBacklogEmptyTailsFromZero(t *testing.T) {
-	ctx := context.Background()
-	stateRoot := t.TempDir()
-	st, err := store.Open(ctx, store.Options{DSN: store.DSN(storeDBPath(stateRoot))})
-	if err != nil {
-		t.Fatalf("store.Open: %v", err)
+func TestLiveEventSourceZeroBacklogSeedsFromSafeSnapshot(t *testing.T) {
+	client := &fakeObserveClient{snapshot: querySnapshotFixture(0)}
+	client.snapshot.RecentEvents = observe.EventPage{
+		Items: []observe.Event{{ID: 42, Kind: "latest"}},
 	}
-	projectID, err := st.CreateProject(ctx, "events-empty", []store.Fingerprint{
-		{Kind: store.FingerprintKindAbsPath, Value: t.TempDir()},
-	})
-	if err != nil {
-		t.Fatalf("CreateProject: %v", err)
+	client.snapshot.EventCursor = 42
+	src := &liveEventSource{
+		dial: func() (eventClient, error) { return client, nil },
 	}
-	_ = st.Close()
 
-	src := &liveEventSource{stateRoot: stateRoot}
-	events, cursor, err := src.Backlog(ctx, projectID, 5)
+	events, cursor, err := src.Backlog(context.Background(), "project-1", 0)
+	if err != nil {
+		t.Fatalf("Backlog: %v", err)
+	}
+	if len(events) != 0 || cursor != 42 {
+		t.Fatalf("zero backlog: events=%+v cursor=%d, want none and 42", events, cursor)
+	}
+	if client.snapshotQ.EventLimit != 1 {
+		t.Fatalf("event limit = %d, want 1 for cursor seed", client.snapshotQ.EventLimit)
+	}
+}
+
+func TestLiveEventSourceBacklogEmptyTailsFromZero(t *testing.T) {
+	client := &fakeObserveClient{snapshot: querySnapshotFixture(0)}
+	src := &liveEventSource{
+		dial: func() (eventClient, error) { return client, nil },
+	}
+
+	events, cursor, err := src.Backlog(context.Background(), "project-1", 5)
 	if err != nil {
 		t.Fatalf("Backlog: %v", err)
 	}
 	if len(events) != 0 || cursor != 0 {
 		t.Errorf("empty project: got %d events, cursor %d; want 0 events, cursor 0", len(events), cursor)
+	}
+}
+
+func TestLiveEventSourceBacklogRejectsNegativeLimit(t *testing.T) {
+	src := &liveEventSource{
+		dial: func() (eventClient, error) {
+			t.Fatal("negative backlog must fail before dialing")
+			return nil, nil
+		},
+	}
+	if _, _, err := src.Backlog(context.Background(), "project-1", -1); err == nil {
+		t.Fatal("Backlog(-1) error = nil")
+	}
+}
+
+func TestObserveEventToAttachDropsContentBearingFields(t *testing.T) {
+	failure := &observe.FailureSummary{Category: observe.FailureDispatch}
+	got := observeEventToAttach(observe.Event{
+		ID:         7,
+		Kind:       "worker.failed",
+		Stream:     "task",
+		PlanID:     "plan-1",
+		TaskID:     "task-1",
+		OccurredAt: time.Date(2026, time.July, 26, 20, 0, 0, 0, time.UTC),
+		Failure:    failure,
+	})
+	if got.ID != 7 || got.Failure != failure {
+		t.Fatalf("converted event = %+v", got)
+	}
+	encoded, err := json.Marshal(got)
+	if err != nil {
+		t.Fatalf("marshal converted event: %v", err)
+	}
+	if strings.Contains(string(encoded), `"actor"`) ||
+		strings.Contains(string(encoded), `"payload"`) {
+		t.Fatalf("converted event retained legacy content: %s", encoded)
 	}
 }
 

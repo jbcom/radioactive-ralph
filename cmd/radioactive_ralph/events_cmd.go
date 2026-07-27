@@ -8,21 +8,19 @@ import (
 	"os"
 
 	"github.com/jbcom/radioactive-ralph/internal/ipc"
-	"github.com/jbcom/radioactive-ralph/internal/store"
+	"github.com/jbcom/radioactive-ralph/internal/observe"
 	"github.com/jbcom/radioactive-ralph/internal/supervisor"
 	"github.com/jbcom/radioactive-ralph/internal/xdg"
 	"github.com/spf13/cobra"
 )
 
-// eventSource is the seam the events command reads through: a backlog snapshot
-// (+ its max id for the live cursor) and the live tail. The real implementation
-// wraps the store (backlog) and an *ipc.Client (live); tests supply a fake so
-// runEventsWith is exercisable with no supervisor and no store.
+// eventSource is the seam the events command reads through: a safe backlog
+// snapshot (+ its max id for the live cursor) and the safe live tail.
 type eventSource interface {
 	// Backlog returns up to n recent events OLDEST-FIRST plus the highest event
 	// id in the project (the live cursor seed). n==0 returns no rows but still
 	// reports the max id, so a --backlog 0 run tails strictly from "now".
-	Backlog(ctx context.Context, projectID string, n int) (events []store.Event, maxID int64, err error)
+	Backlog(ctx context.Context, projectID string, n int) (events []ipc.AttachEvent, maxID int64, err error)
 	// AttachEvents streams live events with id > args.AfterID until ctx is
 	// cancelled or the stream ends. fn is called once per event.
 	AttachEvents(ctx context.Context, args ipc.AttachArgs, fn func(ipc.AttachEvent) error) error
@@ -45,7 +43,8 @@ func newEventsCmd() *cobra.Command {
 	return cmd
 }
 
-// runEvents wires the real store+client seam, then delegates to runEventsWith.
+// runEvents resolves the current project, wires the safe supervisor client,
+// then delegates to runEventsWith.
 func runEvents(ctx context.Context, cmd *cobra.Command, backlog int, asJSON bool) error {
 	stateRoot, err := xdg.StateRoot()
 	if err != nil {
@@ -60,13 +59,7 @@ func runEvents(ctx context.Context, cmd *cobra.Command, backlog int, asJSON bool
 		return err
 	}
 
-	client, err := supervisor.Find(stateRoot)
-	if err != nil {
-		return errNoSupervisorListening
-	}
-	defer func() { _ = client.Close() }()
-
-	src := &liveEventSource{stateRoot: stateRoot, client: client}
+	src := &liveEventSource{stateRoot: stateRoot}
 	return runEventsWith(ctx, cmd.OutOrStdout(), cmd.ErrOrStderr(), src, projectID, backlog, asJSON)
 }
 
@@ -79,7 +72,7 @@ func runEventsWith(ctx context.Context, out, errOut io.Writer, src eventSource, 
 		return fmt.Errorf("read event backlog: %w", err)
 	}
 	for _, ev := range events {
-		writeEvent(out, errOut, storeEventToAttach(ev), asJSON)
+		writeEvent(out, errOut, ev, asJSON)
 	}
 
 	attachErr := src.AttachEvents(ctx, ipc.AttachArgs{ProjectID: projectID, AfterID: cursor}, func(ev ipc.AttachEvent) error {
@@ -114,79 +107,101 @@ func writeEvent(out, errOut io.Writer, ev ipc.AttachEvent, asJSON bool) {
 	if ev.TaskID != "" {
 		line += " task=" + ev.TaskID
 	}
-	if ev.Actor != "" {
-		line += " actor=" + ev.Actor
+	if ev.Failure != nil {
+		line += " failure=" + string(ev.Failure.Category)
 	}
 	_, _ = fmt.Fprintln(out, line)
 }
 
-// storeEventToAttach maps a stored backlog row to the same wire shape the live
-// stream delivers, so backlog and live lines render identically.
-func storeEventToAttach(ev store.Event) ipc.AttachEvent {
-	var payload json.RawMessage
-	if ev.PayloadJSON != "" {
-		payload = json.RawMessage(ev.PayloadJSON)
-	}
+func observeEventToAttach(ev observe.Event) ipc.AttachEvent {
 	return ipc.AttachEvent{
 		ID:         ev.ID,
 		Kind:       ev.Kind,
 		Stream:     ev.Stream,
 		PlanID:     ev.PlanID,
 		TaskID:     ev.TaskID,
-		Actor:      ev.Actor,
-		Payload:    payload,
 		OccurredAt: ev.OccurredAt,
+		Failure:    ev.Failure,
 	}
 }
 
-// liveEventSource is the production eventSource: the backlog + cursor come from
-// the store, the live tail from the supervisor client.
+// liveEventSource reads both backlog and live tail through fresh one-shot
+// supervisor connections. It never opens SQLite.
 type liveEventSource struct {
 	stateRoot string
-	client    *ipc.Client
+	dial      func() (eventClient, error)
 }
 
-func (s *liveEventSource) Backlog(ctx context.Context, projectID string, n int) ([]store.Event, int64, error) {
-	st, err := store.Open(ctx, store.Options{DSN: store.DSN(storeDBPath(s.stateRoot))})
-	if err != nil {
-		return nil, 0, fmt.Errorf("open store: %w", err)
-	}
-	defer func() { _ = st.Close() }()
+type eventClient interface {
+	observeClient
+	AttachEvents(
+		context.Context,
+		ipc.AttachArgs,
+		func(ipc.AttachEvent) error,
+	) error
+	Close() error
+}
 
-	// With a backlog, the live cursor is the newest id IN THE BACKLOG READ
-	// itself — NOT a separate MaxEventID query. Two independent queries would
-	// race: the supervisor (the very process this command tails) could insert an
-	// event between them whose id exceeds a separately-read max, so it would
-	// print once in the backlog AND again in the live tail (a duplicate). Taking
-	// the cursor from the same result set the backlog prints makes the seam
-	// exact — every printed row has id <= cursor, and the live tail delivers only
-	// id > cursor. ListProjectEvents is newest-first, so recent[0] is the max.
-	if n > 0 {
-		recent, err := st.ListProjectEvents(ctx, projectID, n)
-		if err != nil {
-			return nil, 0, fmt.Errorf("list events: %w", err)
-		}
-		if len(recent) == 0 {
-			// No events yet; tail from the beginning (nothing to duplicate).
-			return nil, 0, nil
-		}
-		cursor := recent[0].ID // newest-first: the highest id in this page
-		// Reverse to oldest-first for a readable scrollback that flows into live.
-		for i, j := 0, len(recent)-1; i < j; i, j = i+1, j-1 {
-			recent[i], recent[j] = recent[j], recent[i]
-		}
-		return recent, cursor, nil
+func (s *liveEventSource) open() (eventClient, error) {
+	if s.dial != nil {
+		return s.dial()
 	}
+	return supervisor.Find(s.stateRoot)
+}
 
-	// No backlog requested: seed the cursor to the current max so the stream
-	// tails strictly from "now". A single query, so no race to worry about.
-	maxID, err := st.MaxEventID(ctx, projectID)
-	if err != nil {
-		return nil, 0, fmt.Errorf("max event id: %w", err)
+func (s *liveEventSource) Backlog(
+	ctx context.Context,
+	projectID string,
+	n int,
+) ([]ipc.AttachEvent, int64, error) {
+	if n < 0 {
+		return nil, 0, fmt.Errorf("backlog must be non-negative")
 	}
-	return nil, maxID, nil
+	client, err := s.open()
+	if err != nil {
+		return nil, 0, errNoSupervisorListening
+	}
+	defer func() { _ = client.Close() }()
+
+	eventLimit := n
+	if eventLimit == 0 {
+		// One safe event is enough to seed the live cursor while printing no
+		// backlog. Zero would select the store default rather than "none".
+		eventLimit = 1
+	}
+	query := ipc.ObserveSnapshotArgs{
+		ProjectID:  projectID,
+		PlanLimit:  1,
+		TaskLimit:  1,
+		EventLimit: eventLimit,
+	}
+	snapshot, err := client.ObserveSnapshot(ctx, query)
+	if err != nil {
+		return nil, 0, queryCommandError(err)
+	}
+	if err := observe.ValidateSnapshotResponse(snapshot, query); err != nil {
+		return nil, 0, fmt.Errorf("event backlog: %w", err)
+	}
+	recent := snapshot.RecentEvents.Items
+	if len(recent) == 0 {
+		return []ipc.AttachEvent{}, snapshot.EventCursor, nil
+	}
+	cursor := snapshot.EventCursor
+	if n == 0 {
+		return []ipc.AttachEvent{}, cursor, nil
+	}
+	events := make([]ipc.AttachEvent, 0, len(recent))
+	for i := len(recent) - 1; i >= 0; i-- {
+		events = append(events, observeEventToAttach(recent[i]))
+	}
+	return events, cursor, nil
 }
 
 func (s *liveEventSource) AttachEvents(ctx context.Context, args ipc.AttachArgs, fn func(ipc.AttachEvent) error) error {
-	return s.client.AttachEvents(ctx, args, fn)
+	client, err := s.open()
+	if err != nil {
+		return errNoSupervisorListening
+	}
+	defer func() { _ = client.Close() }()
+	return client.AttachEvents(ctx, args, fn)
 }

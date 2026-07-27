@@ -4,7 +4,6 @@ package gui
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"sync"
 	"sync/atomic"
@@ -17,8 +16,7 @@ import (
 	"fyne.io/fyne/v2/lang"
 	"fyne.io/fyne/v2/widget"
 	"github.com/jbcom/radioactive-ralph/internal/ipc"
-	"github.com/jbcom/radioactive-ralph/internal/orch"
-	"github.com/jbcom/radioactive-ralph/internal/store"
+	"github.com/jbcom/radioactive-ralph/internal/observe"
 )
 
 // refreshInterval is how often the GUI re-fetches Status + the current view's
@@ -686,13 +684,13 @@ func (u *ui) runAttach(ctx context.Context) {
 		if ctx.Err() != nil {
 			return
 		}
-		_ = u.ctrl.Attach(ctx, func(raw json.RawMessage) error {
+		_ = u.ctrl.Attach(ctx, func(event ipc.AttachEvent) error {
 			// Only refresh for events that change visible aggregate state
 			// (task/plan/worker lifecycle). Skipping pure log/heartbeat kinds
 			// (tick, task.progress) avoids a full-snapshot re-read storm on a
 			// busy stream — the GUI re-reads everything from the store, so a
 			// per-frame refresh for a heartbeat would be pure waste.
-			if eventTriggersRefresh(raw) {
+			if eventTriggersRefresh(event) {
 				u.refreshNow()
 			}
 			return nil
@@ -720,12 +718,11 @@ var refreshNoiseKinds = map[string]bool{
 // eventTriggersRefresh reports whether a live Attach frame should trigger a GUI
 // refresh. An undecodable frame defaults to true: if we can't tell what it is,
 // refreshing is the safe (merely-wasteful) choice over silently going stale.
-func eventTriggersRefresh(raw json.RawMessage) bool {
-	var ev ipc.AttachEvent
-	if err := json.Unmarshal(raw, &ev); err != nil || ev.Kind == "" {
+func eventTriggersRefresh(event ipc.AttachEvent) bool {
+	if event.Kind == "" {
 		return true
 	}
-	return !refreshNoiseKinds[ev.Kind]
+	return !refreshNoiseKinds[event.Kind]
 }
 
 // refreshNow gathers a complete data snapshot for the current drill level OFF
@@ -790,7 +787,7 @@ func (u *ui) refreshNow() {
 		default:
 			u.setBanner("")
 		}
-		u.header.SetText(headerText(snap.status, snap.err))
+		u.header.SetText(headerText(snap.summary, snap.capturedAt, snap.err))
 		// While the transient import form is up, refresh the header/banner (so
 		// liveness and errors still update) but do NOT rebuild the body — that
 		// form is built imperatively, not from a snapshot, so re-rendering would
@@ -855,15 +852,24 @@ type snapshot struct {
 	level        drillLevel
 	selectedPlan string
 	selectedTask string
-	status       ipc.StatusReply
+	capturedAt   time.Time
+	summary      observe.Summary
 	err          error
 
-	plans      []store.Plan
-	progress   map[string]orch.Progress // planID -> progress (macro)
-	projEvents []store.Event            // macro: recent project-wide events
-	tasks      []store.Task             // meso
-	events     []store.Event            // micro
-	killID     string                   // micro: worker id running the selected task ("" = none)
+	plans         []observe.Plan
+	plansHasMore  bool
+	progress      map[string]guiProgress
+	projEvents    []observe.Event
+	tasks         []observe.Task
+	tasksHasMore  bool
+	events        []observe.Event
+	eventsHasMore bool
+	killID        string
+}
+
+type guiProgress struct {
+	Done  int
+	Total int
 }
 
 type drillLevel int
@@ -880,49 +886,70 @@ const (
 // gather — a partial view beats a blank one.
 func (u *ui) gather(plan, task string) snapshot {
 	s := snapshot{selectedPlan: plan, selectedTask: task}
-	st, err := u.ctrl.Status(u.ctx)
-	s.status = st
-	s.err = err
-
+	query := observe.SnapshotQuery{
+		ProjectID:  u.project,
+		PlanLimit:  observe.MaxPageLimit,
+		TaskLimit:  1,
+		EventLimit: 1,
+	}
 	switch {
 	case plan != "" && task != "":
 		s.level = levelMicro
-		s.events, _ = u.ctrl.ListTaskEvents(u.ctx, plan, task, 50)
-		// The kill key is the worker that CLAIMED this task. Read it from the
-		// task's own claimed_by_worker_id, which is authoritative even for a
-		// native-fanout group where one worker claims several tasks but the
-		// worker row's current_task_id records only the first — so the kill
-		// affordance appears on every task the worker holds, not just the first.
-		// Fall back to the status Workers scan if the task row is unavailable.
-		if tasks, terr := u.ctrl.ListTasks(u.ctx, plan); terr == nil {
-			for _, t := range tasks {
-				if t.ID == task && t.Status == store.TaskStatusRunning {
-					s.killID = t.ClaimedByWorkerID
-					break
-				}
+		query.PlanID = plan
+		query.TaskID = task
+		query.PlanLimit = 1
+		query.TaskLimit = 1
+		query.EventLimit = 50
+	case plan != "":
+		s.level = levelMeso
+		query.PlanID = plan
+		query.PlanLimit = 1
+		query.TaskLimit = observe.MaxPageLimit
+	default:
+		s.level = levelMacro
+		query.EventLimit = 20
+	}
+
+	reply, err := u.ctrl.Snapshot(u.ctx, query)
+	if err != nil {
+		s.err = err
+		return s
+	}
+	s.capturedAt = reply.CapturedAt
+	s.summary = reply.Summary
+	s.plans = reply.Plans.Items
+	s.plansHasMore = reply.Plans.HasMore
+	s.tasks = reply.Tasks.Items
+	s.tasksHasMore = reply.Tasks.HasMore
+	s.eventsHasMore = reply.RecentEvents.HasMore
+	s.progress = make(map[string]guiProgress, len(reply.Plans.Items))
+	for _, item := range reply.Plans.Items {
+		s.progress[item.ID] = guiProgress{
+			Done:  item.TaskDone,
+			Total: item.TaskTotal,
+		}
+	}
+	if s.level == levelMacro {
+		s.projEvents = reply.RecentEvents.Items
+	}
+	if s.level == levelMicro {
+		s.events = reply.RecentEvents.Items
+		for _, item := range reply.Tasks.Items {
+			if item.ID == task && item.Status == "running" {
+				s.killID = item.ClaimedByWorkerID
+				break
 			}
 		}
 		if s.killID == "" {
-			for _, w := range st.Workers {
-				if w.PlanID == plan && w.TaskID == task {
-					s.killID = w.WorkerID // store worker-row id — the kill key
-					break
+			for _, worker := range reply.Workers {
+				for _, claim := range worker.Claims {
+					if claim.PlanID == plan && claim.TaskID == task {
+						s.killID = worker.ID
+						break
+					}
 				}
 			}
 		}
-	case plan != "":
-		s.level = levelMeso
-		s.tasks, _ = u.ctrl.ListTasks(u.ctx, plan)
-	default:
-		s.level = levelMacro
-		s.plans, _ = u.ctrl.ListPlans(u.ctx, u.project)
-		s.progress = make(map[string]orch.Progress, len(s.plans))
-		for _, p := range s.plans {
-			pr, _ := u.ctrl.PlanProgress(u.ctx, p.ID)
-			s.progress[p.ID] = pr
-		}
-		// The ambient project-activity feed the TUI's macro view also shows.
-		s.projEvents, _ = u.ctrl.ListProjectEvents(u.ctx, u.project, 20)
 	}
 	return s
 }

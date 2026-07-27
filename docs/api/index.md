@@ -32,6 +32,7 @@ internal/doctor
 internal/genesis
 internal/gui
 internal/ipc
+internal/observe
 internal/onboard
 internal/orch
 internal/plan
