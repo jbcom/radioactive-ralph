@@ -423,7 +423,7 @@ func Fingerprints(ctx context.Context, dir string) ([]Fingerprint, error)
 Fingerprints computes the identity fingerprints for a directory: always the cleaned absolute path, plus — best\-effort, if dir is a git repository — the root\-commit sha and any "origin" remote URL. A fingerprint whose git command fails \(e.g. no origin remote configured\) is silently skipped rather than failing the whole call.
 
 <a name="OperatorEvent"></a>
-## type [OperatorEvent](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/operator_snapshot.go#L162-L169>)
+## type [OperatorEvent](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/operator_snapshot.go#L162-L178>)
 
 OperatorEvent is safe event metadata. Raw payload, actor/provider output, and any IDs carried inside the payload are never selected.
 
@@ -435,11 +435,20 @@ type OperatorEvent struct {
     Kind       string    `json:"kind"`
     Stream     string    `json:"stream"`
     OccurredAt time.Time `json:"occurred_at"`
+    // FailureCategory is the provider failure code from the event payload, or
+    // "" when the event carries none.
+    //
+    // This is the ONLY payload field selected here, and it is safe precisely
+    // because it is a CLOSED SET of fixed constants (see provider.Failure) —
+    // never provider prose. The rest of payload_json stays off this DTO: it can
+    // contain arbitrary text from an external process, which is what the
+    // content-safety boundary exists to keep away from operator surfaces.
+    FailureCategory string `json:"failure_category,omitempty"`
 }
 ```
 
 <a name="OperatorEventPage"></a>
-## type [OperatorEventPage](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/operator_snapshot.go#L173-L177>)
+## type [OperatorEventPage](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/operator_snapshot.go#L182-L186>)
 
 OperatorEventPage is one bounded newest\-first event page. NextBeforeID is a keyset cursor that continues toward older events.
 
@@ -1267,7 +1276,7 @@ func (s *Store) PutTaskMetadata(ctx context.Context, planID, taskID, groupPath, 
 PutTaskMetadata inserts the immutable half of a task's metadata row. Plan import owns this; provenance fields are filled in later by the dispatch path.
 
 <a name="Store.ReadOperatorSnapshot"></a>
-### func \(\*Store\) [ReadOperatorSnapshot](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/operator_snapshot.go#L187-L190>)
+### func \(\*Store\) [ReadOperatorSnapshot](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/operator_snapshot.go#L196-L199>)
 
 ```go
 func (s *Store) ReadOperatorSnapshot(ctx context.Context, q OperatorSnapshotQuery) (*OperatorSnapshot, error)

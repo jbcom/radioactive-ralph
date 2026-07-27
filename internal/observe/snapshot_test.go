@@ -551,7 +551,8 @@ func TestFailureForEventUsesOnlyClosedStaticTaxonomy(t *testing.T) {
 		{"worker.admission_refused", FailureAdmission, "worker admission was refused", false},
 	}
 	for _, test := range tests {
-		got := failureForEvent(test.kind)
+		// No provider category: this table covers the kind-derived defaults.
+		got := failureForEvent(test.kind, "")
 		if got == nil {
 			t.Fatalf("failureForEvent(%q) = nil", test.kind)
 		}
@@ -561,7 +562,7 @@ func TestFailureForEventUsesOnlyClosedStaticTaxonomy(t *testing.T) {
 			t.Errorf("failureForEvent(%q) = %+v, want %+v", test.kind, got, test)
 		}
 	}
-	if got := failureForEvent("worker.private-output"); got != nil {
+	if got := failureForEvent("worker.private-output", ""); got != nil {
 		t.Fatalf("unknown event was classified from content: %+v", got)
 	}
 }

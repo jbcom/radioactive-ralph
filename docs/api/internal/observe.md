@@ -90,7 +90,7 @@ var (
 ```
 
 <a name="StateForTask"></a>
-## func [StateForTask](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/observe/snapshot.go#L969>)
+## func [StateForTask](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/observe/snapshot.go#L975>)
 
 ```go
 func StateForTask(status store.TaskStatus) (sdka2a.TaskState, error)
@@ -117,7 +117,7 @@ func ValidateSnapshotResponse(snapshot *Snapshot, q SnapshotQuery) error
 ValidateSnapshotResponse verifies the decoded wire response before an operator client renders or makes automation decisions from it.
 
 <a name="Event"></a>
-## type [Event](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/observe/snapshot.go#L509-L517>)
+## type [Event](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/observe/snapshot.go#L515-L523>)
 
 Event is bounded safe event metadata. Failure is present only for a closed set of recognized failure kinds and contains a static summary.
 
@@ -134,7 +134,7 @@ type Event struct {
 ```
 
 <a name="EventFromMetadata"></a>
-### func [EventFromMetadata](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/observe/snapshot.go#L954>)
+### func [EventFromMetadata](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/observe/snapshot.go#L960>)
 
 ```go
 func EventFromMetadata(item store.OperatorEvent) Event
@@ -143,7 +143,7 @@ func EventFromMetadata(item store.OperatorEvent) Event
 EventFromMetadata projects one already\-scoped safe store event into the public event shape. Live Attach uses this same function as snapshot backlog, so their privacy and failure\-taxonomy contracts cannot drift.
 
 <a name="EventPage"></a>
-## type [EventPage](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/observe/snapshot.go#L520-L524>)
+## type [EventPage](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/observe/snapshot.go#L526-L530>)
 
 EventPage is one newest\-first event metadata page.
 
@@ -170,14 +170,20 @@ type FailureCategory string
 const (
     FailureTaskAttempt  FailureCategory = "task_attempt"
     FailureTaskTerminal FailureCategory = "task_terminal"
-    FailureVerification FailureCategory = "verification"
-    FailureDispatch     FailureCategory = "dispatch"
-    FailureAdmission    FailureCategory = "admission"
+    // Provider-cause categories, mirrored from provider.FailureCategory. They
+    // tell an operator WHICH remediation applies — re-authenticate, wait, or
+    // retry — rather than only that a turn failed.
+    FailureProviderAuth        FailureCategory = "provider_auth"
+    FailureProviderThrottled   FailureCategory = "provider_throttled"
+    FailureProviderUnavailable FailureCategory = "provider_unavailable"
+    FailureVerification        FailureCategory = "verification"
+    FailureDispatch            FailureCategory = "dispatch"
+    FailureAdmission           FailureCategory = "admission"
 )
 ```
 
 <a name="FailureSummary"></a>
-## type [FailureSummary](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/observe/snapshot.go#L501-L505>)
+## type [FailureSummary](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/observe/snapshot.go#L507-L511>)
 
 FailureSummary explains a recognized failure event using only static text. It never includes raw provider output, prompts, argv, stderr, or event payload fields.
 
@@ -190,7 +196,7 @@ type FailureSummary struct {
 ```
 
 <a name="MessageMetadata"></a>
-## type [MessageMetadata](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/observe/snapshot.go#L538-L547>)
+## type [MessageMetadata](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/observe/snapshot.go#L544-L553>)
 
 MessageMetadata is the safe A2A envelope index. It deliberately is not an a2a.Message: message Parts are content and remain behind the store boundary.
 
@@ -208,7 +214,7 @@ type MessageMetadata struct {
 ```
 
 <a name="MessagePage"></a>
-## type [MessagePage](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/observe/snapshot.go#L550-L555>)
+## type [MessagePage](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/observe/snapshot.go#L556-L561>)
 
 MessagePage is one versioned chronological metadata page.
 
@@ -222,7 +228,7 @@ type MessagePage struct {
 ```
 
 <a name="MessageQuery"></a>
-## type [MessageQuery](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/observe/snapshot.go#L528-L534>)
+## type [MessageQuery](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/observe/snapshot.go#L534-L540>)
 
 MessageQuery selects bounded, oldest\-first, content\-free A2A message metadata. TaskID requires PlanID; the store validates every scope and cursor.
 
@@ -330,7 +336,7 @@ func New(reader Reader) (*Service, error)
 New constructs a read\-only observation service.
 
 <a name="Service.Messages"></a>
-### func \(\*Service\) [Messages](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/observe/snapshot.go#L615-L618>)
+### func \(\*Service\) [Messages](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/observe/snapshot.go#L621-L624>)
 
 ```go
 func (s *Service) Messages(ctx context.Context, q MessageQuery) (*MessagePage, error)
@@ -339,7 +345,7 @@ func (s *Service) Messages(ctx context.Context, q MessageQuery) (*MessagePage, e
 Messages reads and projects one bounded chronological A2A message metadata page. Message content is never requested from the Reader.
 
 <a name="Service.Snapshot"></a>
-### func \(\*Service\) [Snapshot](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/observe/snapshot.go#L559-L562>)
+### func \(\*Service\) [Snapshot](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/observe/snapshot.go#L565-L568>)
 
 ```go
 func (s *Service) Snapshot(ctx context.Context, q SnapshotQuery) (*Snapshot, error)
