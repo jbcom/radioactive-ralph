@@ -166,15 +166,14 @@ tags before deletion: `archive/plan-v2-dag`, `archive/release-022-recovery-scrat
       `after: []` is the explicit root opt-out), plan import is transactional
       everywhere, `group_path` is a persisted contract, and containment is
       documented as detection rather than a boundary.
-- [ ] Issue #204 (feat/operator-observability-a2a) — NEEDS_WORK, do not PR yet.
-      The query/control plane, projection service, and IPC v3 surface are strong
-      and privacy on the NEW path is airtight. Blockers: 2 e2e tests fail that
-      pass on main (TUI lost `Description`, dropped by observe.Task on purpose);
-      `init_cmd.go` + `client.go` still open the store directly (untouched by the
-      branch); `plan_cmd.go` runPlanLs still opens the store and has no `--json`;
-      legacy `StatusReply.RepoPath`/`PID`/`WorkerSummary.ProviderSessionID` remain
-      in the live CmdStatus wire contract; Claude auth-failure classification not
-      implemented (internal/provider untouched — only Codex has a classifier).
+- [x] Issue #204 first tranche — SUPERSEDED by the [WAIT] entries for #219/#220
+      below. Three of the five original blockers are resolved: the 2 e2e
+      failures (the TUI/GUI had lost task labels; fixed via an opt-in plan-scoped
+      query rather than by widening the snapshot, because the privacy test
+      deliberately seeds a description of "/private/repository/source-plan.md"
+      to prove descriptions can carry paths), and `plan_cmd.go`'s direct store
+      access plus its missing `--json`. The remaining two are tracked as their
+      own item below.
 - [x] DAG increment 4 (#217) — MERGED as 736e31d, released v0.23.0. Plan model
       learns dependency edges. Review found a REAL ordering-safety hole:
       `encoding/json` keeps the LAST value for a duplicate key, so
@@ -194,13 +193,20 @@ tags before deletion: `archive/plan-v2-dag`, `archive/release-022-recovery-scrat
       second writer to a supervisor-owned DB, and silently produced a plan
       nothing was driving). `plan_cmd.go` joins the architecture gate so it
       cannot regress. Stacked on #219.
-- [ ] Issue #204 remainder — #219 lands the read model, projection, IPC query,
-      and the opt-in per-plan task-label query, but does NOT close the issue.
-      Still open: `init_cmd.go`/`client.go`/`plan_cmd.go` call `store.Open`
-      directly (1/1/2 sites); `plan ls` has no `--json`; `StatusReply.RepoPath`,
-      `StatusReply.PID` and `WorkerSummary.ProviderSessionID` remain on the live
-      `CmdStatus` wire contract with PID still populated by `os.Getpid()`; Claude
-      auth failures unclassified (only Codex has a classifier).
+- [ ] Issue #204 remainder — three criteria left after #219 + #220 land:
+      1. `init_cmd.go` and `client.go` still call `store.Open`. These are WRITES
+         (`CreateProject`, `AddProjectIdentifiers`, `ApplyProjectConfig`,
+         `TouchProjectLastSeen`, `ResolveProject`), so they need new drive
+         commands, not an observe query — decision recorded 2026-07-27T05:30.
+         AGENTS.md already settles the design question: the client "initializes
+         project config" over the socket and "refuses to run without a
+         supervisor", so there is no legitimate pre-supervisor bootstrap window.
+      2. `StatusReply.RepoPath`, `StatusReply.PID`, and
+         `WorkerSummary.ProviderSessionID` remain declared on the live
+         `CmdStatus` wire contract, with PID still populated by `os.Getpid()`.
+      3. Claude auth failures are unclassified — `internal/provider` is untouched
+         and only Codex has a failure classifier
+         (`codex_diagnostics.go:classifyCodexFailure`).
 - [ ] DAG integration — increments 5-12. Central verified finding: **main already has the DAG store
       layer.** `task_deps` ships in 0001_initial with cycle prevention in
       `AddDep`; `Ready`/`ClaimNextReady` already walk the edges. The gap is
