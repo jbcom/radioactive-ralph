@@ -349,6 +349,26 @@ func (s *Store) ClaimNextReady(ctx context.Context, planID, sessionID, workerID 
 		      AND d.task_id = tasks.id
 		      AND tdep.status NOT IN ('done', 'skipped', 'decomposed')
 		  )
+		  -- Admission, not readiness: SKIP a task whose declared output path is
+		  -- also declared by a RUNNING peer. Skipping rather than failing is what
+		  -- keeps the unnamed claim useful — a blocked task must not hide the
+		  -- other ready work behind it. Scoped to running holders because a
+		  -- reservation is a lock for the duration of a run, not a permanent
+		  -- assignment of a path to a task.
+		  AND NOT EXISTS (
+		    SELECT 1
+		    FROM task_output_reservations mine
+		    JOIN task_output_reservations theirs
+		      ON theirs.plan_id = mine.plan_id
+		     AND theirs.path    = mine.path
+		     AND theirs.task_id <> mine.task_id
+		    JOIN tasks holder
+		      ON holder.plan_id = theirs.plan_id
+		     AND holder.id      = theirs.task_id
+		    WHERE mine.plan_id = tasks.plan_id
+		      AND mine.task_id = tasks.id
+		      AND holder.status = 'running'
+		  )
 		ORDER BY
 		  CASE WHEN sequence_ordinal IS NULL THEN 1 ELSE 0 END,
 		  sequence_ordinal,
