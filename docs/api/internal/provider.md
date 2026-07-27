@@ -39,6 +39,8 @@ Package provider adapts configured CLI backends into radioactive\_ralph's provid
 - [type Failure](<#Failure>)
   - [func ClassifyFailure\(err error\) Failure](<#ClassifyFailure>)
   - [func \(f Failure\) Error\(\) string](<#Failure.Error>)
+  - [func \(f Failure\) RetryBudget\(configured int\) int](<#Failure.RetryBudget>)
+  - [func \(f Failure\) Retryable\(\) bool](<#Failure.Retryable>)
   - [func \(f Failure\) Unwrap\(\) error](<#Failure.Unwrap>)
 - [type FailureCategory](<#FailureCategory>)
 - [type File](<#File>)
@@ -75,6 +77,25 @@ const (
 ```
 
 ## Variables
+
+<a name="ErrClaudeAuthentication"></a>Narrower failure categories, derived from the result frame's api\_error\_status. Each is a distinct remediation an operator can act on: re\-authenticate, wait, change model, or retry. Before these existed every one of them arrived as ErrClaudeResultFailed — "claude reported an unsuccessful result" — which tells an operator nothing.
+
+Each is a FIXED CONSTANT. No text from the provider crosses this boundary: the frame's \`result\` field carries operator\-facing prose from an external process \("Invalid API key · Fix external API key"\), and laundering that into Ralph's error surface is exactly what the never\-scrape invariant forbids.
+
+```go
+var (
+    // ErrClaudeAuthentication is a rejected credential (HTTP 401).
+    ErrClaudeAuthentication = errors.New("provider: claude authentication rejected")
+    // ErrClaudeModelAccess is a forbidden model or account (HTTP 403).
+    ErrClaudeModelAccess = errors.New("provider: claude model unavailable or access denied")
+    // ErrClaudeRateLimit is throttling (HTTP 429).
+    ErrClaudeRateLimit = errors.New("provider: claude rate limited")
+    // ErrClaudeServiceUnavailable is an upstream fault (HTTP 5xx).
+    ErrClaudeServiceUnavailable = errors.New("provider: claude service unavailable")
+    // ErrClaudeInvalidRequest is a malformed or rejected request (HTTP 400).
+    ErrClaudeInvalidRequest = errors.New("provider: claude rejected the request")
+)
+```
 
 <a name="ErrAuthoritativeResultTooLarge"></a>
 
@@ -396,7 +417,7 @@ type ClaudeRunner struct{}
 ```
 
 <a name="ClaudeRunner.Run"></a>
-### func \(ClaudeRunner\) [Run](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/claude.go#L47>)
+### func \(ClaudeRunner\) [Run](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/claude.go#L70>)
 
 ```go
 func (ClaudeRunner) Run(ctx context.Context, binding Binding, req Request) (Result, error)
@@ -443,7 +464,7 @@ func (DeclarativeRunner) Run(ctx context.Context, binding Binding, req Request) 
 Run executes one declarative provider turn.
 
 <a name="Failure"></a>
-## type [Failure](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/failure.go#L35-L39>)
+## type [Failure](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/failure.go#L46-L50>)
 
 Failure is the privacy\-safe durable representation of a provider error. Cause remains available transiently for errors.Is/debug logging, but Summary and Category are the only fields suitable for evidence or event persistence.
 
@@ -456,7 +477,7 @@ type Failure struct {
 ```
 
 <a name="ClassifyFailure"></a>
-### func [ClassifyFailure](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/failure.go#L46>)
+### func [ClassifyFailure](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/failure.go#L97>)
 
 ```go
 func ClassifyFailure(err error) Failure
@@ -465,7 +486,7 @@ func ClassifyFailure(err error) Failure
 ClassifyFailure converts a transient provider error to its durable, provider\-output\-free category and summary.
 
 <a name="Failure.Error"></a>
-### func \(Failure\) [Error](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/failure.go#L41>)
+### func \(Failure\) [Error](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/failure.go#L52>)
 
 ```go
 func (f Failure) Error() string
@@ -473,8 +494,30 @@ func (f Failure) Error() string
 
 
 
+<a name="Failure.RetryBudget"></a>
+### func \(Failure\) [RetryBudget](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/failure.go#L88>)
+
+```go
+func (f Failure) RetryBudget(configured int) int
+```
+
+RetryBudget returns the retry count dispatch should hand to the store for this failure: the caller's budget when the failure is worth retrying, and ZERO when it is not, which makes the task fail terminally on this attempt.
+
+<a name="Failure.Retryable"></a>
+### func \(Failure\) [Retryable](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/failure.go#L65>)
+
+```go
+func (f Failure) Retryable() bool
+```
+
+Retryable reports whether re\-running the turn could plausibly succeed.
+
+This lives on the classification rather than in dispatch because the answer is a property of WHY the turn failed, and every dispatch path needs the same answer. The split is operational: retrying an invalid credential burns the retry budget on turns that cannot succeed and DELAYS the operator seeing a terminal error, while a 429 or a 503 is precisely what retries exist for.
+
+The default is RETRYABLE, matching the pre\-classification behavior — a category nobody has reasoned about should not silently become terminal.
+
 <a name="Failure.Unwrap"></a>
-### func \(Failure\) [Unwrap](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/failure.go#L42>)
+### func \(Failure\) [Unwrap](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/failure.go#L53>)
 
 ```go
 func (f Failure) Unwrap() error
@@ -509,6 +552,17 @@ const (
     FailureCanceled FailureCategory = "canceled"
     // FailureProviderRejected means the provider reported an unsuccessful turn.
     FailureProviderRejected FailureCategory = "provider_rejected"
+    // FailureProviderAuth means the provider rejected the credential or denied
+    // access to the requested model. Separate from provider_rejected because
+    // the remediation is an operator action (fix the key, grant the model), and
+    // because it is NOT worth retrying — a credential does not fix itself.
+    FailureProviderAuth FailureCategory = "provider_auth"
+    // FailureProviderThrottled means the provider rate-limited the turn.
+    // Retrying after a wait is precisely the remedy.
+    FailureProviderThrottled FailureCategory = "provider_throttled"
+    // FailureProviderUnavailable means an upstream provider fault (HTTP 5xx).
+    // Transient by nature, so worth retrying.
+    FailureProviderUnavailable FailureCategory = "provider_unavailable"
     // FailureRuntime is the fail-closed category for unrecognized failures.
     FailureRuntime FailureCategory = "provider_runtime"
 )

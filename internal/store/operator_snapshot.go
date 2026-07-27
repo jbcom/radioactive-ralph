@@ -166,6 +166,15 @@ type OperatorEvent struct {
 	Kind       string    `json:"kind"`
 	Stream     string    `json:"stream"`
 	OccurredAt time.Time `json:"occurred_at"`
+	// FailureCategory is the provider failure code from the event payload, or
+	// "" when the event carries none.
+	//
+	// This is the ONLY payload field selected here, and it is safe precisely
+	// because it is a CLOSED SET of fixed constants (see provider.Failure) —
+	// never provider prose. The rest of payload_json stays off this DTO: it can
+	// contain arbitrary text from an external process, which is what the
+	// content-safety boundary exists to keep away from operator surfaces.
+	FailureCategory string `json:"failure_category,omitempty"`
 }
 
 // OperatorEventPage is one bounded newest-first event page. NextBeforeID is a
@@ -853,7 +862,10 @@ func readOperatorEvents(
 	rows, err := tx.QueryContext(ctx, `
 		SELECT e.id, COALESCE(ep.id, ''),
 		       CASE WHEN ep.id IS NULL THEN '' ELSE COALESCE(e.task_id, '') END,
-		       e.kind, COALESCE(e.stream, ''), e.occurred_at
+		       e.kind, COALESCE(e.stream, ''), e.occurred_at,
+		       -- The closed-set failure code only. json_extract on this ONE key
+		       -- cannot surface free text from the rest of the payload.
+		       COALESCE(json_extract(e.payload_json, '$.failure_category'), '')
 		FROM events e
 		LEFT JOIN plans ep ON ep.id = e.plan_id AND ep.project_id = ?
 		WHERE (
@@ -896,6 +908,7 @@ func readOperatorEvents(
 			&event.Kind,
 			&event.Stream,
 			&occurredRaw,
+			&event.FailureCategory,
 		); err != nil {
 			return OperatorEventPage{}, fmt.Errorf("store: scan operator event: %w", err)
 		}

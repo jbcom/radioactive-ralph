@@ -39,6 +39,29 @@ var ErrClaudeMaximumTurns = errors.New("provider: claude maximum-turn limit reac
 // authoritative result frame.
 var ErrClaudeMissingResult = errors.New("provider: claude exited without a result frame")
 
+// Narrower failure categories, derived from the result frame's
+// api_error_status. Each is a distinct remediation an operator can act on:
+// re-authenticate, wait, change model, or retry. Before these existed every one
+// of them arrived as ErrClaudeResultFailed — "claude reported an unsuccessful
+// result" — which tells an operator nothing.
+//
+// Each is a FIXED CONSTANT. No text from the provider crosses this boundary:
+// the frame's `result` field carries operator-facing prose from an external
+// process ("Invalid API key · Fix external API key"), and laundering that into
+// Ralph's error surface is exactly what the never-scrape invariant forbids.
+var (
+	// ErrClaudeAuthentication is a rejected credential (HTTP 401).
+	ErrClaudeAuthentication = errors.New("provider: claude authentication rejected")
+	// ErrClaudeModelAccess is a forbidden model or account (HTTP 403).
+	ErrClaudeModelAccess = errors.New("provider: claude model unavailable or access denied")
+	// ErrClaudeRateLimit is throttling (HTTP 429).
+	ErrClaudeRateLimit = errors.New("provider: claude rate limited")
+	// ErrClaudeServiceUnavailable is an upstream fault (HTTP 5xx).
+	ErrClaudeServiceUnavailable = errors.New("provider: claude service unavailable")
+	// ErrClaudeInvalidRequest is a malformed or rejected request (HTTP 400).
+	ErrClaudeInvalidRequest = errors.New("provider: claude rejected the request")
+)
+
 // Run spawns `claude -p --input-format stream-json --output-format
 // stream-json` under agent.Start, feeds req.UserPrompt through a finite stdin
 // pipe (claude in --input-format stream-json mode reads a JSON-line user
@@ -234,7 +257,12 @@ type claudeResultFrame struct {
 	TotalCostUSD float64 `json:"total_cost_usd"`
 	Subtype      string  `json:"subtype"`
 	IsError      bool    `json:"is_error"`
-	Usage        struct {
+	// APIErrorStatus is the upstream HTTP status when the turn failed against
+	// the API. It is the STRUCTURED failure signal — preferred over matching
+	// the frame's human-readable `result` prose, which is unstable across CLI
+	// versions and would drag provider text across the boundary.
+	APIErrorStatus int `json:"api_error_status"`
+	Usage          struct {
 		InputTokens              int `json:"input_tokens"`
 		OutputTokens             int `json:"output_tokens"`
 		CacheReadInputTokens     int `json:"cache_read_input_tokens"`
@@ -249,7 +277,38 @@ func (f claudeResultFrame) failure() error {
 	if f.Subtype == "error_max_turns" {
 		return ErrClaudeMaximumTurns
 	}
+	// Verified against claude 2.1.220: an invalid API key produces
+	// {"is_error":true,"subtype":"success","api_error_status":401,...}. The
+	// subtype says "success" on a hard failure, so subtype alone cannot be
+	// trusted to categorize — and is_error above is what makes this a failure
+	// at all. api_error_status is the reliable discriminator.
+	if category := claudeFailureForStatus(f.APIErrorStatus); category != nil {
+		return category
+	}
 	return ErrClaudeResultFailed
+}
+
+// claudeFailureForStatus maps an upstream HTTP status to a narrower category,
+// or nil when the status is absent or unrecognized.
+//
+// Unrecognized stays GENERIC on purpose. Forcing an unknown status into the
+// nearest category would send an operator to fix the wrong thing, which is
+// worse than telling them only that the turn failed.
+func claudeFailureForStatus(status int) error {
+	switch {
+	case status == 401:
+		return ErrClaudeAuthentication
+	case status == 403:
+		return ErrClaudeModelAccess
+	case status == 429:
+		return ErrClaudeRateLimit
+	case status == 400:
+		return ErrClaudeInvalidRequest
+	case status >= 500 && status <= 599:
+		return ErrClaudeServiceUnavailable
+	default:
+		return nil
+	}
 }
 
 func (f claudeResultFrame) usage() Usage {
