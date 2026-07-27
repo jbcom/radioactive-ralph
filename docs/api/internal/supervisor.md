@@ -144,7 +144,7 @@ type Supervisor struct {
 ```
 
 <a name="Supervisor.HandleAttach"></a>
-### func \(\*Supervisor\) [HandleAttach](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/supervisor/supervisor.go#L443>)
+### func \(\*Supervisor\) [HandleAttach](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/supervisor/supervisor.go#L442>)
 
 ```go
 func (s *Supervisor) HandleAttach(ctx context.Context, args ipc.AttachArgs, emit func(json.RawMessage) error) error
@@ -153,13 +153,13 @@ func (s *Supervisor) HandleAttach(ctx context.Context, args ipc.AttachArgs, emit
 HandleAttach streams the project's events to the client as they are written, turning the observe half of the drive\+observe API from a stub into a live feed. It TAILS the append\-only events table: each tick it reads rows with id greater than the cursor \(scoped to args.ProjectID, including plan\-linked rows\), emits each, and advances the cursor. The cursor starts at args.AfterID — the client owns it \(it obtains an initial value from MaxEventID/backlog\), so there is no server\-side seed and no lost\-event race. The loop returns when ctx is cancelled \(client disconnect — \#165's watcher — or supervisor shutdown\) or when emit reports the client is gone.
 
 <a name="Supervisor.HandleEnqueue"></a>
-### func \(\*Supervisor\) [HandleEnqueue](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/supervisor/supervisor.go#L390>)
+### func \(\*Supervisor\) [HandleEnqueue](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/supervisor/supervisor.go#L389>)
 
 ```go
 func (s *Supervisor) HandleEnqueue(ctx context.Context, args ipc.EnqueueArgs) (ipc.EnqueueReply, error)
 ```
 
-HandleEnqueue drives one real dispatch pass via internal/orch instead of returning "not implemented": it lists every currently active/paused plan store\-wide \(spec: the supervisor is project\-agnostic — it has no notion of "the current project", so this checks every project's active work, not just one\) and calls DispatchNext on each, in plan order, until either every plan has been tried or maxEnqueueDispatchPlans is reached \(a bound so one enqueue call can never scan an unbounded number of plans\). It is NOT a blocking wait for any of that work to finish — DispatchNext itself is synchronous per dispatched step but bounded by orch's own watchdog config \(agent.WatchdogConfig.StallTimeout\), so a stalled/prompting provider still returns \(killed\) rather than hanging this IPC call.
+HandleEnqueue drives one real dispatch pass via internal/orch instead of returning "not implemented": it lists every currently active/paused plan store\-wide \(spec: the supervisor is project\-agnostic — it has no notion of "the current project", so this checks every project's active work, not just one\) and calls DispatchNext on each, in plan order, until either every plan has been tried or maxEnqueueDispatchPlans is reached \(a bound so one enqueue call can never scan an unbounded number of plans\). It is NOT a blocking wait for any of that work to finish: DispatchNext claims each admitted step and launches its independently bounded provider turn asynchronously, so this IPC call never waits on a turn deadline or stall lease.
 
 args.Description/args.TaskID name the work the caller wanted enqueued, but a store task cannot be created without a plan\_id \(tasks.plan\_id is a NOT NULL foreign key\) and EnqueueArgs carries no plan reference — so HandleEnqueue's job today is exactly "wake up dispatch for whatever is already ready", the same effect an enqueue is meant to have \(make already\-known work actually run\), not "materialize a new ad hoc task with no plan to belong to". EnqueueReply.Inserted reports whether anything was actually dispatched; TaskID echoes args.TaskID \(or, if unset, the number of steps dispatched, best\-effort\) so a caller has some return value acknowledging its enqueue signal was acted upon.
 
@@ -211,7 +211,7 @@ func (s *Supervisor) HandlePlanSetStatus(ctx context.Context, args ipc.PlanSetSt
 HandlePlanSetStatus changes a plan's lifecycle status, validated to the allowed operator transitions.
 
 <a name="Supervisor.HandleReloadConfig"></a>
-### func \(\*Supervisor\) [HandleReloadConfig](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/supervisor/supervisor.go#L419>)
+### func \(\*Supervisor\) [HandleReloadConfig](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/supervisor/supervisor.go#L418>)
 
 ```go
 func (s *Supervisor) HandleReloadConfig(_ context.Context) error
@@ -229,7 +229,7 @@ func (s *Supervisor) HandleStatus(ctx context.Context) (ipc.StatusReply, error)
 HandleStatus reports supervisor\-level liveness. ActiveWorkers and the per\-worker detail are sourced from the store's real worker rows \(store.ListRunningWorkers\) rather than an in\-process map: no in\-process structure could ever reflect this anyway, since agent subprocess lifetime is fully owned by whichever provider runner orch dispatched, not by the supervisor itself. A query failure degrades to an empty list / 0 count rather than failing the whole status reply — a transient error should never make \`status\` itself fail.
 
 <a name="Supervisor.HandleStop"></a>
-### func \(\*Supervisor\) [HandleStop](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/supervisor/supervisor.go#L411>)
+### func \(\*Supervisor\) [HandleStop](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/supervisor/supervisor.go#L410>)
 
 ```go
 func (s *Supervisor) HandleStop(_ context.Context, _ ipc.StopArgs) error
