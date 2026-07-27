@@ -105,6 +105,7 @@ The schema is embedded under schema/\*.sql and applied in lexical order by Migra
   - [func \(s \*Store\) MarkDone\(ctx context.Context, planID, taskID, sessionID string, evidenceJSON string\) \(\[\]Task, error\)](<#Store.MarkDone>)
   - [func \(s \*Store\) MarkFailed\(ctx context.Context, planID, taskID, sessionID, reason string, maxRetries int\) \(retried bool, err error\)](<#Store.MarkFailed>)
   - [func \(s \*Store\) MarkFailedWithPayload\(ctx context.Context, planID, taskID, sessionID string, payload EventPayload, maxRetries int\) \(retried bool, err error\)](<#Store.MarkFailedWithPayload>)
+  - [func \(s \*Store\) MaterializePlanGraph\(ctx context.Context, planID string, tasks \[\]GraphTaskSpec\) error](<#Store.MaterializePlanGraph>)
   - [func \(s \*Store\) MaxEventID\(ctx context.Context, projectID string\) \(int64, error\)](<#Store.MaxEventID>)
   - [func \(s \*Store\) ProjectAbsPath\(ctx context.Context, projectID string\) \(path string, found bool, err error\)](<#Store.ProjectAbsPath>)
   - [func \(s \*Store\) ProjectSpendByProvider\(ctx context.Context, projectID string\) \(map\[string\]float64, error\)](<#Store.ProjectSpendByProvider>)
@@ -1306,6 +1307,19 @@ func (s *Store) MarkFailedWithPayload(ctx context.Context, planID, taskID, sessi
 MarkFailedWithPayload transitions a running task to failed or retries while preserving structured payload details in the event log.
 
 Both UPDATEs are guarded by \`status = 'running' AND claimed\_by\_session = sessionID\`, the same owner guard MarkDone and MarkBlocked carry. Without the owner guard a stale failure report from a worker whose claim the reaper already reclaimed \(and possibly reassigned to a new worker\) would flip the task back to pending / failed and clear the NEW owner's claim — double execution plus a dropped completion. When the guard matches nothing the task has moved on under a different session; MarkFailed returns ErrTaskNotOwnedRunning so the caller can drop the stale report rather than resurrect the task.
+
+<a name="Store.MaterializePlanGraph"></a>
+### func \(\*Store\) [MaterializePlanGraph](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/plan_graph.go#L87>)
+
+```go
+func (s *Store) MaterializePlanGraph(ctx context.Context, planID string, tasks []GraphTaskSpec) error
+```
+
+MaterializePlanGraph writes tasks, metadata, and edges for a plan that already exists, in one transaction.
+
+This is the graph half of CreatePlanGraph without the plan row. Dispatch uses it for a plan that reached the store outside the import path — one written by CreatePlan directly, or any plan predating the graph — which has source markdown but no nodes. Without it the edge walk would report such a plan as having nothing ready and it would silently never dispatch.
+
+The caller decides WHEN this is appropriate \(dispatch only calls it for a plan with no tasks at all\). This is deliberately not an upsert: re\-deriving edges under a plan mid\-run could contradict decisions the run has already made, so a duplicate task id fails the transaction rather than merging.
 
 <a name="Store.MaxEventID"></a>
 ### func \(\*Store\) [MaxEventID](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/events.go#L160>)

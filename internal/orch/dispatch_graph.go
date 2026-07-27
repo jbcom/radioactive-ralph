@@ -41,6 +41,16 @@ type readyGroup struct {
 // independent branches serialized them for no reason. The edge walk has no such
 // limitation, and group_path preserves the grouping that fan-out needs.
 func (o *Orchestrator) loadReadyWave(ctx context.Context, planID string, parsed *plan.Plan) (readyWave, error) {
+	// A plan can reach the store without going through ImportPlan: rows written
+	// by CreatePlan directly, and every plan that predates the graph. Those have
+	// source markdown but no task or edge rows, and the edge walk would report
+	// them as having nothing ready — a plan that silently never dispatches.
+	// Materializing the graph on first sight makes the import path an
+	// optimization rather than a precondition.
+	if err := o.ensurePlanGraph(ctx, planID, parsed); err != nil {
+		return readyWave{}, err
+	}
+
 	partitions, err := o.store.ReadyPartitions(ctx, planID)
 	if err != nil {
 		return readyWave{}, fmt.Errorf("orch: ready partitions: %w", err)
@@ -73,6 +83,34 @@ func (o *Orchestrator) loadReadyWave(ctx context.Context, planID string, parsed 
 		wave.partitions = append(wave.partitions, group)
 	}
 	return wave, nil
+}
+
+// ensurePlanGraph materializes a plan's tasks and dependency edges if they do
+// not exist yet, deriving them from the stored markdown with the SAME
+// graphSpecs rules ImportPlan uses.
+//
+// Idempotent and cheap on the common path: one ListTasks, then nothing. It runs
+// only for a plan whose task rows are absent entirely — never to "top up" a
+// partially-materialized plan, since a plan mid-run legitimately has tasks in
+// every state and re-deriving edges under it could contradict decisions the
+// run has already made.
+func (o *Orchestrator) ensurePlanGraph(ctx context.Context, planID string, parsed *plan.Plan) error {
+	existing, err := o.store.ListTasks(ctx, planID, nil)
+	if err != nil {
+		return fmt.Errorf("orch: list tasks: %w", err)
+	}
+	if len(existing) > 0 {
+		return nil
+	}
+
+	specs, err := graphSpecs(parsed)
+	if err != nil {
+		return err
+	}
+	if err := o.store.MaterializePlanGraph(ctx, planID, specs); err != nil {
+		return fmt.Errorf("orch: materialize plan graph: %w", err)
+	}
+	return nil
 }
 
 // locatedStep pairs a plan step with the positional ref it was found at.

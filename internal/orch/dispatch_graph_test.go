@@ -168,3 +168,81 @@ func TestDispatchNextLinearPlanIsUnchanged(t *testing.T) {
 		t.Fatalf("dispatched = %d, want 1 — a sequential plan still releases one step at a time", dispatched)
 	}
 }
+
+// TestDispatchMaterializesAPlanThatSkippedImport is the compatibility guard for
+// sourcing readiness from the graph. A plan can reach the store without going
+// through ImportPlan — written by CreatePlan directly, or created before the
+// graph existed — and such a plan has source markdown but no task or edge rows.
+// The edge walk would report it as having nothing ready, so it would silently
+// never dispatch: no error, no event, just a plan that sits there. Dispatch
+// materializes the graph on first sight instead, which keeps import an
+// optimization rather than a precondition.
+func TestDispatchMaterializesAPlanThatSkippedImport(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	projectID := mustCreateTestProject(t, s, "unimported")
+	planID := mustCreateTestPlan(t, s, projectID, "unimported", "Ship", twoStepSequentialPlan)
+
+	before, err := s.ListTasks(ctx, planID, nil)
+	if err != nil {
+		t.Fatalf("ListTasks: %v", err)
+	}
+	if len(before) != 0 {
+		t.Fatalf("fixture already has %d tasks; this test needs a plan with none", len(before))
+	}
+
+	runner := &bindingRecordingRunner{}
+	o := New(s,
+		WithRunnerFactory(func(provider.Binding) (provider.Runner, error) { return runner, nil }),
+		WithBindingResolver(fakeBindingResolver("codex", false)),
+	)
+
+	dispatched, err := o.DispatchNext(ctx, projectID, planID)
+	if err != nil {
+		t.Fatalf("DispatchNext: %v", err)
+	}
+	o.Wait()
+	if dispatched != 1 {
+		t.Fatalf("dispatched = %d, want 1 — an unimported plan must still run", dispatched)
+	}
+
+	after, err := s.ListTasks(ctx, planID, nil)
+	if err != nil {
+		t.Fatalf("ListTasks after: %v", err)
+	}
+	if len(after) != 2 {
+		t.Fatalf("materialized %d tasks, want 2 (the whole plan, not just the dispatched step)", len(after))
+	}
+}
+
+// TestDispatchDoesNotRematerializeAPlanMidRun keeps materialization to first
+// sight only. Re-deriving edges under a plan that is already running could
+// contradict decisions the run has made — and a duplicate task id would fail
+// the write outright, turning every subsequent dispatch pass into an error.
+func TestDispatchDoesNotRematerializeAPlanMidRun(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	projectID := mustCreateTestProject(t, s, "no-remat")
+	planID := mustCreateTestPlan(t, s, projectID, "no-remat", "Ship", twoStepSequentialPlan)
+
+	runner := &bindingRecordingRunner{}
+	o := New(s,
+		WithRunnerFactory(func(provider.Binding) (provider.Runner, error) { return runner, nil }),
+		WithBindingResolver(fakeBindingResolver("codex", false)),
+	)
+
+	for pass := 0; pass < 3; pass++ {
+		if _, err := o.DispatchNext(ctx, projectID, planID); err != nil {
+			t.Fatalf("DispatchNext pass %d: %v", pass, err)
+		}
+		o.Wait()
+	}
+
+	tasks, err := s.ListTasks(ctx, planID, nil)
+	if err != nil {
+		t.Fatalf("ListTasks: %v", err)
+	}
+	if len(tasks) != 2 {
+		t.Fatalf("after three passes there are %d tasks, want 2 — the plan was re-materialized", len(tasks))
+	}
+}

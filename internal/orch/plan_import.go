@@ -224,21 +224,3 @@ func documentOrderEdges(parsed *plan.Plan, ids []string) [][]string {
 	visit(parsed.Groups)
 	return edges
 }
-
-// stepTaskID is THE rule mapping a plan step to its store task id: an explicit
-// `id` from the step's ralph-task metadata when present, else the positional
-// StepRef id every plan used before that grammar existed.
-//
-// Import and dispatch MUST agree on this. When they disagreed, importing a step
-// annotated `{"id":"build"}` created task "build", and dispatch then
-// materialized a SECOND positional task "0.0" for the same step — so the plan
-// held a duplicate node, and whichever one ClaimNextReady happened to pick
-// determined whether the run made sense. Worse, claiming "build" left it
-// running with no worker launched, because the caller could not parse a
-// non-positional id back into a StepRef.
-func stepTaskID(ref plan.StepRef, step plan.Step) string {
-	if step.Metadata != nil && step.Metadata.ID != "" {
-		return step.Metadata.ID
-	}
-	return ref.ID()
-}
