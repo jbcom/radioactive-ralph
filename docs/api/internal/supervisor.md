@@ -30,6 +30,8 @@ Package supervisor implements the \`\-\-supervisor\` process: the single durable
   - [func \(s \*Supervisor\) HandleObserveTaskDescriptions\(ctx context.Context, args ipc.ObserveTaskDescriptionsArgs\) \(\*ipc.ObserveTaskDescriptionsReply, error\)](<#Supervisor.HandleObserveTaskDescriptions>)
   - [func \(s \*Supervisor\) HandlePlanImport\(ctx context.Context, args ipc.PlanImportArgs\) \(ipc.PlanImportReply, error\)](<#Supervisor.HandlePlanImport>)
   - [func \(s \*Supervisor\) HandlePlanSetStatus\(ctx context.Context, args ipc.PlanSetStatusArgs\) \(ipc.PlanSetStatusReply, error\)](<#Supervisor.HandlePlanSetStatus>)
+  - [func \(s \*Supervisor\) HandleProjectConfigApply\(ctx context.Context, args ipc.ProjectConfigApplyArgs\) error](<#Supervisor.HandleProjectConfigApply>)
+  - [func \(s \*Supervisor\) HandleProjectConfigGet\(ctx context.Context, args ipc.ProjectConfigGetArgs\) \(ipc.ProjectConfigGetReply, error\)](<#Supervisor.HandleProjectConfigGet>)
   - [func \(s \*Supervisor\) HandleProjectEnsure\(ctx context.Context, args ipc.ProjectEnsureArgs\) \(\*ipc.ProjectEnsureReply, error\)](<#Supervisor.HandleProjectEnsure>)
   - [func \(s \*Supervisor\) HandleReloadConfig\(\_ context.Context\) error](<#Supervisor.HandleReloadConfig>)
   - [func \(s \*Supervisor\) HandleStatus\(ctx context.Context\) \(ipc.StatusReply, error\)](<#Supervisor.HandleStatus>)
@@ -210,6 +212,30 @@ func (s *Supervisor) HandlePlanSetStatus(ctx context.Context, args ipc.PlanSetSt
 ```
 
 HandlePlanSetStatus changes a plan's lifecycle status, validated to the allowed operator transitions.
+
+<a name="Supervisor.HandleProjectConfigApply"></a>
+### func \(\*Supervisor\) [HandleProjectConfigApply](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/supervisor/config.go#L43-L45>)
+
+```go
+func (s *Supervisor) HandleProjectConfigApply(ctx context.Context, args ipc.ProjectConfigApplyArgs) error
+```
+
+HandleProjectConfigApply upserts and deletes project config keys in one call.
+
+Both sets travel together because vconfig computes them together: an overlay to write, plus \(when a provider selection replaces the legacy singular key\) a key to remove. Applying them in separate calls would let a crash in between leave the project with the new selection AND the stale key it was meant to replace — a state no code path expects.
+
+<a name="Supervisor.HandleProjectConfigGet"></a>
+### func \(\*Supervisor\) [HandleProjectConfigGet](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/supervisor/config.go#L21-L23>)
+
+```go
+func (s *Supervisor) HandleProjectConfigGet(ctx context.Context, args ipc.ProjectConfigGetArgs) (ipc.ProjectConfigGetReply, error)
+```
+
+HandleProjectConfigGet returns a project's stored config values.
+
+This exists so \`init\` can resolve vconfig layers without opening the store. The supervisor is the single writer of record; a client that reads and writes the database directly is a second writer to a database it does not own, which is the ownership split the one\-binary architecture exists to prevent.
+
+Values cross the wire as the RAW JSON\-encoded strings the store holds. vconfig owns that format, and decoding here would make the supervisor a second interpreter of a schema it has no stake in.
 
 <a name="Supervisor.HandleProjectEnsure"></a>
 ### func \(\*Supervisor\) [HandleProjectEnsure](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/supervisor/project.go#L23-L26>)

@@ -57,6 +57,13 @@ const (
 	CmdTaskApprove   = "task-approve"
 	CmdWorkerKill    = "worker-kill"
 	CmdProjectEnsure = "project-ensure"
+	// CmdProjectConfigGet reads a project's stored config values, and
+	// CmdProjectConfigApply writes them. Together with CmdProjectEnsure they
+	// are what lets `init` resolve and persist vconfig layers WITHOUT opening
+	// the store: the supervisor stays the single writer of record, and the
+	// client stops being a second writer to a database it does not own.
+	CmdProjectConfigGet   = "project-config-get"
+	CmdProjectConfigApply = "project-config-apply"
 
 	// v3 — project-scoped, content-safe query surface.
 	CmdObserveSnapshot         = "observe-snapshot"
@@ -303,3 +310,41 @@ func (closedError) Error() string { return "ipc: connection closed" }
 
 // ErrClosed is a sentinel value; use errors.Is to match.
 var ErrClosed error = closedError{}
+
+// ProjectConfigGetArgs asks for one project's stored config (CmdProjectConfigGet).
+//
+// An EMPTY Project means the user-scope project — the synthetic project holding
+// user-level config. The supervisor resolves (and creates) it, rather than the
+// client doing so and then telling the supervisor which id to use: that
+// resolution is a store write, and the supervisor is the single writer.
+type ProjectConfigGetArgs struct {
+	Project string `json:"project"`
+	// UserScope asks for the user-level config project instead of naming one.
+	UserScope bool `json:"user_scope,omitempty"`
+}
+
+// ProjectConfigGetReply carries the stored config values verbatim.
+//
+// Values are the RAW JSON-encoded strings the store holds, not decoded Go
+// values: vconfig owns the decoding, and re-encoding across the wire would make
+// the supervisor a second interpreter of a format it does not own.
+type ProjectConfigGetReply struct {
+	Values map[string]string `json:"values"`
+	// ProjectID is the project the values came from — meaningful for a
+	// UserScope request, where the client did not know the id.
+	ProjectID string `json:"project_id,omitempty"`
+}
+
+// ProjectConfigApplyArgs upserts and deletes project config keys
+// (CmdProjectConfigApply).
+//
+// Both sets travel in ONE call because vconfig's override path computes them
+// together — an overlay to write and, when a provider selection replaces the
+// legacy singular key, a key to remove. Splitting them across two round trips
+// would let a crash in between leave the project half-configured.
+type ProjectConfigApplyArgs struct {
+	Project    string            `json:"project"`
+	UserScope  bool              `json:"user_scope,omitempty"`
+	Upserts    map[string]string `json:"upserts,omitempty"`
+	DeleteKeys []string          `json:"delete_keys,omitempty"`
+}

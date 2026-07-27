@@ -92,6 +92,10 @@ type DriveHandler interface {
 		ctx context.Context,
 		args ProjectEnsureArgs,
 	) (*ProjectEnsureReply, error)
+	// HandleProjectConfigGet reads a project's stored config values.
+	HandleProjectConfigGet(ctx context.Context, args ProjectConfigGetArgs) (ProjectConfigGetReply, error)
+	// HandleProjectConfigApply upserts and deletes project config keys.
+	HandleProjectConfigApply(ctx context.Context, args ProjectConfigApplyArgs) error
 }
 
 // QueryHandler is the OPTIONAL v3 content-safe query surface. Keeping it
@@ -604,6 +608,20 @@ func (s *Server) dispatchDrive(ctx context.Context, conn net.Conn, req Request) 
 			return
 		}
 		err := dh.HandleTaskApprove(ctx, args)
+		s.writeResult(conn, OKReply{OK: err == nil}, err)
+	case CmdProjectConfigGet:
+		var args ProjectConfigGetArgs
+		if !s.decodeArgs(conn, req.Args, &args) {
+			return
+		}
+		reply, err := dh.HandleProjectConfigGet(ctx, args)
+		s.writeResult(conn, reply, err)
+	case CmdProjectConfigApply:
+		var args ProjectConfigApplyArgs
+		if !s.decodeArgs(conn, req.Args, &args) {
+			return
+		}
+		err := dh.HandleProjectConfigApply(ctx, args)
 		s.writeResult(conn, OKReply{OK: err == nil}, err)
 	case CmdWorkerKill:
 		var args WorkerKillArgs
