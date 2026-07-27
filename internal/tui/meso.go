@@ -36,7 +36,7 @@ func renderMeso(m Model) string {
 			if t.ClaimedByWorkerID != "" {
 				worker = styleMuted.Render(" worker=" + t.ClaimedByWorkerID)
 			}
-			fmt.Fprintf(&b, "%s%-12s %-24s%s\n", marker, t.ID, statusStr, worker)
+			fmt.Fprintf(&b, "%s%-12s %-24s %s%s\n", marker, t.ID, statusStr, m.snap.descriptions[t.ID], worker)
 			row++
 		}
 	}

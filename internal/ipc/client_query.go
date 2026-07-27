@@ -41,3 +41,26 @@ func (c *Client) ObserveMessages(
 	}
 	return &reply, nil
 }
+
+// ObserveTaskDescriptions reads one PLAN's author-written task labels.
+//
+// Separate from ObserveSnapshot on purpose: a description is plan-author free
+// text that can carry filesystem paths, so it stays out of the always-on bulk
+// snapshot and is fetched only by the human-facing views that need a label.
+// Plan-scoped, not per-task: a list view must cost one round trip, not N.
+func (c *Client) ObserveTaskDescriptions(
+	ctx context.Context,
+	args ObserveTaskDescriptionsArgs,
+) (*ObserveTaskDescriptionsReply, error) {
+	var reply ObserveTaskDescriptionsReply
+	if err := c.versionedCall(
+		ctx,
+		QueryProtoVersion,
+		CmdObserveTaskDescriptions,
+		args,
+		&reply,
+	); err != nil {
+		return nil, err
+	}
+	return &reply, nil
+}

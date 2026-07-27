@@ -41,8 +41,12 @@ type snapshot struct {
 	progress     map[string]progress
 	planEvent    []observe.Event
 
-	tasks         []observe.Task
-	tasksHasMore  bool
+	tasks        []observe.Task
+	tasksHasMore bool
+	// descriptions maps task id -> author-written label, fetched separately
+	// from the content-safe snapshot via the opt-in TaskDetail query. Held
+	// beside observe.Task rather than on it so the bulk DTO stays content-free.
+	descriptions  map[string]string
 	taskEvent     []observe.Event
 	eventsHasMore bool
 	eventCursor   int64
@@ -319,9 +323,11 @@ func (m Model) fetchCmd() tea.Cmd {
 		case levelMeso:
 			snap.tasks = reply.Tasks.Items
 			snap.tasksHasMore = reply.Tasks.HasMore
+			snap.descriptions = fetchDescriptions(ctx, source, projectID, selectedPlan.ID)
 		case levelMicro:
 			snap.taskEvent = reply.RecentEvents.Items
 			snap.eventsHasMore = reply.RecentEvents.HasMore
+			snap.descriptions = fetchDescriptions(ctx, source, projectID, selectedPlan.ID)
 		}
 		return fetchedMsg{snap: snap}
 	}
@@ -547,6 +553,13 @@ func (m Model) handleFetched(msg fetchedMsg) (tea.Model, tea.Cmd) {
 	if msg.snap.tasks != nil {
 		m.snap.tasks = msg.snap.tasks
 		m.snap.tasksHasMore = msg.snap.tasksHasMore
+	}
+	// Descriptions are merged separately from tasks because they are fetched by
+	// a separate query that can fail on its own: an older supervisor answers
+	// CodeUnsupportedCommand, leaving this nil while tasks arrive fine. Keeping
+	// the previous labels in that case beats blanking the column mid-session.
+	if msg.snap.descriptions != nil {
+		m.snap.descriptions = msg.snap.descriptions
 	}
 	if msg.snap.taskEvent != nil {
 		m.snap.taskEvent = msg.snap.taskEvent
@@ -950,4 +963,29 @@ func (m *Model) bumpLiveProgress(ev ipc.AttachEvent) {
 		prog.Done++
 		m.snap.progress[ev.PlanID] = prog
 	}
+}
+
+// fetchDescriptions resolves the author-written labels for one plan's tasks in
+// a single round trip.
+//
+// A failure here is deliberately non-fatal: the label is cosmetic, so a missing
+// one degrades to showing the task id, while failing the whole view over it
+// would turn a nicety into an outage. That also keeps an older supervisor
+// (which answers CodeUnsupportedCommand) usable rather than blank.
+func fetchDescriptions(
+	ctx context.Context,
+	source DataSource,
+	projectID, planID string,
+) map[string]string {
+	if planID == "" {
+		return nil
+	}
+	got, err := source.TaskDescriptions(ctx, observe.TaskDescriptionsQuery{
+		ProjectID: projectID,
+		PlanID:    planID,
+	})
+	if err != nil {
+		return nil
+	}
+	return got.ByTask
 }

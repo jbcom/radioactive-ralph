@@ -43,6 +43,27 @@ func (s *Supervisor) HandleObserveMessages(
 	return reply, nil
 }
 
+// HandleObserveTaskDescriptions serves one PLAN's author-written task labels.
+//
+// Kept off HandleObserveSnapshot deliberately: a description is plan-author
+// free text that can contain filesystem paths, so the bulk snapshot stays
+// content-free and labels are fetched only by the human-facing views. Scoped
+// per plan rather than per task so a list view costs one round trip, not N.
+func (s *Supervisor) HandleObserveTaskDescriptions(
+	ctx context.Context,
+	args ipc.ObserveTaskDescriptionsArgs,
+) (*ipc.ObserveTaskDescriptionsReply, error) {
+	service, err := observe.New(s.store)
+	if err != nil {
+		return nil, err
+	}
+	descriptions, err := service.TaskDescriptions(ctx, args)
+	if err != nil {
+		return nil, codeObserveError(err)
+	}
+	return &descriptions, nil
+}
+
 type observeCodedError struct {
 	err  error
 	code string
@@ -59,7 +80,8 @@ func codeObserveError(err error) error {
 		return &observeCodedError{err: err, code: ipc.CodeInvalidArgs}
 	case errors.Is(err, store.ErrOperatorProjectNotFound),
 		errors.Is(err, store.ErrOperatorPlanNotFound),
-		errors.Is(err, store.ErrOperatorTaskNotFound):
+		errors.Is(err, store.ErrOperatorTaskNotFound),
+		errors.Is(err, store.ErrOperatorTaskDetailNotFound):
 		return &observeCodedError{err: err, code: ipc.CodeNotFound}
 	default:
 		return err

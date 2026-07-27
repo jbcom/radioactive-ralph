@@ -58,8 +58,9 @@ const (
 	CmdWorkerKill    = "worker-kill"
 
 	// v3 — project-scoped, content-safe query surface.
-	CmdObserveSnapshot = "observe-snapshot"
-	CmdObserveMessages = "observe-messages"
+	CmdObserveSnapshot         = "observe-snapshot"
+	CmdObserveMessages         = "observe-messages"
+	CmdObserveTaskDescriptions = "observe-task-descriptions"
 )
 
 // Stable machine-readable error classes carried in Response.Code so a client
@@ -239,6 +240,13 @@ type ObserveMessagesArgs = observe.MessageQuery
 
 // ObserveMessagesReply is one versioned, content-free message metadata page.
 type ObserveMessagesReply = observe.MessagePage
+
+// ObserveTaskDescriptionsArgs aliases the transport-neutral per-plan label
+// query. Separate from ObserveSnapshotArgs on purpose — see observe.TaskDescriptions.
+type ObserveTaskDescriptionsArgs = observe.TaskDescriptionsQuery
+
+// ObserveTaskDescriptionsReply carries one plan's author-written task labels.
+type ObserveTaskDescriptionsReply = observe.TaskDescriptions
 
 // encode writes v as JSON followed by a newline to buf.
 func encodeJSONLine(v any) ([]byte, error) {

@@ -99,6 +99,10 @@ type QueryHandler interface {
 		ctx context.Context,
 		args ObserveMessagesArgs,
 	) (*ObserveMessagesReply, error)
+	HandleObserveTaskDescriptions(
+		ctx context.Context,
+		args ObserveTaskDescriptionsArgs,
+	) (*ObserveTaskDescriptionsReply, error)
 }
 
 // Server is the repo-service IPC server. One instance per repo service.
@@ -471,7 +475,7 @@ func (s *Server) handleConn(conn net.Conn) {
 	case CmdPlanImport, CmdPlanSetStatus, CmdTaskApprove, CmdWorkerKill:
 		s.dispatchDrive(ctx, conn, req)
 
-	case CmdObserveSnapshot, CmdObserveMessages:
+	case CmdObserveSnapshot, CmdObserveMessages, CmdObserveTaskDescriptions:
 		s.dispatchQuery(ctx, conn, req)
 
 	default:
@@ -530,6 +534,13 @@ func (s *Server) dispatchQuery(
 			return
 		}
 		reply, err := qh.HandleObserveMessages(ctx, args)
+		s.writeResult(conn, reply, err)
+	case CmdObserveTaskDescriptions:
+		var args ObserveTaskDescriptionsArgs
+		if !s.decodeArgs(conn, req.Args, &args) {
+			return
+		}
+		reply, err := qh.HandleObserveTaskDescriptions(ctx, args)
 		s.writeResult(conn, reply, err)
 	}
 }

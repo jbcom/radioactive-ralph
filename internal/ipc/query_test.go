@@ -20,6 +20,10 @@ type queryFakeHandler struct {
 	messagesErr   error
 	gotSnapshot   ObserveSnapshotArgs
 	gotMessages   ObserveMessagesArgs
+
+	detailReply *ObserveTaskDescriptionsReply
+	detailErr   error
+	gotDetail   ObserveTaskDescriptionsArgs
 }
 
 func (h *queryFakeHandler) HandleObserveSnapshot(
@@ -36,6 +40,40 @@ func (h *queryFakeHandler) HandleObserveMessages(
 ) (*ObserveMessagesReply, error) {
 	h.gotMessages = args
 	return h.messagesReply, h.messagesErr
+}
+
+func (h *queryFakeHandler) HandleObserveTaskDescriptions(
+	_ context.Context,
+	args ObserveTaskDescriptionsArgs,
+) (*ObserveTaskDescriptionsReply, error) {
+	h.gotDetail = args
+	return h.detailReply, h.detailErr
+}
+
+func TestQueryTaskDescriptionsRoundTrip(t *testing.T) {
+	h := &queryFakeHandler{
+		detailReply: &ObserveTaskDescriptionsReply{
+			PlanID: "plan-1",
+			ByTask: map[string]string{"task-1": "wire up the frobnicator"},
+		},
+	}
+	sock, _, cleanup := startServer(t, h)
+	defer cleanup()
+	client := dialTest(t, sock)
+
+	got, err := client.ObserveTaskDescriptions(context.Background(), ObserveTaskDescriptionsArgs{
+		ProjectID: "project-1",
+		PlanID:    "plan-1",
+	})
+	if err != nil {
+		t.Fatalf("ObserveTaskDetail: %v", err)
+	}
+	if got.ByTask["task-1"] != "wire up the frobnicator" {
+		t.Errorf("ByTask = %v, want the author-written label", got.ByTask)
+	}
+	if h.gotDetail.ProjectID != "project-1" || h.gotDetail.PlanID != "plan-1" {
+		t.Errorf("handler received %+v, want the requested project/plan scope", h.gotDetail)
+	}
 }
 
 func TestQuerySnapshotAndMessagesRoundTrip(t *testing.T) {

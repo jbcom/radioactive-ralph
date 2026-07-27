@@ -326,6 +326,14 @@ type Reader interface {
 		context.Context,
 		store.OperatorMessageQuery,
 	) (*store.OperatorMessagePage, error)
+	// ListOperatorTaskDescriptions backs the opt-in per-plan description read.
+	// It is deliberately a distinct method from ReadOperatorSnapshot so the
+	// bulk surface cannot accidentally start carrying descriptions, and it is
+	// plan-scoped so a list view costs one round trip rather than N.
+	ListOperatorTaskDescriptions(
+		ctx context.Context,
+		projectID, planID string,
+	) (map[string]string, error)
 }
 
 var _ Reader = (*store.Store)(nil)

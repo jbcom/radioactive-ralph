@@ -23,6 +23,11 @@ type fakeDataSource struct {
 	projectEvents []observe.Event
 	taskEvents    map[string][]observe.Event
 
+	// descriptions feeds the opt-in TaskDetail query, keyed by task id.
+	descriptions     map[string]string
+	detailErr        error
+	descriptionCalls int
+
 	maxEventID   int64
 	attachFrames []json.RawMessage
 	attachErr    error
@@ -144,3 +149,16 @@ func (f *fakeDataSource) Attach(
 var errFakeAttach = errors.New("fake attach error")
 
 var _ DataSource = (*fakeDataSource)(nil)
+
+// TaskDescriptions serves the opt-in per-plan labels. Setting detailErr
+// exercises the degrade path: the view must still render, showing task ids.
+func (f *fakeDataSource) TaskDescriptions(
+	_ context.Context,
+	query observe.TaskDescriptionsQuery,
+) (observe.TaskDescriptions, error) {
+	f.descriptionCalls++
+	if f.detailErr != nil {
+		return observe.TaskDescriptions{}, f.detailErr
+	}
+	return observe.TaskDescriptions{PlanID: query.PlanID, ByTask: f.descriptions}, nil
+}

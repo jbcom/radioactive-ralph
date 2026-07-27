@@ -76,4 +76,28 @@ func (l *liveDataSource) Attach(
 	)
 }
 
+// TaskDescriptions fetches one plan's task labels over the opt-in query. An old
+// supervisor returns CodeUnsupportedCommand; the caller degrades to showing
+// task ids rather than failing the view, because a missing label is cosmetic
+// while a failed render is not.
+func (l *liveDataSource) TaskDescriptions(
+	ctx context.Context,
+	query observe.TaskDescriptionsQuery,
+) (observe.TaskDescriptions, error) {
+	if query.ProjectID == "" {
+		query.ProjectID = l.projectID
+	}
+	client, err := l.dial()
+	if err != nil {
+		return observe.TaskDescriptions{}, err
+	}
+	defer func() { _ = client.Close() }()
+
+	reply, err := client.ObserveTaskDescriptions(ctx, query)
+	if err != nil {
+		return observe.TaskDescriptions{}, err
+	}
+	return *reply, nil
+}
+
 var _ DataSource = (*liveDataSource)(nil)

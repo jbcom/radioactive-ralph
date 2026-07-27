@@ -20,6 +20,8 @@ type fakeReader struct {
 	snapshotQ    store.OperatorSnapshotQuery
 	messages     *store.OperatorMessagePage
 	messagesErr  error
+	descriptions map[string]string
+	detailErr    error
 	messagesCall int
 	messagesQ    store.OperatorMessageQuery
 }
@@ -843,4 +845,15 @@ func TestServiceDefendsProjectionBounds(t *testing.T) {
 	if got != nil || !errors.Is(err, ErrProjectionLimitBreach) {
 		t.Fatalf("Messages = (%+v, %v), want nil ErrProjectionLimitBreach", got, err)
 	}
+}
+
+// ListOperatorTaskDescriptions backs the opt-in per-plan description read.
+func (f *fakeReader) ListOperatorTaskDescriptions(
+	_ context.Context,
+	_, _ string,
+) (map[string]string, error) {
+	if f.detailErr != nil {
+		return nil, f.detailErr
+	}
+	return f.descriptions, nil
 }

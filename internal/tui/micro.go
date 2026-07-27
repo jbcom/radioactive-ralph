@@ -20,6 +20,9 @@ func renderMicro(m Model) string {
 	statusStr := statusStyle(m.selectedTask.Status).Render(m.selectedTask.Status)
 	b.WriteString(styleHeader.Render(fmt.Sprintf("task: %s", m.selectedTask.ID)))
 	b.WriteString("\n")
+	if desc := m.snap.descriptions[m.selectedTask.ID]; desc != "" {
+		b.WriteString(styleMuted.Render(desc) + "\n")
+	}
 	fmt.Fprintf(&b, "status=%s\n\n", statusStr)
 
 	lines := microLines(m)
