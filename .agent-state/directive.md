@@ -373,7 +373,7 @@ tags before deletion: `archive/plan-v2-dag`, `archive/release-022-recovery-scrat
 
 ## Rolling improvement queue (directive 0 appends here)
 
-- [ ] LEFTOVERS AUDIT (2026-07-28). Prompted by the right question — I had
+- [x] LEFTOVERS AUDIT (2026-07-28) — DONE, this was the investigation itself. Prompted by the right question — I had
       verified the merged branches were ABSORBED, which is not the same as
       their WORK being finished. Audited main for unfinished scope and found
       three genuine items, each verified against the code rather than inferred:
