@@ -20,6 +20,13 @@ var ErrCalibrationNotFound = errors.New("store: no calibration recorded for this
 // command line than the one already recorded.
 var ErrCalibrationConflict = errors.New("store: alias already calibrated against a different invocation")
 
+// ErrCalibrationAttemptNoOutput reports an attempt with no output digest.
+//
+// Attempts are identified by what they produced, and agreement is computed by
+// comparing digests — so an empty one is not a degraded record but an actively
+// misleading one: repeated failures would all match.
+var ErrCalibrationAttemptNoOutput = errors.New("store: calibration attempt has no output digest")
+
 // ProviderCalibration is one measurement of one exact provider command line.
 //
 // It is a RECORD OF AN OBSERVATION, not configuration. That is why it is
@@ -134,6 +141,25 @@ func (s *Store) RecordCalibration(ctx context.Context, c ProviderCalibration) (P
 		c.IndependenceDomain, nullIfEmpty(c.ModelDigest),
 		c.CapabilitiesJSON, c.EvidenceJSON,
 	); err != nil {
+		// Lost the insert race. The check-then-insert above is not atomic, so a
+		// concurrent probe for a previously unseen alias can land between them —
+		// and the documented guarantee is that recording the SAME measurement
+		// twice is a no-op, not a UNIQUE error. Re-read and compare: identical
+		// means the other writer already recorded exactly this, and a genuine
+		// disagreement is still a conflict.
+		if isUniqueViolation(err) {
+			existing, getErr := s.GetCalibrationByAlias(ctx, c.Alias)
+			if getErr != nil {
+				return ProviderCalibration{}, fmt.Errorf(
+					"store: record calibration %q raced and could not be reloaded: %w", c.Alias, getErr)
+			}
+			if existing.ID == id {
+				return existing, nil
+			}
+			return ProviderCalibration{}, fmt.Errorf(
+				"%w: alias %q is calibrated as %s, cannot re-record as %s",
+				ErrCalibrationConflict, c.Alias, existing.ID[:12], id[:12])
+		}
 		return ProviderCalibration{}, fmt.Errorf("store: record calibration %q: %w", c.Alias, err)
 	}
 	return c, nil
@@ -199,7 +225,45 @@ func (s *Store) RecordCalibrationAttempt(ctx context.Context, a CalibrationAttem
 	if a.AttemptSequence <= 0 || a.Repetition <= 0 {
 		return fmt.Errorf("store: calibration attempt sequence and repetition must be positive")
 	}
-	if _, err := s.db.ExecContext(ctx, `
+	// An attempt is IDENTIFIED by the output it produced, and agreement across
+	// repetitions is computed by comparing those digests. NOT NULL accepts the
+	// empty string, so a provider that exited without a usable result would
+	// record "" — and N such runs would all match each other, reading as
+	// unanimous agreement from runs that produced nothing. Reject it here rather
+	// than teach every comparison to special-case a sentinel.
+	if a.AssistantOutputSHA256 == "" {
+		return fmt.Errorf("%w: attempt %s/%s rep %d has no output digest",
+			ErrCalibrationAttemptNoOutput, a.PlanID, a.TaskID, a.Repetition)
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("store: begin record calibration attempt: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	// The write must belong to the worker that CURRENTLY owns the task. A worker
+	// the reaper reclaimed mid-turn still returns from its provider call and
+	// still tries to record; by then the task may belong to a replacement run,
+	// and accepting the late write would attribute output to an evicted worker
+	// and corrupt the very history the agreement check reads. Checked inside the
+	// transaction so ownership cannot change between the check and the insert.
+	var status, owner string
+	if err := tx.QueryRowContext(ctx, `
+		SELECT status, COALESCE(claimed_by_session,'') FROM tasks WHERE plan_id = ? AND id = ?
+	`, a.PlanID, a.TaskID).Scan(&status, &owner); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("%w: no task %s/%s", ErrTaskNotOwnedRunning, a.PlanID, a.TaskID)
+		}
+		return fmt.Errorf("store: read calibration attempt task owner: %w", err)
+	}
+	if status != string(TaskStatusRunning) || owner != a.SessionID {
+		return fmt.Errorf(
+			"%w: task %s/%s is %s owned by %q, attempt claims %q",
+			ErrTaskNotOwnedRunning, a.PlanID, a.TaskID, status, owner, a.SessionID)
+	}
+
+	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO task_calibration_attempts(
 			plan_id, task_id, attempt_sequence, repetition, alias, provider,
 			model, effort, session_id, provider_session_id, assistant_output_sha256
@@ -211,6 +275,9 @@ func (s *Store) RecordCalibrationAttempt(ctx context.Context, a CalibrationAttem
 	); err != nil {
 		return fmt.Errorf("store: record calibration attempt %s/%s rep %d: %w",
 			a.PlanID, a.TaskID, a.Repetition, err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("store: commit calibration attempt: %w", err)
 	}
 	return nil
 }

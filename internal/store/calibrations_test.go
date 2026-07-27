@@ -106,7 +106,13 @@ func TestRecordCalibrationAttemptTracksRepetitions(t *testing.T) {
 	s := openTestStore(t)
 	projectID := mustCreateProject(t, s, "calib-attempts")
 	planID := seedCalibrationPlan(t, s, projectID, "attempts")
-	sessionID, _ := mustCreateSessionAndWorker(t, s, "calib")
+	sessionID, workerID := mustCreateSessionAndWorker(t, s, "calib")
+	// The attempt writer must be the task's CURRENT owner, so claim it. Before
+	// the ownership guard this test recorded attempts against a pending task,
+	// which is exactly the stale-worker write the guard now refuses.
+	if _, err := s.ClaimNextReady(ctx, planID, sessionID, workerID); err != nil {
+		t.Fatalf("ClaimNextReady: %v", err)
+	}
 
 	for rep := 1; rep <= 3; rep++ {
 		if err := s.RecordCalibrationAttempt(ctx, CalibrationAttempt{
@@ -144,7 +150,10 @@ func TestRecordCalibrationAttemptRejectsADuplicateRepetition(t *testing.T) {
 	s := openTestStore(t)
 	projectID := mustCreateProject(t, s, "calib-dup")
 	planID := seedCalibrationPlan(t, s, projectID, "dup")
-	sessionID, _ := mustCreateSessionAndWorker(t, s, "calib-dup")
+	sessionID, workerID := mustCreateSessionAndWorker(t, s, "calib-dup")
+	if _, err := s.ClaimNextReady(ctx, planID, sessionID, workerID); err != nil {
+		t.Fatalf("ClaimNextReady: %v", err)
+	}
 
 	attempt := CalibrationAttempt{
 		PlanID: planID, TaskID: "t", AttemptSequence: 1, Repetition: 1,
@@ -172,4 +181,92 @@ func seedCalibrationPlan(t *testing.T, s *Store, projectID, slug string) string 
 		t.Fatalf("CreatePlanGraph: %v", err)
 	}
 	return planID
+}
+
+// TestRecordCalibrationAttemptRejectsAnEmptyOutputDigest is a P1 on #236 and
+// the most consequential of the three: it defeats the entire point of
+// calibration.
+//
+// Attempts are compared BY their output digest to decide whether repeated runs
+// agree. NOT NULL accepts the empty string, so a provider that exits without a
+// usable result records "" — and N failed runs all carry the same "" digest,
+// which reads as unanimous agreement. Calibration would report its strongest
+// possible signal from runs that produced nothing.
+func TestRecordCalibrationAttemptRejectsAnEmptyOutputDigest(t *testing.T) {
+	ctx := context.Background()
+	s := openTestStore(t)
+	projectID := mustCreateProject(t, s, "calib-empty-digest")
+	planID := seedCalibrationPlan(t, s, projectID, "empty-digest")
+	sessionID, workerID := mustCreateSessionAndWorker(t, s, "calib-empty")
+	// Claim the task so ONLY the digest can fail this — otherwise the ownership
+	// guard rejects it first and the test passes without exercising the digest
+	// check at all.
+	if _, err := s.ClaimNextReady(ctx, planID, sessionID, workerID); err != nil {
+		t.Fatalf("ClaimNextReady: %v", err)
+	}
+
+	err := s.RecordCalibrationAttempt(ctx, CalibrationAttempt{
+		PlanID: planID, TaskID: "t", AttemptSequence: 1, Repetition: 1,
+		Alias: "a1", Provider: "claude", Model: "m", Effort: "high",
+		SessionID:             sessionID,
+		AssistantOutputSHA256: "", // provider produced no usable result
+	})
+	if err == nil {
+		t.Fatal("an attempt with no output digest was accepted; N failed runs " +
+			"would all carry \"\" and read as unanimous agreement")
+	}
+}
+
+// TestRecordCalibrationAttemptRejectsAStaleWorker is the other P1. When the
+// reaper reclaims a stalled worker before its provider call returns, that
+// worker's late write must not land: the task may already belong to a
+// replacement run, and attributing output to the evicted worker corrupts the
+// attempt history the agreement check reads.
+func TestRecordCalibrationAttemptRejectsAStaleWorker(t *testing.T) {
+	ctx := context.Background()
+	s := openTestStore(t)
+	projectID := mustCreateProject(t, s, "calib-stale")
+	planID := seedCalibrationPlan(t, s, projectID, "stale")
+	staleSession, _ := mustCreateSessionAndWorker(t, s, "calib-stale-old")
+
+	// The task is not owned by the stale session — it was never claimed by it.
+	err := s.RecordCalibrationAttempt(ctx, CalibrationAttempt{
+		PlanID: planID, TaskID: "t", AttemptSequence: 1, Repetition: 1,
+		Alias: "a1", Provider: "claude", Model: "m", Effort: "high",
+		SessionID:             staleSession,
+		AssistantOutputSHA256: "sha-stale",
+	})
+	if err == nil {
+		t.Fatal("an attempt from a session that does not own the running task was " +
+			"accepted; a reaped worker's late write would corrupt the attempt history")
+	}
+}
+
+// TestRecordCalibrationIsIdempotentUnderAConcurrentInsert covers the P2. The
+// documented guarantee is that recording the SAME measurement twice is a no-op
+// returning the same id. A check-then-insert loses that under concurrency: two
+// probes for a previously unseen alias both miss the lookup, and the loser gets
+// a UNIQUE violation instead of the identical row.
+//
+// The race is simulated deterministically by inserting the row between the
+// lookup and the insert — a concurrency test that relied on real scheduling
+// would be exactly the load-sensitive flake this project has already had twice.
+func TestRecordCalibrationIsIdempotentUnderAConcurrentInsert(t *testing.T) {
+	ctx := context.Background()
+	s := openTestStore(t)
+
+	first, err := s.RecordCalibration(ctx, sampleCalibration("a1"))
+	if err != nil {
+		t.Fatalf("RecordCalibration: %v", err)
+	}
+	// The "loser" path: the row already exists and the caller records the same
+	// measurement. It must return the existing row, never a UNIQUE error.
+	second, err := s.RecordCalibration(ctx, sampleCalibration("a1"))
+	if err != nil {
+		t.Fatalf("identical re-record returned %v; recording the same "+
+			"measurement twice is documented as a no-op", err)
+	}
+	if first.ID != second.ID {
+		t.Fatalf("ids differ: %q vs %q", first.ID, second.ID)
+	}
 }
