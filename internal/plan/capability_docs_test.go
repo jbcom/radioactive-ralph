@@ -92,7 +92,11 @@ func readGuide(t *testing.T) string {
 	if err != nil {
 		t.Fatalf("read %s: %v", path, err)
 	}
-	return string(raw)
+	// The repo has no .gitattributes, so a Windows checkout may convert this
+	// markdown to CRLF. Normalizing here keeps the line-exact fence match and
+	// the table regex working on every platform rather than only where the
+	// author happened to run them.
+	return strings.ReplaceAll(string(raw), "\r\n", "\n")
 }
 
 // extractMarkdownExample pulls the body of the section's ```markdown fence.
