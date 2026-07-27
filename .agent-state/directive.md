@@ -161,16 +161,22 @@ tags before deletion: `archive/plan-v2-dag`, `archive/release-022-recovery-scrat
       backstop (240ms/Open, 44x reduction).
 - [x] PR #210 — MERGED. Directive re-armed + the DAG integration spec landed.
 - [x] DAG increment 4 (#217) — MERGED, released v0.23.0.
-- [ ] [WAIT] Eight PRs open. **#215 (increment 2) MERGED.** Chain:
-      **#216 -> #221 -> #225 -> #228**, plus independents #220, #222, #224, #226.
+- [ ] [WAIT] Ten PRs open as of 2026-07-27: 220, 222, 224, 225, 226, 228, 229,
+      230, 231, 232. MERGED so far in this arc: #215 (increment 2), #216
+      (increment 3), #221 (increment 5, the keystone). Remaining DAG chain:
+      **#225 -> #228 -> #229** (increments 6, 7, 8). Independents: #220 (dumb
+      client), #222 (this directive), #224 (winio Stop), #226 (packaging
+      flake), #230 (claude classification), #231 (StatusReply host ids).
       Reconciliation lesson (2026-07-27): after a stacked parent squash-merges,
       REBUILD the child from main and cherry-pick only its unique commits —
-      never rebase it. Rebasing #220 replayed all eight of #219's commits against
-      the squash of themselves; `git merge-base --is-ancestor <parent-head>
-      <child-head>` proved exactly two commits were unique, and reset+cherry-pick
-      applied them with zero conflicts. The squash rewrites the parent's history
+      never rebase it. Enumerate the unique set explicitly with
+      `git log --reverse --format=%H <pre-squash-parent-tip>..<child-head>`;
+      `git merge-base --is-ancestor` only confirms the precondition, it does not
+      select the commits. Rebasing #220 replayed all eight of #219's commits
+      against the squash of themselves. The squash rewrites the parent's history
       into one commit the child no longer shares ancestry with, so git cannot
-      tell the duplicates apart. Same treatment rebuilt #215/#216/#221/#225.
+      tell the duplicates apart. Same treatment rebuilt #215/#216/#221/#225 and,
+      after #221 merged, #225/#228/#229 again.
       - #224 fixes a REAL Windows deadlock, not a flake: winio's Accept waits on
         an internal goroutine with no cancellation case while that goroutine
         selects between close and accept; when close loses the coin flip it calls
