@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"database/sql"
 	"testing"
 	"testing/fstest"
@@ -71,7 +72,7 @@ func openRawSQLite(t *testing.T) *sql.DB {
 func TestApplyMigrationExecFailureDoesNotBumpVersion(t *testing.T) {
 	db := openRawSQLite(t)
 
-	err := applyMigration(db, 1, "THIS IS NOT VALID SQL;")
+	err := applyMigration(context.Background(), db, 1, "THIS IS NOT VALID SQL;")
 	if err == nil {
 		t.Fatal("applyMigration with invalid SQL: want error, got nil")
 	}
@@ -88,7 +89,7 @@ func TestApplyMigrationExecFailureDoesNotBumpVersion(t *testing.T) {
 func TestApplyMigrationSuccessBumpsVersion(t *testing.T) {
 	db := openRawSQLite(t)
 
-	if err := applyMigration(db, 7, "CREATE TABLE t_migrate_test(id INTEGER PRIMARY KEY);"); err != nil {
+	if err := applyMigration(context.Background(), db, 7, "CREATE TABLE t_migrate_test(id INTEGER PRIMARY KEY);"); err != nil {
 		t.Fatalf("applyMigration: %v", err)
 	}
 

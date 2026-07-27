@@ -151,7 +151,7 @@ func Open(ctx context.Context, opts Options) (*Store, error) {
 		return nil, err
 	}
 
-	if err := Migrate(db); err != nil {
+	if err := Migrate(ctx, db); err != nil {
 		_ = db.Close()
 		return nil, err
 	}
