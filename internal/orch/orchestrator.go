@@ -464,16 +464,27 @@ func (o *Orchestrator) DispatchNext(ctx context.Context, projectID, planID strin
 	// Each partition is one leaf group. Fan-out may delegate a whole partition
 	// to one provider; it must never span two, because a fan-out turn runs
 	// under a single group heading and a single resolved binding.
+	//
+	// TASKS and WORKERS are counted separately here, and conflating them is a
+	// real bug rather than bookkeeping pedantry. DispatchNext RETURNS a task
+	// count — callers want to know how much work started — but maxParallel
+	// bounds WORKERS, and a native fan-out partition is N tasks on exactly ONE
+	// worker with one provider turn. Charging N against the budget lets a
+	// two-task fan-out consume a maxParallel=2 pipeline outright, stranding an
+	// unrelated ready branch until the next tick while a semaphore slot sits
+	// free the whole time.
+	workers := 0
 	for _, group := range wave.partitions {
-		if o.maxParallel > 0 && dispatched >= o.maxParallel {
+		if o.maxParallel > 0 && workers >= o.maxParallel {
 			break
 		}
-		n, err := o.dispatchReadyGroup(ctx, dispatchGroupArgs{
+		tasks, admitted, err := o.dispatchReadyGroup(ctx, dispatchGroupArgs{
 			projectID: projectID, projectDir: projectDir, planID: planID,
 			parsedPlan: parsedPlan, storeTitle: storedPlan.Title,
-			group: group, alreadyDispatched: dispatched,
+			group: group, alreadyAdmitted: workers,
 		})
-		dispatched += n
+		dispatched += tasks
+		workers += admitted
 		if err != nil {
 			return dispatched, err
 		}
@@ -487,15 +498,20 @@ type dispatchGroupArgs struct {
 	parsedPlan                    *plan.Plan
 	storeTitle                    string
 	group                         readyGroup
-	// alreadyDispatched is how many workers earlier partitions in this pass
-	// admitted, so maxParallel bounds the PASS rather than each group.
-	alreadyDispatched int
+	// alreadyAdmitted is how many WORKERS earlier partitions in this pass
+	// admitted, so maxParallel bounds the PASS rather than each group. Workers,
+	// not tasks: a fan-out partition is many tasks on one worker.
+	alreadyAdmitted int
 }
 
 // dispatchReadyGroup dispatches one leaf group from the ready wave: either as a
 // single native-fan-out turn owning the whole group, or as one Ralph-managed
 // worker per step.
-func (o *Orchestrator) dispatchReadyGroup(ctx context.Context, a dispatchGroupArgs) (dispatched int, err error) {
+//
+// Returns the number of TASKS started and the number of WORKERS admitted.
+// These differ for native fan-out — N tasks, one worker — and the caller needs
+// both: tasks for what it reports, workers for the maxParallel budget.
+func (o *Orchestrator) dispatchReadyGroup(ctx context.Context, a dispatchGroupArgs) (dispatched, admitted int, err error) {
 	projectID, planID := a.projectID, a.planID
 	projectDir, parsedPlan := a.projectDir, a.parsedPlan
 	storedTitle := a.storeTitle
@@ -517,7 +533,7 @@ func (o *Orchestrator) dispatchReadyGroup(ctx context.Context, a dispatchGroupAr
 	if parallel && candidateLimit > 1 {
 		binding, err := o.resolveBinding(ctx, projectID, parallel, BindingProbe)
 		if err != nil {
-			return dispatched, fmt.Errorf("orch: resolve binding: %w", err)
+			return dispatched, admitted, fmt.Errorf("orch: resolve binding: %w", err)
 		}
 		if binding.Config.NativeFanout {
 			// Native fan-out consumes one Ralph worker, so scan the complete
@@ -528,7 +544,7 @@ func (o *Orchestrator) dispatchReadyGroup(ctx context.Context, a dispatchGroupAr
 			for i := 0; i < candidateLimit; i++ {
 				gated, err := o.stepGateBlocks(ctx, planID, refs[i], readySteps[i])
 				if err != nil {
-					return dispatched, err
+					return dispatched, admitted, err
 				}
 				if !gated {
 					eligibleSteps = append(eligibleSteps, readySteps[i])
@@ -536,14 +552,14 @@ func (o *Orchestrator) dispatchReadyGroup(ctx context.Context, a dispatchGroupAr
 				}
 			}
 			if len(eligibleSteps) == 0 {
-				return dispatched, nil
+				return dispatched, admitted, nil
 			}
 
 			// A fan-out group is one worker / one provider turn, so it takes ONE
 			// dispatch slot. If the pipeline is full there's no capacity now —
 			// return without dispatching; the next pass retries.
 			if !o.acquireDispatchSlot() {
-				return dispatched, nil
+				return dispatched, admitted, nil
 			}
 			slotReleased := false
 			releaseSlot := func() {
@@ -555,11 +571,11 @@ func (o *Orchestrator) dispatchReadyGroup(ctx context.Context, a dispatchGroupAr
 			binding, err = o.resolveBinding(ctx, projectID, parallel, BindingDispatch)
 			if err != nil {
 				releaseSlot()
-				return dispatched, fmt.Errorf("orch: resolve binding for dispatch: %w", err)
+				return dispatched, admitted, fmt.Errorf("orch: resolve binding for dispatch: %w", err)
 			}
 			if !binding.Config.NativeFanout {
 				releaseSlot()
-				return dispatched, fmt.Errorf("orch: binding capability changed between probe and dispatch")
+				return dispatched, admitted, fmt.Errorf("orch: binding capability changed between probe and dispatch")
 			}
 			n, err := o.dispatchFanoutGroup(ctx, projectID, projectDir, planID, parsedPlan, storedTitle, groupHeading, binding, eligibleSteps, eligibleRefs, releaseSlot)
 			if err != nil {
@@ -567,9 +583,11 @@ func (o *Orchestrator) dispatchReadyGroup(ctx context.Context, a dispatchGroupAr
 				// pre-launch failure (claim/spend); the async turn was never
 				// started, so release the slot here.
 				releaseSlot()
-				return dispatched, err
+				return dispatched, admitted, err
 			}
-			return n, nil
+			// N tasks, but exactly ONE worker: a single provider turn owns the
+			// whole group.
+			return n, 1, nil
 		}
 	}
 
@@ -579,7 +597,7 @@ func (o *Orchestrator) dispatchReadyGroup(ctx context.Context, a dispatchGroupAr
 		// partitions already admitted. Keep scanning past approval- or spend-gated
 		// candidates and stop only after the pass has actually admitted the
 		// configured number of workers.
-		if o.maxParallel > 0 && a.alreadyDispatched+dispatched >= o.maxParallel {
+		if o.maxParallel > 0 && a.alreadyAdmitted+admitted >= o.maxParallel {
 			break
 		}
 		// Skip a step still held behind the approval gate BEFORE acquiring a
@@ -589,7 +607,7 @@ func (o *Orchestrator) dispatchReadyGroup(ctx context.Context, a dispatchGroupAr
 		// use (see stepGateBlocks).
 		gated, err := o.stepGateBlocks(ctx, planID, refs[i], readySteps[i])
 		if err != nil {
-			return dispatched, err
+			return dispatched, admitted, err
 		}
 		if gated {
 			// Sequential: a gated step blocks the rest (they depend on it) → stop.
@@ -614,14 +632,17 @@ func (o *Orchestrator) dispatchReadyGroup(ctx context.Context, a dispatchGroupAr
 			parallel: parallel, ref: refs[i], step: readySteps[i],
 		})
 		if err != nil {
-			return dispatched, err
+			return dispatched, admitted, err
 		}
 		if launched {
+			// One Ralph-managed worker per step: task and worker counts move
+			// together on this path.
 			dispatched++
+			admitted++
 		}
 	}
 
-	return dispatched, nil
+	return dispatched, admitted, nil
 }
 
 // dispatchStepArgs bundles the per-step inputs dispatchReadyStep needs, so the

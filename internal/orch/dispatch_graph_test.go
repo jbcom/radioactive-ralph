@@ -246,3 +246,42 @@ func TestDispatchDoesNotRematerializeAPlanMidRun(t *testing.T) {
 		t.Fatalf("after three passes there are %d tasks, want 2 — the plan was re-materialized", len(tasks))
 	}
 }
+
+// TestFanoutChargesOneWorkerAgainstMaxParallel separates the two things
+// DispatchNext counts. It RETURNS a task count (callers want to know how much
+// work started), but maxParallel bounds WORKERS — and native fan-out is N tasks
+// on exactly one worker with one provider turn.
+//
+// Charging N against the budget makes a two-task fan-out consume a
+// maxParallel=2 pipeline entirely, so an unrelated ready branch waits for the
+// next tick even though a semaphore slot is free the whole time.
+func TestFanoutChargesOneWorkerAgainstMaxParallel(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	projectID := mustCreateTestProject(t, s, "fanout-budget")
+
+	runner := &fakeRunner{results: []provider.Result{
+		{AssistantOutput: "left done"},
+		{AssistantOutput: "right done"},
+	}}
+	o := New(s,
+		WithRunnerFactory(func(provider.Binding) (provider.Runner, error) { return runner, nil }),
+		WithBindingResolver(fakeBindingResolver("claude", true)), // NativeFanout
+		WithMaxParallel(2),
+	)
+	planID := mustImportPlan(t, o, projectID, "budget", diamondPlan)
+	completeTask(t, s, planID, "prepare")
+
+	if _, err := o.DispatchNext(ctx, projectID, planID); err != nil {
+		t.Fatalf("DispatchNext: %v", err)
+	}
+	o.Wait()
+
+	// Left is a two-task fan-out (one worker), Right is a single task (one
+	// worker). Both fit in maxParallel=2 — unless the fan-out is charged as two.
+	calls := runner.callReqs()
+	if len(calls) != 2 {
+		t.Fatalf("provider turns = %d, want 2 — the two-task fan-out partition is "+
+			"ONE worker, so the second partition still fits in maxParallel=2", len(calls))
+	}
+}
