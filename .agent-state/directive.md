@@ -161,8 +161,8 @@ tags before deletion: `archive/plan-v2-dag`, `archive/release-022-recovery-scrat
       backstop (240ms/Open, 44x reduction).
 - [x] PR #210 — MERGED. Directive re-armed + the DAG integration spec landed.
 - [x] DAG increment 4 (#217) — MERGED, released v0.23.0.
-- [ ] [WAIT-CI] Fifteen PRs open (222, 224, 225, 228, 229, 233, 234, 236, 237,
-      238, 239, 240, 245, 246, 247). ALL review threads on ALL FIFTEEN are
+- [ ] [WAIT-CI] Sixteen PRs open (222, 224, 225, 228, 229, 233, 234, 236, 237,
+      238, 239, 240, 245, 246, 247, 250). ALL review threads on ALL of them are
       RESOLVED as of 2026-07-27 16:20Z. The only thing between them and merge
       is macOS CI.
       BLOCKER (external, not repo-side): every macOS job — Test/GUI/Package GUI
@@ -413,11 +413,22 @@ tags before deletion: `archive/plan-v2-dag`, `archive/release-022-recovery-scrat
             their reason there and fail closed without it — were unreachable
             for every dispatch-materialized task. #228 depends on the same
             primitive. Metadata is now written as part of materializing a task.
-      - [ ] `providers` / `differentFrom` — still no readers. These express
-            independence constraints (run this task on a provider DIFFERENT
-            from the one that produced the artifact it reviews), which needs
-            the calibration identity work in #234/#236 to have a domain to
-            compare against. Sequence after those merge, not before.
+      - [x] `providers` — ENFORCED (PR #250, stacked on #247). Matches the
+            binding ALIAS or the provider TYPE, since several aliases can share
+            a type and "any claude" vs "this pool member" are different asks.
+            Shares blocked_capability with `requires`: same class of refusal,
+            same remedy. NO closed vocabulary, unlike `requires` — provider
+            names are operator config, so an unrecognized name is
+            indistinguishable from one this project is simply not bound to; it
+            blocks with the allowed list named either way. An all-blank list
+            restricts nothing rather than blocking everywhere.
+      - [ ] `differentFrom` — still no reader, and cannot get one yet: it names
+            tasks that must not share this task's INDEPENDENCE DOMAIN, and no
+            dispatch path reads a domain today. The domain arrives with the
+            calibration identity work (#234 resolves the invocation, #236
+            records inference/control/independence domains per calibration).
+            Sequence after both merge rather than inventing a domain notion
+            that would then disagree with the one they ship.
 
 - [x] Two LOAD-SENSITIVE timing tests — FIXED (PR #237). Both verified not
       caused by the branch that surfaced them (each passed 3/3 and 4/4 in
