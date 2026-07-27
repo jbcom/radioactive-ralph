@@ -187,7 +187,15 @@ tags before deletion: `archive/plan-v2-dag`, `archive/release-022-recovery-scrat
       newer than this binary supports" —
       `TestCurrentSchemaVersionMatchesEmbeddedMigrations` now names the real
       cause. Opens as a PR once #212 merges (it is the base).
-- [ ] DAG integration — increments 3-12. Central verified finding: **main already has the DAG store
+- [ ] [WAIT] DAG increment 3 — COMMITTED on `feat/plan-graph-named-claim`
+      (224ed6b), stacked on increment 2. `ClaimTask` is the exact named claim:
+      `ClaimNextReady` returns whichever task its ORDER BY surfaces, which forced
+      the orchestrator to reconcile a substituted task afterward. Same readiness
+      predicate minus ordering/LIMIT; `claimGate` serializes in-process claims so
+      a ready wave cannot turn queueing into SQLITE_BUSY. Output reservations
+      deferred to their own increment. 6 new tests incl. 12-goroutine uniqueness;
+      existing claim tests unchanged. Opens as a PR once its base merges.
+- [ ] DAG integration — increments 4-12. Central verified finding: **main already has the DAG store
       layer.** `task_deps` ships in 0001_initial with cycle prevention in
       `AddDep`; `Ready`/`ClaimNextReady` already walk the edges. The gap is
       confined to the orchestrator — `DispatchNext` re-parses markdown and derives
