@@ -131,7 +131,8 @@ func runDeclarativeAttempt(ctx context.Context, binding Binding, req Request, st
 
 	switch binding.Config.Type {
 	case declarativePlainStdout:
-		out, err := runCommandWithStall(ctx, stallTimeout, req.WorkingDir, binding.Config.Binary, args)
+		out, err := runCommandWithStallContained(
+			ctx, stallTimeout, req.WorkingDir, req.ContainmentRoot, binding.Config.Binary, args)
 		if err != nil {
 			return Result{}, err
 		}
@@ -140,7 +141,9 @@ func runDeclarativeAttempt(ctx context.Context, binding Binding, req Request, st
 			AssistantOutput: normalizeStructuredOutput(out, req),
 		}, nil
 	case declarativeLastMessageFile:
-		if _, err := runCommandWithStall(ctx, stallTimeout, req.WorkingDir, binding.Config.Binary, args); err != nil {
+		if _, err := runCommandWithStallContained(
+			ctx, stallTimeout, req.WorkingDir, req.ContainmentRoot, binding.Config.Binary, args,
+		); err != nil {
 			return Result{}, err
 		}
 		raw, err := os.ReadFile(outputPath) //nolint:gosec // provider-configured path after templating

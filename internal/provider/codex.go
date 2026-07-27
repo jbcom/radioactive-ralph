@@ -96,6 +96,7 @@ func (CodexRunner) Run(ctx context.Context, binding Binding, req Request) (Resul
 		Command:                 binding.Config.Binary,
 		Args:                    args,
 		Dir:                     req.WorkingDir,
+		ContainmentRoot:         req.ContainmentRoot,
 		ResultPath:              outPath,
 		MaxOutputRetentionBytes: agent.RetentionBudgetForLineBytes(codexRetainedJSONLLineBytes),
 		OversizeOutputPolicy:    agent.DiscardOversizeOutput,

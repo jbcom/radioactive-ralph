@@ -53,8 +53,12 @@ have to enumerate every read, mach lookup, and network call each provider CLI
 needs — an open-ended list that differs per provider and per version, whose
 first omission surfaces as a provider bug rather than a policy one. The
 guarantee here is scoped to **writes**, so the profile denies exactly that.
-Reads are covered by the validation layer; network egress is out of scope and
-named as such below.
+Reads are NOT contained. The validation layer checks which paths *Ralph* will
+read on a task's behalf; it places no restriction on the provider process, which
+can read anything the user running Ralph can read. That is stated plainly here
+because an earlier draft of this document implied validation covered provider
+reads, which would have been a guarantee nobody was making. Network egress is
+likewise out of scope and named as such below.
 
 ### There is no temp-directory exception, deliberately
 
@@ -145,8 +149,12 @@ handles.
 
 - **Network egress.** A contained provider can still reach the network. Scoping
   that needs a different mechanism and its own threat model.
-- **Reads.** The provider can read what the user running Ralph can read.
-  Containment here is about what it can *change*.
+- **Reads.** The provider can read whatever the user running Ralph can read.
+  Nothing in either layer constrains that: containment here is about what a
+  provider can *change*. Scoping reads would need the handled-rights set to
+  include READ_FILE/READ_DIR, which breaks execve unless every path holding a
+  binary or shared library is enumerated — a different design with a different
+  cost.
 - **Deliberate privilege escalation.** This raises the cost of an accidental or
   careless write outside the checkout. It is not a defense against a provider
   actively attacking the host.

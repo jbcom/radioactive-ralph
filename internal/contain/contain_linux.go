@@ -70,6 +70,29 @@ const fsWriteBits = fsWriteFile | fsRemoveDir | fsRemoveFile |
 // handled set is clamped rather than assumed.
 const fsABI6Bits uint64 = 0xFFFF
 
+// fsBitsThroughABI maps a Landlock ABI version to the filesystem rights it
+// defines, so the handled set is capped by what the RUNNING kernel knows.
+//
+// This matters below ABI 5: REFER arrived in ABI 2 and TRUNCATE in ABI 3, so a
+// kernel at ABI 1 rejects a ruleset containing them with EINVAL — and the
+// failure lands on create_ruleset or on the /dev rule, neither of which
+// mentions the offending bit. Capping is the kernel's own documented
+// best-effort pattern rather than a workaround.
+func fsBitsThroughABI(abi uintptr) uint64 {
+	switch {
+	case abi >= 5:
+		return fsABI6Bits // IOCTL_DEV (bit 15) and everything below
+	case abi == 4:
+		return 0x7FFF // through TRUNCATE (bit 14)
+	case abi == 3:
+		return 0x7FFF // TRUNCATE added
+	case abi == 2:
+		return 0x3FFF // REFER added (bit 13)
+	default:
+		return 0x1FFF // ABI 1: through MAKE_SYM (bit 12)
+	}
+}
+
 type landlockRulesetAttr struct {
 	HandledAccessFS  uint64
 	HandledAccessNet uint64
@@ -165,7 +188,7 @@ func restrictSelfToRoot(root string) error {
 	// Clamp to rights the running kernel defines. Per the kernel's documented
 	// best-effort pattern, an unsupported bit must be dropped rather than
 	// passed — create_ruleset returns EINVAL on an unknown bit.
-	handled := fsWriteBits & fsABI6Bits
+	handled := fsWriteBits & fsBitsThroughABI(abi)
 	attr := landlockRulesetAttr{HandledAccessFS: handled}
 	// G103: Landlock has no libc wrapper in Go's syscall package, so the
 	// ruleset attr must be passed as a raw pointer. attr is a local struct of
@@ -177,13 +200,22 @@ func restrictSelfToRoot(root string) error {
 	}
 	defer func() { _ = syscall.Close(int(fd)) }()
 
-	// The root is the only writable subtree. /dev is granted the same rights
-	// because stdio and the pty live there and a provider that cannot write to
-	// its own terminal cannot run; it holds no project or user files.
-	for _, dir := range []string{root, "/dev"} {
-		if err := allowWritesBeneath(fd, dir, handled); err != nil {
-			return err
-		}
+	// The project root is the only subtree granted full write rights.
+	if err := allowWritesBeneath(fd, root, handled); err != nil {
+		return err
+	}
+
+	// /dev gets WRITE_FILE ONLY — enough for stdio and the pty, which a provider
+	// cannot run without.
+	//
+	// NOT the full write set: that would include MAKE_CHAR, MAKE_BLOCK,
+	// REMOVE_FILE and friends across every /dev descendant, letting a contained
+	// provider create device nodes or delete existing ones. The macOS profile
+	// already scoped this correctly (write-data on specific nodes plus the tty);
+	// granting everything here was an inconsistency in this package, not a
+	// requirement.
+	if err := allowWritesBeneath(fd, "/dev", fsWriteFile&handled); err != nil {
+		return err
 	}
 
 	if _, _, errno := syscall.Syscall6(

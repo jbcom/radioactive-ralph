@@ -92,10 +92,11 @@ func (ClaudeRunner) Run(ctx context.Context, binding Binding, req Request) (Resu
 	args := claudeArgs(binding, req, sessionID, model, effort)
 
 	opts := agent.Options{
-		Command:    binding.Config.Binary,
-		Args:       args,
-		Dir:        req.WorkingDir,
-		ResultPath: resultPath,
+		Command:         binding.Config.Binary,
+		Args:            args,
+		Dir:             req.WorkingDir,
+		ContainmentRoot: req.ContainmentRoot,
+		ResultPath:      resultPath,
 		// Bound every PTY byte, including partial/oversized/non-JSON records
 		// that never reach the structured callback.
 		MaxObservedOutputBytes: maxStructuredEvidenceBytes,

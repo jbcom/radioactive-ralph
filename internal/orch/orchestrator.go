@@ -71,6 +71,15 @@ type Orchestrator struct {
 	spendCapUSD     map[string]float64 // provider name -> cap; 0/absent = uncapped
 	acceptanceCheck AcceptanceChecker
 
+	// containProviderWrites confines each provider turn to writing beneath the
+	// project directory, enforced by the kernel (internal/contain).
+	//
+	// OPT-IN rather than default-on: turning it on changes what an existing
+	// deployment's provider can do, and a provider that legitimately writes
+	// outside the checkout (a shared cache, a user-level config) would start
+	// failing on upgrade. Operators enable it deliberately.
+	containProviderWrites bool
+
 	// decisionLogAbsorb, when set, is invoked by AbsorbDecisionLog (see
 	// lifecycle.go) instead of the default XDG-backed implementation. Test
 	// hook.
@@ -139,6 +148,28 @@ type Orchestrator struct {
 	// reads it concurrently from the tick / HandleEnqueue.
 	baseCtxMu sync.RWMutex
 	baseCtx   context.Context
+}
+
+// WithProviderWriteContainment confines every provider turn to writing beneath
+// the project directory.
+//
+// Off by default: enabling it changes what an existing deployment's provider is
+// permitted to do, so it is an operator decision rather than an upgrade side
+// effect. Where the platform has no containment primitive, dispatch FAILS the
+// turn rather than running it unconfined — a caller that asked for containment
+// and silently got none would hold exactly the false guarantee this exists to
+// replace.
+func WithProviderWriteContainment(enabled bool) Option {
+	return func(o *Orchestrator) { o.containProviderWrites = enabled }
+}
+
+// containmentRootFor returns the write boundary for a turn in projectDir, or ""
+// when containment is disabled.
+func (o *Orchestrator) containmentRootFor(projectDir string) string {
+	if !o.containProviderWrites {
+		return ""
+	}
+	return projectDir
 }
 
 // workerHeartbeatInterval is how often a running worker's store heartbeat is
@@ -1050,10 +1081,11 @@ func (o *Orchestrator) dispatchWorker(ctx context.Context, projectID, projectDir
 	// re-check (which re-runs real shell commands) fail spuriously against an
 	// already-expired deadline. Use runCtx for Run; keep the parent ctx after.
 	req := provider.Request{
-		WorkingDir:   projectDir,
-		UserPrompt:   scoped.prompt(),
-		TurnTimeout:  o.turnTimeout,
-		StallTimeout: o.stallTimeout,
+		WorkingDir:      projectDir,
+		ContainmentRoot: o.containmentRootFor(projectDir),
+		UserPrompt:      scoped.prompt(),
+		TurnTimeout:     o.turnTimeout,
+		StallTimeout:    o.stallTimeout,
 	}
 	limits, err := provider.ResolveTurnLimits(binding, req)
 	if err != nil {
@@ -1306,10 +1338,11 @@ func (o *Orchestrator) runFanoutGroup(ctx context.Context, projectID, projectDir
 	}
 
 	req := provider.Request{
-		WorkingDir:   projectDir,
-		UserPrompt:   scoped.prompt(),
-		TurnTimeout:  o.turnTimeout,
-		StallTimeout: o.stallTimeout,
+		WorkingDir:      projectDir,
+		ContainmentRoot: o.containmentRootFor(projectDir),
+		UserPrompt:      scoped.prompt(),
+		TurnTimeout:     o.turnTimeout,
+		StallTimeout:    o.stallTimeout,
 	}
 	limits, err := provider.ResolveTurnLimits(binding, req)
 	if err != nil {

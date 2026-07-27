@@ -172,7 +172,15 @@ func buildContainHelper(t *testing.T) string {
 	return bin
 }
 
-func shellQuote(s string) string { return "'" + s + "'" }
+// shellQuote single-quotes s for /bin/sh, escaping any embedded apostrophe.
+//
+// t.TempDir() paths derive from the TEST NAME, so a test whose name ever
+// contains an apostrophe would otherwise produce a command targeting a
+// different path — or failing to parse — and the containment assertion would
+// read that as a refused write.
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
 
 // TestPolicyGrantsNothingOutsideTheRoot is a regression for a hole this package
 // shipped with in draft and the behavioral tests caught.
