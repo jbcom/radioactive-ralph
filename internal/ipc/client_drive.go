@@ -103,6 +103,20 @@ func (c *Client) WorkerKill(ctx context.Context, args WorkerKillArgs) error {
 	return c.driveCall(ctx, CmdWorkerKill, args, nil)
 }
 
+// ProjectEnsure resolves the caller's directory to a project, creating it when
+// no fingerprint matches. The client computes its own fingerprints from its
+// working directory; the supervisor owns the store write.
+func (c *Client) ProjectEnsure(
+	ctx context.Context,
+	args ProjectEnsureArgs,
+) (*ProjectEnsureReply, error) {
+	var reply ProjectEnsureReply
+	if err := c.driveCall(ctx, CmdProjectEnsure, args, &reply); err != nil {
+		return nil, err
+	}
+	return &reply, nil
+}
+
 // NegotiatedVersion returns the supervisor's supported wire protocol version
 // (from StatusReply). 0 means a pre-versioned v1 supervisor.
 func (c *Client) NegotiatedVersion(ctx context.Context) (int, error) {
