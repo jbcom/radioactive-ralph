@@ -340,14 +340,68 @@ func (s *Store) RecordTaskProviderSession(
 	return nil
 }
 
-// MarkBlockedCapability records a fail-closed pre-dispatch capability block.
-func (s *Store) MarkBlockedCapability(ctx context.Context, planID, taskID, reason string) error {
+// MarkBlockedCapability records a fail-closed pre-dispatch capability block and
+// reports whether this call was the TRANSITION into that state.
+//
+// The transition is answered inside the same transaction as the write because
+// it cannot be answered correctly outside it: dispatch evaluates the gate more
+// than once per pass, so a caller comparing against a task row it read earlier
+// sees a stale status and emits a duplicate. Callers that emit an event on
+// blocking use this to emit once rather than on every supervisor tick.
+func (s *Store) MarkBlockedCapability(ctx context.Context, planID, taskID, reason string) (bool, error) {
 	return s.markMetadataBlocked(ctx, planID, taskID, TaskStatusBlockedCapability, reason)
 }
 
 // MarkBlockedInput records a fail-closed immutable-input admission failure.
-func (s *Store) MarkBlockedInput(ctx context.Context, planID, taskID, reason string) error {
+// The bool reports whether this call was the transition into the blocked state;
+// see MarkBlockedCapability.
+func (s *Store) MarkBlockedInput(ctx context.Context, planID, taskID, reason string) (bool, error) {
 	return s.markMetadataBlocked(ctx, planID, taskID, TaskStatusBlockedInput, reason)
+}
+
+// ClearTaskBlock returns a pre-dispatch-blocked task to pending and drops its
+// recorded reason. Reports whether a row actually changed.
+//
+// Without this a block is a TRAP rather than a gate: ClaimTask accepts only
+// pending or ready, so a task blocked on a capability stayed unclaimable even
+// after an operator performed the exact fix the block asked for, and the plan
+// never completed.
+//
+// Only the two fail-closed pre-dispatch states are cleared. A running, done, or
+// failed task is untouched — those are owned by the worker lifecycle, and
+// resetting one here would discard real execution state.
+func (s *Store) ClearTaskBlock(ctx context.Context, planID, taskID string) (bool, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return false, fmt.Errorf("store: begin clear task block: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	res, err := tx.ExecContext(ctx, `
+		UPDATE tasks SET status = 'pending'
+		WHERE plan_id = ? AND id = ? AND status IN ('blocked_capability','blocked_input')
+	`, planID, taskID)
+	if err != nil {
+		return false, fmt.Errorf("store: clear task block: %w", err)
+	}
+	count, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("store: clear task block rows affected: %w", err)
+	}
+	if count == 0 {
+		// Not blocked: nothing to clear, and not an error — the caller checks
+		// every eligible task on every pass.
+		return false, nil
+	}
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE task_metadata SET blocked_reason = '' WHERE plan_id = ? AND task_id = ?
+	`, planID, taskID); err != nil {
+		return false, fmt.Errorf("store: clear blocked reason: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return false, fmt.Errorf("store: commit clear task block: %w", err)
+	}
+	return true, nil
 }
 
 func (s *Store) markMetadataBlocked(
@@ -355,12 +409,26 @@ func (s *Store) markMetadataBlocked(
 	planID, taskID string,
 	status TaskStatus,
 	reason string,
-) error {
+) (bool, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return fmt.Errorf("store: begin metadata block: %w", err)
+		return false, fmt.Errorf("store: begin metadata block: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
+
+	// Read the prior status inside the transaction so "was it already blocked?"
+	// is answered against the same snapshot the UPDATE below acts on.
+	var priorStatus string
+	if err := tx.QueryRowContext(ctx,
+		`SELECT status FROM tasks WHERE plan_id = ? AND id = ?`, planID, taskID,
+	).Scan(&priorStatus); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return false, ErrTaskNotRunning
+		}
+		return false, fmt.Errorf("store: read prior task status: %w", err)
+	}
+	transitioned := priorStatus != string(status)
+
 	res, err := tx.ExecContext(ctx, `
 		UPDATE tasks SET status = ?
 		-- blocked_input belongs here alongside blocked_capability: both are
@@ -371,12 +439,12 @@ func (s *Store) markMetadataBlocked(
 		WHERE plan_id = ? AND id = ? AND status IN ('pending','ready','blocked_capability','blocked_input')
 	`, string(status), planID, taskID)
 	if err != nil {
-		return fmt.Errorf("store: mark metadata blocked: %w", err)
+		return false, fmt.Errorf("store: mark metadata blocked: %w", err)
 	}
 	if count, err := res.RowsAffected(); err != nil {
-		return fmt.Errorf("store: metadata block rows affected: %w", err)
+		return false, fmt.Errorf("store: metadata block rows affected: %w", err)
 	} else if count == 0 {
-		return ErrTaskNotRunning
+		return false, ErrTaskNotRunning
 	}
 	// A task with no task_metadata row must not be silently half-blocked.
 	// Migration 0003 does not backfill metadata, so a task created before it
@@ -387,21 +455,30 @@ func (s *Store) markMetadataBlocked(
 		UPDATE task_metadata SET blocked_reason = ? WHERE plan_id = ? AND task_id = ?
 	`, reason, planID, taskID)
 	if err != nil {
-		return fmt.Errorf("store: record capability reason: %w", err)
+		return false, fmt.Errorf("store: record capability reason: %w", err)
 	}
 	if count, err := reasonRes.RowsAffected(); err != nil {
-		return fmt.Errorf("store: capability reason rows affected: %w", err)
+		return false, fmt.Errorf("store: capability reason rows affected: %w", err)
 	} else if count == 0 {
-		return fmt.Errorf("%w: task %s has no metadata row to record a block reason",
+		return false, fmt.Errorf("%w: task %s has no metadata row to record a block reason",
 			ErrTaskMetadataMissing, taskID)
 	}
-	if _, err := tx.ExecContext(ctx, `
-		INSERT INTO events(plan_id, task_id, kind, stream, payload_json)
-		VALUES (?, ?, ?, 'service', ?)
-	`, planID, taskID, "task."+string(status), payloadJSON(EventPayload{Reason: reason})); err != nil {
-		return fmt.Errorf("store: log metadata block: %w", err)
+	// Emit only on the TRANSITION into the blocked state. Dispatch re-evaluates
+	// the gate on every supervisor tick (and more than once per pass), so an
+	// unconditional insert appends an identical event forever — burying the one
+	// moment that matters, the block itself, under repeats of itself.
+	if transitioned {
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO events(plan_id, task_id, kind, stream, payload_json)
+			VALUES (?, ?, ?, 'service', ?)
+		`, planID, taskID, "task."+string(status), payloadJSON(EventPayload{Reason: reason})); err != nil {
+			return false, fmt.Errorf("store: log metadata block: %w", err)
+		}
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return false, fmt.Errorf("store: commit metadata block: %w", err)
+	}
+	return transitioned, nil
 }
 
 // TeamRollup aggregates task state per team path for the operator views.

@@ -17,7 +17,10 @@ Package provider adapts configured CLI backends into radioactive\_ralph's provid
 
 - [Constants](<#constants>)
 - [Variables](<#variables>)
+- [func BindingCapabilities\(cfg BindingConfig\) map\[string\]bool](<#BindingCapabilities>)
+- [func CheckRequirements\(binding Binding, requires \[\]string\) error](<#CheckRequirements>)
 - [func DefaultWatchdogConfig\(\) agent.WatchdogConfig](<#DefaultWatchdogConfig>)
+- [func KnownCapability\(key string\) bool](<#KnownCapability>)
 - [func StreamJSONWatchdogConfig\(\) agent.WatchdogConfig](<#StreamJSONWatchdogConfig>)
 - [func ValidateBinding\(binding Binding\) error](<#ValidateBinding>)
 - [func ValidateConfiguredTimeout\(field, raw string\) error](<#ValidateConfiguredTimeout>)
@@ -60,6 +63,29 @@ Package provider adapts configured CLI backends into radioactive\_ralph's provid
 
 
 ## Constants
+
+<a name="CapabilityNativeFanout"></a>Capability keys a plan task may name in its \`requires\` list.
+
+The vocabulary is CLOSED and every key maps to something BindingConfig actually declares. An open vocabulary would make \`requires\` unfalsifiable: a key no binding could ever satisfy would block every task forever, and a key no binding could ever fail would be decoration.
+
+```go
+const (
+    // CapabilityNativeFanout — the provider can run a whole ready group in one
+    // turn. Dispatch charges such a group a single worker, so a task that needs
+    // it must not land on a binding without it.
+    CapabilityNativeFanout = "native_fanout"
+
+    // CapabilityResume — the provider can continue a prior session. A task
+    // written to pick up where an earlier attempt stopped is wrong on a binding
+    // that always starts cold.
+    CapabilityResume = "resume"
+
+    // CapabilityAppendSystemPrompt — the provider accepts an appended system
+    // prompt rather than replacing it. A task relying on the base prompt
+    // surviving cannot run where it is overwritten.
+    CapabilityAppendSystemPrompt = "append_system_prompt"
+)
+```
 
 <a name="DefaultTurnTimeout"></a>
 
@@ -155,6 +181,20 @@ var DefaultStallTimeout = 3 * time.Minute
 var ErrAgentBlocked = errors.New("provider: agent blocked (killed by watchdog)")
 ```
 
+<a name="ErrCapabilityUnknown"></a>ErrCapabilityUnknown reports a requirement naming a key outside the closed vocabulary above.
+
+Distinct from ErrCapabilityUnmet on purpose: an unmet requirement is a scheduling fact the operator resolves by choosing another binding, while an unknown one is a typo in the plan that no binding will ever satisfy.
+
+```go
+var ErrCapabilityUnknown = errors.New("provider: unrecognized capability key")
+```
+
+<a name="ErrCapabilityUnmet"></a>ErrCapabilityUnmet reports a requirement the bound provider cannot satisfy.
+
+```go
+var ErrCapabilityUnmet = errors.New("provider: binding does not satisfy required capabilities")
+```
+
 <a name="ErrClaudeMaximumTurns"></a>ErrClaudeMaximumTurns is the static category for error\_max\_turns.
 
 ```go
@@ -221,6 +261,28 @@ var ErrProviderStalled = errors.New("provider: progress stalled")
 var ErrStreamJSONLineTooLong = errors.New("provider: stream-json line exceeded 16MiB limit")
 ```
 
+<a name="BindingCapabilities"></a>
+## func [BindingCapabilities](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/capabilities.go#L50>)
+
+```go
+func BindingCapabilities(cfg BindingConfig) map[string]bool
+```
+
+BindingCapabilities reports the capability keys a binding satisfies.
+
+Derived from the binding's own config rather than a per\-provider table: the config already declares these, and a second table would drift the first time a provider gained or lost one. Absent means NOT satisfied — callers must not read a missing key as "unknown, assume yes".
+
+<a name="CheckRequirements"></a>
+## func [CheckRequirements](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/capabilities.go#L78>)
+
+```go
+func CheckRequirements(binding Binding, requires []string) error
+```
+
+CheckRequirements verifies a binding satisfies every requirement.
+
+Every failing key is named at once. Reporting the first miss alone would turn one plan fix into N dispatch cycles, since the operator cannot see the rest until the one they fixed stops failing.
+
 <a name="DefaultWatchdogConfig"></a>
 ## func [DefaultWatchdogConfig](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/watchdog.go#L83>)
 
@@ -229,6 +291,15 @@ func DefaultWatchdogConfig() agent.WatchdogConfig
 ```
 
 DefaultWatchdogConfig returns a WatchdogConfig seeded with DefaultStallTimeout and DefaultPromptPatterns. Runners call this \(rather than constructing agent.WatchdogConfig\{\} directly\) so every provider gets the same baseline prompt/stall detection unless a caller has a reason to override it. Use this ONLY for providers whose output is free\-form pane text where a raw interactive prompt could actually appear \(see StreamJSONWatchdogConfig for the structured\-output case\).
+
+<a name="KnownCapability"></a>
+## func [KnownCapability](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/capabilities.go#L65>)
+
+```go
+func KnownCapability(key string) bool
+```
+
+KnownCapability reports whether key is in the closed vocabulary.
 
 <a name="StreamJSONWatchdogConfig"></a>
 ## func [StreamJSONWatchdogConfig](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/watchdog.go#L99>)

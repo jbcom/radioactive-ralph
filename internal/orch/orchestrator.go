@@ -924,6 +924,14 @@ func (o *Orchestrator) spawnWorkerRows(ctx context.Context, binding provider.Bin
 func (o *Orchestrator) materializeStepTask(ctx context.Context, planID string, ref plan.StepRef, step plan.Step) (*store.Task, error) {
 	taskID := stepTaskID(ref, step)
 	if existing, err := o.store.GetTask(ctx, planID, taskID); err == nil {
+		// A task from an older dispatch path (or from before metadata rows were
+		// written here) has none, and migration 0003 does not backfill. Without
+		// this, MarkBlockedCapability fails with ErrTaskMetadataMissing — and
+		// because the gate treats that as fatal, ONE legacy task aborted every
+		// dispatch pass for the whole plan.
+		if err := o.materializeStepMetadata(ctx, planID, taskID, ref, step); err != nil {
+			return nil, err
+		}
 		return existing, nil
 	}
 	// First sight of this step: materialize it. A concurrent dispatcher losing
@@ -996,7 +1004,7 @@ func (o *Orchestrator) stepGateBlocks(ctx context.Context, planID, projectID str
 	if task.Status == store.TaskStatusReadyPendingApproval {
 		return true, nil
 	}
-	return o.capabilityGateBlocks(ctx, planID, projectID, parallel, task.ID, step)
+	return o.capabilityGateBlocks(ctx, planID, projectID, parallel, task, step)
 }
 
 // capabilityGateBlocks enforces a step's `requires` list against the provider it
@@ -1009,7 +1017,8 @@ func (o *Orchestrator) stepGateBlocks(ctx context.Context, planID, projectID str
 //
 // Resolution uses BindingProbe so the check peeks at the provider without
 // consuming a pool cursor — the same reason the native-fan-out probe does.
-func (o *Orchestrator) capabilityGateBlocks(ctx context.Context, planID, projectID string, parallel bool, taskID string, step plan.Step) (bool, error) {
+func (o *Orchestrator) capabilityGateBlocks(ctx context.Context, planID, projectID string, parallel bool, task *store.Task, step plan.Step) (bool, error) {
+	taskID := task.ID
 	if step.Metadata == nil || len(step.Metadata.Requires) == 0 {
 		return false, nil
 	}
@@ -1019,6 +1028,21 @@ func (o *Orchestrator) capabilityGateBlocks(ctx context.Context, planID, project
 	}
 	capErr := provider.CheckRequirements(binding, step.Metadata.Requires)
 	if capErr == nil {
+		// The requirement is satisfied NOW. If this task was blocked on it, the
+		// operator has performed exactly the fix the block asked for, so release
+		// it — otherwise ClaimTask (pending/ready only) would never take it and
+		// the block would outlive its own remedy.
+		cleared, err := o.store.ClearTaskBlock(ctx, planID, taskID)
+		if err != nil {
+			return false, fmt.Errorf("orch: clear capability block for %s: %w", taskID, err)
+		}
+		if cleared {
+			_ = o.store.Emit(ctx, store.EmitOpts{
+				ProjectID: projectID, PlanID: planID, TaskID: taskID,
+				Kind:   "task.unblocked_capability",
+				Stream: "service",
+			})
+		}
 		return false, nil
 	}
 	if !errors.Is(capErr, provider.ErrCapabilityUnmet) && !errors.Is(capErr, provider.ErrCapabilityUnknown) {
@@ -1028,16 +1052,13 @@ func (o *Orchestrator) capabilityGateBlocks(ctx context.Context, planID, project
 	// recorded reason is indistinguishable from one merely waiting on capacity,
 	// and the plan stalls with nothing for an operator to act on. Failing to
 	// record is therefore fatal rather than swallowed.
-	if err := o.store.MarkBlockedCapability(ctx, planID, taskID, capErr.Error()); err != nil {
+	// MarkBlockedCapability emits the task.blocked_capability event inside its
+	// own transaction, and only on the transition into that state. A second emit
+	// here would duplicate every block — and, evaluated per tick, would grow
+	// without bound.
+	if _, err := o.store.MarkBlockedCapability(ctx, planID, taskID, capErr.Error()); err != nil {
 		return false, fmt.Errorf("orch: record capability block for %s: %w", taskID, err)
 	}
-	_ = o.store.Emit(ctx, store.EmitOpts{
-		ProjectID:   projectID,
-		PlanID:      planID,
-		Kind:        "task.blocked_capability",
-		Stream:      "service",
-		PayloadJSON: mustPayloadJSON(store.EventPayload{Reason: capErr.Error()}),
-	})
 	return true, nil
 }
 
