@@ -291,7 +291,7 @@ tags before deletion: `archive/plan-v2-dag`, `archive/release-022-recovery-scrat
       falling back. Validation is CONFIG-DRIVEN, unlike the archived branch's
       hardcoded per-provider model/effort tables, which would duplicate what
       BindingConfig already declares and drift on the first new model.
-      Increment 12 (docs) PARTIALLY SHIPPED (PR #238): the ralph-task grammar
+      Increment 12 (docs) PARTIALLY SHIPPED (PRs #238, #239): the ralph-task grammar
       was entirely undocumented despite shipping in #217/#221. The guide now
       covers it with EXECUTABLE examples — docs_example_test.go runs the page's
       example, the three-row after table, and the whole fails-closed list, so a
@@ -299,6 +299,15 @@ tags before deletion: `archive/plan-v2-dag`, `archive/release-022-recovery-scrat
       ENFORCED (id, after, team) vs merely PARSED (binding, requires, providers,
       differentFrom, inputs, outputs), verified against main rather than the
       spec — listing the second group as working would be a lie.
+      #239 adds docs/design/plan-adaptive-concurrency.md, based on the CHAIN
+      TIP rather than main on purpose: it describes ReadyPartitions,
+      project-scoped reservations, canonicalization, and worker-vs-task
+      accounting, none of which are on main yet, so publishing it there would
+      document features that do not exist. Every claim was checked against a
+      backing test before being written. Still missing from increment 12:
+      docs/design/deterministic-execution.md and
+      docs/design/exact-provider-identity.md (the latter needs #234's
+      Invocation/StrictBinding to have landed, since that IS the mechanism).
       Increment 10 store layer SHIPPED (PR #236): calibrations are
       content-addressed so re-probing one command line is idempotent, and a
       CONFLICTING remeasurement FAILS rather than overwrites — tasks bind to a
