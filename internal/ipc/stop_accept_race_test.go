@@ -4,6 +4,7 @@ import (
 	"io"
 	"log/slog"
 	"net"
+	"sync"
 	"testing"
 	"time"
 )
@@ -15,6 +16,50 @@ import (
 // Windows-only — a helper unavailable on the one platform that can fail is no
 // helper at all.
 func startStopRaceServer(t *testing.T) *Server {
+	t.Helper()
+	return startStopRaceServerWith(t, nil)
+}
+
+// wedgedListener models the Windows winio deadlock: Accept parks and is NOT
+// woken by the retirement dial, and Close never returns.
+//
+// Accept must still unblock when Close is called, or the accept goroutine
+// leaks and Stop hangs in wg.Wait for a reason that has nothing to do with the
+// behavior under test — real winio's Accept does return once the listener is
+// closing. Close blocking forever is the actual Windows defect being modeled.
+type wedgedListener struct {
+	net.Listener
+	closing chan struct{}
+	once    sync.Once
+}
+
+func newWedgedListener(l net.Listener) *wedgedListener {
+	return &wedgedListener{Listener: l, closing: make(chan struct{})}
+}
+
+// Accept ignores the retirement dial — that is the point, the loop must fail to
+// retire — but returns as soon as Close begins.
+func (w *wedgedListener) Accept() (net.Conn, error) {
+	<-w.closing
+	return nil, net.ErrClosed
+}
+
+// Close signals Accept and then blocks forever, exactly as winio's
+// win32PipeListener.Close does when its internal goroutine never exits.
+func (w *wedgedListener) Close() error {
+	w.once.Do(func() { close(w.closing) })
+	select {}
+}
+
+// startStopRaceServerWith builds and starts a server, optionally wrapping its
+// listener BEFORE Start launches acceptLoop.
+//
+// The wrapper goes through Server.wrapListener rather than assigning
+// srv.listener directly. Two reasons, both found the hard way: Start
+// OVERWRITES s.listener with its own bind, so a pre-Start assignment is
+// silently discarded; and a post-Start assignment races acceptLoop, which is
+// the failure CI's race detector caught.
+func startStopRaceServerWith(t *testing.T, wrap func(net.Listener) net.Listener) *Server {
 	t.Helper()
 	dir := shortTempDir(t)
 	socketPath, heartbeatPath := ServiceEndpoint(dir)
@@ -28,6 +73,7 @@ func startStopRaceServer(t *testing.T) *Server {
 	if err != nil {
 		t.Fatalf("NewServer: %v", err)
 	}
+	srv.wrapListener = wrap
 	if err := srv.Start(); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
@@ -110,16 +156,22 @@ func TestStopIsIdempotentAfterAcceptShutdown(t *testing.T) {
 // blocked goroutine in a process that is shutting down anyway is strictly
 // better than never shutting down.
 func TestStopReturnsEvenWhenTheAcceptLoopWillNotRetire(t *testing.T) {
-	srv := startStopRaceServer(t)
-	time.Sleep(50 * time.Millisecond)
-
 	// Reproduce the Windows failure portably. On Unix, closing a listener out
 	// from under a parked Accept() returns immediately, so the bug cannot occur
-	// here naturally — substituting a listener whose Close blocks forever is
-	// what makes this test meaningful on every platform rather than only on the
-	// one that can actually deadlock.
-	srv.listener = blockingCloseListener{Listener: srv.listener}
-	srv.acceptDone = make(chan struct{})
+	// naturally — a listener whose Accept AND Close both block forever is what
+	// makes this test meaningful on every platform rather than only on the one
+	// that can actually deadlock.
+	//
+	// Both halves matter. Without a wedged Accept the loop retires normally,
+	// Stop never reaches the listener close, and the test passes whether that
+	// close is detached or synchronous — decorative rather than a regression.
+	// Substituted BEFORE Start, because acceptLoop reads srv.listener the
+	// moment it is spawned; assigning it afterwards races the running
+	// goroutine, which is what CI's race detector caught.
+	srv := startStopRaceServerWith(t, func(l net.Listener) net.Listener {
+		return newWedgedListener(l)
+	})
+	time.Sleep(50 * time.Millisecond)
 
 	start := time.Now()
 	done := make(chan error, 1)
@@ -140,14 +192,4 @@ func TestStopReturnsEvenWhenTheAcceptLoopWillNotRetire(t *testing.T) {
 		t.Fatal("Stop never returned when the accept loop could not be retired — " +
 			"the timeout only bounded the WAIT, not Stop itself")
 	}
-}
-
-// blockingCloseListener stands in for winio's named-pipe listener in the state
-// where its Close never returns.
-type blockingCloseListener struct {
-	net.Listener
-}
-
-func (blockingCloseListener) Close() error {
-	select {} // never returns, exactly like the deadlocked win32PipeListener.Close
 }

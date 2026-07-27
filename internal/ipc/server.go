@@ -129,6 +129,14 @@ type Server struct {
 	heartbeatInterval time.Duration
 	wg                sync.WaitGroup
 	stopCh            chan struct{}
+	// wrapListener, when set, decorates the bound listener before the accept
+	// loop is spawned. TEST HOOK: shutdown behavior depends on how Accept and
+	// Close respond when they cannot complete, and the only portable way to
+	// exercise that is to substitute a listener that reproduces it. Assigning
+	// s.listener from a test instead is a data race — acceptLoop reads it the
+	// moment it starts — and Start would overwrite the assignment anyway.
+	wrapListener func(net.Listener) net.Listener
+
 	// acceptDone closes when the accept loop has left Accept() for good, so
 	// Stop can close the listener with no accept request in flight.
 	acceptDone  chan struct{}
@@ -284,6 +292,9 @@ func (s *Server) Start() error {
 	l, err := listenEndpoint(s.socketPath)
 	if err != nil {
 		return fmt.Errorf("ipc: listen %s: %w", s.socketPath, err)
+	}
+	if s.wrapListener != nil {
+		l = s.wrapListener(l)
 	}
 	s.listener = l
 
