@@ -161,9 +161,9 @@ tags before deletion: `archive/plan-v2-dag`, `archive/release-022-recovery-scrat
       backstop (240ms/Open, 44x reduction).
 - [x] PR #210 — MERGED. Directive re-armed + the DAG integration spec landed.
 - [x] DAG increment 4 (#217) — MERGED, released v0.23.0.
-- [ ] [WAIT] Thirteen PRs open (220, 222, 224, 225, 226, 228, 229, 230, 232,
-      233, 234, 235, 236); MERGED in this arc: #215, #216, #221, #231, plus
-      releases through v0.26.0. Remaining DAG chain: **#225 -> #228 -> #229**
+- [ ] [WAIT] Sixteen PRs open (220, 222, 224, 225, 226, 228, 229, 230, 233,
+      234, 235, 236, 237, 238, 239, 240); MERGED in this arc: #215, #216, #221,
+      #231, #232, plus releases through v0.26.0. Remaining DAG chain: **#225 -> #228 -> #229**
       (increments 6, 7, 8). Independents: #220 (dumb client), #222 (directive),
       #224 (winio Stop), #226 (packaging flake), #230 (claude classification),
       #233 (#204 config surface), #234 (increment 9 invocation), #235 (provider
@@ -255,7 +255,14 @@ tags before deletion: `archive/plan-v2-dag`, `archive/release-022-recovery-scrat
       supervisor discovery in client.go. Moving it earlier breaks the first-run
       wizard, which exists for the operator who has no supervisor yet —
       `TestE2E_FirstRunWizardDeclinePath` is the guard.
-- [ ] DAG integration — increments 8-12 remain. Central verified finding stands:
+- [ ] [WAIT] DAG integration — every remaining piece is gated on an open PR,
+      nothing is independently actionable. Increments 1-10 and most of 12 are
+      SHIPPED or in flight (#212, #215, #216, #217, #221, #225, #228, #229,
+      #234, #236, #238, #239, #240). The one unwritten page,
+      docs/design/exact-provider-identity.md, would document Invocation and
+      StrictBinding — which live in unmerged #234, so writing it now documents
+      absent code. Increment 11 (IPC + clients) depends on 10's orch half,
+      which depends on #234's InvocationConfigHash. Original finding stands: Central verified finding stands:
       **main already had the DAG store layer** (`task_deps` in 0001_initial,
       cycle prevention in `AddDep`, `Ready`/`ClaimNextReady` already walking the
       edges). The gap was confined to the orchestrator. Shipped/open:
