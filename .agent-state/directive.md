@@ -191,8 +191,14 @@ tags before deletion: `archive/plan-v2-dag`, `archive/release-022-recovery-scrat
         * GitHub incident — githubstatus.com reports all systems operational.
         * Workflow defect — actionlint clean; ubuntu, windows, CodeQL, E2E and
           GUI (ubuntu) all pass on the same runs.
-      Remaining cause is GitHub-side macOS capacity, which no repo change can
-      fix. Watcher armed that asserts a macOS job actually REACHED in_progress
+      DECISIVE TEST (2026-07-27 ~19:00Z): manually cancelled ~28 obsolete
+      queued runs across every branch, taking the repo-wide CI queue from 11
+      live runs to 3 and freeing 100+ macOS job slots. macOS jobs on the two
+      remaining runs STAYED QUEUED. So contention was never the binding
+      constraint — the repo can hold zero backlog and macOS still will not
+      start. Remaining cause is GitHub-side macOS capacity, which no repo
+      change can fix. #252 is still correct (it stops the backlog rebuilding
+      on every push) but it was never going to be sufficient. Watcher armed that asserts a macOS job actually REACHED in_progress
       (cancelled/skipped explicitly excluded, after an earlier watcher reported
       success by matching a run this session had itself cancelled). ubuntu, windows, CodeQL, E2E and GUI
       (ubuntu) all pass. githubstatus.com reports all systems operational and
