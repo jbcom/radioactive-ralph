@@ -311,8 +311,11 @@ func TestHandleStatusDegradesOnCountError(t *testing.T) {
 	if len(status.Workers) != 0 {
 		t.Errorf("Workers = %v, want empty (degraded on query failure)", status.Workers)
 	}
-	if status.PID == 0 {
-		t.Error("PID = 0, want the real process pid regardless of the query failure")
+	// The reply must still be a REAL reply, not a zero value: a degraded status
+	// that returns nothing is indistinguishable from a supervisor that is not
+	// answering. ProtoVersion carries that now that the host pid is gone.
+	if status.ProtoVersion == 0 {
+		t.Error("ProtoVersion = 0, want a populated reply regardless of the query failure")
 	}
 }
 
