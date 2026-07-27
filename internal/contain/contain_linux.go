@@ -7,6 +7,8 @@ import (
 	"os"
 	"syscall"
 	"unsafe"
+
+	"golang.org/x/sys/unix"
 )
 
 // Landlock syscall numbers. Arch-generic, so no per-architecture table.
@@ -188,7 +190,10 @@ func restrictSelfToRoot(root string) error {
 
 // allowWritesBeneath grants the handled write rights under dir.
 func allowWritesBeneath(rulesetFd uintptr, dir string, handled uint64) error {
-	dirFd, err := syscall.Open(dir, syscall.O_PATH|syscall.O_CLOEXEC, 0)
+	// unix.O_PATH, not syscall.O_PATH: the latter is only defined on SOME
+	// linux architectures (present on arm64, absent on amd64), so building
+	// against it compiles on a dev machine and fails in CI on another arch.
+	dirFd, err := unix.Open(dir, unix.O_PATH|unix.O_CLOEXEC, 0)
 	if err != nil {
 		return fmt.Errorf("contain: open %s for containment rule: %w", dir, err)
 	}

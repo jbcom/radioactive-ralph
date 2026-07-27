@@ -2,7 +2,11 @@
 
 package contain
 
-import "testing"
+import (
+	"os"
+	"strings"
+	"testing"
+)
 
 // TestHandledMaskExcludesReadAndExec is the regression for the bug that cost
 // the most time building this: a mask written as "all write bits" (0x7fe)
@@ -74,5 +78,40 @@ func TestHelperInvocationRoundTrips(t *testing.T) {
 	// exec an argument instead of starting.
 	if _, _, ok := IsHelperInvocation([]string{"/usr/bin/radioactive_ralph", "--supervisor"}); ok {
 		t.Error("a normal invocation was treated as a containment helper")
+	}
+}
+
+// TestNoArchSpecificSyscallConstants records a portability trap this package
+// already hit, and names the rule that avoids it.
+//
+// syscall.O_PATH is defined on SOME linux architectures and not others — arm64
+// has it, amd64 does not. Developing on an arm64 machine, `go build` and the
+// whole Linux test suite passed; CI on amd64 failed to compile. The fix is to
+// take such constants from golang.org/x/sys/unix, which defines them
+// uniformly across arches.
+//
+// Honest scope: on the arches where the constant is missing, the COMPILER
+// already catches this, so the test is not the primary defense — a
+// cross-arch `go vet` is. Its value is that the failure it prevents is
+// bewildering (a Landlock package failing to build for a file-open flag), and
+// this states the rule where the next person editing these syscalls will read
+// it.
+func TestNoArchSpecificSyscallConstants(t *testing.T) {
+	src, err := os.ReadFile("contain_linux.go")
+	if err != nil {
+		t.Fatalf("read source: %v", err)
+	}
+	// Only flag real uses, not the explanatory comment naming the trap.
+	for _, line := range strings.Split(string(src), "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "//") {
+			continue
+		}
+		for _, bad := range []string{"syscall.O_PATH", "syscall.O_CLOEXEC"} {
+			if strings.Contains(trimmed, bad) {
+				t.Errorf("%s is not defined on every linux arch; use the "+
+					"golang.org/x/sys/unix equivalent: %s", bad, trimmed)
+			}
+		}
 	}
 }
