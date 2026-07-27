@@ -25,6 +25,17 @@ const (
 	FailureCanceled FailureCategory = "canceled"
 	// FailureProviderRejected means the provider reported an unsuccessful turn.
 	FailureProviderRejected FailureCategory = "provider_rejected"
+	// FailureProviderAuth means the provider rejected the credential or denied
+	// access to the requested model. Separate from provider_rejected because
+	// the remediation is an operator action (fix the key, grant the model), and
+	// because it is NOT worth retrying — a credential does not fix itself.
+	FailureProviderAuth FailureCategory = "provider_auth"
+	// FailureProviderThrottled means the provider rate-limited the turn.
+	// Retrying after a wait is precisely the remedy.
+	FailureProviderThrottled FailureCategory = "provider_throttled"
+	// FailureProviderUnavailable means an upstream provider fault (HTTP 5xx).
+	// Transient by nature, so worth retrying.
+	FailureProviderUnavailable FailureCategory = "provider_unavailable"
 	// FailureRuntime is the fail-closed category for unrecognized failures.
 	FailureRuntime FailureCategory = "provider_runtime"
 )
@@ -74,8 +85,28 @@ func ClassifyFailure(err error) Failure {
 		return Failure{Category: FailureTurnDeadline, Summary: "provider exceeded its total turn deadline", Cause: err}
 	case errors.Is(err, context.Canceled):
 		return Failure{Category: FailureCanceled, Summary: "provider turn was canceled", Cause: err}
+	case errors.Is(err, ErrClaudeAuthentication),
+		errors.Is(err, ErrClaudeModelAccess):
+		return Failure{
+			Category: FailureProviderAuth,
+			Summary:  "provider authentication or model access was denied",
+			Cause:    err,
+		}
+	case errors.Is(err, ErrClaudeRateLimit):
+		return Failure{
+			Category: FailureProviderThrottled,
+			Summary:  "provider rate limited the turn",
+			Cause:    err,
+		}
+	case errors.Is(err, ErrClaudeServiceUnavailable):
+		return Failure{
+			Category: FailureProviderUnavailable,
+			Summary:  "provider service was unavailable",
+			Cause:    err,
+		}
 	case errors.Is(err, ErrClaudeResultFailed),
 		errors.Is(err, ErrClaudeMaximumTurns),
+		errors.Is(err, ErrClaudeInvalidRequest),
 		errors.Is(err, ErrClaudeMissingResult),
 		errors.Is(err, ErrCodexTurnFailed),
 		errors.Is(err, ErrCodexOversizeSchema),
