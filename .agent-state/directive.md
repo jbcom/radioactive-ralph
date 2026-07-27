@@ -175,27 +175,27 @@ tags before deletion: `archive/plan-v2-dag`, `archive/release-022-recovery-scrat
       legacy `StatusReply.RepoPath`/`PID`/`WorkerSummary.ProviderSessionID` remain
       in the live CmdStatus wire contract; Claude auth-failure classification not
       implemented (internal/provider untouched — only Codex has a classifier).
-- [ ] [WAIT] DAG increments 2-4 — three PRs open, ALL with 0 failures and 0
-      unresolved threads, waiting only on CI:
-      - **#215** (increment 2) `0003_plan_graph` migration + `task_metadata.go`.
-        Review caught two real bugs I introduced: `MarkBlocked*` did not check
-        `RowsAffected`, so a task predating the migration (which does not
-        backfill) went unclaimable with its reason silently dropped — now fails
-        closed via `ErrTaskMetadataMissing` and rolls back; and `ActiveWorkers`
-        counted running tasks, so one fan-out worker holding three tasks reported
-        as three workers, which matters because the never-block invariant is
-        judged against worker counts. Also added the two blocked statuses to
-        `statusbucket` (they were falling through to `Muted`, showing
-        needs-attention work as benign) and regenerated the API docs.
-      - **#216** (increment 3) `ClaimTask`, the exact named claim. Stacked on
-        #215; the watcher retargets it to main once #215 lands.
-      - **#217** (increment 4) plan model learns dependency edges. Review found a
-        REAL ordering-safety hole: `encoding/json` keeps the LAST value for a
-        duplicate key, so `{"after":["prepare"],"after":[]}` parsed as an
-        unconditioned root and would dispatch BEFORE `prepare` — and a duplicate
-        also hid a null from the null-check, because that check unmarshals into a
-        map which has already collapsed the pair. Both reproduced, then fixed
-        with a token-stream walk rejecting repeats at any depth.
+- [x] DAG increment 4 (#217) — MERGED as 736e31d, released v0.23.0. Plan model
+      learns dependency edges. Review found a REAL ordering-safety hole:
+      `encoding/json` keeps the LAST value for a duplicate key, so
+      `{"after":["prepare"],"after":[]}` parsed as an unconditioned root and
+      would dispatch BEFORE `prepare` — and a duplicate also hid a null from the
+      null-check, because that check unmarshals into a map which has already
+      collapsed the pair. Both reproduced, then fixed with a token-stream walk.
+- [ ] [WAIT] DAG increments 2-3 + observability — four PRs open, 0 failures:
+      **#215** (increment 2, task_metadata + group_path; review caught two bugs I
+      introduced — `MarkBlocked*` not checking RowsAffected so a pre-migration
+      task went unclaimable with its reason dropped, and `ActiveWorkers` counting
+      tasks so one fan-out worker read as three), **#216** (increment 3,
+      `ClaimTask`, stacked on #215), **#210** (directive + spec), and **#219**
+      (partial #204). All rebased onto v0.23.0.
+- [ ] Issue #204 remainder — #219 lands the read model, projection, IPC query,
+      and the opt-in per-plan task-label query, but does NOT close the issue.
+      Still open: `init_cmd.go`/`client.go`/`plan_cmd.go` call `store.Open`
+      directly (1/1/2 sites); `plan ls` has no `--json`; `StatusReply.RepoPath`,
+      `StatusReply.PID` and `WorkerSummary.ProviderSessionID` remain on the live
+      `CmdStatus` wire contract with PID still populated by `os.Getpid()`; Claude
+      auth failures unclassified (only Codex has a classifier).
 - [ ] DAG integration — increments 5-12. Central verified finding: **main already has the DAG store
       layer.** `task_deps` ships in 0001_initial with cycle prevention in
       `AddDep`; `Ready`/`ClaimNextReady` already walk the edges. The gap is
