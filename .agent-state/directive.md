@@ -136,7 +136,16 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
       self-reference is unsatisfiable, so dispatch could only block it forever.
       walkPlanSteps derives ids the way import does, so validation and dispatch
       share one notion of identity. Guide says validated-not-enforced.
-      - [ ] Populate the independence domains, THEN enforce differentFrom. #236
+      - [ ] [WAIT] Populate the independence domains, THEN enforce differentFrom.
+            Steps 1 and 2 are DONE but neither is on main yet: #262 writes the
+            domain, #263 populates it, both OPEN as of 2026-07-28. VERIFIED --
+            git grep on origin/main finds recordExecutionProvenance absent,
+            HandleCalibrationPut absent, and AssignedIndependenceDomain only in
+            internal/store/task_metadata.go, i.e. the type with no writer.
+            Building step 3 now would compare "" against "" and permit
+            everything: the same vacuous guarantee, one layer further in. It
+            unblocks the moment #262 and #263 merge -- no other work needed.
+            Original scoping follows. #236
             (9c04550) shipped the STORAGE for both halves, and I briefly marked
             this ungated on that alone. Checking the write paths corrected it:
               * store.Calibration.IndependenceDomain exists
