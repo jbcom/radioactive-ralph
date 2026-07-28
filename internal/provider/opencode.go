@@ -65,7 +65,12 @@ func (OpencodeRunner) Run(ctx context.Context, binding Binding, req Request) (Re
 	}
 	defer cleanup()
 
-	args := opencodeArgs(binding, req)
+	// One resolution, reported on the Result and enforcing StrictBinding.
+	invocation, err := ResolveInvocation(binding, req)
+	if err != nil {
+		return Result{}, err
+	}
+	args := opencodeArgs(binding, req, invocation)
 
 	opts := agent.Options{
 		Command:    binding.Config.Binary,
@@ -173,6 +178,7 @@ func (OpencodeRunner) Run(ctx context.Context, binding Binding, req Request) (Re
 		SessionID:       sessionID,
 		AssistantOutput: normalizeStructuredOutput(assistant.String(), req),
 		Usage:           usage,
+		Invocation:      invocation,
 	}, nil
 }
 
@@ -247,7 +253,7 @@ func parseOpencodeEvent(line []byte) (ev opencodeEvent, ok bool) {
 // opencodeArgs builds the opencode command line.
 //
 // Extracted so the argv is testable without spawning a CLI.
-func opencodeArgs(binding Binding, req Request) []string {
+func opencodeArgs(binding Binding, req Request, invocation Invocation) []string {
 	args := []string{
 		"run", combinePrompt(req), "--format", "json",
 		// Run without external plugins. A supervised turn must be reproducible
@@ -260,11 +266,14 @@ func opencodeArgs(binding Binding, req Request) []string {
 	if req.WorkingDir != "" {
 		args = append(args, "--dir", req.WorkingDir)
 	}
-	if model := resolveModel(binding.Config, req.Model); model != "" {
-		args = append(args, "--model", model)
+	// Model and effort come from the RESOLVED invocation, not a second
+	// resolution here: one resolution per turn means what runs and what gets
+	// reported cannot disagree.
+	if invocation.Model != "" {
+		args = append(args, "--model", invocation.Model)
 	}
-	if effort := resolveEffort(binding.Config, req.Effort); effort != "" {
-		args = append(args, "--variant", effort)
+	if invocation.Effort != "" {
+		args = append(args, "--variant", invocation.Effort)
 	}
 	// NOTE: --auto is deliberately NOT passed. See opencode_args_test.go.
 	args = append(args, binding.Config.Args...)
