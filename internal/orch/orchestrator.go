@@ -112,6 +112,20 @@ type Orchestrator struct {
 	capInFlightMu sync.Mutex
 	capInFlight   map[string]int
 
+	// saturated tracks, PER PLAN, whether a full pipeline has already been
+	// reported, so the report fires on the TRANSITION into saturation rather
+	// than on every tick that observes it.
+	//
+	// Keyed by plan rather than global: the supervisor scans every active plan
+	// against one semaphore, so a single flag let the first plan consume the
+	// only report and hide that other plans' queues are also waiting. "Ready
+	// work is waiting" is a fact about a PLAN's queue, not about the semaphore.
+	//
+	// Guarded because DispatchNext runs concurrently from the periodic tick and
+	// from HandleEnqueue.
+	saturatedMu sync.Mutex
+	saturated   map[string]bool
+
 	// Async dispatch (the never-block invariant): dispatchWorker runs the provider
 	// agent turn, which can block for up to its independent total deadline. It must
 	// NOT run inline under the supervisor's dispatchMu, or a slow turn wedges the
@@ -505,6 +519,7 @@ func (o *Orchestrator) DispatchNext(ctx context.Context, projectID, planID strin
 			// dispatch slot. If the pipeline is full there's no capacity now —
 			// return without dispatching; the next pass retries.
 			if !o.acquireDispatchSlot() {
+				o.reportSaturation(ctx, projectID, planID, len(eligibleSteps))
 				return dispatched, nil
 			}
 			slotReleased := false
@@ -565,6 +580,19 @@ func (o *Orchestrator) DispatchNext(ctx context.Context, projectID, planID strin
 		// claim a task we can't run or block the lock. The next tick / enqueue
 		// resumes from here. (nil sem = unbounded; acquire always succeeds.)
 		if !o.acquireDispatchSlot() {
+			// Ready work exists and capacity does not. Say so: zero dispatched
+			// with no event is indistinguishable from an empty ready set, and
+			// those are the two states most worth telling apart — one clears
+			// itself as tasks finish, the other may never clear if a worker is
+			// wedged.
+			// The count is the candidates NOT YET EXAMINED this pass, which is
+			// what "waiting for capacity" honestly means here. It is not a claim
+			// that each one would have been claimable: a step already running
+			// under another worker still sits in the decomposition, and only the
+			// claim itself settles that. Overstating the number would make the
+			// event a guess dressed as a measurement, so it is described as
+			// unexamined rather than as ready-and-claimable.
+			o.reportSaturation(ctx, projectID, planID, candidateLimit-i)
 			break
 		}
 
@@ -808,6 +836,51 @@ func (o *Orchestrator) recoverDispatchPanic(ctx context.Context, projectID, plan
 // true on success. A nil semaphore (maxParallel <= 0) means unbounded — always
 // true. Non-blocking so a full pipeline stops the dispatch pass instead of
 // blocking the caller's dispatchMu.
+// reportSaturation emits once when dispatch ENTERS saturation, recording how
+// many ready candidates went unexamined.
+//
+// The count is what makes the event actionable: "a slot was unavailable" is
+// nearly as uninformative as silence, while "4 ready candidates are waiting for
+// capacity" tells an operator there is work queued behind a full pipeline.
+//
+// Transition-only, for the reason #247 established: dispatch re-evaluates this
+// on every supervisor tick, so emitting per pass appends an identical event
+// forever and buries the one moment that matters. The flag resets when a slot
+// is released, so a later saturation is reported again.
+func (o *Orchestrator) reportSaturation(ctx context.Context, projectID, planID string, waiting int) {
+	o.saturatedMu.Lock()
+	if o.saturated == nil {
+		o.saturated = map[string]bool{}
+	}
+	already := o.saturated[planID]
+	o.saturated[planID] = true
+	o.saturatedMu.Unlock()
+	if already {
+		return
+	}
+	_ = o.store.Emit(ctx, store.EmitOpts{
+		ProjectID: projectID,
+		PlanID:    planID,
+		Kind:      "dispatch.saturated",
+		Stream:    "service",
+		PayloadJSON: mustPayloadJSON(store.EventPayload{
+			Reason: fmt.Sprintf(
+				"dispatch pipeline full; %d candidate(s) left unexamined this pass", waiting),
+		}),
+	})
+}
+
+// clearSaturation re-arms the report so the NEXT time the pipeline fills is
+// reported as a new transition rather than swallowed as a repeat.
+// clearSaturation re-arms the report for EVERY plan, because a freed slot is
+// capacity every plan can now compete for — so the next fill is a genuine new
+// transition for whichever plan observes it.
+func (o *Orchestrator) clearSaturation() {
+	o.saturatedMu.Lock()
+	o.saturated = nil
+	o.saturatedMu.Unlock()
+}
+
 func (o *Orchestrator) acquireDispatchSlot() bool {
 	if o.dispatchSem == nil {
 		return true
@@ -827,6 +900,9 @@ func (o *Orchestrator) releaseDispatchSlot() {
 		return
 	}
 	<-o.dispatchSem
+	// Capacity exists again, so the next fill is a NEW transition rather than a
+	// repeat of the one already reported.
+	o.clearSaturation()
 }
 
 // SetBaseContext sets the long-lived context async dispatch goroutines run
