@@ -68,9 +68,18 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
 
 ## Remaining
 
-- [ ] Land the 11 open PRs: 222, 225, 236, 247, 251, 252, 255, 257, 258, 259,
-      261. MERGED since this item was written: #246 (desktop launch), #256
-      (reporting owner), #245 (init over supervisor).
+- [ ] Land the 10 open PRs: 222, 225, 236, 251, 252, 255, 257, 258, 259, 261.
+      MERGED since this item was written: #246 (desktop launch), #256
+      (reporting owner), #245 (init over supervisor), #247 (capability
+      requirements, squashed as 82ff030).
+      DIRTY CLEARED 2026-07-28: #259, #251, #225 all conflicted on #247 merging
+      and are now BLOCKED/MERGEABLE again. Nearly every conflict was in
+      GENERATED docs (docs/api/internal/*.md) -> `make docs-api`, then
+      `git add` the path (regeneration rewrites the file but does NOT mark the
+      conflict resolved). Only #225 had a real code conflict, and resolving it
+      surfaced a genuine bug -- see the ready-walk asymmetry in
+      decisions.ndjson. When a parent PR squash-merges, MERGE origin/main AGAIN:
+      the content is absorbed but the commit is not, so git re-raises the region.
       DO NOT CANCEL CI RUNS. A run's top-level status stays "queued" until its
       LAST job finishes, so a "queued" run routinely has 19-22 of 23 jobs already
       SUCCESS -- cancelling it throws away completed macOS work and forces a full
