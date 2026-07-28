@@ -580,6 +580,8 @@ jobs:
             docs/install.sh \
             scripts/ci/test_install_signature_policy.sh \
             scripts/verify-docs-artifact.sh \
+            scripts/verify-repo-claims.sh \
+            scripts/drive-open-prs.sh \
             scripts/ci/wait_for_package_publication.sh \
             scripts/ci/test_wait_for_package_publication.sh \
             scripts/ci/test_publish_cli_manifests.sh \
