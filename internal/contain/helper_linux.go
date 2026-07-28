@@ -2,8 +2,10 @@
 
 package contain
 
-func isHelperInvocation(argv []string) (string, []string, bool) {
-	return IsHelperInvocation(argv)
+func isHelperInvocation(argv []string) (string, []string, []string, bool) {
+	return parseHelperInvocation(argv)
 }
 
-func runHelper(root string, command []string) error { return RunHelper(root, command) }
+func runHelper(root string, extra []string, command []string) error {
+	return RunHelperWithExtras(root, extra, command)
+}

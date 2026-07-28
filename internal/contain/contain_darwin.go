@@ -2,7 +2,10 @@
 
 package contain
 
-import "os/exec"
+import (
+	"fmt"
+	"os/exec"
+)
 
 // sandboxExec is macOS's Seatbelt entry point. It applies a policy to the
 // process AND everything it spawns, which is what makes it usable here: a
@@ -53,13 +56,26 @@ func wrapCommand(p Policy, name string, args []string) (string, []string, error)
 	// -D binds a parameter the profile references. Passing the root as a
 	// PARAMETER rather than interpolating it into the profile text keeps a path
 	// containing quotes or parens from changing the policy's meaning.
-	wrapped := make([]string, 0, 6+len(args))
+	// Each declared allowance becomes its own numbered parameter, and the
+	// profile gains one (allow file-write* (subpath (param "EXTRA_N"))) line per
+	// grant. Parameters rather than interpolation for the same reason ROOT uses
+	// one: a path containing quotes or parens would otherwise rewrite the
+	// profile's meaning rather than widen it by one subpath.
+	profile := denyWritesOutsideRoot
+	params := make([]string, 0, 2*len(p.ExtraWritable))
+	for i, extra := range p.ExtraWritable {
+		key := fmt.Sprintf("EXTRA_%d", i)
+		profile += fmt.Sprintf("(allow file-write* (subpath (param %q)))\n", key)
+		params = append(params, "-D", key+"="+extra)
+	}
+
+	wrapped := make([]string, 0, 6+len(params)+len(args))
 	wrapped = append(wrapped,
-		"-p", denyWritesOutsideRoot,
+		"-p", profile,
 		"-D", "ROOT="+p.Root,
-		"--",
-		name,
 	)
+	wrapped = append(wrapped, params...)
+	wrapped = append(wrapped, "--", name)
 	return sandboxExec, append(wrapped, args...), nil
 }
 
