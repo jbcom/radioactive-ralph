@@ -68,7 +68,7 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
 
 ## Remaining
 
-- [ ] Land the 9 open PRs: 222, 225, 251, 252, 255, 257, 258, 259, 261.
+- [ ] Land the 10 open PRs: 222, 225, 251, 252, 255, 257, 258, 259, 261, 262.
       MERGED since this item was written: #246 (desktop launch), #256
       (reporting owner), #245 (init over supervisor), #247 (capability
       requirements, squashed as 82ff030), #236 (calibration records, 9c04550 --
@@ -149,7 +149,7 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
             on them today would compare "" against "" and permit everything —
             the exact VACUOUS GUARANTEE #259 rejects at import, reintroduced at
             dispatch and harder to see. Order is therefore:
-              1. [x] DONE on feat/record-task-execution: dispatch now calls
+              1. [x] DONE — PR #262. Dispatch now calls
                  RecordTaskExecution before every turn, in BOTH the single-task
                  and native-fan-out paths. The domain comes from the binding's
                  CALIBRATION (GetCalibrationByAlias), not derived from the
