@@ -265,7 +265,9 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
       self-reference is unsatisfiable, so dispatch could only block it forever.
       walkPlanSteps derives ids the way import does, so validation and dispatch
       share one notion of identity. Guide says validated-not-enforced.
-      - [ ] Populate the independence domains, THEN enforce differentFrom.
+      - [x] CLOSED (#272, bf77756; verified on origin/main -- resolveIndependentBinding
+            and validateDifferentFromAcyclic both present): populate the
+            independence domains, THEN enforce differentFrom.
             UNGATED 2026-07-28: #262 and #263 are both MERGED, and re-verified
             on origin/main rather than trusted -- recordExecutionProvenance
             present in internal/orch/orchestrator.go, HandleCalibrationPut
