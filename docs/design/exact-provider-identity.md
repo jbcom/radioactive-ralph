@@ -82,11 +82,21 @@ model and effort:
 func InvocationConfigHash(binding Binding, model Model, effort string) (string, error)
 ```
 
-It covers the alias, the full `BindingConfig`, and the resolved model/effort —
-so two invocations with different hashes ran different command lines, whatever
-else about them matches. Changing the alias, the args, the model, or the effort
-all change the hash; the same inputs hash identically, or every lookup would
-miss.
+It covers the alias, the full `BindingConfig`, and the resolved model/effort.
+The direction that holds is the useful one: **equal hashes mean the same
+configured invocation.** The converse does not — two aliases pointing at
+identical config produce different hashes while the runners build the same argv,
+so unequal hashes mean "not known to be the same", not "provably different
+command lines".
+
+That asymmetry is deliberate rather than a defect. The hash keys a *measurement
+of an alias*, and an operator who splits one binding into two aliases has
+created two things to calibrate independently, even where today's argv coincides
+— the aliases exist precisely so they can diverge. Treating them as
+interchangeable would attribute one alias's evidence to another.
+
+Changing the alias, the args, the model, or the effort all change the hash; the
+same inputs hash identically, or every lookup would miss.
 
 This is what makes a calibration reusable. A calibration is a *measurement of
 one exact command line*, so it is keyed by this hash rather than by the alias:
