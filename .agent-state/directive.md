@@ -68,8 +68,8 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
 
 ## Remaining
 
-- [ ] [WAIT-AGENT] Land the 10 open PRs: 222, 225, 251, 252, 255, 257, 259, 262,
-      263, 265. Delegated to scripts/drive-open-prs.sh, running in the
+- [ ] [WAIT-AGENT] Land the 9 open PRs: 222, 225, 251, 252, 255, 257, 259, 262,
+      263. Delegated to scripts/drive-open-prs.sh, running in the
       background: it rebases the leader, arms auto-merge, merges CLEAN/UNSTABLE
       with no failures, and exits 2/3/4 the moment anything needs a decision
       rather than reporting false success. The monitor reports failures,
@@ -105,7 +105,8 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
       (reporting owner), #245 (init over supervisor), #247 (capability
       requirements, squashed as 82ff030), #236 (calibration records, 9c04550 --
       merged by the driver with no manual step once its checks went green),
-      #261 (shellcheck coverage + the non-cancelling driver), #258 (observe
+      #265 (leader-only rebase + leader-hold, b9313db), #261 (shellcheck
+      coverage + the non-cancelling driver), #258 (observe
       blocked-reason, c94ca79 -- merged by the driver, and it conflicted NOTHING:
       all eight others went BEHIND, none DIRTY).
       DIRTY CLEARED 2026-07-28: #259, #251, #225 all conflicted on #247 merging
@@ -172,6 +173,14 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
       print "rebased #N" every round while rebasing NOTHING -- the THIRD time
       this one script has had an error path indistinguishable from its success
       path.
+      CONFIRMED IN PRODUCTION when #265 merged (b9313db) -- the first merge under
+      the new logic, and the direct before/after: the all-at-once rebase after
+      #258 produced queued=42/running=0; the leader-only rebase after #265
+      produced queued=9. Driver log shows exactly the intended sequence:
+      "leader #265 left the queue; releasing" then "rebased #222 only (4 checks
+      out, 1 behind)". Rounds 42-44 also show behind=9 with NO rebase, proving
+      the hold survives multiple rounds instead of releasing to a different
+      branch each time -- the P1 defect review caught.
       SAME LESSON as the state-push storm, one level up: the constraint is a
       small serialized pool, so the winning move is always to add LESS work.
       #252 IS THE PREVENTION and is therefore the highest-priority PR: its
