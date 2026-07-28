@@ -68,7 +68,7 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
 
 ## Remaining
 
-- [ ] Land the 3 open PRs: 225, 251, 271.
+- [ ] Land the 3 open PRs: 225, 271, 272.
 
 - [ ] [WAIT-AGENT] PTY process-group reaping: cleanup can leave a live child.
       Surfaced in a merge_group run of #252 (a PR touching only two workflow
@@ -101,7 +101,8 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
       thread, or shows a failure that is ALSO failing on its queue branch --
       verify-repo-claims.sh guard 8 fails the verifier if this label outlives
       its justification.
-      MERGED via the queue this session: #252, #257, #262, #222, #270, #255, #268,
+      MERGED via the queue this session: #251, #252, #257, #262, #222, #270, #255,
+      #268,
       #267, #263,
       #259, #265, #261, #258, #236, #247, #256, #245, #246.
 
