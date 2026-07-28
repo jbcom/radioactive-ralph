@@ -87,7 +87,7 @@ func ValidateForImport(md []byte) error
 ValidateForImport is the plan\-ingress contract. It rejects empty/no\-step documents and every ambiguity reported by Validate before a project or plan row is created. This is intentionally stricter than Parse, which remains useful for inspecting already\-stored historical input.
 
 <a name="Group"></a>
-## type [Group](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plan/types.go#L19-L39>)
+## type [Group](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plan/types.go#L21-L41>)
 
 Group is a single heading's section. A Group either carries Steps \(it is a leaf: no child subheadings appear in its section\) or SubGroups \(it has child subheadings, which carry the ordering\) \-\- never both.
 
@@ -116,7 +116,7 @@ type Group struct {
 ```
 
 <a name="Plan"></a>
-## type [Plan](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plan/types.go#L9-L14>)
+## type [Plan](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plan/types.go#L11-L16>)
 
 Plan is the parsed, nested representation of a plan document.
 
@@ -171,7 +171,7 @@ type PlanError struct {
 ```
 
 <a name="Validate"></a>
-### func [Validate](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plan/validate.go#L250>)
+### func [Validate](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plan/validate.go#L253>)
 
 ```go
 func Validate(md []byte) []PlanError
@@ -193,7 +193,7 @@ func (e PlanError) String() string
 
 
 <a name="Step"></a>
-## type [Step](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plan/types.go#L43-L67>)
+## type [Step](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plan/types.go#L45-L69>)
 
 Step is a single unit of work: the list item text plus any trailing paragraph\(s\) of detail found alongside the list under the same heading.
 
@@ -272,7 +272,7 @@ func (r StepRef) ID() string
 ID returns a stable, deterministic string key for this step, suitable for use in a done\-set. It is derived purely from position in the plan tree \(e.g. "0.1.2"\), not from step text, so it stays stable across re\-parses of the same document and is independent of wording edits that don't change structure.
 
 <a name="TaskBinding"></a>
-## type [TaskBinding](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plan/types.go#L124-L133>)
+## type [TaskBinding](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plan/types.go#L126-L135>)
 
 TaskBinding pins the provider identity for one task.
 
@@ -290,7 +290,7 @@ type TaskBinding struct {
 ```
 
 <a name="TaskInput"></a>
-## type [TaskInput](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plan/types.go#L137-L140>)
+## type [TaskInput](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plan/types.go#L139-L142>)
 
 TaskInput is a file this task reads, optionally pinned to an exact content hash so a changed input is detected rather than silently used.
 
@@ -302,7 +302,7 @@ type TaskInput struct {
 ```
 
 <a name="TaskMetadata"></a>
-## type [TaskMetadata](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plan/types.go#L72-L121>)
+## type [TaskMetadata](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plan/types.go#L74-L123>)
 
 TaskMetadata is the decoded contents of a step's \`\`\`ralph\-task fenced block. It lets a plan author state execution facts the prose cannot: explicit dependency edges, a provider binding, and the files the step reads or writes.
 
@@ -360,7 +360,7 @@ type TaskMetadata struct {
 ```
 
 <a name="TaskMetadata.AllowedProviders"></a>
-### func \(\*TaskMetadata\) [AllowedProviders](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plan/types.go#L160>)
+### func \(\*TaskMetadata\) [AllowedProviders](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plan/types.go#L162>)
 
 ```go
 func (m *TaskMetadata) AllowedProviders() []string
@@ -369,7 +369,7 @@ func (m *TaskMetadata) AllowedProviders() []string
 AllowedProviders returns the task's provider restriction, tolerating a nil receiver so dispatch can ask without a nil check at every call site.
 
 <a name="TaskMetadata.DependsOn"></a>
-### func \(\*TaskMetadata\) [DependsOn](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plan/types.go#L151>)
+### func \(\*TaskMetadata\) [DependsOn](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plan/types.go#L153>)
 
 ```go
 func (m *TaskMetadata) DependsOn() (ids []string, stated bool)
@@ -378,7 +378,7 @@ func (m *TaskMetadata) DependsOn() (ids []string, stated bool)
 DependsOn reports the explicit dependency ids and whether the author stated them at all. Callers deriving edges must branch on stated: when it is false, document order supplies the edges.
 
 <a name="TaskMetadata.IndependencePeers"></a>
-### func \(\*TaskMetadata\) [IndependencePeers](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plan/types.go#L170>)
+### func \(\*TaskMetadata\) [IndependencePeers](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plan/types.go#L186>)
 
 ```go
 func (m *TaskMetadata) IndependencePeers() []string
@@ -387,7 +387,7 @@ func (m *TaskMetadata) IndependencePeers() []string
 IndependencePeers returns the tasks this one must not share an independence domain with, tolerating a nil receiver for the same reason AllowedProviders does.
 
 <a name="TaskOutput"></a>
-## type [TaskOutput](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plan/types.go#L143-L146>)
+## type [TaskOutput](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plan/types.go#L145-L148>)
 
 TaskOutput is a file this task writes. Mode is currently always "exclusive".
 
