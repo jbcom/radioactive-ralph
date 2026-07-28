@@ -130,6 +130,21 @@ func (c *Client) ProjectEnsure(
 	return &reply, nil
 }
 
+// ProjectConfigGet reads a project's stored config values through the
+// supervisor, so a client never opens the store to resolve its config layers.
+func (c *Client) ProjectConfigGet(ctx context.Context, args ProjectConfigGetArgs) (ProjectConfigGetReply, error) {
+	var reply ProjectConfigGetReply
+	if err := c.driveCall(ctx, CmdProjectConfigGet, args, &reply); err != nil {
+		return ProjectConfigGetReply{}, err
+	}
+	return reply, nil
+}
+
+// ProjectConfigApply upserts and deletes project config keys in one call.
+func (c *Client) ProjectConfigApply(ctx context.Context, args ProjectConfigApplyArgs) error {
+	return c.driveCall(ctx, CmdProjectConfigApply, args, nil)
+}
+
 // NegotiatedVersion returns the supervisor's supported wire protocol version
 // (from StatusReply). 0 means a pre-versioned v1 supervisor.
 func (c *Client) NegotiatedVersion(ctx context.Context) (int, error) {

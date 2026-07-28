@@ -77,6 +77,13 @@ const (
 	CmdTaskApprove   = "task-approve"
 	CmdWorkerKill    = "worker-kill"
 	CmdProjectEnsure = "project-ensure"
+	// CmdProjectConfigGet reads a project's stored config values, and
+	// CmdProjectConfigApply writes them. Together with CmdProjectEnsure they
+	// are what lets `init` resolve and persist vconfig layers WITHOUT opening
+	// the store: the supervisor stays the single writer of record, and the
+	// client stops being a second writer to a database it does not own.
+	CmdProjectConfigGet   = "project-config-get"
+	CmdProjectConfigApply = "project-config-apply"
 
 	// v3 — project-scoped, content-safe query surface.
 	CmdObserveSnapshot         = "observe-snapshot"
@@ -331,3 +338,55 @@ func (closedError) Error() string { return "ipc: connection closed" }
 
 // ErrClosed is a sentinel value; use errors.Is to match.
 var ErrClosed error = closedError{}
+
+// ProjectConfigGetArgs asks for one project's stored config (CmdProjectConfigGet).
+//
+// The two selectors are MUTUALLY EXCLUSIVE, and the supervisor rejects any other
+// combination rather than guessing:
+//
+//   - UserScope=true with an EMPTY Project selects the user-scope project — the
+//     synthetic project holding user-level config.
+//   - UserScope=false with a NON-EMPTY Project selects that project.
+//
+// An empty Project alone does NOT select user scope; it is an invalid request.
+// The supervisor resolves (and creates) the user-scope project rather than the
+// client doing so and telling the supervisor which id to use: that resolution is
+// a store write, and the supervisor is the single writer.
+type ProjectConfigGetArgs struct {
+	Project string `json:"project"`
+	// UserScope asks for the user-level config project instead of naming one.
+	// Requires Project to be empty.
+	UserScope bool `json:"user_scope,omitempty"`
+}
+
+// ProjectConfigGetReply carries the stored config values verbatim.
+//
+// Values are the RAW JSON-encoded strings the store holds, not decoded Go
+// values: vconfig owns the decoding, and re-encoding across the wire would make
+// the supervisor a second interpreter of a format it does not own.
+type ProjectConfigGetReply struct {
+	Values map[string]string `json:"values"`
+	// ProjectID is the project the values came from — meaningful for a
+	// UserScope request, where the client did not know the id.
+	ProjectID string `json:"project_id,omitempty"`
+}
+
+// ProjectConfigApplyArgs upserts and deletes project config keys
+// (CmdProjectConfigApply).
+//
+// Both sets travel in ONE call because vconfig's override path computes them
+// together — an overlay to write and, when a provider selection replaces the
+// legacy singular key, a key to remove. Splitting them across two round trips
+// would let a crash in between leave the project half-configured.
+// Project and UserScope select the target under the same mutually exclusive
+// rule as ProjectConfigGetArgs. A client applying to the user layer must say so
+// with UserScope rather than sending the id that layer resolves to: naming the
+// resolved id asks the supervisor to trust a client-computed identity for a
+// scope the supervisor owns.
+type ProjectConfigApplyArgs struct {
+	Project string `json:"project"`
+	// UserScope targets the user-level config project. Requires Project empty.
+	UserScope  bool              `json:"user_scope,omitempty"`
+	Upserts    map[string]string `json:"upserts,omitempty"`
+	DeleteKeys []string          `json:"delete_keys,omitempty"`
+}
