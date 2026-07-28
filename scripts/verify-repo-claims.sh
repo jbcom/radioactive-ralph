@@ -49,28 +49,49 @@ say "unresolved review threads" "$tot"
 f=0
 stale_f=0
 for pr in $(gh pr list --state open --json number --jq '.[].number' 2>/dev/null); do
-  c=$(gh pr view "$pr" --json statusCheckRollup \
-    --jq '[.statusCheckRollup[]?|select(.conclusion=="FAILURE")|.name]|join(",")' 2>/dev/null)
-  [ -z "$c" ] && continue
+  # ONE NAME PER LINE, never space-joined. Check names contain spaces and
+  # parentheses ("Package GUI (ubuntu-latest)"), so joining them and
+  # word-splitting shreds one name into three fragments that match nothing --
+  # every failure would then look SUPERSEDED and guard 8 would go quiet, which
+  # is the exact false all-clear this block exists to prevent.
+  #
+  # Newline-delimited rather than NUL: command substitution STRIPS NUL bytes, so
+  # a $(...) capture can never carry them (verified: bash warns "ignored null
+  # byte in input" and the list comes back empty). A check name cannot contain a
+  # newline, so newlines are lossless for the data that actually exists.
+  names=$(gh pr view "$pr" --json statusCheckRollup \
+    --jq '.statusCheckRollup[]?|select(.conclusion=="FAILURE")|.name' 2>/dev/null)
+  [ -z "$names" ] && continue
+
+  # Anchor the branch match to the PR number followed by its SHA. A bare
+  # "pr-$pr-" substring makes PR 25 match queue branches for 250, 251, 252 --
+  # reading a DIFFERENT PR's result and reporting it as this one's.
   qsha=$(git ls-remote --heads origin "refs/heads/gh-readonly-queue/*" 2>/dev/null \
-    | grep "pr-$pr-" | head -1 | cut -f1)
+    | grep -E "/pr-$pr-[0-9a-f]+$" | head -1 | cut -f1)
+
   if [ -n "$qsha" ]; then
-    # Every name that failed on the PR branch must also be failing on the queue
-    # branch for this to be real work.
-    live=0
-    for name in ${c//,/ }; do
-      qc=$(gh api "repos/jbcom/radioactive-ralph/commits/$qsha/check-runs" \
-        --jq "[.check_runs[]|select(.name==\"$name\" and .conclusion==\"failure\")]|length" 2>/dev/null)
-      [ "${qc:-0}" != "0" ] && live=$((live+1))
-    done
+    qfail=$(gh api "repos/jbcom/radioactive-ralph/commits/$qsha/check-runs" \
+      --jq '.check_runs[]|select(.conclusion=="failure")|.name' 2>/dev/null)
+    live=0; shown=""
+    while IFS= read -r name; do
+      [ -z "$name" ] && continue
+      # -x anchors the WHOLE line and -F keeps parentheses literal: an exact
+      # whole-name comparison, not a substring.
+      if printf '%s\n' "$qfail" | grep -qxF -- "$name"; then
+        live=$((live+1))
+      fi
+      shown="${shown:+$shown, }$name"
+    done <<INNER_EOF
+$names
+INNER_EOF
     if [ "$live" = "0" ]; then
-      say "  PR #$pr failure(s) SUPERSEDED by queue" "$c"
+      say "  PR #$pr failure(s) SUPERSEDED by queue" "$shown"
       stale_f=$((stale_f+1))
       continue
     fi
     f=$((f+live))
   else
-    n=$(printf '%s' "$c" | tr ',' '\n' | grep -c .)
+    n=$(printf '%s\n' "$names" | grep -c .)
     f=$((f+n))
   fi
 done
