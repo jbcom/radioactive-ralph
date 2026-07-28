@@ -109,6 +109,26 @@ completion is never agent-asserted and never inferred from termination.
 - Run `bash scripts/generate-api-docs.sh` when the exported Go API changes.
 - Each new package lands build/test/-race/lint-green in isolation (the rewrite
   proceeds phase-by-phase per the implementation plan).
+- **A check that finds nothing to check must FAIL, not pass.** Silent no-op and
+  genuine success print identically, so a green result proves nothing about
+  whether anything was examined. Observed four times in one session:
+  - `go test -run <name>` with a typo'd name printed `ok` for ZERO tests, and
+    was briefly accepted as a passing negative proof.
+  - `verify-repo-claims.sh` guard 9 reported "no merged PRs listed as open"
+    twice while matching nothing — once because the list used bare numbers with
+    no `#` tokens to extract, once because the label read "open PR" and the
+    pattern required "open PRs".
+  - guard 8's item count went to zero when the checkbox pattern stopped
+    matching, printing "0 open items" — which reads as an empty queue.
+  - a shell loop echoed "pushed" after a rejected push, because the `echo` ran
+    unconditionally.
+
+  Both verifier guards now fail loudly on an empty match. When writing a check,
+  ask what it prints if its input format changes — if that output is
+  indistinguishable from success, the check is decorative.
+- **Prove a fix by reverting it.** A test that passes after a change may have
+  passed before it. Re-apply the defect and confirm the named test fails for
+  the stated reason; if it does not, the test is not testing the fix.
 
 ## Adding a command / provider / package
 
