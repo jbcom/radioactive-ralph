@@ -68,7 +68,7 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
 
 ## Remaining
 
-- [ ] [WAIT] Land the open PRs: 279, 282, 283, 286.
+- [ ] [WAIT] Land the open PRs: 287, 288.
       (225, 274, 272, 275, 277 and 278 landed this pass.)
       All four are QUEUED or auto-merge ARMED with zero unresolved threads and
       zero failing checks; the only remaining work is CI on a serialized runner
@@ -120,8 +120,8 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
       cannot be contained so the resolver refuses rather than failing opaquely.
       A codex-specific carve-out is now insufficient -- opencode needs it too.
 
-- [ ] [WAIT] Issue #280: ralph-task `binding` was INERT. BOTH halves are open
-      as PRs -- storage #282, dispatch #283. STORAGE HALF --
+- [x] Issue #280 CLOSED: ralph-task `binding` was INERT. BOTH halves LANDED --
+      storage #282, dispatch #283. STORAGE HALF --
       ReadyPartitions now splits on the declared binding, so a coalesced turn
       can no longer swallow a task's pin (the same hole `providers` had until
       #272). The DISPATCH half is still open: nothing yet CONSUMES
@@ -140,7 +140,17 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
       Environ() applies only to driven subprocesses and the live tests dispatch
       in-process. The real cause was #281.)
 
-- [ ] Issue #273 REPRODUCED DETERMINISTICALLY 2026-07-28: it is LOAD-dependent,
+- [ ] [WAIT] Issue #273 SOLVED, fix in #288. NOT a product bug: the ceiling
+      trips in ~370ms and the full runner path returns the right error in 2.06s
+      -- but 39.73s under -race, a ~19x multiplier on a 1 MiB/line firehose.
+      The 90s test budget left ~50s of headroom, which CPU contention consumed.
+      Budget is now build-tagged so the instrumented case gets room without
+      loosening the ordinary build, where the same path costs 2s.
+      THE LESSON: "the ceiling did not trip" and "the ceiling tripped too slowly
+      to observe" produce the IDENTICAL error. Only timing the two paths apart
+      distinguishes them, and I filed #273 on the first reading without
+      measuring -- the same shape as blaming the harness in #276.
+      Original report: it is LOAD-dependent,
       not a code regression. Passes in ~40s on an idle machine at every commit I
       tried (including before #275). Under ~12 spinners/core it fails at exactly
       90.01s -- the TEST's own context deadline -- with "context deadline
