@@ -68,10 +68,11 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
 
 ## Remaining
 
-- [ ] Land the 10 open PRs: 222, 225, 236, 251, 252, 255, 257, 258, 259, 261.
+- [ ] Land the 9 open PRs: 222, 225, 251, 252, 255, 257, 258, 259, 261.
       MERGED since this item was written: #246 (desktop launch), #256
       (reporting owner), #245 (init over supervisor), #247 (capability
-      requirements, squashed as 82ff030).
+      requirements, squashed as 82ff030), #236 (calibration records, 9c04550 --
+      merged by the driver with no manual step once its checks went green).
       DIRTY CLEARED 2026-07-28: #259, #251, #225 all conflicted on #247 merging
       and are now BLOCKED/MERGEABLE again. Nearly every conflict was in
       GENERATED docs (docs/api/internal/*.md) -> `make docs-api`, then
@@ -135,10 +136,20 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
       self-reference is unsatisfiable, so dispatch could only block it forever.
       walkPlanSteps derives ids the way import does, so validation and dispatch
       share one notion of identity. Guide says validated-not-enforced.
-      - [ ] [WAIT] Enforce the runtime constraint: compare independence domains
-            at dispatch. VERIFIED gated — #236 is still OPEN and nothing on main
-            defines a domain to compare, so writing it now would invent a second
-            notion of identity that disagrees with the one #236 ships.
+      - [ ] Enforce the runtime constraint: compare independence domains at
+            dispatch. UNGATED 2026-07-28 — #236 merged (9c04550) and main now
+            defines BOTH halves of the identity this needs:
+              * store.Calibration.IndependenceDomain (internal/store/calibrations.go:58)
+                — what a provider's domain IS.
+              * store.TaskMetadata.AssignedIndependenceDomain
+                (internal/store/task_metadata.go:35) — what a task RAN on.
+            So the comparison no longer has to invent a second notion of
+            identity. Shape: at dispatch, for each id in the step's
+            differentFrom, read the referenced task's assigned domain and refuse
+            a binding whose calibrated domain equals it. Import already rejects
+            unknown/self/empty references (#259), so enforcement can assume the
+            references resolve. Verified by grepping origin/main for both
+            symbols, not by assuming #236 carried them.
 
 - [x] Increment 11 operator half — DONE (PR #258). Task carries BlockedReason,
       backed by a bulk plan-scoped store.ListTaskBlockingReasons (per-task reads
