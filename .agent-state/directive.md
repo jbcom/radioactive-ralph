@@ -59,195 +59,383 @@ compiles + passes its own tests). One large branch; final PR(s) at the end.
 Full decision trail: .agent-state/decisions.ndjson. Spec:
 docs/superpowers/specs/2026-07-16-supervisor-architecture-design.md.
 
-## Shipped (compressed → docs/superpowers/PILLARS.md)
+## Shipped
 
-- Supervisor-architecture rewrite (v0.10.0) — PRs #73/#74/#75.
-- Post-release multi-lens audit (→ v0.10.3, converged) — PRs #76/#79/#81/#83.
-- Guided first-run onboarding — PR #85 (80daad9).
-- Versioned IPC drive+observe API — PR #87 (2f20adf).
-- Fyne desktop GUI client — PR #89 (e969551).
-- Desktop app + packaging + GUI polish (v0.15.0 + since) — native installers #92,
-  desktop-app docs #94, GUI macro-view richness #96, deps #97, TUI liveness
-  header #98, GUI guide #101, GUI+packaging correctness #102 (P1 AppImage-FUSE
-  release-blocker), API-docs regen #104, arch cask #106, GUI Escape-back nav #107,
-  directive/PILLARS baseline #108, GUI CI locale-flake fix #110.
-- Doctor codex-metering blind-spot check (guidance in Detail, not the dropped
-  OK-check Remediate) — PR #112 (v0.18.0).
-- Dependabot security sweep: x/image 0.41.0, protobuf 6.33.6 (via semgrep
-  1.170.0 lifting the OTel<protobuf-5 ceiling), js-yaml 4.3.0 — PR #114.
-- GUI+doctor forward-exploration arc (2-reviewer pass → 6 findings, all shipped):
-  focus-first-action + its focus-steal fix #116, directive-sync #117, drive-error
-  coordination + nav-token + import-form fix #119, doctor state-dir usability
-  check #120, destructive-action confirm dialogs #122, GUI scroll-to-top #123,
-  doctor claude-auth ErrNotFound classification #125 (releases v0.19–v0.21).
+Compressed to docs/superpowers/PILLARS.md and the git log. This file tracks
+only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
+#220, #221, #224, #226, #228, #229, #230, #231, #232, #233, #234, #235, #237,
+#238, #240, #250 — releases through v0.30.0.
 
-- Never-block / async-dispatch arc (supervisor/store review → 2 findings +
-  cascade): async dispatch so a slow provider turn can't wedge the
-  tick/enqueue/reaper — goroutine-per-worker + maxParallel semaphore + shutdown
-  drain + baseCtx, plus a running-worker heartbeat (so the reaper doesn't reclaim
-  a healthy long turn), persistCtx (results survive shutdown), and fan-out leak
-  fixes #127; SQLite pool cap at 4 (not 1 — avoids the single-conn deadlock +
-  backup-freeze) #129; per-project spend reservation so a capped provider can't
-  overspend under concurrency #131; supervisor concurrent-start test de-flaked
-  #132 (releases v0.21.0–v0.21.2).
+## Remaining
 
-- Never-block hardening & audit-driven correctness (two opus adversarial audits —
-  orchestrator concurrency + store claim-path — drove the fixes): dispatch-turn
-  panic containment + immediate claim reclaim, and heartbeat-leak-on-panic fix
-  #146; oversized stream-json line FAILS the turn (retryable) instead of masking
-  a killed worker as a done step, + process-tree reap so it can't hang #144;
-  approval-gate dead-end closed — an approved 'ready' task is now claimable #147;
-  ResourceExceeded purged from generated API docs #143; and the store audit's C2,
-  which a codex P1 on the follow-up proved a LIVE reaper double-execution bug
-  (unheartbeated worker session → step-2 delete → cascade-kill live worker →
-  re-dispatch), fixed via worker-session heartbeat + a step-2 session-delete
-  guard #149. Dead-raw error-contract cleanup #150 (v0.21.3+). The orchestrator
-  audit otherwise gave async dispatch a clean bill (no races/leaks).
+- [ ] [WAIT-AGENT] Land the 8 open PRs: 222, 225, 251, 252, 255, 257, 262, 268.
+      MERGED: #259 (differentFrom import validation), #263 (calibration IPC,
+      9fe7d33), #267 (watchdog barrier),
+      #265, #261, #258, #236, #247, #256, #245, #246.
 
-Detail lives in PILLARS.md; consult .agent-state/decisions.ndjson for the why
-behind any load-bearing call.
+      MECHANISM CHANGED 2026-07-28 (user-directed). The driver is STOPPED and
+      obsolete; GitHub now does the merging. Three changes, all live:
+        1. MERGE QUEUE (ruleset 19896999): squash, ALLGREEN, batches up to 5.
+           This is the structural fix for `strict` protection -- the queue tests
+           base + PR + everything ahead of it ONCE, in order, instead of making
+           every author rebase into a moving target. I had been throttling
+           rebases to work around this rather than solving it.
+        2. REQUIRED CHECKS 25 -> 13, macOS 4 -> 1. User: "why are we validating
+           builds in CI they will validate in CD". Correct -- release.yml runs
+           GoReleaser, which rebuilds and smoke-tests every platform target and
+           the installer, so CI gating 7 cross-compile Build jobs and 6
+           packaging jobs re-validated at merge time what CD validates at
+           release time. Dropped checks STILL RUN on every PR; they just stop
+           blocking. Immediate effect: #257/#255/#252 flipped BLOCKED -> CLEAN.
+        3. ci.yml is PR + merge_group ONLY. User: "why is ci.yml running on
+           anything other than pull requests". The push trigger re-ran the whole
+           23-job matrix on every merge, which under a queue verifies nothing --
+           the queued commit IS main's future state and merging happens BECAUSE
+           those checks passed. Verified no workflow_run consumer depends on it.
 
-## Concrete queue (current)
+      BOOTSTRAP -- I GOT THIS WRONG ONCE. The queue cannot run until ci.yml's
+      merge_group trigger is on MAIN, and that ships in #268. I enabled the
+      queue anyway, in the same pass as naming the dependency; it accepted #259
+      and parked it in AWAITING_CHECKS waiting for a merge_group run that could
+      never be created. Ruleset 19896999 is now DISABLED and #259 merged fine
+      through the normal path.
+      CORRECT ORDER: (1) land #268, (2) then re-enable ruleset 19896999,
+      (3) verify a merge_group CI run actually APPEARS before trusting it.
+      Naming a prerequisite is not satisfying it.
+      DONE 2026-07-28: #268 merged (5c5159a), ruleset re-enabled, and the
+      verification passed -- 5 entries queued and merge_group CI runs started.
 
-Worktree/branch reconciliation is DONE (2026-07-26): 18 worktrees -> 5, 17 local
-branches -> 5, remote heads -> 2. Method note for future passes: `git cherry`
-and three-dot diffs BOTH give false positives here (squash-merge changes
-patch-ids; branch-behind-main inflates diffs). The decisive test is
-`git merge-tree --write-tree origin/main <branch>` compared against main's tree
-— a no-op merge proves full absorption. Never-reviewed branches were archived as
-tags before deletion: `archive/plan-v2-dag`, `archive/release-022-recovery-scratch`,
-`archive/release-v0220-manual-recovery` (all pushed to github).
+      QUEUE MECHANICS, learned the hard way:
+      * `gh pr merge --auto` DOES enqueue. My repeated "queued=[]" readings were
+        a stale/empty GraphQL response, not a stall -- confirmed by trying an
+        explicit enqueuePullRequest and getting "Pull request is already in the
+        queue" for all four. Query entries with entries(first:N){totalCount ...}
+        and trust totalCount over an empty nodes list.
+      * `gh pr merge --squash` prints "The merge strategy for main is set by the
+        merge queue" -- that is INFORMATIONAL, not a failure. The enqueue
+        succeeded.
+      * `--delete-branch` is REJECTED under a queue; the queue owns deletion.
+      * A queue entry can read UNMERGEABLE while the PR itself reads
+        CLEAN/MERGEABLE. That is the queue doing its job: the PR conflicts with
+        the BATCH ahead of it, which is the semantic conflict a queue exists to
+        catch before it reaches main.
+      ROLLBACK: /tmp/protection-backup.json holds the original 25-check config.
 
-- [x] PR #208 admission token boundary — CodeRabbit was right and my first
-      counter was wrong: `persist-credentials: false` does NOT scope a token to a
-      step; GITHUB_TOKEN stays available to every step via
-      `secrets.GITHUB_TOKEN`/`github.token`, so job-level `contents: write` was a
-      job-wide write capability and the "only step receives the write token"
-      comment was false. Fixed by REMOVING the capability rather than relocating
-      it (the reviewer proposed a second write job): built-in token drops to
-      `contents: read` and the draft read uses the existing CI_GITHUB_TOKEN. Also
-      replaced the admission command blocklist with a structural allowlist —
-      `gh api -f x=1 --method PATCH` evaded the old literal `gh api --method`
-      check; proven by a negative test. Both threads resolved.
-- [x] PR #209 (issue #205) — MERGED as 3045d07; issue #205 auto-closed. Turn
-      deadlines separated from stall detection + Darwin process-tree containment.
-      The branch was based on v0.22.0 and would have DELETED PR #206's three
-      release-authority files and reverted the released 0.22.1 CHANGELOG heading;
-      rebased so the diff is purely the fix. Three further defects found and
-      fixed during review: (1) the cleanup path guarded on
-      `errors.Is(err, syscall.ESRCH)` but `auditTokenForPID` never wraps ESRCH
-      (`task_name_for_pid` reports a dead PID as KERN_FAILURE / Mach code 5), so
-      the guard could never fire and an ordinary teardown race failed the whole
-      cleanup — the exact false-cleanup failure #205 exists to eliminate, fixed
-      via an `errDarwinProcessGone` sentinel; (2) unbounded stdout/stderr and
-      stream-JSON aggregate sinks, which the 30m turn default widened into an OOM
-      path since every write renews the stall lease — now bounded inline at
-      16MiB, verified 0.34s vs a 90s timeout without the ceiling; (3)
-      `layeredTimeoutValue` accepted any non-empty string, so `turn_timeout =
-      "banana"` let dispatch claim a task that then looped forever until stale
-      reclamation — now validated at binding resolution via
-      `ValidateConfiguredTimeout`.
-- [x] PR #212 (DAG increment 1) — MERGED as 72b75b5. Two pre-existing races
-      proven on main and fixed: `journal_mode` as a DSN `_pragma` re-ran a
-      lock-taking pragma on every pooled connection, and `Migrate` read the
-      schema version outside any lock so concurrent first-openers all ran the
-      same DDL. Review then caught a bug the fix introduced — the early return
-      swallowed the newer-schema case, letting an old binary treat a newer schema
-      as already-applied — fixed with `ErrSchemaNewerThanBinary` checked inside
-      the transaction, plus cancellation-aware retries. A Windows CI failure I had
-      first misattributed to a pre-existing flake turned out to be mine: the retry
-      loops stacked on the DSN's own `busy_timeout`, so one contended Open could
-      burn >10s of backoff against a 15s test bound. Retries are now a 3-attempt
-      backstop (240ms/Open, 44x reduction).
-- [ ] [WAIT] PR #210 — directive + DAG integration spec. 0 failures, 0 unresolved
-      threads, 9 checks still running. Absorbed 9 review findings including four
-      spec-consistency fixes: edge derivation is four distinct cases (an OMITTED
-      `after` keeps document order so annotation cannot silently reorder;
-      `after: []` is the explicit root opt-out), plan import is transactional
-      everywhere, `group_path` is a persisted contract, and containment is
-      documented as detection rather than a boundary.
-- [x] Issue #204 first tranche — SUPERSEDED by the [WAIT] entries for #219/#220
-      below. Three of the five original blockers are resolved: the 2 e2e
-      failures (the TUI/GUI had lost task labels; fixed via an opt-in plan-scoped
-      query rather than by widening the snapshot, because the privacy test
-      deliberately seeds a description of "/private/repository/source-plan.md"
-      to prove descriptions can carry paths), and `plan_cmd.go`'s direct store
-      access plus its missing `--json`. The remaining two are tracked as their
-      own item below.
-- [x] DAG increment 4 (#217) — MERGED as 736e31d, released v0.23.0. Plan model
-      learns dependency edges. Review found a REAL ordering-safety hole:
-      `encoding/json` keeps the LAST value for a duplicate key, so
-      `{"after":["prepare"],"after":[]}` parsed as an unconditioned root and
-      would dispatch BEFORE `prepare` — and a duplicate also hid a null from the
-      null-check, because that check unmarshals into a map which has already
-      collapsed the pair. Both reproduced, then fixed with a token-stream walk.
-- [ ] [WAIT] DAG increments 2-3 + observability — four PRs open, 0 failures:
-      **#215** (increment 2, task_metadata + group_path; review caught two bugs I
-      introduced — `MarkBlocked*` not checking RowsAffected so a pre-migration
-      task went unclaimable with its reason dropped, and `ActiveWorkers` counting
-      tasks so one fan-out worker read as three), **#216** (increment 3,
-      `ClaimTask`, stacked on #215), **#210** (directive + spec), and **#219**
-      (partial #204). All rebased onto v0.23.0.
-- [ ] [WAIT] PR #220 — `plan ls` through the query surface + `--json`, and
-      `plan import` loses its offline direct-store fallback (the client was a
-      second writer to a supervisor-owned DB, and silently produced a plan
-      nothing was driving). `plan_cmd.go` joins the architecture gate so it
-      cannot regress. Stacked on #219.
-- [ ] Issue #204 remainder — after #219 + #220 land, three criteria are left:
-      1. `init_cmd.go` is the last direct store user. Beyond project
-         resolve/create it pulls in ~90 lines of `vconfig` layer resolution
-         (`DiffConflicts`, `EffectiveProject`, `ApplyProjectConfig`), so it
-         needs a config-apply command surface of its own — larger than the
-         project-ensure command #220 adds. AGENTS.md already settles the design
-         question: the client "initializes project config" over the socket and
-         "refuses to run without a supervisor".
-      2. `StatusReply.RepoPath`, `StatusReply.PID`, and
-         `WorkerSummary.ProviderSessionID` remain declared on the live
-         `CmdStatus` wire contract, with PID still populated by `os.Getpid()`.
-      3. Claude auth failures are unclassified — `internal/provider` is untouched
-         and only Codex has a classifier
-         (`codex_diagnostics.go:classifyCodexFailure`).
-      Note for whoever picks this up: `ensureProjectKnown` must stay AFTER
-      supervisor discovery in client.go. Moving it earlier breaks the first-run
-      wizard, which exists for the operator who has no supervisor yet —
-      `TestE2E_FirstRunWizardDeclinePath` is the guard.
-- [ ] DAG integration — increments 5-12. Central verified finding: **main already has the DAG store
-      layer.** `task_deps` ships in 0001_initial with cycle prevention in
-      `AddDep`; `Ready`/`ClaimNextReady` already walk the edges. The gap is
-      confined to the orchestrator — `DispatchNext` re-parses markdown and derives
-      readiness POSITIONALLY, and `internal/orch` has zero `AddDep` calls. Work =
-      grammar expresses edges -> persist into the existing table at import ->
-      dispatch walks the graph. 12 ordered increments in
-      `docs/superpowers/specs/2026-07-26-dag-integration-design.md`.
-      Increment 1 = PR #212 (WAL + migration races). Increment 2 =
-      `0003_plan_graph.up.sql` (WRITTEN, in the rr-dag-reland worktree, with
-      `group_path` added since increment 6's fan-out partitioning needs it
-      persisted rather than re-derived from markdown) + `store/task_metadata.go`.
-      Verified salvage constraints: `ErrTaskNotRunning` moves to `tasks.go`;
-      `TeamRollups` SURVIVES the `task_metadata_view.go` discard (consumed by
-      supervisor.go:349 + gui/team.go + views.go:262); keep main's `isSQLiteBusy`
-      from #212 (broader than the archive's — handles SQLITE_LOCKED too).
-      Hard discards: `plan_graph.go`'s `CreatePlanGraph`
-      (duplicates CreatePlan+CreateTask+AddDep AND bypasses the cycle check),
-      `graph_validate.go`, `enrichTaskMetadata` + the `Task` widening,
-      `Plan.V2` and every `parsed.V2` fork, the Codex arg expansion, and the
-      double filesystem verification in `VerifyAndComplete`. CWE-22 located in
-      `secureProjectPath` with a fix specified — must land fixed.
-- [ ] Deferred provider CLI flag decisions, own PR with real-CLI verification:
-      claude `--permission-mode bypassPermissions` (a security posture change —
-      arguable since claude.go:122 already treats a permission prompt as a KILL,
-      but it needs its own decision, not a DAG ride-along), claude `--no-chrome`,
-      opencode `--pure --auto`. DISCARDED separately: the `defaultOpencodeProvider`
-      NativeFanout true->false flip, which regresses a capability main documents
-      as verified against installed opencode 1.18.3.
-- [ ] Windows shutdown flake in `TestRun_SecondRunRefuses`
-      (supervisor_test.go:133). Pre-existing — PR #209 changed only COMMENTS in
-      internal/supervisor/supervisor.go, and the file's own comments at :17/:153
-      document this named-pipe timing flake while :158 calls this very test the
-      "deterministic" alternative, which the failure disproves. Root-cause the
-      cancel-and-collect tail rather than raising the 15s bound again.
+      There is ALWAYS an action here; this is not a wait.
+      1. `bash scripts/verify-repo-claims.sh` first -- never assert from memory.
+      2. DIRTY -> resolve. Nearly every conflict is GENERATED docs
+         (docs/api/internal/*.md): run `make docs-api`, then `git add` the path
+         (regeneration rewrites the file but does NOT mark it resolved).
+      3. FAILING -> read the job log, fix the cause. Re-check before believing
+         it: CI re-runs constantly and a FAILURE seen once is often already gone.
+      4. Unresolved thread -> verify against the code, then fix or counter it.
+      5. Nothing actionable -> the queue is working; do not add CI load.
+
+- [x] docs/design/exact-provider-identity.md — DONE (PR #255). Documents
+      Invocation/StrictBinding/InvocationConfigHash and the transferable rule:
+      compare against the RESOLVED value, not the shape of the thing that
+      produced it. Four tests execute the doc's claims (the real substitution,
+      the strict refusal, every fingerprint property incl. stability, and the
+      limits section), so the page cannot drift from the code.
+
+- [x] `differentFrom` REFERENCES validated at import (PR #259). An unresolvable
+      reference is silently VACUOUS — the plan reads as carrying an independence
+      guarantee while nothing enforces it, which is worse than no field — and a
+      self-reference is unsatisfiable, so dispatch could only block it forever.
+      walkPlanSteps derives ids the way import does, so validation and dispatch
+      share one notion of identity. Guide says validated-not-enforced.
+      - [ ] [WAIT] Populate the independence domains, THEN enforce differentFrom.
+            Steps 1 and 2 are DONE but neither is on main yet: #262 writes the
+            domain, #263 populates it, both OPEN as of 2026-07-28. VERIFIED --
+            git grep on origin/main finds recordExecutionProvenance absent,
+            HandleCalibrationPut absent, and AssignedIndependenceDomain only in
+            internal/store/task_metadata.go, i.e. the type with no writer.
+            Building step 3 now would compare "" against "" and permit
+            everything: the same vacuous guarantee, one layer further in. It
+            unblocks the moment #262 and #263 merge -- no other work needed.
+            Original scoping follows. #236
+            (9c04550) shipped the STORAGE for both halves, and I briefly marked
+            this ungated on that alone. Checking the write paths corrected it:
+              * store.Calibration.IndependenceDomain exists
+                (internal/store/calibrations.go:58), but NO production code
+                records a calibration — only tests do.
+              * store.TaskMetadata.AssignedIndependenceDomain exists
+                (task_metadata.go:35) and RecordTaskExecution writes it
+                (task_metadata.go:224), but that function has ZERO production
+                callers — again only tests.
+            So both columns are empty in every real run, and enforcement built
+            on them today would compare "" against "" and permit everything —
+            the exact VACUOUS GUARANTEE #259 rejects at import, reintroduced at
+            dispatch and harder to see. Order is therefore:
+              1. [x] DONE — PR #262. Dispatch now calls
+                 RecordTaskExecution before every turn, in BOTH the single-task
+                 and native-fan-out paths. The domain comes from the binding's
+                 CALIBRATION (GetCalibrationByAlias), not derived from the
+                 provider name -- inferring claude->"anthropic" would put a
+                 vendor table in the dispatch path and disagree with whatever a
+                 calibration later measures. Uncalibrated binding => empty
+                 domain, turn still runs (a missing calibration is not an error).
+                 Model/effort come from provider.ResolveInvocation, NOT the
+                 request: review caught that neither dispatch path sets
+                 req.Model/req.Effort, so recording them wrote EMPTY values while
+                 looking like it captured them (40e73db). Same commit gates the
+                 domain on InvocationHash equality -- alias match alone reused a
+                 calibration measured for a different command line, and a stale
+                 domain is worse than none because it looks measured. Best-effort with an emitted
+                 event on failure: provenance records a turn, it does not gate
+                 one. Fan-out records EVERY task in the group -- proven by
+                 negative test: recording only claimed[0] leaves peer "0.1" with
+                 an empty domain, which reads as INDEPENDENT and would satisfy
+                 differentFrom for the tasks that most obviously violate it.
+              2. [x] DONE -- PR #263, but NOT by porting the v2 lane. Scoping it
+                 showed the v2 handler depends on APIs main does not have
+                 (PutProviderCalibration, ValidateProviderCalibration, an ipc
+                 calibration surface) while main has RecordCalibration instead,
+                 so a verbatim port would BE the "never port the diff" mistake
+                 the spec warns about. Built the producer against MAIN's API
+                 instead: calibration-put/calibration-list on the drive version,
+                 a separate optional CalibrationHandler so no existing handler
+                 breaks, no client-supplied id (the store content-addresses),
+                 and a conflicting re-record REFUSED with CodeConflict rather
+                 than overwritten -- silently replacing an alias's calibration
+                 would retroactively change what every already-dispatched task
+                 is believed to have run on. The full admission lane
+                 (calibration_admission.go, await-calibration tasks,
+                 repetitions) remains unported and is a separate increment.
+                 Original scoping note: nothing in the tree records one
+                 (grep for RecordCalibration outside store/ + its tests returns
+                 nothing), so #262's domain lookup finds none and correctly
+                 records empty. The lane is already DESIGNED, not to be
+                 improvised: docs/superpowers/specs/2026-07-26-dag-integration-design.md
+                 lines 118-144 specify internal/orch/calibration_admission.go
+                 (~255 lines + tests) ported as-is, carrying ONE *calibrationLane
+                 pointer rather than seven loose dispatchStepArgs fields, and
+                 warns NEVER to port orchestrator.go's diff -- hand-apply the
+                 readiness swap, since main has since gained native-fanout and
+                 stepGateBlocks. store.BindTaskCalibration already exists for
+                 await-calibration tasks, so the store side is in place.
+                 This is a full increment, not a wire-up.
+              3. Only then compare at dispatch and refuse a matching domain.
+                 COMPOSITION ALREADY PROVEN (bf53f6a on #262): combining #262 and
+                 #263 locally showed they merge with only a generated-doc
+                 conflict, build together, and pass end to end --
+                 TestOperatorRecordedCalibrationReachesTheTask walks operator
+                 record -> dispatch -> domain on the task. This mattered because
+                 each half was verified ALONE: the producer writes what an
+                 operator supplies, the consumer requires InvocationHash to equal
+                 what dispatch resolves, and nothing checked an operator could
+                 produce a record satisfying that gate. Had they disagreed, every
+                 calibration would read as stale and the domain would stay empty
+                 -- the same vacuous guarantee by a longer route. Negative proof:
+                 a plausible-but-different hash reds the test.
+            Verified by grepping origin/main for callers, not by assuming the
+            types being present meant they were wired.
+
+- [x] Increment 11 operator half — DONE (PR #258). Task carries BlockedReason,
+      backed by a bulk plan-scoped store.ListTaskBlockingReasons (per-task reads
+      would be an N+1 on every operator refresh; ids repeat across plans).
+      FOUND WHILE TESTING IT: StateForTask never mapped blocked_capability or
+      blocked_input and its default fails the WHOLE projection — one blocked
+      task returned "unknown Ralph task status" for the entire snapshot, so the
+      status meant to make a stall visible hid everything instead.
+      - [ ] [WAIT] Remaining half: ready partitions + per-task provenance over
+            the observe surface. RE-VERIFIED 2026-07-28 after #236 merged
+            (9c04550) — the gate is now HALF open:
+              * per-task provenance: UNBLOCKED. internal/store/calibrations.go
+                is on main, so the types exist to project.
+              * ready partitions: still gated. `func (s *Store) ReadyPartitions`
+                is NOT on main; it ships with #225, which is open. RE-CHECKED
+                after #258 merged (c94ca79): the observe blocked surface IS on
+                main now, but that is the operator half, not this one.
+            Do the provenance half first rather than waiting on both — checked
+            by grepping origin/main for each symbol, not by assuming the pair
+            moves together.
+
+- [ ] [WAIT] Make provider write containment reachable from config, then default
+      it on. Step 1 (the config key) is DONE on #251; step 2 is gated on that PR
+      merging.
+      "REAL TURNS USING IT" IS NOW SATISFIED (14f58f7): tests/e2e now runs a real
+      orchestrator + real provider subprocess under its own pty, with the project
+      config key set exactly as an operator sets it and a fake CLI that genuinely
+      attempts to write outside the project. It runs in the REQUIRED check
+      "E2E (CI-feasible)", so it gates every merge rather than being a local
+      demo. Paired with an UNCONTAINED CONTROL that must escape -- without it, a
+      write that failed for an unrelated reason would make the contained case
+      pass while measuring nothing. Negative proof: dropping the resolver reds
+      the contained case with "a REAL provider turn wrote outside the project
+      while contain_provider_writes was set".
+      So the ONLY remaining gate on the flip is #251 merging.
+      EVIDENCE ACQUIRED 2026-07-28 (cdc28d8), and it MOVED the bar for step 2.
+      A CodeRabbit finding on #251 was verified true: declarativeStreamJSON
+      called runStreamJSONCommand, which took no containment argument at all, so
+      a stream-json binding ran UNCONFINED while the config claimed
+      "confines the provider process AND everything it spawns". Fail-open on a
+      security boundary, and worse than no containment because an operator
+      trusts the claim. Enforcement now lives at one choke point
+      (applyContainment) and TestEveryDeclarativeShapeConfinesItsTurn measures
+      whether a write ESCAPES rather than whether an argument was passed --
+      a signature check would not have caught this one. Any new runner shape
+      added before the flip needs a subtest there.
+
+      EXEC-PATH AUDIT DONE 2026-07-28 (fc9c4a0) — the precondition step 2 needed.
+      Every process-launching site classified:
+        CONFINED: provider/exec.go (plain-stdout, last-message-file),
+          declarative.go stream-json (fixed cdc28d8), agent/agent.go,
+          claudesession/session.go Spawn (wired pre-emptively -- it launches
+          `claude -p` with NO containment and no production caller yet, which is
+          precisely how stream-json shipped broken).
+        DELIBERATELY NOT: orch/verify.go checkCommandExitsZero. It is the
+          ORCHESTRATOR running the plan author's acceptance criterion, not a
+          provider turn, and those legitimately write outside the project
+          (go build -> GOCACHE, test runners -> TMPDIR). The project-root policy
+          would fail them and report the task unverified for an unrelated
+          reason. If plans ever come from an untrusted source this needs its own
+          wider-root policy. Documented in place, not changed silently.
+        N/A: doctor, service, projectid, agentdetect, genesis (fixed argv);
+          tests/e2e and cassette/recorder (test-only).
+      So step 2 is now gated ONLY on #251 merging.
+      macOS and Linux both enforce in #251; native Windows is closed as
+      not-needed (no provider runs there). Two steps, in order:
+      1. [x] DONE on #251, and the WIRE now exists too (998681d). The key was
+         INERT when first shipped: vconfig parsed it, exposed
+         ContainProviderWrites, and NOTHING called that -- and
+         WithProviderWriteContainment had zero production callers. An operator
+         setting the key got no containment and no signal it did nothing.
+         THIRD instance of this class on this one feature: the field set nowhere
+         in production, the stream-json shape that skipped applyContainment, and
+         the key nothing consulted. Each looked complete from its own side, which
+         is why "is it wired?" is now a standing question, not an afterthought.
+         Resolved PER PROJECT (ContainmentResolver function, not a process bool):
+         one orchestrator serves every project, so a static flag applies one
+         project's answer to all of them. Fails CLOSED-TO-OFF on config error,
+         matching the key's contract. Original note: absent
+         OR malformed means off — a typo must not silently enable a boundary
+         that makes provider writes fail, since that surfaces as unexplained
+         provider errors far from the cause. Accepts bool and string because a
+         store layer round-trips values as JSON strings.
+      2. [WAIT] Flip the default only after real turns have run with it enabled.
+         The config key shipped on #251, which is still OPEN, so no real turn has
+         used it yet. A provider that legitimately writes to a shared cache
+         outside the checkout would start failing on upgrade, and that is not a
+         guess worth making from the test suite alone.
+
+- [x] #248 CLOSED (PR #256). VerifyAndCompleteAs takes the REPORTING session so
+      the store's owner guard compares against the worker that produced the
+      evidence; a stale reporter now loses benignly instead of overwriting its
+      replacement. Both dispatch paths wired, with a source-level test asserting
+      that wiring — a correct guard nothing calls is the same defect shape as
+      containment shipping with zero callers.
+
+- [x] #249 CLOSED (PR #257). dispatch.saturated names how many ready candidates
+      went UNEXAMINED, so the event says work is queued behind a full pipeline
+      rather than merely that a slot was taken. Transition-only per #247;
+      releaseDispatchSlot re-arms it. Both exits covered (per-step loop and
+      fan-out group), -race clean since the flag is touched concurrently.
+
 
 ## Rolling improvement queue (directive 0 appends here)
+
+- [x] LEFTOVERS AUDIT (2026-07-28 UTC) — DONE, this was the investigation itself. Prompted by the right question — I had
+      verified the merged branches were ABSORBED, which is not the same as
+      their WORK being finished. Audited main for unfinished scope and found
+      three genuine items, each verified against the code rather than inferred:
+
+- [x] Provider write-side containment — SHIPPED for macOS (PR #251).
+      internal/contain wraps the provider in sandbox-exec (Seatbelt) with an
+      absolute, SYMLINK-RESOLVED root; opt-in per agent.Start via
+      ContainmentRoot (NOT derived from Dir — where a process starts is not the
+      same claim as the only place it may write); fails closed on an
+      unsupported platform or a relative root.
+      Inheritance is the load-bearing property: Seatbelt applies the policy to
+      the process AND everything it spawns, so a fan-out provider's sub-agents
+      cannot escape. Grandchild test included.
+      LESSON — a convenience grant silently re-opened the boundary. The draft
+      profile granted the resolved TMPDIR for scratch files; on macOS that
+      resolves under /private/tmp, so it allowed writes to a subtree full of
+      other tools' files WHILE STILL REPORTING CONTAINMENT. Only the behavioral
+      test caught it (the escape target wrote successfully). A grant that
+      widens the boundary is worse than no containment because it reports
+      success. No temp grant now, plus a regression test asserting every
+      writable subpath resolves to the root — it inspects the PROFILE's grants
+      rather than scanning argv, since in tests the root itself lives under a
+      temp dir and a substring scan cannot tell intended from extra.
+      The profile allows by default and denies WRITES only: default-deny would
+      have to enumerate every read/mach-lookup/network call each CLI version
+      needs, and its first omission looks like a provider bug rather than a
+      policy one.
+      - [x] Linux containment — SHIPPED (PR #251). Landlock via a RE-EXEC
+            helper: Wrap re-invokes Ralph's own binary with a sentinel flag,
+            that helper restricts itself and immediately execs the provider.
+            main() handles the sentinel FIRST — work before the exec is either
+            outside the restriction or discarded.
+            WHY re-exec and not in-process: Landlock is applied by a process to
+            ITSELF, and below ABI 8 there is no TSYNC, so restrict_self binds
+            only the CALLING thread. MEASURED on ABI 6: a thread created BEFORE
+            the call writes outside the root successfully. Go's runtime has
+            threads running before any user code, so in-process would ship a
+            boundary with a hole while reporting containment.
+            LESSON — the handled-rights mask cost the most time. Landlock denies
+            a HANDLED right everywhere no rule grants it. A mask written as "all
+            write bits" (0x7fe) actually handles bit 2 READ_FILE and bit 3
+            READ_DIR; granting them only under the root made every file outside
+            unreadable — including the provider binary and the dynamic loader —
+            so execve failed EACCES, a symptom pointing at exec rather than
+            reads. Root-caused by stuck-loop-debugger after I burned several
+            cycles on it. Three tests now guard the mask directly.
+            SECOND LESSON — the behavioral tests build a REAL helper binary.
+            Re-executing the go test binary makes it reject the sentinel and never
+            run the command, which every "did the file appear?" assertion reads
+            as successful containment. That false pass was OBSERVED before being
+            fixed; it is the same trap the macOS TMPDIR grant set.
+      - [x] Windows containment — NOT NEEDED, closed as a DECISION rather
+            than left as a gap (PR #251). No provider can run on native
+            Windows: agent.Start allocates a pty via creack/pty, which returns
+            ErrPTYUnsupported, and the Windows SCM safety spec says it
+            outright — "Native Windows provider workers are already
+            unsupported". Windows operators run under WSL, which is Linux, so
+            Linux containment is what covers them. Building it would guard a
+            code path that cannot execute, i.e. dead code, which this repo
+            treats as a defect. A test records the reasoning and FAILS if
+            Available() ever reports true on Windows — meaning a provider path
+            was added and the matrix needs revisiting; it asserts the CONTRACT
+            rather than the platform so it stays meaningful if that happens.
+
+- [x] `desktop_launch.go` — DONE (PR #246). Was the LAST CLI store reader.
+      It resolves the project for a Finder/Explorer launch before any supervisor
+      is known to be running, which is why it was exempted rather than fixed
+      with init: it needs NON-MUTATING resolution, because a file-manager launch
+      has an arbitrary cwd (often not a repo, sometimes "/") and project-ensure
+      creates on a miss — which would register that directory as a durable
+      project just because someone double-clicked an icon. Fixed by adding
+      ProjectEnsureArgs.ResolveOnly, which skips the accumulate/touch writes on
+      the FOUND path too, not only the create on the miss path: a "resolve" that
+      still mutates rows is not one. The gate proved it again — removing the
+      import made the boundary test demand the exemption be deleted. Only
+      supervisor_cmd.go and binding_resolver.go remain exempt, both
+      supervisor-side by design, so a new entry now means a NEW violation.
+
+- [x] Two LOAD-SENSITIVE timing tests — FIXED (PR #237). Both verified not
+      caused by the branch that surfaced them (each passed 3/3 and 4/4 in
+      isolation on that same branch):
+      `internal/provider/claudesession.TestResumeSendsSentinelOnSpawn` and
+      `internal/provider.TestDeclarativeProgressRenewsStallButTotalDeadlineStillWins`.
+      Both assert which of two racing deadlines fires first, so under
+      full-suite parallel load the host's scheduling decides the outcome
+      instead of the code. Two independent tests failing the same way is a
+      PATTERN, not two flakes. Fix on their own terms — inject a clock, or
+      widen the margin between the two deadlines so scheduling cannot invert
+      them. Fixed by widening the margins, NOT by faking a clock: what these
+      tests verify is that one REAL deadline beats another REAL deadline, and a
+      faked clock would verify the comparison while removing the wiring under
+      test. Declarative: 400ms stall lease -> 3s against a 40ms emit interval
+      (still far below the 1200ms turn deadline it proves wins). Sentinel: the
+      5s spawn ctx also bounded the FAKE CLI's life, so a slow machine killed it
+      before it echoed and surfaced as "events closed without echo" — a message
+      that reads like a missing sentinel rather than an expired budget, which is
+      what made it misleading; now 60s ctx with a 30s echo wait below it, so a
+      real failure reports "timeout waiting for sentinel echo". Both have
+      negative proofs: raising the turn timeout to 8s fails at 8.002s, and
+      suppressing the fake echo fails with the specific timeout message.
 
 Completed this arc (audits → fixes, all shipped):
 - [x] Orchestrator async-dispatch concurrency audit → panic containment #146.

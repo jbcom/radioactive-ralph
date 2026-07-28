@@ -1352,6 +1352,128 @@ func mustPayloadJSON(p store.EventPayload) string {
 // Provider runners own progress observation and renew only their stall lease.
 // This layer independently applies the absolute turn deadline so custom/fake
 // runners cannot bypass the bounded-turn invariant.
+// recordExecutionProvenance records WHAT a task is about to run on, before its
+// turn starts.
+//
+// This is the write half of provenance the store has carried since #236. Until
+// it existed, nothing in production called RecordTaskExecution, so
+// assigned_independence_domain was empty in every real run — and differentFrom
+// enforcement built on that column would have compared "" against "" and
+// permitted everything. A guarantee that always passes is the vacuous kind plan
+// import already refuses (#259); this is what makes a dispatch-side comparison
+// possible at all.
+//
+// The domain comes from the binding's CALIBRATION rather than being derived
+// here. Dispatch knows the alias, provider, model and effort, but "who is this
+// result independent OF" is a measured property, not something to infer from a
+// provider name — hardcoding, say, claude→"anthropic" would put a vendor table
+// in the dispatch path and quietly disagree with whatever calibration later
+// measures. An uncalibrated binding records an EMPTY domain, which is honest:
+// nothing has established what it is independent of yet.
+//
+// A calibration is only reused when its INVOCATION HASH matches what this turn
+// will actually run. Matching on alias alone is not enough: the hash exists
+// precisely to identify one measured command line, so an alias whose binding
+// config, model, or effort has changed since the probe would stamp a STALE
+// domain onto the task — and a stale domain makes differentFrom accept or
+// reject on evidence that describes a different command line. A mismatch
+// records an empty domain, the same as no calibration at all, because a
+// measurement of something else is not evidence about this.
+//
+// Best-effort by design. Provenance is a record of the turn, not a
+// precondition for it: failing the dispatch because the metadata write lost a
+// race would trade a complete turn for a bookkeeping error. The failure is
+// emitted so it is visible rather than silent.
+func (o *Orchestrator) recordExecutionProvenance(
+	ctx context.Context, projectID, planID, taskID, sessionID string,
+	binding provider.Binding, req provider.Request,
+) {
+	// Resolve what this turn will CONCRETELY run as. req.Model and req.Effort are
+	// routinely empty — dispatch does not pin a tier — so recording them would
+	// have written empty model/effort on every task while looking like it had
+	// captured them. ResolveInvocation applies the binding's own tier mapping and
+	// fallbacks, which is what the provider actually executes.
+	invocation, invErr := provider.ResolveInvocation(binding, req)
+	if invErr != nil {
+		_ = o.store.Emit(ctx, store.EmitOpts{
+			ProjectID: projectID, PlanID: planID, TaskID: taskID,
+			Kind:   "task.provenance_invocation_error",
+			Stream: "service",
+			PayloadJSON: mustPayloadJSON(store.EventPayload{
+				Provider: binding.Name, Reason: invErr.Error(),
+			}),
+		})
+	}
+
+	var domain string
+	cal, err := o.store.GetCalibrationByAlias(ctx, binding.Name)
+	switch {
+	case err == nil:
+		// Alias match is NOT enough. InvocationHash identifies the exact measured
+		// command line, so a calibration whose binding config, model, or effort
+		// differs from this turn describes something else — reusing its domain
+		// would let differentFrom accept or reject on evidence about a different
+		// invocation. A mismatch is treated exactly like no calibration.
+		wantHash, hashErr := provider.InvocationConfigHash(
+			binding, provider.Model(invocation.Model), invocation.Effort)
+		switch {
+		case hashErr != nil:
+			_ = o.store.Emit(ctx, store.EmitOpts{
+				ProjectID: projectID, PlanID: planID, TaskID: taskID,
+				Kind:   "task.provenance_invocation_error",
+				Stream: "service",
+				PayloadJSON: mustPayloadJSON(store.EventPayload{
+					Provider: binding.Name, Reason: hashErr.Error(),
+				}),
+			})
+		case cal.InvocationHash == wantHash:
+			domain = cal.IndependenceDomain
+		default:
+			// Stale calibration: recorded for a different command line. Empty
+			// domain, and say so — an operator whose probe no longer matches the
+			// binding needs to know the constraint has quietly lost its evidence.
+			_ = o.store.Emit(ctx, store.EmitOpts{
+				ProjectID: projectID, PlanID: planID, TaskID: taskID,
+				Kind:   "task.calibration_stale",
+				Stream: "service",
+				PayloadJSON: mustPayloadJSON(store.EventPayload{
+					Provider: binding.Name,
+					Reason: fmt.Sprintf(
+						"calibration %s measured a different invocation; independence domain not reused",
+						cal.ID),
+				}),
+			})
+		}
+	case errors.Is(err, store.ErrCalibrationNotFound):
+		// Expected: most bindings are never calibrated. Empty domain, no event.
+	default:
+		_ = o.store.Emit(ctx, store.EmitOpts{
+			ProjectID: projectID, PlanID: planID, TaskID: taskID,
+			Kind:   "task.provenance_calibration_error",
+			Stream: "service",
+			PayloadJSON: mustPayloadJSON(store.EventPayload{
+				Provider: binding.Name, Reason: err.Error(),
+			}),
+		})
+	}
+
+	// The RESOLVED model and effort, not the requested ones: the record must say
+	// which model actually produced the result, and a tier request resolves
+	// through the binding's mapping before the provider ever sees it.
+	if err := o.store.RecordTaskExecution(ctx, planID, taskID, binding.Name,
+		binding.Config.Type, invocation.Model, invocation.Effort,
+		domain, sessionID); err != nil {
+		_ = o.store.Emit(ctx, store.EmitOpts{
+			ProjectID: projectID, PlanID: planID, TaskID: taskID,
+			Kind:   "task.provenance_write_failed",
+			Stream: "service",
+			PayloadJSON: mustPayloadJSON(store.EventPayload{
+				Provider: binding.Name, Reason: err.Error(),
+			}),
+		})
+	}
+}
+
 func (o *Orchestrator) dispatchWorker(ctx context.Context, projectID, projectDir, planID, sessionID, workerID string, binding provider.Binding, ds *dispatchedStep, scoped scopedContext) error {
 	runner, err := o.newRunner(binding)
 	if err != nil {
@@ -1375,6 +1497,11 @@ func (o *Orchestrator) dispatchWorker(ctx context.Context, projectID, projectDir
 	}
 	req.TurnTimeout = limits.TurnTimeout
 	req.StallTimeout = limits.StallTimeout
+
+	// Written BEFORE runner.Run: RecordTaskExecution requires the task to be
+	// running with this session still holding the claim, and a turn that crashes
+	// should still have left a record of what it ran on.
+	o.recordExecutionProvenance(ctx, projectID, planID, ds.task.ID, sessionID, binding, req)
 
 	// The total turn timeout bounds ONLY the agent turn: cancel it the instant Run
 	// returns (not at function end) so the timeout resources aren't held
@@ -1634,6 +1761,16 @@ func (o *Orchestrator) runFanoutGroup(ctx context.Context, projectID, projectDir
 	}
 	req.TurnTimeout = limits.TurnTimeout
 	req.StallTimeout = limits.StallTimeout
+
+	// EVERY task in the group, not just the first. A fan-out runs the whole group
+	// in ONE turn on ONE binding, so all of them share that provenance — and a
+	// group sharing a provider is exactly the case a differentFrom constraint
+	// exists to catch. Recording only the first task would leave its peers
+	// looking like they ran on nothing, which reads as "independent".
+	for _, ds := range claimed {
+		o.recordExecutionProvenance(ctx, projectID, planID, ds.task.ID, sessionID, binding, req)
+	}
+
 	// The total timeout bounds ONLY the fan-out turn; cancel it the instant Run
 	// returns so it isn't held through the per-task verification below. The run
 	// context is also registered under workerID so a worker-kill cancels the
