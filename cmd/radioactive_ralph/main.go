@@ -112,6 +112,7 @@ func newRootCmd(ctx context.Context, launchDesktop desktopLaunchFunc) *cobra.Com
 	root.AddCommand(newEventsCmd())
 	root.AddCommand(newStatusCmd())
 	root.AddCommand(newMessagesCmd())
+	root.AddCommand(newCalibrationCmd())
 	root.AddCommand(newGUICmd())
 
 	return root
