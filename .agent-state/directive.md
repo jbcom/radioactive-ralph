@@ -68,8 +68,8 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
 
 ## Remaining
 
-- [ ] Land the 12 open PRs: 222, 225, 236, 245, 246, 247, 251, 252, 255, 256,
-      257, 258.
+- [ ] Land the 11 open PRs: 222, 225, 236, 245, 247, 251, 252, 255, 257, 258,
+      259. (#246 desktop-launch and #256 reporting-owner MERGED.)
       There is ALWAYS an action here; this is not a wait.
       1. `bash scripts/verify-repo-claims.sh` first — never assert status from
          memory.
