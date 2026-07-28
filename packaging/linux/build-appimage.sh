@@ -61,12 +61,35 @@ case "$ARCH" in
   *) echo "build-appimage: no pinned appimagetool for arch $ARCH" >&2; exit 1 ;;
 esac
 TOOL="$(mktemp -d)/appimagetool"
-curl -sSL -o "$TOOL" \
-  "https://github.com/AppImage/appimagetool/releases/download/${APPIMAGETOOL_VERSION}/appimagetool-${ARCH}.AppImage"
-echo "${TOOL_SHA}  ${TOOL}" | sha256sum -c - || {
-  echo "build-appimage: appimagetool SHA-256 mismatch — refusing to run" >&2
+TOOL_URL="https://github.com/AppImage/appimagetool/releases/download/${APPIMAGETOOL_VERSION}/appimagetool-${ARCH}.AppImage"
+
+# Retry the DOWNLOAD, never the verification. A truncated transfer and a
+# tampered artifact both surface as a hash mismatch, and only one of them is
+# worth retrying — so each attempt re-downloads from scratch and is checked
+# independently, and the script still refuses to run anything unverified.
+#
+# This exists because a single corrupted fetch failed CI while upstream was
+# serving exactly the pinned bytes: verified by re-downloading the same URL and
+# getting the pinned SHA-256. Without a retry, one bad transfer of a 15MB
+# artifact fails the whole packaging job.
+fetched=no
+for attempt in 1 2 3; do
+  # --fail so an HTTP error is not written to disk as if it were the artifact;
+  # --retry covers transport-level blips within a single attempt.
+  if curl -sSL --fail --retry 2 --retry-delay 2 -o "$TOOL" "$TOOL_URL" &&
+     echo "${TOOL_SHA}  ${TOOL}" | sha256sum -c - >/dev/null 2>&1; then
+    fetched=yes
+    break
+  fi
+  echo "build-appimage: appimagetool fetch/verify attempt ${attempt} failed" >&2
+  rm -f "$TOOL"
+  sleep $((attempt * 3))
+done
+if [ "$fetched" != "yes" ]; then
+  echo "build-appimage: appimagetool SHA-256 mismatch after 3 attempts — refusing to run" >&2
+  echo "build-appimage: expected ${TOOL_SHA} from ${TOOL_URL}" >&2
   exit 1
-}
+fi
 chmod +x "$TOOL"
 
 OUT="radioactive-ralph_${VERSION}_linux_${ARCH}.AppImage"
