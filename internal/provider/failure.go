@@ -145,6 +145,7 @@ func ClassifyFailure(err error) Failure {
 			Cause:    err,
 		}
 	case errors.Is(err, ErrClaudeResultFailed),
+		errors.Is(err, ErrClaudeAPIFailure),
 		errors.Is(err, ErrClaudeMaximumTurns),
 		errors.Is(err, ErrClaudeInvalidRequest),
 		errors.Is(err, ErrClaudeMissingResult),

@@ -33,13 +33,41 @@ func TestClaudeUnstatusedAPIErrorIsCategorized(t *testing.T) {
 	if err == nil {
 		t.Fatal("failure() = nil for a frame with is_error:true")
 	}
-	if errors.Is(err, ErrClaudeResultFailed) {
-		t.Fatalf("failure() = %v, the generic sentinel, for a frame that explicitly "+
-			"reports terminal_reason=api_error; the turn is known to have died against "+
-			"the API and saying only \"unsuccessful result\" discards that", err)
+	if !errors.Is(err, ErrClaudeAPIFailure) {
+		t.Fatalf("failure() = %v, want ErrClaudeAPIFailure: the frame explicitly "+
+			"reports terminal_reason=api_error, and saying only \"unsuccessful "+
+			"result\" discards that", err)
 	}
-	if !errors.Is(err, ErrClaudeServiceUnavailable) {
-		t.Fatalf("failure() = %v, want ErrClaudeServiceUnavailable", err)
+	// The category must NOT be the transient-upstream one. Nothing here
+	// establishes transience, and the most common cause is a credential problem
+	// no retry can fix.
+	if errors.Is(err, ErrClaudeServiceUnavailable) {
+		t.Fatalf("failure() = %v, which classifies as a RETRYABLE upstream fault; "+
+			"a null api_error_status says only that the turn died against the API, "+
+			"so retrying burns the budget on turns that cannot succeed and delays "+
+			"the operator seeing a terminal error", err)
+	}
+}
+
+// TestClaudeUnstatusedAPIErrorIsTerminal is the half that actually protects the
+// operator: the classification must not be retryable.
+//
+// This is the defect the first version of this change shipped. Mapping an
+// unstatused api_error to ErrClaudeServiceUnavailable read as a harmless
+// naming choice, but that category falls through Failure.Retryable's permissive
+// default -- so a logged-out CLI would be dispatched three more times before
+// anyone was told what was wrong. Naming a category is choosing a retry policy.
+func TestClaudeUnstatusedAPIErrorIsTerminal(t *testing.T) {
+	err := claudeResultFrame{
+		IsError: true, Subtype: "success", TerminalReason: "api_error",
+	}.failure()
+
+	failure := ClassifyFailure(err)
+	if failure.Retryable() {
+		t.Fatalf("ClassifyFailure(%v).Retryable() = true (category %q); an API "+
+			"failure with no status is not known to be transient, and retrying it "+
+			"delays the terminal error the operator needs to see",
+			err, failure.Category)
 	}
 }
 

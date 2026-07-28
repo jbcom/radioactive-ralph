@@ -60,6 +60,18 @@ var (
 	ErrClaudeServiceUnavailable = errors.New("provider: claude service unavailable")
 	// ErrClaudeInvalidRequest is a malformed or rejected request (HTTP 400).
 	ErrClaudeInvalidRequest = errors.New("provider: claude rejected the request")
+	// ErrClaudeAPIFailure is a turn that died against the API without reporting
+	// a status to categorize on — terminal_reason "api_error" with a null
+	// api_error_status, which is what a logged-out CLI produces.
+	//
+	// Deliberately NOT ErrClaudeServiceUnavailable. That category means a
+	// transient upstream fault and is therefore RETRYABLE, but nothing here
+	// establishes transience: a null status says only that the turn died against
+	// the API, and the most common cause is a credential problem no number of
+	// retries will fix. Classifying it as unavailable would burn the retry
+	// budget on turns that cannot succeed and delay the operator seeing a
+	// terminal error — the exact cost Failure.Retryable documents.
+	ErrClaudeAPIFailure = errors.New("provider: claude turn failed against the API")
 )
 
 // Run spawns `claude -p --input-format stream-json --output-format
@@ -298,7 +310,7 @@ func (f claudeResultFrame) failure() error {
 	// confident wrong answer. "The upstream call failed" is what is actually
 	// known, and it is strictly more than the generic sentinel said.
 	if f.TerminalReason == claudeTerminalAPIError {
-		return ErrClaudeServiceUnavailable
+		return ErrClaudeAPIFailure
 	}
 	return ErrClaudeResultFailed
 }
