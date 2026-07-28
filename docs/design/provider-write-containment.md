@@ -36,15 +36,25 @@ appears to contain it.
 
 An operator enables it per project with:
 
+Containment is **ON by default**. Turn it off for a project whose provider
+legitimately writes outside the checkout:
+
 ```toml
 [projects.my-project]
-contain_provider_writes = true
+contain_provider_writes = false
 ```
 
-Absent means off, and so does a malformed value. A typo must not silently
-*enable* a boundary that makes provider writes fail — that surfaces as
-unexplained provider errors far from their cause, so a bad value behaves like
-the absent key it resembles.
+Absent means ON, and so does a malformed value. The reasoning inverted with the
+default and is worth stating in both directions. While absent meant off, a typo
+silently *enabling* the boundary would surface as unexplained provider write
+failures far from their cause. Now that absent means on, a typo must not
+silently *remove* a security boundary the operator believes is active — the
+failure nobody notices until it matters. Both readings choose "behave like the
+absent key"; only the key's meaning changed.
+
+An explicit `false` always wins. On-by-default is only defensible while the
+escape hatch is real, and a provider that needs a wider root stays runnable
+without patching Ralph.
 
 Containment is **opt-in per `agent.Start`** via `ContainmentRoot`, not derived
 from `Dir`. Where a process starts is not the same claim as the only place it

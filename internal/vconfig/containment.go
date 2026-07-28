@@ -21,7 +21,7 @@ const ContainProviderWritesKey = "contain_provider_writes"
 func ContainProviderWrites(cfg ProjectConfig) bool {
 	raw, ok := cfg.Values[ContainProviderWritesKey]
 	if !ok {
-		return false
+		return true
 	}
 	switch val := raw.(type) {
 	case bool:
@@ -30,8 +30,19 @@ func ContainProviderWrites(cfg ProjectConfig) bool {
 		// A store layer round-trips values as JSON strings, so the same intent
 		// arrives as "true" rather than true depending on which layer set it.
 		parsed, err := strconv.ParseBool(val)
-		return err == nil && parsed
+		if err != nil {
+			// A MALFORMED value keeps containment ON, and this inverted with the
+			// default. While absent meant off, a typo silently enabling a
+			// boundary would surface as unexplained provider errors far from
+			// their cause, so resembling the absent key was the honest direction.
+			// Now that absent means ON, the same argument points the other way:
+			// a typo must not silently REMOVE a security boundary the operator
+			// believes is active. Both readings pick "behave like the absent
+			// key"; only the key's meaning changed.
+			return true
+		}
+		return parsed
 	default:
-		return false
+		return true
 	}
 }

@@ -226,6 +226,17 @@ func (o *Orchestrator) containmentRootFor(ctx context.Context, projectID, projec
 		}
 		return projectDir
 	}
+	// NOTE the asymmetry with vconfig.ContainProviderWrites, which defaults ON.
+	// This fallback is reached only when NO resolver was installed, i.e. by a
+	// test or an embedder that never wired config at all -- for those callers
+	// there is no operator intent to read, so the static flag is the whole
+	// signal and an absent flag means off. The production entry point always
+	// installs the resolver (supervisor_cmd.go), so the on-by-default config
+	// decision reaches every real dispatch.
+	//
+	// Deliberately NOT flipped to match: doing so would silently confine every
+	// existing embedder whose config never mentioned containment, which is the
+	// upgrade-surprise the config default was carefully reasoned about to avoid.
 	if !o.containProviderWrites {
 		return ""
 	}
