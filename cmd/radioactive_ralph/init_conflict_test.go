@@ -55,6 +55,10 @@ func TestInitMode_ProjectConfigConflictDefaultsToAutoRemove(t *testing.T) {
 	projectDir := t.TempDir()
 	chdir(t, projectDir)
 
+	// init is a dumb client now: it refuses to run without a supervisor, so the
+	// conflict UX under test is only reachable with one live.
+	startTestSupervisor(t, stateDir)
+
 	// First --init establishes "model" = "stored-model" as the baseline.
 	firstConfig := writeProjectConfigFile(t, t.TempDir(), "stored-model")
 	cmd1 := newTestRootCmd(context.Background())
@@ -90,6 +94,10 @@ func TestInitMode_ProjectConfigConflictForceOverrideApplies(t *testing.T) {
 
 	projectDir := t.TempDir()
 	chdir(t, projectDir)
+
+	// init is a dumb client now: it refuses to run without a supervisor, so the
+	// conflict UX under test is only reachable with one live.
+	startTestSupervisor(t, stateDir)
 
 	firstConfig := writeProjectConfigFile(t, t.TempDir(), "stored-model")
 	cmd1 := newTestRootCmd(context.Background())

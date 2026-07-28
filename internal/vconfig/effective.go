@@ -28,6 +28,13 @@ import (
 // path simply never calls EffectiveProject with a projectConfigFile) — see
 // spec §5a and the AddFlags doc comment.
 func EffectiveProject(ctx context.Context, st *store.Store, projectsCfg ProjectConfig, projectID, projectConfigFile string, mode Mode) (ProjectConfig, error) {
+	return EffectiveProjectFrom(ctx, NewStoreConfigSource(st), projectsCfg, projectID, projectConfigFile, mode)
+}
+
+// EffectiveProjectFrom is EffectiveProject against any ConfigSource, so a
+// client resolving config over the supervisor socket runs the same code the
+// supervisor does.
+func EffectiveProjectFrom(ctx context.Context, src ConfigSource, projectsCfg ProjectConfig, projectID, projectConfigFile string, mode Mode) (ProjectConfig, error) {
 	if projectConfigFile == "" {
 		return projectsCfg, nil
 	}
@@ -37,7 +44,7 @@ func EffectiveProject(ctx context.Context, st *store.Store, projectsCfg ProjectC
 		return ProjectConfig{}, fmt.Errorf("vconfig: load project-config-file %s: %w", projectConfigFile, err)
 	}
 
-	return EffectiveProjectFromValues(ctx, st, projectsCfg, projectID, overlay, mode)
+	return EffectiveProjectFromValuesFrom(ctx, src, projectsCfg, projectID, overlay, mode)
 }
 
 // EffectiveProjectFromValues is EffectiveProject's core: merge (and, under
@@ -50,20 +57,33 @@ func EffectiveProject(ctx context.Context, st *store.Store, projectsCfg ProjectC
 // round-tripping the filtered map back through a TOML file just to satisfy
 // EffectiveProject's file-path signature.
 func EffectiveProjectFromValues(ctx context.Context, st *store.Store, projectsCfg ProjectConfig, projectID string, overlay map[string]any, mode Mode) (ProjectConfig, error) {
+	return EffectiveProjectFromValuesFrom(ctx, NewStoreConfigSource(st), projectsCfg, projectID, overlay, mode)
+}
+
+// EffectiveProjectFromValuesFrom is EffectiveProjectFromValues against any
+// ConfigSource.
+func EffectiveProjectFromValuesFrom(ctx context.Context, src ConfigSource, projectsCfg ProjectConfig, projectID string, overlay map[string]any, mode Mode) (ProjectConfig, error) {
 	merged := cloneMap(projectsCfg.Values)
 	mergeMapInto(merged, overlay)
 
 	if mode == ModeChange {
-		if st == nil {
-			return ProjectConfig{}, fmt.Errorf("vconfig: ModeChange requires a store")
+		if isNilConfigSource(src) {
+			return ProjectConfig{}, fmt.Errorf("vconfig: ModeChange requires a config source")
 		}
+		// ONE batched apply rather than a write per key. A key-at-a-time loop
+		// leaves the project half-updated if any write fails partway, and over a
+		// socket it would also be one round trip per key.
+		upserts := make(map[string]string, len(overlay))
 		for k, v := range overlay {
 			encoded, err := json.Marshal(v)
 			if err != nil {
 				return ProjectConfig{}, fmt.Errorf("vconfig: encode %q for persist: %w", k, err)
 			}
-			if err := st.SetProjectConfig(ctx, projectID, k, string(encoded)); err != nil {
-				return ProjectConfig{}, fmt.Errorf("vconfig: persist %q: %w", k, err)
+			upserts[k] = string(encoded)
+		}
+		if len(upserts) > 0 {
+			if err := src.ApplyProjectConfigValues(ctx, projectID, upserts, nil); err != nil {
+				return ProjectConfig{}, fmt.Errorf("vconfig: persist project config: %w", err)
 			}
 		}
 	}
