@@ -15,6 +15,7 @@ depend on.
 | [Config virtual layers](./config-layers.md) | USER/PROJECTS layering, changes vs. overrides, conflict diffing |
 | [Orchestrator-verified completion and A2A](./completion-and-a2a.md) | Why a worker never marks its own work done, and the A2A vocabulary that carries evidence |
 | [Deterministic execution](./deterministic-execution.md) | What is reproducible about a run — and what deliberately is not |
+| [Plan-adaptive concurrency](./plan-adaptive-concurrency.md) | How readiness, leaf-group partitioning, and output reservations decide what runs at once |
 
 ```{toctree}
 :hidden:
@@ -24,4 +25,5 @@ declarative-provider-bindings
 config-layers
 completion-and-a2a
 deterministic-execution
+plan-adaptive-concurrency
 ```
