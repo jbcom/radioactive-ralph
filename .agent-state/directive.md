@@ -68,12 +68,12 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
 
 ## Remaining
 
-- [ ] Land the 11 open PRs: 222, 225, 251, 252, 255, 257, 258, 259, 261, 262,
-      263.
+- [ ] Land the 10 open PRs: 222, 225, 251, 252, 255, 257, 258, 259, 262, 263.
       MERGED since this item was written: #246 (desktop launch), #256
       (reporting owner), #245 (init over supervisor), #247 (capability
       requirements, squashed as 82ff030), #236 (calibration records, 9c04550 --
-      merged by the driver with no manual step once its checks went green).
+      merged by the driver with no manual step once its checks went green),
+      #261 (shellcheck coverage + the non-cancelling driver).
       DIRTY CLEARED 2026-07-28: #259, #251, #225 all conflicted on #247 merging
       and are now BLOCKED/MERGEABLE again. Nearly every conflict was in
       GENERATED docs (docs/api/internal/*.md) -> `make docs-api`, then
