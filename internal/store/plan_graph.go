@@ -18,6 +18,24 @@ type GraphTaskSpec struct {
 	// MetadataJSON is the raw ralph-task block, or "{}" when the step carried
 	// no annotation.
 	MetadataJSON string
+	// Inputs and Outputs are the task's declared filesystem surface, persisted
+	// as reservations so the claim path can refuse to run two tasks that write
+	// the same exclusive path concurrently. Declared paths are project-relative.
+	Inputs  []TaskInputSpec
+	Outputs []TaskOutputSpec
+}
+
+// TaskInputSpec is one declared input, optionally pinned to a content hash.
+type TaskInputSpec struct {
+	Path   string
+	SHA256 string
+}
+
+// TaskOutputSpec is one declared output. Mode defaults to "exclusive", the only
+// mode the schema admits today.
+type TaskOutputSpec struct {
+	Path string
+	Mode string
 }
 
 // CreatePlanGraphOpts is one plan and its complete task graph.
@@ -119,6 +137,19 @@ func (s *Store) writeGraphTasksOn(ctx context.Context, ex execer, planID string,
 			if err := s.putTaskMetadataOn(
 				ctx, ex, planID, spec.ID, task.GroupPath, task.TeamPath, metadata,
 			); err != nil {
+				return err
+			}
+		}
+		// Reservations go in the SAME transaction as the node. A task that
+		// exists without its reservations would be claimable against a path a
+		// peer owns, which is the window reservations exist to close.
+		for _, in := range task.Inputs {
+			if err := s.reserveTaskInputOn(ctx, ex, planID, spec.ID, in.Path, in.SHA256); err != nil {
+				return err
+			}
+		}
+		for _, out := range task.Outputs {
+			if err := s.reserveTaskOutputOn(ctx, ex, planID, spec.ID, out.Path, out.Mode); err != nil {
 				return err
 			}
 		}

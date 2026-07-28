@@ -2,6 +2,7 @@ package orch
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -265,5 +266,102 @@ func TestDispatchUsesTheImportedGraphID(t *testing.T) {
 	}
 	if tasks[0].ID != "build" {
 		t.Fatalf("task id = %q, want the explicit graph id", tasks[0].ID)
+	}
+}
+
+// sharedOutputPlan declares two independent tasks writing the SAME exclusive
+// path. Nothing in the dependency graph orders them — neither consumes the
+// other's result — so both are ready at once, and the reservation is the only
+// thing standing between them and a concurrent clobber.
+const sharedOutputPlan = "# Shared output\n\n" +
+	"- alpha writes the artifact\n\n" +
+	"  ```ralph-task\n" +
+	`  {"id": "alpha", "after": [], "outputs": [{"path": "build/artifact.txt", "mode": "exclusive"}]}` + "\n" +
+	"  ```\n\n" +
+	"- beta writes the artifact too\n\n" +
+	"  ```ralph-task\n" +
+	`  {"id": "beta", "after": [], "outputs": [{"path": "build/artifact.txt", "mode": "exclusive"}]}` + "\n" +
+	"  ```\n"
+
+// TestImportPersistsOutputReservations closes the loop from plan text to
+// enforcement: a declared output in the markdown must reach
+// task_output_reservations, and the claim path must then refuse the second
+// task while the first runs.
+func TestImportPersistsOutputReservations(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	projectID := mustCreateTestProject(t, s, "shared-output")
+	o := New(s, WithBindingResolver(fakeBindingResolver("codex", false)))
+
+	planID, err := o.ImportPlan(ctx, ImportPlanOpts{
+		ProjectID: projectID, Slug: "shared", Title: "Shared", Markdown: sharedOutputPlan,
+	})
+	if err != nil {
+		t.Fatalf("ImportPlan: %v", err)
+	}
+
+	// Both are ready: no edge orders them.
+	parts, err := s.ReadyPartitions(ctx, planID)
+	if err != nil {
+		t.Fatalf("ReadyPartitions: %v", err)
+	}
+	total := 0
+	for _, p := range parts {
+		total += len(p.Tasks)
+	}
+	if total != 2 {
+		t.Fatalf("ready tasks = %d, want 2 — both are dependency-free", total)
+	}
+
+	sessionA, workerA := mustCreateSessionAndWorkerForTest(t, s)
+	if _, err := s.ClaimTask(ctx, planID, "alpha", sessionA, workerA); err != nil {
+		t.Fatalf("claim alpha: %v", err)
+	}
+	sessionB, workerB := mustCreateSessionAndWorkerForTest(t, s)
+	if _, err := s.ClaimTask(ctx, planID, "beta", sessionB, workerB); !errors.Is(err, store.ErrOutputReserved) {
+		t.Fatalf("claim beta err = %v, want ErrOutputReserved — the declared output "+
+			"in the plan markdown must reach the reservation table and be enforced", err)
+	}
+}
+
+// TestFanoutWithConflictingOutputsStillMakesProgress is the livelock. A native
+// fan-out group claims every eligible task under ONE worker; when two of them
+// declare the same output, the second claim returns ErrOutputReserved. Treating
+// that as fatal made dispatchFanoutGroup release every prior claim and return
+// an error, so the next pass repeated the identical sequence and NEITHER task
+// could ever run.
+//
+// A reservation conflict is temporary by construction — the holder is running
+// and will finish. It must be a SKIP, exactly like losing a claim race, not a
+// fault.
+func TestFanoutWithConflictingOutputsStillMakesProgress(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	projectID := mustCreateTestProject(t, s, "fanout-conflict")
+
+	runner := &fakeRunner{results: []provider.Result{
+		{AssistantOutput: "first"}, {AssistantOutput: "second"},
+	}}
+	o := New(s,
+		WithRunnerFactory(func(provider.Binding) (provider.Runner, error) { return runner, nil }),
+		WithBindingResolver(fakeBindingResolver("claude", true)), // NativeFanout
+	)
+	planID, err := o.ImportPlan(ctx, ImportPlanOpts{
+		ProjectID: projectID, Slug: "conflict", Title: "Conflict", Markdown: sharedOutputPlan,
+	})
+	if err != nil {
+		t.Fatalf("ImportPlan: %v", err)
+	}
+
+	dispatched, err := o.DispatchNext(ctx, projectID, planID)
+	if err != nil {
+		t.Fatalf("DispatchNext returned an error for a reservation conflict: %v — a "+
+			"conflict is temporary (the holder is running and will finish), so it "+
+			"must skip like a lost claim race, not fault", err)
+	}
+	o.Wait()
+	if dispatched == 0 {
+		t.Fatal("nothing dispatched: the fan-out group livelocked on its own " +
+			"reservation conflict, so neither task can ever run")
 	}
 }
