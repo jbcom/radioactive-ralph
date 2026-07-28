@@ -99,10 +99,10 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
       self-reference is unsatisfiable, so dispatch could only block it forever.
       walkPlanSteps derives ids the way import does, so validation and dispatch
       share one notion of identity. Guide says validated-not-enforced.
-      - [ ] Enforce the runtime constraint: compare independence domains at
-            dispatch. Gated on #236 (calibrations carry
-            inference/control/independence domains); nothing on main defines a
-            domain to compare yet.
+      - [ ] [WAIT] Enforce the runtime constraint: compare independence domains
+            at dispatch. VERIFIED gated — #236 is still OPEN and nothing on main
+            defines a domain to compare, so writing it now would invent a second
+            notion of identity that disagrees with the one #236 ships.
 
 - [x] Increment 11 operator half — DONE (PR #258). Task carries BlockedReason,
       backed by a bulk plan-scoped store.ListTaskBlockingReasons (per-task reads
@@ -111,9 +111,10 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
       blocked_input and its default fails the WHOLE projection — one blocked
       task returned "unknown Ralph task status" for the entire snapshot, so the
       status meant to make a stall visible hid everything instead.
-      - [ ] Remaining half: ready partitions + per-task provenance over the
-            observe surface. Gated on #225 (ReadyPartitions) and #236
-            (calibration provenance), neither on main yet.
+      - [ ] [WAIT] Remaining half: ready partitions + per-task provenance over
+            the observe surface. VERIFIED gated — #225 (ReadyPartitions) and
+            #236 (calibration provenance) are both still OPEN, and neither type
+            exists on main to project.
 
 - [ ] Make provider write containment reachable from config, then default it on.
       macOS and Linux both enforce in #251; native Windows is closed as
@@ -123,10 +124,11 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
          that makes provider writes fail, since that surfaces as unexplained
          provider errors far from the cause. Accepts bool and string because a
          store layer round-trips values as JSON strings.
-      2. Flip the default only after real turns have run with it enabled. A
-         provider that legitimately writes to a shared cache outside the
-         checkout would start failing on upgrade, and that is not a guess worth
-         making from the test suite alone.
+      2. [WAIT] Flip the default only after real turns have run with it enabled.
+         The config key shipped on #251, which is still OPEN, so no real turn has
+         used it yet. A provider that legitimately writes to a shared cache
+         outside the checkout would start failing on upgrade, and that is not a
+         guess worth making from the test suite alone.
 
 - [x] #248 CLOSED (PR #256). VerifyAndCompleteAs takes the REPORTING session so
       the store's owner guard compares against the worker that produced the
