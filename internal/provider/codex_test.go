@@ -482,8 +482,12 @@ printf '%s\n' '{"type":"turn.completed","usage":{"input_tokens":1,"cached_input_
 		}
 		args = append(args, string(decoded))
 	}
-	if len(args) != 16 {
-		t.Fatalf("args = %#v, want exactly 16 arguments", args)
+	// 18, not 16: the resolved reasoning effort now reaches the process as a
+	// `-c model_reasoning_effort=...` config override. It was previously
+	// recorded on Result.Invocation and never passed, so provenance asserted an
+	// effort codex had not run.
+	if len(args) != 18 {
+		t.Fatalf("args = %#v, want exactly 18 arguments", args)
 	}
 	wantFixed := map[int]string{
 		0:  "exec",
@@ -497,9 +501,11 @@ printf '%s\n' '{"type":"turn.completed","usage":{"input_tokens":1,"cached_input_
 		8:  "--output-last-message",
 		10: "-m",
 		11: "gpt-test-model",
-		12: "--output-schema",
-		14: "--ephemeral",
-		15: combinePrompt(req),
+		12: "-c",
+		13: `model_reasoning_effort="high"`,
+		14: "--output-schema",
+		16: "--ephemeral",
+		17: combinePrompt(req),
 	}
 	for index, want := range wantFixed {
 		if got := args[index]; got != want {
@@ -509,10 +515,64 @@ printf '%s\n' '{"type":"turn.completed","usage":{"input_tokens":1,"cached_input_
 	if filepath.Base(args[9]) != "last-message.txt" {
 		t.Errorf("last-message path = %q, want last-message.txt", args[9])
 	}
-	if filepath.Base(args[13]) != "schema.json" {
-		t.Errorf("schema path = %q, want schema.json", args[13])
+	if filepath.Base(args[15]) != "schema.json" {
+		t.Errorf("schema path = %q, want schema.json", args[15])
 	}
-	if filepath.Dir(args[9]) != filepath.Dir(args[13]) {
+	if filepath.Dir(args[9]) != filepath.Dir(args[15]) {
 		t.Errorf("last-message and schema files do not share an isolated temp dir: %q vs %q", args[9], args[13])
+	}
+}
+
+// TestCodexArgsPassTheResolvedEffort is CodeRabbit's P1 on #234, and it caught
+// a gap against this project's own decision record: the record said to TAKE
+// `-c model_reasoning_effort=%q` in this PR, and the plumbing landed on
+// Result.Invocation without ever reaching the process.
+//
+// The consequence is worse than a missing flag. ResolveInvocation records the
+// effort and StrictBinding validates it, so Result.Invocation asserted an
+// effort that codex never ran — provenance that is confidently wrong.
+func TestCodexArgsPassTheResolvedEffort(t *testing.T) {
+	binding := Binding{
+		Name:   "codex-pool",
+		Config: BindingConfig{Type: "codex", Binary: "codex", HighEffort: "high"},
+	}
+	inv, err := ResolveInvocation(binding, Request{Model: ModelSonnet, Effort: "high"})
+	if err != nil {
+		t.Fatalf("ResolveInvocation: %v", err)
+	}
+	args := codexArgs(binding, Request{WorkingDir: "/tmp/x"}, inv, "/tmp/out.txt", "")
+
+	idx := -1
+	for i, a := range args {
+		if a == "-c" {
+			idx = i
+		}
+	}
+	if idx < 0 || idx+1 >= len(args) {
+		t.Fatalf("args = %v, want a -c config override carrying the effort", args)
+	}
+	if want := `model_reasoning_effort="high"`; args[idx+1] != want {
+		t.Fatalf("config override = %q, want %q", args[idx+1], want)
+	}
+}
+
+// TestCodexArgsOmitTheOverrideForDefaultEffort keeps Ralph out of the way when
+// the request names no specific effort. Passing "default" through would REPLACE
+// the operator's own config.toml value with a literal that is not a valid
+// effort — worse than sending nothing.
+func TestCodexArgsOmitTheOverrideForDefaultEffort(t *testing.T) {
+	binding := Binding{Name: "codex-pool", Config: BindingConfig{Type: "codex", Binary: "codex"}}
+	for _, effort := range []string{"", "default"} {
+		inv, err := ResolveInvocation(binding, Request{Model: ModelSonnet, Effort: effort})
+		if err != nil {
+			t.Fatalf("ResolveInvocation(%q): %v", effort, err)
+		}
+		args := codexArgs(binding, Request{WorkingDir: "/tmp/x"}, inv, "/tmp/out.txt", "")
+		for i, a := range args {
+			if a == "-c" {
+				t.Errorf("effort %q produced a config override %q; the operator's "+
+					"configured lane must be left alone", effort, args[i+1])
+			}
+		}
 	}
 }
