@@ -262,6 +262,18 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
                  await-calibration tasks, so the store side is in place.
                  This is a full increment, not a wire-up.
               3. Only then compare at dispatch and refuse a matching domain.
+                 COMPOSITION ALREADY PROVEN (bf53f6a on #262): combining #262 and
+                 #263 locally showed they merge with only a generated-doc
+                 conflict, build together, and pass end to end --
+                 TestOperatorRecordedCalibrationReachesTheTask walks operator
+                 record -> dispatch -> domain on the task. This mattered because
+                 each half was verified ALONE: the producer writes what an
+                 operator supplies, the consumer requires InvocationHash to equal
+                 what dispatch resolves, and nothing checked an operator could
+                 produce a record satisfying that gate. Had they disagreed, every
+                 calibration would read as stale and the domain would stay empty
+                 -- the same vacuous guarantee by a longer route. Negative proof:
+                 a plausible-but-different hash reds the test.
             Verified by grepping origin/main for callers, not by assuming the
             types being present meant they were wired.
 
