@@ -1240,6 +1240,15 @@ func mustPayloadJSON(p store.EventPayload) string {
 // measures. An uncalibrated binding records an EMPTY domain, which is honest:
 // nothing has established what it is independent of yet.
 //
+// A calibration is only reused when its INVOCATION HASH matches what this turn
+// will actually run. Matching on alias alone is not enough: the hash exists
+// precisely to identify one measured command line, so an alias whose binding
+// config, model, or effort has changed since the probe would stamp a STALE
+// domain onto the task — and a stale domain makes differentFrom accept or
+// reject on evidence that describes a different command line. A mismatch
+// records an empty domain, the same as no calibration at all, because a
+// measurement of something else is not evidence about this.
+//
 // Best-effort by design. Provenance is a record of the turn, not a
 // precondition for it: failing the dispatch because the metadata write lost a
 // race would trade a complete turn for a bookkeeping error. The failure is
@@ -1248,11 +1257,62 @@ func (o *Orchestrator) recordExecutionProvenance(
 	ctx context.Context, projectID, planID, taskID, sessionID string,
 	binding provider.Binding, req provider.Request,
 ) {
+	// Resolve what this turn will CONCRETELY run as. req.Model and req.Effort are
+	// routinely empty — dispatch does not pin a tier — so recording them would
+	// have written empty model/effort on every task while looking like it had
+	// captured them. ResolveInvocation applies the binding's own tier mapping and
+	// fallbacks, which is what the provider actually executes.
+	invocation, invErr := provider.ResolveInvocation(binding, req)
+	if invErr != nil {
+		_ = o.store.Emit(ctx, store.EmitOpts{
+			ProjectID: projectID, PlanID: planID, TaskID: taskID,
+			Kind:   "task.provenance_invocation_error",
+			Stream: "service",
+			PayloadJSON: mustPayloadJSON(store.EventPayload{
+				Provider: binding.Name, Reason: invErr.Error(),
+			}),
+		})
+	}
+
 	var domain string
 	cal, err := o.store.GetCalibrationByAlias(ctx, binding.Name)
 	switch {
 	case err == nil:
-		domain = cal.IndependenceDomain
+		// Alias match is NOT enough. InvocationHash identifies the exact measured
+		// command line, so a calibration whose binding config, model, or effort
+		// differs from this turn describes something else — reusing its domain
+		// would let differentFrom accept or reject on evidence about a different
+		// invocation. A mismatch is treated exactly like no calibration.
+		wantHash, hashErr := provider.InvocationConfigHash(
+			binding, provider.Model(invocation.Model), invocation.Effort)
+		switch {
+		case hashErr != nil:
+			_ = o.store.Emit(ctx, store.EmitOpts{
+				ProjectID: projectID, PlanID: planID, TaskID: taskID,
+				Kind:   "task.provenance_invocation_error",
+				Stream: "service",
+				PayloadJSON: mustPayloadJSON(store.EventPayload{
+					Provider: binding.Name, Reason: hashErr.Error(),
+				}),
+			})
+		case cal.InvocationHash == wantHash:
+			domain = cal.IndependenceDomain
+		default:
+			// Stale calibration: recorded for a different command line. Empty
+			// domain, and say so — an operator whose probe no longer matches the
+			// binding needs to know the constraint has quietly lost its evidence.
+			_ = o.store.Emit(ctx, store.EmitOpts{
+				ProjectID: projectID, PlanID: planID, TaskID: taskID,
+				Kind:   "task.calibration_stale",
+				Stream: "service",
+				PayloadJSON: mustPayloadJSON(store.EventPayload{
+					Provider: binding.Name,
+					Reason: fmt.Sprintf(
+						"calibration %s measured a different invocation; independence domain not reused",
+						cal.ID),
+				}),
+			})
+		}
 	case errors.Is(err, store.ErrCalibrationNotFound):
 		// Expected: most bindings are never calibrated. Empty domain, no event.
 	default:
@@ -1266,12 +1326,11 @@ func (o *Orchestrator) recordExecutionProvenance(
 		})
 	}
 
-	// Model and effort come from the REQUEST, which carries what this turn
-	// actually asked for, rather than from the binding config, which only holds
-	// the per-tier mapping. Recording the config would say what the binding
-	// could run, not what this task did.
+	// The RESOLVED model and effort, not the requested ones: the record must say
+	// which model actually produced the result, and a tier request resolves
+	// through the binding's mapping before the provider ever sees it.
 	if err := o.store.RecordTaskExecution(ctx, planID, taskID, binding.Name,
-		binding.Config.Type, string(req.Model), req.Effort,
+		binding.Config.Type, invocation.Model, invocation.Effort,
 		domain, sessionID); err != nil {
 		_ = o.store.Emit(ctx, store.EmitOpts{
 			ProjectID: projectID, PlanID: planID, TaskID: taskID,
