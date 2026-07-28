@@ -35,6 +35,13 @@ type Request struct {
 	// same claim as the only place it may write, and silently equating them
 	// would change behavior for every existing caller. Empty leaves the process
 	// unconfined, exactly as before.
+	//
+	// A RUNNER THAT DOES NOT PASS THIS TO applyContainment SILENTLY VOIDS THE
+	// GUARANTEE. That is not hypothetical: the stream-json declarative shape once
+	// dropped it while the other two shapes carried it, so the field was set, the
+	// config claimed containment, and the turn wrote wherever it liked. Every
+	// exec path must route through applyContainment — which also fails closed on
+	// an unsupported platform rather than running unwrapped.
 	ContainmentRoot string
 
 	SystemPrompt string

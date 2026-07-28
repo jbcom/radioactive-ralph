@@ -169,7 +169,8 @@ func runDeclarativeAttempt(ctx context.Context, binding Binding, req Request, st
 			Invocation:      invocation,
 		}, nil
 	case declarativeStreamJSON:
-		out, raw, err := runStreamJSONCommand(ctx, stallTimeout, req.WorkingDir, binding.Config.Binary, args)
+		out, raw, err := runStreamJSONCommand(
+			ctx, stallTimeout, req.WorkingDir, req.ContainmentRoot, binding.Config.Binary, args)
 		if err != nil {
 			// raw is empty on error by runStreamJSONCommand's contract (diagnostic
 			// context is folded into err), so there is nothing to extract here.
@@ -342,7 +343,17 @@ func validateArgTemplate(input string) error {
 // where the caller uses it to extract a session id; on every error path it is
 // returned empty, because a failed turn has no usable output and any diagnostic
 // context (stderr, a scan error) is folded into the returned error instead.
-func runStreamJSONCommand(ctx context.Context, stallTimeout time.Duration, dir, bin string, args []string) (assistantText, rawOutput string, err error) {
+// containmentRoot is threaded through for the same reason the other two
+// declarative shapes take it: the confinement contract is "the provider process
+// AND everything it spawns", and a shape that skipped it would leave stream-json
+// bindings running unconfined while the config said otherwise. applyContainment
+// FAILS CLOSED — an unsupported platform or an unusable root returns an error
+// here rather than launching the turn unwrapped.
+func runStreamJSONCommand(ctx context.Context, stallTimeout time.Duration, dir, containmentRoot, bin string, args []string) (assistantText, rawOutput string, err error) {
+	bin, args, wrapErr := applyContainment(containmentRoot, bin, args)
+	if wrapErr != nil {
+		return "", "", wrapErr
+	}
 	stallCtx, progress, cancelStall := withProgressLease(ctx, stallTimeout)
 	defer cancelStall()
 	cmd := exec.CommandContext(stallCtx, bin, args...) //nolint:gosec // argv is runtime-controlled

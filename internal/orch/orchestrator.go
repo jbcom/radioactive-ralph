@@ -160,6 +160,15 @@ type Orchestrator struct {
 // turn rather than running it unconfined — a caller that asked for containment
 // and silently got none would hold exactly the false guarantee this exists to
 // replace.
+//
+// "Every provider turn" is load-bearing and is enforced at ONE choke point:
+// applyContainment, which every exec path calls before starting a process. That
+// is deliberate. The guarantee previously lived in each call site instead, and
+// the stream-json declarative shape simply did not have it — a binding ran
+// unconfined while the config claimed protection, and no test noticed because
+// the other shapes did carry it. Any new exec path must route through
+// applyContainment; TestEveryDeclarativeShapeConfinesItsTurn measures the escape
+// behaviorally so a shape that forgets fails rather than passing quietly.
 func WithProviderWriteContainment(enabled bool) Option {
 	return func(o *Orchestrator) { o.containProviderWrites = enabled }
 }
