@@ -163,3 +163,13 @@ func (m *TaskMetadata) AllowedProviders() []string {
 	}
 	return m.Providers
 }
+
+// IndependencePeers returns the tasks this one must not share an independence
+// domain with, tolerating a nil receiver for the same reason AllowedProviders
+// does.
+func (m *TaskMetadata) IndependencePeers() []string {
+	if m == nil {
+		return nil
+	}
+	return m.DifferentFrom
+}

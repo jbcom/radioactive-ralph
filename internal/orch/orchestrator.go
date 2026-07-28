@@ -813,6 +813,32 @@ func (o *Orchestrator) dispatchReadyStep(ctx context.Context, a dispatchStepArgs
 		binding = rotated
 	}
 
+	// Independence: a step declaring differentFrom must not run on a provider
+	// whose domain matches one a named peer already ran on.
+	//
+	// Resolved HERE, alongside `providers`, and ROTATED rather than blocked, for
+	// the same reason: a pool is a rotation, so the next member may well have a
+	// different domain, and refusing on the head's identity would make the
+	// constraint a coin flip on cursor position. It is also not a fail-closed
+	// block like `requires` -- no operator action is needed, the very next
+	// dispatch may satisfy it, so a durable blocked_* state would leave someone
+	// clearing a condition that resolves itself.
+	if peers := a.step.Metadata.IndependencePeers(); len(peers) > 0 {
+		rotated, rerr := o.resolveIndependentBinding(ctx, a, peers, binding)
+		if rerr != nil {
+			release()
+			_ = o.store.Emit(ctx, store.EmitOpts{
+				ProjectID: a.projectID, PlanID: a.planID,
+				TaskID:      stepTaskID(a.ref, a.step),
+				Kind:        "worker.admission_refused",
+				Stream:      "service",
+				PayloadJSON: mustPayloadJSON(store.EventPayload{Reason: rerr.Error()}),
+			})
+			return false, nil
+		}
+		binding = rotated
+	}
+
 	if err := o.checkSpendCap(ctx, a.projectID, binding.Name); err != nil {
 		// Spend-cap refusal is not a fatal error: other steps (possibly on an
 		// uncapped provider) may still be dispatchable. Record it and move on.
@@ -1266,6 +1292,98 @@ func (o *Orchestrator) resolveAllowedBinding(
 	}
 	return provider.Binding{}, fmt.Errorf(
 		"orch: no configured provider satisfies the task restriction %v", allowed)
+}
+
+// resolveIndependentBinding returns a binding whose independence domain differs
+// from every peer named in a step's differentFrom, rotating through the pool.
+//
+// A peer's domain comes from what it ACTUALLY RAN ON (task_metadata's
+// assigned_independence_domain, written by recordExecutionProvenance), not from
+// what a plan hoped it would run on. The whole point of the constraint is
+// evidence about the real execution.
+//
+// A peer with an EMPTY domain does not satisfy the constraint by default, and
+// this is the load-bearing decision. Empty means one of: the peer has not run
+// yet, or it ran on a binding nothing has calibrated. In both cases we do not
+// KNOW the domains differ -- and a constraint that passes on absence of evidence
+// is the vacuous guarantee plan import already refuses to accept. So an
+// unresolvable peer defers the dispatch rather than permitting it; the step
+// runs once the peer has run and been calibrated.
+func (o *Orchestrator) resolveIndependentBinding(
+	ctx context.Context,
+	a dispatchStepArgs,
+	peers []string,
+	first provider.Binding,
+) (provider.Binding, error) {
+	// Collect the peers' recorded domains once; rotation does not change them.
+	peerDomains := map[string]struct{}{}
+	for _, peer := range peers {
+		meta, err := o.store.GetTaskExecutionMetadata(ctx, a.planID, peer)
+		if err != nil {
+			return provider.Binding{}, fmt.Errorf(
+				"orch: independence peer %q has no execution record yet: %w", peer, err)
+		}
+		if meta.AssignedIndependenceDomain == "" {
+			return provider.Binding{}, fmt.Errorf(
+				"orch: independence peer %q ran on an uncalibrated binding, so its "+
+					"domain is unknown and independence cannot be established", peer)
+		}
+		peerDomains[meta.AssignedIndependenceDomain] = struct{}{}
+	}
+
+	seen := map[string]struct{}{}
+	candidate := first
+	for i := 0; i <= maxProviderRotations; i++ {
+		domain, err := o.bindingDomain(ctx, candidate)
+		if err != nil {
+			return provider.Binding{}, err
+		}
+		// An UNCALIBRATED candidate is not usable here either: an unknown domain
+		// cannot be shown to differ from a peer's.
+		if domain != "" {
+			if _, clash := peerDomains[domain]; !clash {
+				return candidate, nil
+			}
+		}
+		if _, wrapped := seen[candidate.Name]; wrapped {
+			break
+		}
+		seen[candidate.Name] = struct{}{}
+		next, err := o.resolveBinding(ctx, a.projectID, a.parallel, BindingDispatch)
+		if err != nil {
+			return provider.Binding{}, fmt.Errorf("orch: resolve independent binding: %w", err)
+		}
+		candidate = next
+	}
+	return provider.Binding{}, fmt.Errorf(
+		"orch: no configured provider has an independence domain distinct from peers %v", peers)
+}
+
+// bindingDomain reports a binding's calibrated independence domain, or "" when
+// nothing has calibrated it.
+//
+// Gated on the invocation hash for the same reason recordExecutionProvenance is:
+// a calibration measures ONE command line, so a record whose hash does not match
+// what this turn resolves describes something else, and reusing its domain would
+// decide independence on evidence about a different invocation.
+func (o *Orchestrator) bindingDomain(ctx context.Context, binding provider.Binding) (string, error) {
+	cal, err := o.store.GetCalibrationByAlias(ctx, binding.Name)
+	if errors.Is(err, store.ErrCalibrationNotFound) {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("orch: read calibration for %q: %w", binding.Name, err)
+	}
+	invocation, err := provider.ResolveInvocation(binding, provider.Request{})
+	if err != nil {
+		return "", nil
+	}
+	hash, err := provider.InvocationConfigHash(
+		binding, provider.Model(invocation.Model), invocation.Effort)
+	if err != nil || cal.InvocationHash != hash {
+		return "", nil
+	}
+	return cal.IndependenceDomain, nil
 }
 
 // maxProviderRotations bounds how many extra resolutions one dispatch may ask
