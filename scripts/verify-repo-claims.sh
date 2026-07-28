@@ -86,15 +86,32 @@ for wt in /Users/jbogaty/src/jbcom/radioactive-ralph /Users/jbogaty/src/jbcom/.w
   [ "$n" != "0" ] && say "  $(basename "$wt") UNPUSHED commits" "$n"
 done
 
-# 8. The directive must not mark EVERY open item as a wait while real work is
-#    outstanding. An all-[WAIT] queue tells the anti-stop hook the turn may end,
-#    so a stale wait-label is how a session stops with PRs still open — which is
+# 8. The directive must not mark EVERY open item as a wait while ACTIONABLE work
+#    is outstanding. An all-[WAIT] queue tells the anti-stop hook the turn may
+#    end, so a stale wait-label is how a session stops with real work left —
 #    exactly what happened before this check existed.
+#
+#    "Actionable" is the load-bearing word, and the first version of this check
+#    got it wrong by firing on open-PR count alone. A PR that is MERGEABLE with
+#    no failing checks, no conflict, and no unresolved thread has nothing an
+#    agent can do to it: every remaining check is a CI job on a serialized
+#    runner pool, and pushing more work at that pool measurably slows it (a
+#    burst of state-only commits, then a rebase of every branch at once, both
+#    made the queue worse). Demanding a non-wait label in that state does not
+#    produce progress — it produces invented adjacent work to satisfy the
+#    detector, which is its own failure mode.
+#
+#    So the guard now asks what it actually cares about: is there a failure to
+#    fix, a conflict to resolve, or a thread to answer? Any of those with an
+#    all-[WAIT] directive is a stale label. None of them means waiting is the
+#    honest state, and the driver plus the monitor carry it.
 tot_items=$(grep -cE '^- \[ \]|^      - \[ \]' .agent-state/directive.md 2>/dev/null)
 wait_items=$(grep -cE '^- \[ \] \[WAIT|^      - \[ \] \[WAIT' .agent-state/directive.md 2>/dev/null)
 say "directive open items" "$tot_items ($wait_items wait-labelled)"
-if [ "$tot_items" != "0" ] && [ "$tot_items" = "$wait_items" ] && [ "${open:-0}" != "0" ]; then
-  say "  ALL open items are [WAIT]" "but $open PRs are still open — FIX THE LABEL"
+actionable=$(( ${tot:-0} + ${f:-0} + ${d:-0} ))
+if [ "$tot_items" != "0" ] && [ "$tot_items" = "$wait_items" ] && [ "$actionable" != "0" ]; then
+  say "  ALL open items are [WAIT]" \
+    "but $actionable actionable item(s) exist (threads+failures+DIRTY) — FIX THE LABEL"
   fail=1
 fi
 
