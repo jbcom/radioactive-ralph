@@ -65,10 +65,18 @@ turns against an uncontained control:
 | codex | fails at startup — `failed to initialize in-process app-server client: Operation not permitted` |
 | opencode | does not complete |
 
-This is **not** a file-path problem, so widening the policy does not fix it:
-under `(allow default)` with no write-deny codex succeeds, and adding
-`(deny file-write*)` breaks it even with `TMPDIR` re-allowed. The app-server
-needs a write the profile cannot enumerate.
+Each needs one narrow write path outside the project, measured by bisecting the
+profile one grant at a time:
+
+| provider | required path |
+|---|---|
+| codex | `$HOME/.codex` |
+| opencode | `$HOME/.local/share/opencode` |
+
+Neither needs a blanket `$HOME` grant — that also works and would make
+containment vacuous, the same failure that got `TMPDIR` removed from the
+allow-set. `TMPDIR` alone is NOT sufficient for either, which is what first made
+this look unfixable.
 
 A binding therefore declares whether it can be confined
 (`BindingConfig.SupportsContainment`), and dispatch does one of two things:
