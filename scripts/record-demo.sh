@@ -13,7 +13,10 @@
 
 set -euo pipefail
 
-readonly REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# Declared separately from the assignment: `readonly X="$(cmd)"` masks cmd's
+# exit status, so a failed cd would leave REPO_ROOT wrong instead of failing.
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+readonly REPO_ROOT
 readonly TAPE="${REPO_ROOT}/scripts/demo.tape"
 readonly OUTPUT="${REPO_ROOT}/assets/demo.gif"
 
