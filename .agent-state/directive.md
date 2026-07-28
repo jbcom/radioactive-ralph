@@ -68,7 +68,11 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
 
 ## Remaining
 
-- [ ] Land the open PRs: 277, 278, 279, 281.
+- [ ] [WAIT] Land the open PRs: 277, 278, 279, 281.
+      All four are QUEUED or auto-merge ARMED with zero unresolved threads and
+      zero failing checks; the only remaining work is CI on a serialized runner
+      pool. Pushing more at that pool measurably slows it (verified earlier this
+      session). Re-check with scripts/verify-repo-claims.sh before asserting.
       (225, 274, 272 and 275 already landed this pass.)
       All review threads resolved; each fix carries its own negative proof.
         * #272 differentFrom enforcement -- MERGED. FIVE review findings, all real:
