@@ -252,18 +252,31 @@ func stringSliceValue(v any) ([]string, error) {
 //
 // FAILS CLOSED-TO-OFF on a config error, matching the key's own contract:
 // absent or malformed means OFF, because a boundary switched on by accident
-// makes provider writes fail far from any visible cause. The error is logged so
-// a resolution failure is not silent, but it does not enable containment the
-// operator did not ask for.
+// makes provider writes fail far from any visible cause.
+//
+// That reasoning INVERTED when the default flipped: a resolution failure now
+// keeps containment ON, because failing open would silently drop the boundary
+// precisely when config reads are already failing. See the body.
 func storeContainmentResolver(st *store.Store) orch.ContainmentResolver {
 	return func(ctx context.Context, projectID string) bool {
+		// A resolution FAILURE keeps containment ON, and this direction inverted
+		// with the default. While absent meant off, failing to read config could
+		// not enable a boundary the operator never asked for. Now that absent
+		// means on, returning false here would let a transient SQLite read error
+		// silently launch an otherwise-admitted turn UNCONFINED -- reversing the
+		// fail-closed default at exactly the moment the system is least healthy,
+		// and with no signal, since the turn then succeeds normally.
+		//
+		// Failing closed costs a refused dispatch on an incapable binding, which
+		// is visible and recoverable. Failing open costs a security boundary
+		// nobody knows is missing.
 		userCfg, err := vconfig.ResolveUser(ctx, st, "", "")
 		if err != nil {
-			return false
+			return true
 		}
 		projectCfg, err := vconfig.ResolveProjects(ctx, st, userCfg, projectID)
 		if err != nil {
-			return false
+			return true
 		}
 		return vconfig.ContainProviderWrites(projectCfg)
 	}

@@ -106,7 +106,7 @@ func AutoRemove(incoming map[string]any, conflicts []Conflict) map[string]any
 AutoRemove returns a copy of incoming with every conflicting key deleted, leaving only the keys that didn't collide with a stored value. incoming itself is left untouched.
 
 <a name="ContainProviderWrites"></a>
-## func [ContainProviderWrites](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/vconfig/containment.go#L21>)
+## func [ContainProviderWrites](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/vconfig/containment.go#L29>)
 
 ```go
 func ContainProviderWrites(cfg ProjectConfig) bool
@@ -114,9 +114,13 @@ func ContainProviderWrites(cfg ProjectConfig) bool
 
 ContainProviderWrites reports whether an operator has asked for provider write containment on this project.
 
-Absent means OFF. Enabling containment changes what a provider is permitted to do — one that legitimately writes to a shared cache outside the checkout starts failing — so it is an operator's decision rather than something an upgrade turns on.
+Absent means ON, and so does a malformed value.
 
-A malformed value is also OFF. A typo must not silently ENABLE a boundary that makes provider writes fail, because that surfaces as unexplained provider errors far from their actual cause; behaving like the absent key it resembles is the honest failure direction.
+It defaulted OFF while the guarantee was unproven: enabling containment changes what a provider may do, and one that legitimately writes outside the checkout would start failing on upgrade. That was not a guess worth making from the test suite alone — and the caution was justified, because the first attempt to flip this DID break codex and opencode.
+
+It is no longer a guess. A binding now declares whether it can run confined at all \(BindingConfig.SupportsContainment\), so a provider that cannot is spared rather than broken, and every shipped provider completes a real turn with containment enabled. Enforcement is proven separately by TestE2E\_ContainedTurnCannotWriteOutsideTheProject, which fails when containment is disabled and runs in a required check.
+
+An explicit false always wins: the flip changes the default, not the operator's ability to override it.
 
 <a name="FlagsFrom"></a>
 ## func [FlagsFrom](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/vconfig/flags.go#L37>)

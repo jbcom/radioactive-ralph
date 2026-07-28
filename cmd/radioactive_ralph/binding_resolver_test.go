@@ -467,22 +467,33 @@ func TestStoreContainmentResolverReadsTheProjectKey(t *testing.T) {
 		t.Fatalf("SetProjectConfig: %v", err)
 	}
 
+	// And an EXPLICIT off, which is the case that still needs the key: absent
+	// now means ON, so only a written `false` turns containment off.
+	if err := st.SetProjectConfig(ctx, off, vconfig.ContainProviderWritesKey, `"false"`); err != nil {
+		t.Fatalf("SetProjectConfig: %v", err)
+	}
+
 	resolve := storeContainmentResolver(st)
 	if !resolve(ctx, on) {
 		t.Error("containment not resolved for a project that enabled it — the stored " +
 			"key never reaches dispatch, so setting it does nothing")
 	}
 	if resolve(ctx, off) {
-		t.Error("containment resolved ON for a project that never asked; enabling a " +
-			"write boundary by accident surfaces as unexplained provider failures")
+		t.Error("containment resolved ON for a project that explicitly set false; the " +
+			"flip changed the DEFAULT, not the operator's ability to override it")
 	}
 }
 
-// TestStoreContainmentResolverFailsClosedToOff pins the direction of failure. A
-// malformed value must behave like the absent key it resembles: a typo that
-// silently ENABLED the boundary would make provider writes fail far from any
-// visible cause.
-func TestStoreContainmentResolverFailsClosedToOff(t *testing.T) {
+// TestStoreContainmentResolverFailsClosedToOn pins the direction of failure,
+// which INVERTED when the default flipped.
+//
+// A malformed value must behave like the absent key it resembles. While absent
+// meant off, a typo silently ENABLING the boundary would have made provider
+// writes fail far from any visible cause. Now that absent means on, a typo must
+// not silently REMOVE a boundary the operator believes is active — the failure
+// nobody notices until it matters. The rule did not change; the key's meaning
+// did.
+func TestStoreContainmentResolverFailsClosedToOn(t *testing.T) {
 	ctx := context.Background()
 	st := openBindingTestStore(t)
 
@@ -495,7 +506,45 @@ func TestStoreContainmentResolverFailsClosedToOff(t *testing.T) {
 	if err := st.SetProjectConfig(ctx, projectID, vconfig.ContainProviderWritesKey, `"yepp"`); err != nil {
 		t.Fatalf("SetProjectConfig: %v", err)
 	}
-	if storeContainmentResolver(st)(ctx, projectID) {
-		t.Fatal("a malformed value enabled containment; it must behave like the absent key")
+	if !storeContainmentResolver(st)(ctx, projectID) {
+		t.Fatal("a malformed value DISABLED containment; it must behave like the absent " +
+			"key, which now means on — otherwise a typo silently strips the boundary")
+	}
+}
+
+// TestStoreContainmentResolverFailsClosedOnReadError pins the direction of a
+// CONFIG-RESOLUTION failure, which is distinct from a malformed value and had
+// no test at all -- which is why it survived the default flip.
+//
+// A closed store makes ResolveUser/ResolveProjects fail. Before the flip,
+// returning false there was right: failing to read config must not enable a
+// boundary the operator never asked for. After it, false would silently launch
+// an otherwise-admitted turn UNCONFINED -- reversing the fail-closed default at
+// exactly the moment the system is least healthy, with no signal at all,
+// because the turn then succeeds normally.
+//
+// Failing closed costs a refused dispatch, which is visible and recoverable.
+// Failing open costs a boundary nobody knows is missing.
+func TestStoreContainmentResolverFailsClosedOnReadError(t *testing.T) {
+	ctx := context.Background()
+	st := openBindingTestStore(t)
+
+	projectID, err := st.CreateProject(ctx, "readfail", []store.Fingerprint{
+		{Kind: store.FingerprintKindAbsPath, Value: t.TempDir()},
+	})
+	if err != nil {
+		t.Fatalf("CreateProject: %v", err)
+	}
+
+	resolve := storeContainmentResolver(st)
+	// Close the store so every subsequent config read fails.
+	if err := st.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	if !resolve(ctx, projectID) {
+		t.Fatal("a config-resolution FAILURE disabled containment; a transient read " +
+			"error must not silently drop a security boundary, least of all while the " +
+			"store is already unhealthy")
 	}
 }

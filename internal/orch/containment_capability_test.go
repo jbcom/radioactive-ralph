@@ -182,3 +182,46 @@ func TestIncapableBindingIsRefusedWhenContainmentRequested(t *testing.T) {
 			"why, or the plan simply stalls with no operator-visible reason")
 	}
 }
+
+// TestStaticFlagAlsoRefusesAnIncapableBinding covers the OTHER way containment
+// is requested: WithProviderWriteContainment(true), not the project config.
+//
+// That option promises to confine every provider turn. Sparing an incapable
+// binding under it would break the same security contract as the config path,
+// and an existing caller passing the flag has no project key to consult -- so
+// the refusal must come from the flag itself, not only from the resolver.
+func TestStaticFlagAlsoRefusesAnIncapableBinding(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	projectID := mustCreateTestProject(t, s, "contain-static")
+	planID := mustCreateTestPlan(t, s, projectID, "contain-static", "Work",
+		"# Work\n\n- do it\n\n   ```ralph-task\n   {\"id\": \"a\"}\n   ```\n")
+
+	no := false
+	var ran bool
+	o := New(s,
+		WithBindingResolver(func(_ context.Context, _ string, _ bool, _ BindingResolutionPurpose) (provider.Binding, error) {
+			return provider.Binding{
+				Name: "codex",
+				Config: provider.BindingConfig{
+					Type: "codex", Binary: "true", SupportsContainment: &no,
+				},
+			}, nil
+		}),
+		WithRunnerFactory(func(provider.Binding) (provider.Runner, error) {
+			return recordingRunner{onRun: func(provider.Request) { ran = true }}, nil
+		}),
+		// No resolver: the STATIC flag is the request.
+		WithProviderWriteContainment(true),
+	)
+	if _, err := o.DispatchNext(ctx, projectID, planID); err != nil {
+		t.Fatalf("DispatchNext: %v", err)
+	}
+	o.Wait()
+
+	if ran {
+		t.Fatal("a turn ran unconfined under WithProviderWriteContainment(true) with " +
+			"a binding that cannot be confined; the option promises to confine EVERY " +
+			"turn, so silently running one unprotected breaks that contract")
+	}
+}
