@@ -22,13 +22,8 @@ type fakeReader struct {
 	messagesErr  error
 	descriptions map[string]string
 	detailErr    error
-	// blockingReasons is keyed by PLAN, mirroring the plan-scoped query, so a
-	// test can assert one plan's reasons never appear in another's snapshot.
-	blockingReasons    map[string]map[string]string
-	blockingReasonsErr error
-	blockingCalls      int
-	messagesCall       int
-	messagesQ          store.OperatorMessageQuery
+	messagesCall int
+	messagesQ    store.OperatorMessageQuery
 }
 
 func (f *fakeReader) ReadOperatorSnapshot(
@@ -865,24 +860,20 @@ func (f *fakeReader) ListOperatorTaskDescriptions(
 	return f.descriptions, nil
 }
 
-func (f *fakeReader) ListTaskBlockingReasons(
-	_ context.Context, planID string,
-) (map[string]string, error) {
-	f.blockingCalls++
-	if f.blockingReasonsErr != nil {
-		return nil, f.blockingReasonsErr
-	}
-	return f.blockingReasons[planID], nil
-}
-
-// TestSnapshotSurfacesBlockedReasonToClients is the point of the field.
+// TestSnapshotClassifiesBlockedTasksForClients is the point of the field.
 //
-// A blocked task and a task waiting on a dependency both show zero progress. One
-// clears itself as upstream work finishes; the other needs an operator to change
-// configuration or fix the plan. Before this, telling them apart meant reading
-// task_metadata directly in SQLite — exactly the access the dumb-client boundary
-// exists to remove, so the answer was unavailable through the supported surface.
-func TestSnapshotSurfacesBlockedReasonToClients(t *testing.T) {
+// A blocked task and a task waiting on a dependency both show zero progress.
+// One clears itself as upstream work finishes; the other needs an operator to
+// change configuration or fix the plan. Before this, telling them apart meant
+// reading task_metadata directly in SQLite — the access the dumb-client
+// boundary exists to remove.
+//
+// The projection carries a CLASSIFICATION, not the stored reason string. This
+// package's contract is that raw payload text never crosses the boundary (see
+// FailureCategory), and a stored reason is error-derived and unbounded; the
+// category plus static remediation text answers "which knob fixes this" without
+// forwarding whatever a wrapped error happened to say.
+func TestSnapshotClassifiesBlockedTasksForClients(t *testing.T) {
 	captured := time.Now().UTC().Truncate(time.Second)
 	reader := &fakeReader{
 		snapshot: &store.OperatorSnapshot{
@@ -891,8 +882,13 @@ func TestSnapshotSurfacesBlockedReasonToClients(t *testing.T) {
 			Tasks: store.OperatorTaskPage{
 				Items: []store.OperatorTask{
 					{
-						PlanID: "plan-1", ID: "stuck",
+						PlanID: "plan-1", ID: "cap",
 						Status:    store.TaskStatusBlockedCapability,
+						CreatedAt: captured, UpdatedAt: captured,
+					},
+					{
+						PlanID: "plan-1", ID: "input",
+						Status:    store.TaskStatusBlockedInput,
 						CreatedAt: captured, UpdatedAt: captured,
 					},
 					{
@@ -903,15 +899,11 @@ func TestSnapshotSurfacesBlockedReasonToClients(t *testing.T) {
 				},
 			},
 		},
-		blockingReasons: map[string]map[string]string{
-			"plan-1": {"stuck": "binding lacks native_fanout"},
-		},
 	}
 	svc, err := New(reader)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-
 	snap, err := svc.Snapshot(context.Background(), SnapshotQuery{ProjectID: "p"})
 	if err != nil {
 		t.Fatalf("Snapshot: %v", err)
@@ -921,20 +913,17 @@ func TestSnapshotSurfacesBlockedReasonToClients(t *testing.T) {
 	for _, task := range snap.Tasks.Items {
 		byID[task.ID] = task
 	}
-	if got := byID["stuck"].BlockedReason; got != "binding lacks native_fanout" {
-		t.Errorf("blocked task reason = %q, want the recorded reason — without it a "+
-			"client cannot tell a blocked task from one waiting on a dependency", got)
+	if got := byID["cap"].Blocked; got == nil || got.Category != BlockedCapability {
+		t.Errorf("capability-blocked task = %+v, want the capability category", got)
+	} else if got.Summary == "" {
+		t.Error("capability block carries no remediation text")
 	}
-	if got := byID["healthy"].BlockedReason; got != "" {
-		t.Errorf("unblocked task carries reason %q; it must stay empty so the field "+
-			"means something when present", got)
+	if got := byID["input"].Blocked; got == nil || got.Category != BlockedInput {
+		t.Errorf("input-blocked task = %+v, want the input category", got)
 	}
-
-	// One query per PLAN, not per task: two tasks, one plan, one call.
-	if reader.blockingCalls != 1 {
-		t.Errorf("blocking-reason queries = %d, want 1 for a single-plan page; "+
-			"per-task reads would be an N+1 on every operator refresh",
-			reader.blockingCalls)
+	if got := byID["healthy"].Blocked; got != nil {
+		t.Errorf("unblocked task carries %+v; the field must be nil so its presence "+
+			"means something", got)
 	}
 }
 
@@ -963,5 +952,61 @@ func TestBlockedStatusesDoNotBlankTheSnapshot(t *testing.T) {
 					"until something outside it changes", state)
 			}
 		})
+	}
+}
+
+// TestBlockedClassificationCannotConfusePlans records why the classification is
+// derived from the task's own status rather than joined from a per-plan map.
+//
+// The first implementation queried blocking reasons per plan and flattened them
+// into one map keyed by TASK ID. Task ids are plan-local and usually positional
+// ("0.1"), so two plans in one page collided and an operator saw plan A's block
+// on plan B's healthy task. Deriving from status removes the join, and with it
+// that entire class of bug — cross-plan collisions, N+1 reads, page-vs-plan
+// scope mismatch, and reading outside the snapshot's transaction.
+func TestBlockedClassificationCannotConfusePlans(t *testing.T) {
+	captured := time.Now().UTC().Truncate(time.Second)
+	reader := &fakeReader{
+		snapshot: &store.OperatorSnapshot{
+			CapturedAt: captured,
+			Project:    store.OperatorProject{ID: "p", DisplayName: "P", CreatedAt: captured},
+			Tasks: store.OperatorTaskPage{
+				Items: []store.OperatorTask{
+					{
+						PlanID: "plan-a", ID: "0.1",
+						Status:    store.TaskStatusBlockedCapability,
+						CreatedAt: captured, UpdatedAt: captured,
+					},
+					{
+						// SAME task id, different plan, NOT blocked.
+						PlanID: "plan-b", ID: "0.1",
+						Status:    store.TaskStatusPending,
+						CreatedAt: captured, UpdatedAt: captured,
+					},
+				},
+			},
+		},
+	}
+	svc, err := New(reader)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	snap, err := svc.Snapshot(context.Background(), SnapshotQuery{ProjectID: "p"})
+	if err != nil {
+		t.Fatalf("Snapshot: %v", err)
+	}
+	for _, task := range snap.Tasks.Items {
+		switch task.PlanID {
+		case "plan-a":
+			if task.Blocked == nil {
+				t.Error("plan A's blocked task lost its classification")
+			}
+		case "plan-b":
+			if task.Blocked != nil {
+				t.Errorf("plan B's task 0.1 is classified %+v despite being pending; "+
+					"task ids are plan-local, so nothing may key on them alone",
+					task.Blocked)
+			}
+		}
 	}
 }

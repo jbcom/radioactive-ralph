@@ -95,7 +95,6 @@ The schema is embedded under schema/\*.sql and applied in lexical order by Migra
   - [func \(s \*Store\) ListPlans\(ctx context.Context, projectID string, statuses \[\]PlanStatus\) \(\[\]Plan, error\)](<#Store.ListPlans>)
   - [func \(s \*Store\) ListProjectEvents\(ctx context.Context, projectID string, limit int\) \(\[\]Event, error\)](<#Store.ListProjectEvents>)
   - [func \(s \*Store\) ListRunningWorkers\(ctx context.Context\) \(\[\]RunningWorker, error\)](<#Store.ListRunningWorkers>)
-  - [func \(s \*Store\) ListTaskBlockingReasons\(ctx context.Context, planID string\) \(map\[string\]string, error\)](<#Store.ListTaskBlockingReasons>)
   - [func \(s \*Store\) ListTaskEvents\(ctx context.Context, planID, taskID string, limit int\) \(\[\]Event, error\)](<#Store.ListTaskEvents>)
   - [func \(s \*Store\) ListTaskGroupPaths\(ctx context.Context, planID string\) \(map\[string\]string, error\)](<#Store.ListTaskGroupPaths>)
   - [func \(s \*Store\) ListTasks\(ctx context.Context, planID string, statuses \[\]TaskStatus\) \(\[\]Task, error\)](<#Store.ListTasks>)
@@ -932,7 +931,7 @@ func (s *Store) Backup(ctx context.Context, destDir string) (string, error)
 Backup writes a consistent point\-in\-time copy of the store database into destDir using SQLite's \`VACUUM INTO\`, which — unlike a raw file copy — is safe to run against a live database \(it takes a read transaction and produces a compacted, fully\-consistent snapshot even while other connections are writing under WAL\). Returns the path to the backup file.
 
 <a name="Store.BindTaskCalibration"></a>
-### func \(\*Store\) [BindTaskCalibration](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/task_metadata.go#L183-L186>)
+### func \(\*Store\) [BindTaskCalibration](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/task_metadata.go#L148-L151>)
 
 ```go
 func (s *Store) BindTaskCalibration(ctx context.Context, planID, taskID, calibrationID, capabilitySetJSON string) error
@@ -1204,19 +1203,6 @@ func (s *Store) ListRunningWorkers(ctx context.Context) ([]RunningWorker, error)
 
 ListRunningWorkers returns every worker row currently status='running', with the worker id and its current plan/task. It is the read backing the status reply's per\-worker detail so a client \(the GUI\) can name a specific worker to kill. Workers with no assigned task are still listed \(PlanID/TaskID empty\).
 
-<a name="Store.ListTaskBlockingReasons"></a>
-### func \(\*Store\) [ListTaskBlockingReasons](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/task_metadata.go#L154>)
-
-```go
-func (s *Store) ListTaskBlockingReasons(ctx context.Context, planID string) (map[string]string, error)
-```
-
-ListTaskBlockingReasons returns task id \-\> blocked reason for one plan, including only tasks that actually have one.
-
-Bulk rather than per\-task: the observe snapshot already lists every task, so calling GetTaskExecutionMetadata for each would be an N\+1 on the path an operator hits every refresh. Omitting empty reasons keeps the payload to facts — an empty string per healthy task is bytes that say nothing.
-
-Scoped to planID because task ids repeat across plans; an unscoped query would attribute one plan's block to another.
-
 <a name="Store.ListTaskEvents"></a>
 ### func \(\*Store\) [ListTaskEvents](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/tasks.go#L474>)
 
@@ -1256,7 +1242,7 @@ func (s *Store) MarkBlocked(ctx context.Context, planID, taskID, sessionID strin
 MarkBlocked releases a running task into the blocked set so an operator can later requeue or otherwise intervene.
 
 <a name="Store.MarkBlockedCapability"></a>
-### func \(\*Store\) [MarkBlockedCapability](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/task_metadata.go#L366>)
+### func \(\*Store\) [MarkBlockedCapability](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/task_metadata.go#L331>)
 
 ```go
 func (s *Store) MarkBlockedCapability(ctx context.Context, planID, taskID, reason string) error
@@ -1265,7 +1251,7 @@ func (s *Store) MarkBlockedCapability(ctx context.Context, planID, taskID, reaso
 MarkBlockedCapability records a fail\-closed pre\-dispatch capability block.
 
 <a name="Store.MarkBlockedInput"></a>
-### func \(\*Store\) [MarkBlockedInput](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/task_metadata.go#L371>)
+### func \(\*Store\) [MarkBlockedInput](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/task_metadata.go#L336>)
 
 ```go
 func (s *Store) MarkBlockedInput(ctx context.Context, planID, taskID, reason string) error
@@ -1402,7 +1388,7 @@ func (s *Store) RecordSpend(ctx context.Context, o RecordSpendOpts) error
 RecordSpend appends one spend row for a completed provider turn. Used by the orchestrator to accumulate provider.Usage.CostUSD per project so spend caps \(configured per provider/variant\) can be enforced before the next dispatch.
 
 <a name="Store.RecordTaskExecution"></a>
-### func \(\*Store\) [RecordTaskExecution](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/task_metadata.go#L233-L236>)
+### func \(\*Store\) [RecordTaskExecution](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/task_metadata.go#L198-L201>)
 
 ```go
 func (s *Store) RecordTaskExecution(ctx context.Context, planID, taskID, alias, provider, model, effort, independenceDomain, sessionID string) error
@@ -1411,7 +1397,7 @@ func (s *Store) RecordTaskExecution(ctx context.Context, planID, taskID, alias, 
 RecordTaskExecution binds the selected provider request and worker session to the running task. The reporting session must still own the live claim so a late provenance write from a reclaimed worker cannot overwrite the current owner's immutable execution record.
 
 <a name="Store.RecordTaskProviderSession"></a>
-### func \(\*Store\) [RecordTaskProviderSession](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/task_metadata.go#L315-L318>)
+### func \(\*Store\) [RecordTaskProviderSession](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/task_metadata.go#L280-L283>)
 
 ```go
 func (s *Store) RecordTaskProviderSession(ctx context.Context, planID, taskID, claimingSessionID, providerSessionID string) error
@@ -1474,7 +1460,7 @@ func (s *Store) StatusCounts(ctx context.Context) (StatusCounts, error)
 StatusCounts returns the plan/task aggregates for the status reply, across all projects \(the supervisor is project\-agnostic\). Counts are derived from the live rows so they stay accurate without any in\-process bookkeeping.
 
 <a name="Store.TeamRollups"></a>
-### func \(\*Store\) [TeamRollups](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/task_metadata.go#L446>)
+### func \(\*Store\) [TeamRollups](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/task_metadata.go#L411>)
 
 ```go
 func (s *Store) TeamRollups(ctx context.Context, projectID string) ([]TeamRollup, error)
@@ -1579,7 +1565,7 @@ const (
 ```
 
 <a name="TeamRollup"></a>
-## type [TeamRollup](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/task_metadata.go#L430-L441>)
+## type [TeamRollup](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/task_metadata.go#L395-L406>)
 
 TeamRollup aggregates task state per team path for the operator views.
 

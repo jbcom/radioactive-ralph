@@ -335,11 +335,6 @@ type Reader interface {
 		projectID, planID string,
 		taskIDs []string,
 	) (map[string]string, error)
-	// ListTaskBlockingReasons returns task id -> blocked reason for one plan,
-	// omitting tasks that have none. Plan-scoped and bulk for the same reason as
-	// the descriptions read above: a snapshot lists many tasks, so per-task reads
-	// would be an N+1 on an operator's refresh path.
-	ListTaskBlockingReasons(ctx context.Context, planID string) (map[string]string, error)
 }
 
 var _ Reader = (*store.Store)(nil)
@@ -455,16 +450,23 @@ type Task struct {
 	ParentTaskID      string `json:"parent_task_id,omitempty"`
 	ClaimedByWorkerID string `json:"claimed_by_worker_id,omitempty"`
 
-	// BlockedReason is why a fail-closed pre-dispatch block was applied
-	// (blocked_capability / blocked_input), empty when the task is not blocked.
+	// Blocked classifies a fail-closed pre-dispatch block, nil when the task is
+	// not blocked.
 	//
 	// Exposed because a blocked task is otherwise indistinguishable from one
 	// waiting on a dependency: both show zero progress, but one clears itself as
 	// upstream tasks finish and the other needs an operator to change
-	// configuration or fix the plan. Without the reason, "why is this stalled?"
-	// required raw SQLite — which is exactly the access the dumb-client boundary
-	// removes.
-	BlockedReason string `json:"blocked_reason,omitempty"`
+	// configuration or fix the plan. Without it, "why is this stalled?" required
+	// raw SQLite — the access the dumb-client boundary removes.
+	//
+	// A CLASSIFICATION rather than the stored reason string. This package's
+	// contract is that raw payload text is never forwarded (see
+	// FailureCategory), and a stored reason is error-derived and unbounded, so
+	// passing it through would have made this the one field that leaks free text
+	// across the boundary. The category plus static remediation text answers the
+	// operator's question — which knob fixes this — without carrying whatever a
+	// wrapped error happened to say.
+	Blocked *BlockedSummary `json:"blocked,omitempty"`
 
 	CreatedAt time.Time    `json:"created_at"`
 	UpdatedAt time.Time    `json:"updated_at"`
@@ -517,6 +519,52 @@ const (
 	FailureDispatch            FailureCategory = "dispatch"
 	FailureAdmission           FailureCategory = "admission"
 )
+
+// BlockedCategory is the closed set of fail-closed pre-dispatch blocks.
+type BlockedCategory string
+
+// Safe blocked categories. A closed schema surface, like FailureCategory.
+const (
+	// BlockedCapability: the bound provider cannot or may not do this work.
+	// Remedy is configuration — bind a provider that satisfies the requirement.
+	BlockedCapability BlockedCategory = "capability"
+	// BlockedInput: a declared immutable input no longer matches its pinned
+	// digest. Remedy is the plan or the file, not the provider.
+	BlockedInput BlockedCategory = "input"
+	// BlockedApproval: held for a human decision before it may run.
+	BlockedApproval BlockedCategory = "approval"
+)
+
+// BlockedSummary explains a block using only static text, mirroring
+// FailureSummary's contract: no stored reason strings, no payload fields.
+type BlockedSummary struct {
+	Category BlockedCategory `json:"category"`
+	Summary  string          `json:"summary"`
+}
+
+// blockedSummaryFor maps a durable blocked status onto its static explanation.
+// Returns nil for any status that is not a pre-dispatch block.
+func blockedSummaryFor(status store.TaskStatus) *BlockedSummary {
+	switch status {
+	case store.TaskStatusBlockedCapability:
+		return &BlockedSummary{
+			Category: BlockedCapability,
+			Summary:  "the bound provider does not satisfy this task's requirements; bind a provider that does",
+		}
+	case store.TaskStatusBlockedInput:
+		return &BlockedSummary{
+			Category: BlockedInput,
+			Summary:  "a declared input no longer matches its pinned digest; fix the plan or the file",
+		}
+	case store.TaskStatusReadyPendingApproval:
+		return &BlockedSummary{
+			Category: BlockedApproval,
+			Summary:  "held for approval before it may run",
+		}
+	default:
+		return nil
+	}
+}
 
 // FailureSummary explains a recognized failure event using only static text.
 // It never includes raw provider output, prompts, argv, stderr, or event
@@ -628,18 +676,11 @@ func (s *Service) Snapshot(
 	// One query per DISTINCT plan in the page, not per task: a snapshot lists
 	// many tasks and an operator hits this on every refresh, so per-task reads
 	// would be an N+1 exactly where it is most visible.
-	reasons := map[string]string{}
-	for planID := range distinctPlanIDs(raw.Tasks.Items) {
-		planReasons, rerr := s.reader.ListTaskBlockingReasons(ctx, planID)
-		if rerr != nil {
-			return nil, fmt.Errorf("observe: load blocking reasons for %s: %w", planID, rerr)
-		}
-		for taskID, reason := range planReasons {
-			reasons[taskID] = reason
-		}
-	}
-
-	tasks, err := tasksFromStore(raw.Tasks, reasons)
+	// No extra query: the durable STATUS classifies the block, so there is
+	// nothing to join. That removes the whole class of problems a per-plan
+	// reason join introduced — cross-plan key collisions, N+1 reads, page-vs-plan
+	// scope mismatch, and reading outside the snapshot's transaction.
+	tasks, err := tasksFromStore(raw.Tasks)
 	if err != nil {
 		return nil, err
 	}
@@ -880,19 +921,7 @@ func plansFromStore(page store.OperatorPlanPage) PlanPage {
 	return out
 }
 
-// distinctPlanIDs collects the plans a task page touches, so blocking reasons
-// are fetched once per plan rather than once per task.
-func distinctPlanIDs(items []store.OperatorTask) map[string]struct{} {
-	out := make(map[string]struct{}, len(items))
-	for _, item := range items {
-		if item.PlanID != "" {
-			out[item.PlanID] = struct{}{}
-		}
-	}
-	return out
-}
-
-func tasksFromStore(page store.OperatorTaskPage, reasons map[string]string) (TaskPage, error) {
+func tasksFromStore(page store.OperatorTaskPage) (TaskPage, error) {
 	out := TaskPage{
 		Items:   make([]Task, 0, len(page.Items)),
 		HasMore: page.HasMore,
@@ -904,7 +933,7 @@ func tasksFromStore(page store.OperatorTaskPage, reasons map[string]string) (Tas
 		}
 	}
 	for _, item := range page.Items {
-		task, err := taskFromStore(item, reasons[item.ID])
+		task, err := taskFromStore(item)
 		if err != nil {
 			return TaskPage{}, err
 		}
@@ -913,7 +942,7 @@ func tasksFromStore(page store.OperatorTaskPage, reasons map[string]string) (Tas
 	return out, nil
 }
 
-func taskFromStore(item store.OperatorTask, blockedReason string) (Task, error) {
+func taskFromStore(item store.OperatorTask) (Task, error) {
 	if item.PlanID == "" || item.ID == "" {
 		return Task{}, fmt.Errorf(
 			"%w: task has empty identity",
@@ -954,7 +983,7 @@ func taskFromStore(item store.OperatorTask, blockedReason string) (Task, error) 
 		ReclaimCount:      item.ReclaimCount,
 		ParentTaskID:      item.ParentTaskID,
 		ClaimedByWorkerID: item.ClaimedByWorkerID,
-		BlockedReason:     blockedReason,
+		Blocked:           blockedSummaryFor(item.Status),
 		CreatedAt:         item.CreatedAt,
 		UpdatedAt:         item.UpdatedAt,
 		A2ATask:           protocolTask,
