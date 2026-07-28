@@ -240,7 +240,7 @@ func DefaultWatchdogConfig() agent.WatchdogConfig
 DefaultWatchdogConfig returns a WatchdogConfig seeded with DefaultStallTimeout and DefaultPromptPatterns. Runners call this \(rather than constructing agent.WatchdogConfig\{\} directly\) so every provider gets the same baseline prompt/stall detection unless a caller has a reason to override it. Use this ONLY for providers whose output is free\-form pane text where a raw interactive prompt could actually appear \(see StreamJSONWatchdogConfig for the structured\-output case\).
 
 <a name="InvocationConfigHash"></a>
-## func [InvocationConfigHash](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/invocation.go#L148>)
+## func [InvocationConfigHash](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/invocation.go#L165>)
 
 ```go
 func InvocationConfigHash(binding Binding, model Model, effort string) (string, error)
@@ -260,7 +260,7 @@ func StreamJSONWatchdogConfig() agent.WatchdogConfig
 StreamJSONWatchdogConfig is the watchdog config for providers driven in a structured stream\-json mode \(claude/opencode: \`\-\-output\-format stream\-json\`\). Their normal output is JSON frames whose text can innocently contain prompt\-like words \("permission", "continue?"\), which content\-blind matching would misread and KILL a valid turn. It keeps the prompt patterns but sets SkipPromptMatchOnJSONLines: patterns are matched ONLY on lines that are NOT valid JSON, so a legitimate JSON frame is never a false prompt while a GENUINE raw interactive prompt \(never valid JSON\) is still caught immediately — not merely by the slower stall timeout.
 
 <a name="ValidateBinding"></a>
-## func [ValidateBinding](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/declarative.go#L173>)
+## func [ValidateBinding](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/declarative.go#L187>)
 
 ```go
 func ValidateBinding(binding Binding) error
