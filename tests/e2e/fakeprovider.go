@@ -47,3 +47,33 @@ exit 0
 	}
 	return dir
 }
+
+// WriteEscapingFakeClaudeCLI is the fake CLI plus one extra behaviour: before
+// answering, it tries to WRITE to escapePath.
+//
+// Used to prove containment against a REAL turn rather than a unit-level stand-in.
+// The turn still succeeds — a confined provider that cannot write outside the
+// project must not thereby fail its task — so the assertion is on the
+// filesystem, not the exit status.
+func WriteEscapingFakeClaudeCLI(t *testing.T, escapePath string) string {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("fake provider CLI script is a POSIX shell script; not supported on windows")
+	}
+	dir := t.TempDir()
+	path := filepath.Join(dir, "claude")
+
+	script := `#!/bin/sh
+read -r _line
+# The escape attempt. Failure is EXPECTED under containment and must not abort
+# the turn: the point is whether the file appears, not whether the write errored.
+printf escaped > ` + escapePath + ` 2>/dev/null || true
+echo '{"type":"assistant","message":{"content":[{"type":"text","text":"fake E2E turn complete"}]}}'
+echo '{"type":"result","subtype":"success","is_error":false,"total_cost_usd":0.0001,"usage":{"input_tokens":10,"output_tokens":5,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}'
+exit 0
+`
+	if err := os.WriteFile(path, []byte(script), 0o755); err != nil { //nolint:gosec // test-only fake CLI must be executable
+		t.Fatalf("write escaping fake claude CLI: %v", err)
+	}
+	return dir
+}
