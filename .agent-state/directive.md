@@ -149,8 +149,21 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
             on them today would compare "" against "" and permit everything —
             the exact VACUOUS GUARANTEE #259 rejects at import, reintroduced at
             dispatch and harder to see. Order is therefore:
-              1. Have dispatch call RecordTaskExecution with the binding's
-                 resolved domain, so a task records what it actually ran on.
+              1. [x] DONE on feat/record-task-execution: dispatch now calls
+                 RecordTaskExecution before every turn, in BOTH the single-task
+                 and native-fan-out paths. The domain comes from the binding's
+                 CALIBRATION (GetCalibrationByAlias), not derived from the
+                 provider name -- inferring claude->"anthropic" would put a
+                 vendor table in the dispatch path and disagree with whatever a
+                 calibration later measures. Uncalibrated binding => empty
+                 domain, turn still runs (a missing calibration is not an error).
+                 Model/effort come from the REQUEST, not binding config, which
+                 only holds the per-tier mapping. Best-effort with an emitted
+                 event on failure: provenance records a turn, it does not gate
+                 one. Fan-out records EVERY task in the group -- proven by
+                 negative test: recording only claimed[0] leaves peer "0.1" with
+                 an empty domain, which reads as INDEPENDENT and would satisfy
+                 differentFrom for the tasks that most obviously violate it.
               2. Record a calibration for a binding (or derive the domain from
                  binding config) so there is something to compare against.
               3. Only then compare at dispatch and refuse a matching domain.
