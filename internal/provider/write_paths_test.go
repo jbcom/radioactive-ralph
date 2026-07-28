@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/BurntSushi/toml"
 )
 
 // TestCodexDeclaresItsRequiredWritePath closes the second half of #296.
@@ -93,4 +95,49 @@ func hasPath(haystack []string, needle string) bool {
 		}
 	}
 	return false
+}
+
+// TestOperatorConfigWritePathsAreHonored pins that write_paths works from
+// CONFIG, not only from a shipped default.
+//
+// The shipped defaults declare their own paths in Go, so every other test here
+// would pass even if the toml tag were wrong or the field never decoded -- and
+// an operator adding a provider Ralph does not ship would silently get no
+// grant, with their contained turns failing for a reason the config appears to
+// address.
+//
+// That is the inert-config shape this codebase has closed four times (the
+// contain key, WithProviderWriteContainment, the declarative stream-json shape,
+// and ralph-task `binding`). Verified through an actual toml decode rather than
+// by constructing the struct in Go, which would prove nothing about the tag.
+func TestOperatorConfigWritePathsAreHonored(t *testing.T) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Skipf("no home dir: %v", err)
+	}
+	var file struct {
+		Providers map[string]BindingConfig `toml:"providers"`
+	}
+	const src = `
+[providers.custom]
+type = "codex"
+binary = "codex"
+write_paths = ["~/.custom-provider-state"]
+`
+	if _, err := toml.Decode(src, &file); err != nil {
+		t.Fatalf("decode provider config: %v", err)
+	}
+	cfg, ok := file.Providers["custom"]
+	if !ok {
+		t.Fatal("provider block did not decode at all")
+	}
+	if len(cfg.WritePaths) != 1 {
+		t.Fatalf("WritePaths = %v, want one entry; the toml tag does not match the "+
+			"key an operator writes, so a configured grant silently does nothing",
+			cfg.WritePaths)
+	}
+	want := filepath.Join(home, ".custom-provider-state")
+	if got := BindingWritePaths(Binding{Config: cfg}); !hasPath(got, want) {
+		t.Fatalf("BindingWritePaths = %v, want it to include %q", got, want)
+	}
 }
