@@ -18,6 +18,7 @@ Package provider adapts configured CLI backends into radioactive\_ralph's provid
 - [Constants](<#constants>)
 - [Variables](<#variables>)
 - [func BindingCapabilities\(cfg BindingConfig\) map\[string\]bool](<#BindingCapabilities>)
+- [func CheckAllowedProviders\(binding Binding, providers \[\]string\) error](<#CheckAllowedProviders>)
 - [func CheckRequirements\(binding Binding, requires \[\]string\) error](<#CheckRequirements>)
 - [func DefaultWatchdogConfig\(\) agent.WatchdogConfig](<#DefaultWatchdogConfig>)
 - [func InvocationConfigHash\(binding Binding, model Model, effort string\) \(string, error\)](<#InvocationConfigHash>)
@@ -258,6 +259,12 @@ var ErrOpencodeMissingFinish = errors.New("provider: opencode exited without a s
 var ErrOpencodeReportedError = errors.New("provider: opencode reported a session error")
 ```
 
+<a name="ErrProviderNotAllowed"></a>ErrProviderNotAllowed reports a binding outside a task's declared \`providers\` restriction.
+
+```go
+var ErrProviderNotAllowed = errors.New("provider: binding is not among the task's allowed providers")
+```
+
 <a name="ErrProviderStalled"></a>ErrProviderStalled is returned when a provider produces no observable progress before its renewable stall lease expires.
 
 ```go
@@ -280,6 +287,19 @@ func BindingCapabilities(cfg BindingConfig) map[string]bool
 BindingCapabilities reports the capability keys a binding satisfies.
 
 Derived from the binding's own config rather than a per\-provider table: the config already declares these, and a second table would drift the first time a provider gained or lost one. Absent means NOT satisfied — callers must not read a missing key as "unknown, assume yes".
+
+<a name="CheckAllowedProviders"></a>
+## func [CheckAllowedProviders](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/capabilities.go#L134>)
+
+```go
+func CheckAllowedProviders(binding Binding, providers []string) error
+```
+
+CheckAllowedProviders verifies a binding is permitted to run a task that restricts which providers may do so.
+
+A name matches the binding's ALIAS or its provider TYPE, and both are meaningful: several aliases can share a type \(a round\-robin pool of claude bindings\), so "any claude" and "this specific pool member" are different restrictions an operator may legitimately want. Accepting only one of the two would silently block plans written against the other.
+
+Unlike CheckRequirements there is no closed vocabulary to validate against: provider names are operator\-chosen configuration, so an unrecognized one is indistinguishable from a provider this project simply is not bound to right now. It blocks with the allowed list named, which is the actionable report either way.
 
 <a name="CheckRequirements"></a>
 ## func [CheckRequirements](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/capabilities.go#L78>)

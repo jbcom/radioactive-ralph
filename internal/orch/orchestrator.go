@@ -623,6 +623,27 @@ func (o *Orchestrator) dispatchReadyStep(ctx context.Context, a dispatchStepArgs
 		return false, fmt.Errorf("orch: resolve binding: %w", err)
 	}
 
+	// `providers` is enforced HERE, not at the gate: this is the first point at
+	// which the binding a turn will actually use is known. When the resolution
+	// is disallowed, ROTATE through the pool rather than giving up — a pool is a
+	// rotation, so the next member may well be permitted, and refusing on the
+	// head's identity would make the restriction a coin flip on cursor position.
+	allowed := a.step.Metadata.AllowedProviders()
+	if len(allowed) > 0 {
+		rotated, rerr := o.resolveAllowedBinding(ctx, a, allowed, binding)
+		if rerr != nil {
+			release()
+			_ = o.store.Emit(ctx, store.EmitOpts{
+				ProjectID: a.projectID, PlanID: a.planID,
+				Kind:        "worker.admission_refused",
+				Stream:      "service",
+				PayloadJSON: mustPayloadJSON(store.EventPayload{Reason: rerr.Error()}),
+			})
+			return false, nil
+		}
+		binding = rotated
+	}
+
 	if err := o.checkSpendCap(ctx, a.projectID, binding.Name); err != nil {
 		// Spend-cap refusal is not a fatal error: other steps (possibly on an
 		// uncapped provider) may still be dispatchable. Record it and move on.
@@ -991,6 +1012,50 @@ func (o *Orchestrator) materializeStepMetadata(ctx context.Context, planID, task
 	return nil
 }
 
+// resolveAllowedBinding returns a binding permitted by the task's `providers`
+// restriction, rotating through the pool from the already-resolved first
+// candidate.
+//
+// A pool resolver hands out members in rotation, so the FIRST resolution says
+// nothing about whether an allowed member exists. It is asked at most
+// maxProviderRotations more times; seeing an alias twice means the rotation has
+// wrapped and every member has been considered.
+//
+// Returns an error only when no member satisfies the restriction. That is a
+// per-tick refusal, NOT a durable block: the project's provider set can change,
+// and marking the task blocked_capability here would leave an operator clearing
+// a state a config edit already fixed.
+func (o *Orchestrator) resolveAllowedBinding(
+	ctx context.Context,
+	a dispatchStepArgs,
+	allowed []string,
+	first provider.Binding,
+) (provider.Binding, error) {
+	seen := map[string]struct{}{}
+	candidate := first
+	for i := 0; i <= maxProviderRotations; i++ {
+		if err := provider.CheckAllowedProviders(candidate, allowed); err == nil {
+			return candidate, nil
+		}
+		if _, wrapped := seen[candidate.Name]; wrapped {
+			break
+		}
+		seen[candidate.Name] = struct{}{}
+		next, err := o.resolveBinding(ctx, a.projectID, a.parallel, BindingDispatch)
+		if err != nil {
+			return provider.Binding{}, fmt.Errorf("orch: resolve allowed binding: %w", err)
+		}
+		candidate = next
+	}
+	return provider.Binding{}, fmt.Errorf(
+		"orch: no configured provider satisfies the task restriction %v", allowed)
+}
+
+// maxProviderRotations bounds how many extra resolutions one dispatch may ask
+// for while seeking a permitted provider. A real pool is far smaller, and a
+// bound means a misbehaving resolver cannot spin forever.
+const maxProviderRotations = 16
+
 // stepGateBlocks materializes ref's task (idempotent) and reports whether it is
 // currently undispatchable — either held behind the approval gate (status
 // ready_pending_approval) or requiring a capability the bound provider does not
@@ -1026,6 +1091,16 @@ func (o *Orchestrator) capabilityGateBlocks(ctx context.Context, planID, project
 	if err != nil {
 		return false, fmt.Errorf("orch: resolve binding for capability gate: %w", err)
 	}
+	// Only `requires` is decided here. A capability is a property of the
+	// PROVIDER TYPE, and the probe binding is representative of the wave, so one
+	// resolution answers it.
+	//
+	// `providers` is NOT decidable from a probe: BindingProbe deliberately does
+	// not advance a pool cursor, so this only ever sees the pool's HEAD. With a
+	// [claude, codex] pool and a codex-only task, blocking here would refuse
+	// work the very next dispatch resolution could run — turning the restriction
+	// into a coin flip on cursor position. It is enforced at dispatch instead,
+	// against the binding actually assigned.
 	capErr := provider.CheckRequirements(binding, step.Metadata.Requires)
 	if capErr == nil {
 		// The requirement is satisfied NOW. If this task was blocked on it, the
@@ -1050,7 +1125,8 @@ func (o *Orchestrator) capabilityGateBlocks(ctx context.Context, planID, project
 		}
 		return false, nil
 	}
-	if !errors.Is(capErr, provider.ErrCapabilityUnmet) && !errors.Is(capErr, provider.ErrCapabilityUnknown) {
+	if !errors.Is(capErr, provider.ErrCapabilityUnmet) &&
+		!errors.Is(capErr, provider.ErrCapabilityUnknown) {
 		return false, capErr
 	}
 	// Record WHY before reporting blocked. A task made undispatchable without a

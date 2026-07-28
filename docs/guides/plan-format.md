@@ -204,6 +204,44 @@ supervisor retries its way out of. That is the point: a task that can
 never succeed on this binding says so immediately instead of stalling
 with no explanation.
 
+## Restricting which provider runs a task
+
+A step can name the providers allowed to run it:
+
+```markdown
+# Cross-check
+
+- review the generated migration
+
+   ```ralph-task
+   {"id": "review-migration", "providers": ["codex"]}
+   ```
+```
+
+A name matches either the binding **alias** or the provider **type**, because
+both are useful restrictions: several aliases can share one type (a
+round-robin pool of `claude` bindings), so "any claude" and "this specific
+pool member" mean different things.
+
+A task whose resolved provider is outside its list is **not dispatched**, and
+the refusal is recorded as a `worker.admission_refused` event naming the
+allowed providers. Where the project is bound to a *pool*, dispatch rotates
+through it first: a `[claude, codex]` pool can still run a codex-only task, so
+the restriction is about the work rather than about which member the rotation
+happened to reach.
+
+The task stays `pending` rather than becoming `blocked_capability`, and the
+difference from `requires` is deliberate. `providers` names operator
+**configuration** — binding the project to an allowed provider fixes it, so a
+durable block would leave an operator clearing a state their config edit had
+already resolved. `requires` is different: no configuration change makes a
+provider gain a capability it does not have, so that one does block.
+
+Unlike `requires`, there is no closed vocabulary here: provider names are
+operator-chosen configuration, so an unrecognized name is indistinguishable
+from a provider this project simply is not bound to right now. Either way the
+task blocks and names the list, which is the actionable report.
+
 ## Validation
 
 `internal/plan.Validate` checks the document against the grammar (sibling

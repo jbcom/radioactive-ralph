@@ -324,6 +324,177 @@ func countBlockedCapabilityEvents(t *testing.T, s *store.Store, projectID string
 	return n
 }
 
+const restrictsProvidersPlan = "# Cap group\n\n" +
+	"- only codex may do this\n\n" +
+	"   ```ralph-task\n   {\"id\": \"codex-only\", \"providers\": [\"codex\"]}\n   ```\n"
+
+const restrictsProvidersByAliasPlan = "# Cap group\n\n" +
+	"- named by alias\n\n" +
+	"   ```ralph-task\n   {\"id\": \"alias-only\", \"providers\": [\"claude-pool\"]}\n   ```\n"
+
+// TestDispatchBlocksTaskRestrictedToAnotherProvider enforces the `providers`
+// field, which parsed and persisted with no reader.
+//
+// A task naming the providers allowed to run it is expressing that the work is
+// only valid from one of them — a cross-check written for codex is worthless
+// executed by the model that produced the thing it reviews. Ignoring the field
+// silently produced exactly the result it exists to prevent.
+func TestDispatchBlocksTaskRestrictedToAnotherProvider(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	projectID := mustCreateTestProject(t, s, "prov-block")
+	planID := mustCreateTestPlan(t, s, projectID, "prov-block", "Prov", restrictsProvidersPlan)
+
+	runner := &fakeRunner{results: []provider.Result{{AssistantOutput: "should never run"}}}
+	o := New(s,
+		WithRunnerFactory(func(provider.Binding) (provider.Runner, error) { return runner, nil }),
+		WithBindingResolver(fakeBindingResolver("claude", false)), // not codex
+	)
+
+	dispatched, err := o.DispatchNext(ctx, projectID, planID)
+	if err != nil {
+		t.Fatalf("DispatchNext: %v", err)
+	}
+	o.Wait()
+
+	if dispatched != 0 {
+		t.Fatalf("dispatched = %d, want 0 — a task restricted to codex must not "+
+			"run on claude", dispatched)
+	}
+	if calls := runner.callReqs(); len(calls) != 0 {
+		t.Fatalf("runner called %d times; the restricted provider must never see it",
+			len(calls))
+	}
+	// The task stays PENDING rather than becoming blocked_capability, and that
+	// is deliberate. `providers` names operator CONFIGURATION, not a property of
+	// the work: binding the project to codex fixes it, and a durable block would
+	// leave an operator clearing a state their config edit already resolved.
+	// Compare `requires`, where no configuration change can make a provider
+	// gain a capability it lacks — that one does block.
+	task, err := s.GetTask(ctx, planID, "codex-only")
+	if err != nil {
+		t.Fatalf("GetTask: %v", err)
+	}
+	if task.Status != store.TaskStatusPending {
+		t.Fatalf("status = %q, want %q — a provider restriction is a per-tick "+
+			"admission refusal, not a durable block", task.Status, store.TaskStatusPending)
+	}
+
+	// It must still be VISIBLE. A silently skipped task is indistinguishable
+	// from one waiting on a dependency.
+	events, err := s.ListProjectEvents(ctx, projectID, 100)
+	if err != nil {
+		t.Fatalf("ListProjectEvents: %v", err)
+	}
+	refused := false
+	for _, e := range events {
+		if e.Kind == "worker.admission_refused" && strings.Contains(e.PayloadJSON, "codex") {
+			refused = true
+		}
+	}
+	if !refused {
+		t.Error("no admission-refusal event naming the allowed provider; the " +
+			"refusal would be invisible to an operator")
+	}
+}
+
+// TestDispatchRunsTaskOnAnAllowedProvider is the control on the provider TYPE.
+func TestDispatchRunsTaskOnAnAllowedProvider(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	projectID := mustCreateTestProject(t, s, "prov-ok")
+	planID := mustCreateTestPlan(t, s, projectID, "prov-ok", "Prov", restrictsProvidersPlan)
+
+	runner := &fakeRunner{results: []provider.Result{{AssistantOutput: "done"}}}
+	o := New(s,
+		WithRunnerFactory(func(provider.Binding) (provider.Runner, error) { return runner, nil }),
+		WithBindingResolver(fakeBindingResolver("codex", false)),
+	)
+	dispatched, err := o.DispatchNext(ctx, projectID, planID)
+	if err != nil {
+		t.Fatalf("DispatchNext: %v", err)
+	}
+	o.Wait()
+	if dispatched != 1 {
+		t.Fatalf("dispatched = %d, want 1 — codex is allowed", dispatched)
+	}
+}
+
+// TestProvidersMatchesAliasOrType lets an operator name either the binding
+// ALIAS or the provider TYPE.
+//
+// Both are meaningful and they differ: several aliases can share one type (a
+// round-robin pool of claude bindings), so "any claude" and "this specific
+// pool member" are different restrictions. Accepting only one of the two would
+// silently block plans written against the other.
+func TestProvidersMatchesAliasOrType(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	projectID := mustCreateTestProject(t, s, "prov-alias")
+	planID := mustCreateTestPlan(t, s, projectID, "prov-alias", "Prov", restrictsProvidersByAliasPlan)
+
+	runner := &fakeRunner{results: []provider.Result{{AssistantOutput: "done"}}}
+	o := New(s,
+		WithRunnerFactory(func(provider.Binding) (provider.Runner, error) { return runner, nil }),
+		// Alias "claude-pool", type "claude": the plan names the ALIAS.
+		WithBindingResolver(func(_ context.Context, _ string, _ bool, _ BindingResolutionPurpose) (provider.Binding, error) {
+			return provider.Binding{
+				Name:   "claude-pool",
+				Config: provider.BindingConfig{Type: "claude", Binary: "true"},
+			}, nil
+		}),
+	)
+	dispatched, err := o.DispatchNext(ctx, projectID, planID)
+	if err != nil {
+		t.Fatalf("DispatchNext: %v", err)
+	}
+	o.Wait()
+	if dispatched != 1 {
+		t.Fatalf("dispatched = %d, want 1 — the plan names the binding alias, "+
+			"which must be as valid a restriction as the provider type", dispatched)
+	}
+}
+
+// TestProvidersGateConsidersEveryPoolMember is a P1 on #250: the gate must not
+// block a task that some pool member CAN run.
+//
+// BindingProbe deliberately does not advance the pool cursor, so the gate only
+// ever saw the pool's current HEAD. With a [claude, codex] pool and a task
+// restricted to codex, it blocked the task permanently — even though the very
+// next dispatch resolution would have handed it codex. The restriction became a
+// coin flip on cursor position rather than a statement about the work.
+func TestProvidersGateConsidersEveryPoolMember(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	projectID := mustCreateTestProject(t, s, "prov-pool")
+	planID := mustCreateTestPlan(t, s, projectID, "prov-pool", "Prov", restrictsProvidersPlan)
+
+	runner := &fakeRunner{results: []provider.Result{{AssistantOutput: "done"}}}
+	// Pool head is claude; the task requires codex, which is the SECOND member.
+	pool := newPurposeAwarePoolResolver("claude", "codex")
+	o := New(s,
+		WithRunnerFactory(func(provider.Binding) (provider.Runner, error) { return runner, nil }),
+		WithBindingResolver(pool.resolve),
+	)
+
+	dispatched, err := o.DispatchNext(ctx, projectID, planID)
+	if err != nil {
+		t.Fatalf("DispatchNext: %v", err)
+	}
+	o.Wait()
+
+	if dispatched != 1 {
+		task, gerr := s.GetTask(ctx, planID, "codex-only")
+		status := "unknown"
+		if gerr == nil {
+			status = string(task.Status)
+		}
+		t.Fatalf("dispatched = %d (task status %q), want 1 — codex is IN the pool, "+
+			"so a codex-only task must run rather than block on the head being claude",
+			dispatched, status)
+	}
+}
+
 // TestClearingACapabilityBlockLeavesAnInputBlockIntact is a Major on #247.
 //
 // ClearTaskBlock cleared BOTH fail-closed states, and this gate only re-checks
