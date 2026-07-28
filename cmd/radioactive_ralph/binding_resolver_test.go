@@ -511,3 +511,40 @@ func TestStoreContainmentResolverFailsClosedToOn(t *testing.T) {
 			"key, which now means on — otherwise a typo silently strips the boundary")
 	}
 }
+
+// TestStoreContainmentResolverFailsClosedOnReadError pins the direction of a
+// CONFIG-RESOLUTION failure, which is distinct from a malformed value and had
+// no test at all -- which is why it survived the default flip.
+//
+// A closed store makes ResolveUser/ResolveProjects fail. Before the flip,
+// returning false there was right: failing to read config must not enable a
+// boundary the operator never asked for. After it, false would silently launch
+// an otherwise-admitted turn UNCONFINED -- reversing the fail-closed default at
+// exactly the moment the system is least healthy, with no signal at all,
+// because the turn then succeeds normally.
+//
+// Failing closed costs a refused dispatch, which is visible and recoverable.
+// Failing open costs a boundary nobody knows is missing.
+func TestStoreContainmentResolverFailsClosedOnReadError(t *testing.T) {
+	ctx := context.Background()
+	st := openBindingTestStore(t)
+
+	projectID, err := st.CreateProject(ctx, "readfail", []store.Fingerprint{
+		{Kind: store.FingerprintKindAbsPath, Value: t.TempDir()},
+	})
+	if err != nil {
+		t.Fatalf("CreateProject: %v", err)
+	}
+
+	resolve := storeContainmentResolver(st)
+	// Close the store so every subsequent config read fails.
+	if err := st.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	if !resolve(ctx, projectID) {
+		t.Fatal("a config-resolution FAILURE disabled containment; a transient read " +
+			"error must not silently drop a security boundary, least of all while the " +
+			"store is already unhealthy")
+	}
+}
