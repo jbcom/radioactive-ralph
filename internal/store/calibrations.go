@@ -191,6 +191,46 @@ func (s *Store) GetCalibrationByAlias(ctx context.Context, alias string) (Provid
 	return c, nil
 }
 
+// ListCalibrations returns every recorded measurement, ordered by alias.
+//
+// Ordered rather than insertion-ordered so an operator comparing two hosts sees
+// the same sequence: this is the query that answers "which aliases have a
+// measured independence domain and which do not", and that is the difference
+// between a differentFrom constraint that can be enforced and one that silently
+// cannot.
+func (s *Store) ListCalibrations(ctx context.Context) ([]ProviderCalibration, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, alias, provider, model, effort, binary_path, binary_version,
+		       binary_sha256, invocation_hash, inference_domain, control_domain,
+		       independence_domain, model_digest, capabilities_json, evidence_json
+		FROM provider_calibrations ORDER BY alias
+	`)
+	if err != nil {
+		return nil, fmt.Errorf("store: list calibrations: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var out []ProviderCalibration
+	for rows.Next() {
+		var c ProviderCalibration
+		var modelDigest sql.NullString
+		if err := rows.Scan(
+			&c.ID, &c.Alias, &c.Provider, &c.Model, &c.Effort, &c.BinaryPath,
+			&c.BinaryVersion, &c.BinarySHA256, &c.InvocationHash, &c.InferenceDomain,
+			&c.ControlDomain, &c.IndependenceDomain, &modelDigest,
+			&c.CapabilitiesJSON, &c.EvidenceJSON,
+		); err != nil {
+			return nil, fmt.Errorf("store: scan calibration: %w", err)
+		}
+		c.ModelDigest = modelDigest.String
+		out = append(out, c)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("store: list calibrations: %w", err)
+	}
+	return out, nil
+}
+
 // CalibrationAttempt is one repetition of one calibrated task run.
 //
 // Calibration compares repeated runs of the SAME task, so each repetition is
