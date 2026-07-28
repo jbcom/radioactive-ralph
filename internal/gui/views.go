@@ -264,26 +264,9 @@ func (u *ui) buildMeso(s snapshot) {
 		u.body.Add(widget.NewLabel("No tasks in this plan."))
 		return
 	}
-	// Only partitions holding more than one task are labelled: a partition of
-	// one is the ordinary case, so marking every row would bury the fan-out
-	// groups the marker exists to reveal. Numbered per view because the ordinal
-	// itself is an unreadable hash — the operator needs "these two rows are one
-	// turn", never the digest.
-	partitionSize := map[string]int{}
-	for _, t := range s.tasks {
-		if t.PartitionOrdinal != "" {
-			partitionSize[t.PartitionOrdinal]++
-		}
-	}
-	partitionLabels := map[string]string{}
-	for _, t := range s.tasks {
-		if partitionSize[t.PartitionOrdinal] < 2 {
-			continue
-		}
-		if _, seen := partitionLabels[t.PartitionOrdinal]; !seen {
-			partitionLabels[t.PartitionOrdinal] = fmt.Sprintf("p%d", len(partitionLabels)+1)
-		}
-	}
+	// Display policy lives in observe (see PartitionLabels) so this view and the
+	// TUI cannot disagree about which partitions are worth marking.
+	partitionLabels := observe.PartitionLabels(s.tasks)
 
 	for _, t := range s.tasks {
 		taskID := t.ID

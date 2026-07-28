@@ -93,3 +93,47 @@ func TestTaskOmitsProvenanceBeforeExecution(t *testing.T) {
 		}
 	}
 }
+
+// TestPartitionLabelsMarkOnlyFanoutGroups pins the display policy now that it
+// is shared by every renderer. Both rules are load-bearing: labelling
+// singletons buries the real fan-out groups, and labelling nothing makes the
+// grouping invisible.
+func TestPartitionLabelsMarkOnlyFanoutGroups(t *testing.T) {
+	labels := PartitionLabels([]Task{
+		{ID: "a", PartitionOrdinal: "aaaa"},
+		{ID: "b", PartitionOrdinal: "aaaa"},
+		{ID: "c", PartitionOrdinal: "bbbb"}, // partition of one
+		{ID: "d"},                           // no ordinal at all
+	})
+	if labels["aaaa"] == "" {
+		t.Error("the partition holding two tasks got no label, so an operator " +
+			"cannot see they are one fan-out turn")
+	}
+	if labels["bbbb"] != "" {
+		t.Errorf("a partition of one was labelled %q; singletons are the ordinary "+
+			"case and marking them buries the real groups", labels["bbbb"])
+	}
+	if labels[""] != "" {
+		t.Errorf("tasks with no ordinal were labelled %q; absent metadata is not "+
+			"evidence of a shared partition", labels[""])
+	}
+}
+
+// TestPartitionLabelsNumberInDisplayOrder keeps the labels readable: the first
+// fan-out group a reader meets is p1. Numbering by map iteration would reshuffle
+// them between renders of identical data.
+func TestPartitionLabelsNumberInDisplayOrder(t *testing.T) {
+	tasks := []Task{
+		{ID: "a", PartitionOrdinal: "zzz"},
+		{ID: "b", PartitionOrdinal: "zzz"},
+		{ID: "c", PartitionOrdinal: "aaa"},
+		{ID: "d", PartitionOrdinal: "aaa"},
+	}
+	for i := range 12 {
+		labels := PartitionLabels(tasks)
+		if labels["zzz"] != "p1" || labels["aaa"] != "p2" {
+			t.Fatalf("run %d: got zzz=%q aaa=%q, want p1/p2 in first-seen order",
+				i, labels["zzz"], labels["aaa"])
+		}
+	}
+}

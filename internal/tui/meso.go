@@ -21,34 +21,10 @@ func renderMeso(m Model) string {
 	b.WriteString("\n\n")
 
 	groups := groupTasks(m.snap.tasks)
-	// Partition ordinals are 16-hex-digit hashes: an operator can compare them
-	// but cannot read them, and a row of digests is noise. Number them per view
-	// instead, so the marker says "these two rows are one fan-out turn" -- the
-	// only question the ordinal answers. Numbered in display order so the labels
-	// stay stable while the view does.
-	//
-	// Only partitions holding MORE THAN ONE task get a label: a partition of one
-	// is the ordinary case and says nothing an operator can act on, so labelling
-	// every row would bury the fan-out groups among singletons.
-	partitionSize := map[string]int{}
-	for _, g := range groups {
-		for _, t := range g.tasks {
-			if t.PartitionOrdinal != "" {
-				partitionSize[t.PartitionOrdinal]++
-			}
-		}
-	}
-	partitionLabels := map[string]string{}
-	for _, g := range groups {
-		for _, t := range g.tasks {
-			if partitionSize[t.PartitionOrdinal] < 2 {
-				continue
-			}
-			if _, seen := partitionLabels[t.PartitionOrdinal]; !seen {
-				partitionLabels[t.PartitionOrdinal] = fmt.Sprintf("p%d", len(partitionLabels)+1)
-			}
-		}
-	}
+	// Display policy (which partitions get a marker, and that the raw ordinal is
+	// never shown) lives in observe so the TUI, GUI, and any future renderer
+	// cannot drift apart on it.
+	partitionLabels := observe.PartitionLabels(m.snap.tasks)
 	row := 0
 	for _, g := range groups {
 		if g.label != "" {

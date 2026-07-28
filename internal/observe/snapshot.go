@@ -435,6 +435,43 @@ type PlanPage struct {
 	NextAfterID string `json:"next_after_id,omitempty"`
 }
 
+// PartitionLabels assigns each MULTI-TASK ready partition a short display label
+// ("p1", "p2", ...) keyed by partition ordinal, in the order the tasks are
+// given. Tasks whose partition holds only one task get no entry, so a caller
+// can render `labels[t.PartitionOrdinal]` and get "" for them.
+//
+// Two rules live here rather than in each renderer, because they are display
+// POLICY and every surface must apply them identically:
+//
+//   - Partitions of ONE are unlabelled. A partition of one is the ordinary
+//     case and says nothing an operator can act on, so labelling every row
+//     buries the fan-out groups the marker exists to reveal.
+//   - The ordinal itself is never shown. It is a hash: comparable, not
+//     readable, and a row of digests is noise. The label answers "same
+//     partition?" -- the only question the ordinal is meant to answer.
+//
+// It returns labels rather than mutating tasks so the projection stays a pure
+// read model, and it is here rather than duplicated in the TUI and GUI because
+// two copies of a display rule diverge the first time either is touched.
+func PartitionLabels(tasks []Task) map[string]string {
+	size := map[string]int{}
+	for _, t := range tasks {
+		if t.PartitionOrdinal != "" {
+			size[t.PartitionOrdinal]++
+		}
+	}
+	labels := map[string]string{}
+	for _, t := range tasks {
+		if size[t.PartitionOrdinal] < 2 {
+			continue
+		}
+		if _, seen := labels[t.PartitionOrdinal]; !seen {
+			labels[t.PartitionOrdinal] = fmt.Sprintf("p%d", len(labels)+1)
+		}
+	}
+	return labels
+}
+
 // ProvenanceLabel names the provider that executed this task, preferring the
 // operator-facing alias over the raw provider type, and returning "" when the
 // task has not run.
