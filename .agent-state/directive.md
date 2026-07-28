@@ -103,6 +103,15 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
       * Each queue branch carries ~23 check-runs. A snapshot showing required
         checks "missing" usually means NOT YET COMPLETE. Watch completed-vs-
         running across two samples before calling it a stall.
+      * A FAILING check on the PR BRANCH can be STALE once the PR is queued.
+        The queue tests base+PR, so a fix that landed on main after the PR's
+        last push IS present in the queue branch even though the PR branch
+        lacks it. #252 showed Package GUI failing while its queue branch
+        2f9f2549 had #270's appimagetool fix and was re-running that job green.
+        Check the gh-readonly-queue/* branch before acting on a PR-branch
+        failure -- and note a queued PR CANNOT be rebased ("Branches that are
+        queued for merging cannot be updated"), so dequeuing to "fix" a stale
+        failure would be strictly worse than leaving it.
 
       ACTIONS, in order:
       1. `bash scripts/verify-repo-claims.sh` -- never assert status from memory.
