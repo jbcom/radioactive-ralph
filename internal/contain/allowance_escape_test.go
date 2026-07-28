@@ -34,24 +34,37 @@ func TestAllowanceDoesNotBecomeAnEscape(t *testing.T) {
 
 	// Inside the GRANTED path: must succeed, or the allowance does nothing.
 	inGrant := filepath.Join(granted, "ok")
-	bin, args, err := wrapCommand(p, "/bin/sh", []string{"-c", "printf x > " + inGrant})
-	if err != nil {
-		t.Fatalf("wrap: %v", err)
-	}
-	if out, err := exec.Command(bin, args...).CombinedOutput(); err != nil {
+	if out, err := runWrapped(t, p, "printf x > "+inGrant); err != nil {
 		t.Fatalf("write to the GRANTED path failed (%v): %s", err, out)
 	}
 
 	// Outside root AND outside the grant: must still be refused.
-	bin, args, err = wrapCommand(p, "/bin/sh", []string{"-c", "printf x > " + forbidden})
-	if err != nil {
-		t.Fatalf("wrap: %v", err)
-	}
-	_, _ = exec.Command(bin, args...).CombinedOutput()
+	_, _ = runWrapped(t, p, "printf x > "+forbidden)
 	if _, err := os.Stat(forbidden); err == nil {
 		t.Fatalf("a write to %q SUCCEEDED while only %q was granted; the allowance "+
 			"re-opened the boundary generally instead of widening it by one subpath, "+
 			"so every provider runs unconfined while the config claims otherwise",
 			forbidden, granted)
 	}
+}
+
+// runWrapped executes a shell snippet under the policy, routing through the
+// stand-in helper binary on platforms whose Wrap re-execs os.Executable().
+//
+// On Linux, containment works by re-invoking the CURRENT binary with a helper
+// flag; under `go test` that binary is the test binary, which does not parse
+// the flag and exits "flag provided but not defined". The existing linux tests
+// solve this with buildContainHelper, whose main() calls MaybeRunHelper the way
+// the real CLI entry point does -- reused here rather than reinvented.
+func runWrapped(t *testing.T, p Policy, script string) (string, error) {
+	t.Helper()
+	name, args, err := p.Wrap("/bin/sh", []string{"-c", script})
+	if err != nil {
+		t.Fatalf("Wrap: %v", err)
+	}
+	if selfExec, _ := os.Executable(); name == selfExec {
+		name = buildContainHelper(t)
+	}
+	out, err := exec.Command(name, args...).CombinedOutput() //nolint:gosec // test-owned
+	return string(out), err
 }

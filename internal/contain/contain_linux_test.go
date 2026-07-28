@@ -60,9 +60,19 @@ func TestHandledMaskCoversEveryMutatingRight(t *testing.T) {
 }
 
 // TestHelperInvocationRoundTrips pins the sentinel contract main() depends on.
+//
+// The argv now carries a COUNT of extra writable paths between the root and the
+// command, because a policy may grant subpaths a provider needs to start. The
+// count is length-prefixed rather than delimited: a path is arbitrary text, so
+// any sentinel could appear as a directory name and would silently truncate the
+// grant list into a WRONG boundary rather than an error.
+//
+// A zero count is the pre-existing shape, so this test still describes the
+// common case -- one root, no extras -- and would fail loudly if the format
+// changed again without the callers being updated.
 func TestHelperInvocationRoundTrips(t *testing.T) {
 	root, cmd, ok := IsHelperInvocation([]string{
-		"/usr/bin/radioactive_ralph", helperFlag, "/work", "/bin/sh", "-c", "true",
+		"/usr/bin/radioactive_ralph", helperFlag, "/work", "0", "/bin/sh", "-c", "true",
 	})
 	if !ok {
 		t.Fatal("a helper argv was not recognized; the provider would run UNCONTAINED")
