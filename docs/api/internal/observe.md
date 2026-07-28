@@ -22,6 +22,8 @@ This package is not an A2A server. It uses the official A2A Task vocabulary for 
 - [func StateForTask\(status store.TaskStatus\) \(sdka2a.TaskState, error\)](<#StateForTask>)
 - [func ValidateMessageResponse\(page \*MessagePage\) error](<#ValidateMessageResponse>)
 - [func ValidateSnapshotResponse\(snapshot \*Snapshot, q SnapshotQuery\) error](<#ValidateSnapshotResponse>)
+- [type BlockedCategory](<#BlockedCategory>)
+- [type BlockedSummary](<#BlockedSummary>)
 - [type Event](<#Event>)
   - [func EventFromMetadata\(item store.OperatorEvent\) Event](<#EventFromMetadata>)
 - [type EventPage](<#EventPage>)
@@ -90,7 +92,7 @@ var (
 ```
 
 <a name="StateForTask"></a>
-## func [StateForTask](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/observe/snapshot.go#L975>)
+## func [StateForTask](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/observe/snapshot.go#L1048>)
 
 ```go
 func StateForTask(status store.TaskStatus) (sdka2a.TaskState, error)
@@ -116,8 +118,44 @@ func ValidateSnapshotResponse(snapshot *Snapshot, q SnapshotQuery) error
 
 ValidateSnapshotResponse verifies the decoded wire response before an operator client renders or makes automation decisions from it.
 
+<a name="BlockedCategory"></a>
+## type [BlockedCategory](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/observe/snapshot.go#L524>)
+
+BlockedCategory is the closed set of fail\-closed pre\-dispatch blocks.
+
+```go
+type BlockedCategory string
+```
+
+<a name="BlockedCapability"></a>Safe blocked categories. A closed schema surface, like FailureCategory.
+
+```go
+const (
+    // BlockedCapability: the bound provider cannot or may not do this work.
+    // Remedy is configuration — bind a provider that satisfies the requirement.
+    BlockedCapability BlockedCategory = "capability"
+    // BlockedInput: a declared immutable input no longer matches its pinned
+    // digest. Remedy is the plan or the file, not the provider.
+    BlockedInput BlockedCategory = "input"
+    // BlockedApproval: held for a human decision before it may run.
+    BlockedApproval BlockedCategory = "approval"
+)
+```
+
+<a name="BlockedSummary"></a>
+## type [BlockedSummary](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/observe/snapshot.go#L540-L543>)
+
+BlockedSummary explains a block using only static text, mirroring FailureSummary's contract: no stored reason strings, no payload fields.
+
+```go
+type BlockedSummary struct {
+    Category BlockedCategory `json:"category"`
+    Summary  string          `json:"summary"`
+}
+```
+
 <a name="Event"></a>
-## type [Event](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/observe/snapshot.go#L515-L523>)
+## type [Event](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/observe/snapshot.go#L580-L588>)
 
 Event is bounded safe event metadata. Failure is present only for a closed set of recognized failure kinds and contains a static summary.
 
@@ -134,7 +172,7 @@ type Event struct {
 ```
 
 <a name="EventFromMetadata"></a>
-### func [EventFromMetadata](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/observe/snapshot.go#L960>)
+### func [EventFromMetadata](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/observe/snapshot.go#L1033>)
 
 ```go
 func EventFromMetadata(item store.OperatorEvent) Event
@@ -143,7 +181,7 @@ func EventFromMetadata(item store.OperatorEvent) Event
 EventFromMetadata projects one already\-scoped safe store event into the public event shape. Live Attach uses this same function as snapshot backlog, so their privacy and failure\-taxonomy contracts cannot drift.
 
 <a name="EventPage"></a>
-## type [EventPage](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/observe/snapshot.go#L526-L530>)
+## type [EventPage](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/observe/snapshot.go#L591-L595>)
 
 EventPage is one newest\-first event metadata page.
 
@@ -156,7 +194,7 @@ type EventPage struct {
 ```
 
 <a name="FailureCategory"></a>
-## type [FailureCategory](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/observe/snapshot.go#L487>)
+## type [FailureCategory](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/observe/snapshot.go#L506>)
 
 FailureCategory is a fixed, non\-secret operator taxonomy derived only from durable event kinds. Raw payload text is never inspected by this package.
 
@@ -183,7 +221,7 @@ const (
 ```
 
 <a name="FailureSummary"></a>
-## type [FailureSummary](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/observe/snapshot.go#L507-L511>)
+## type [FailureSummary](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/observe/snapshot.go#L572-L576>)
 
 FailureSummary explains a recognized failure event using only static text. It never includes raw provider output, prompts, argv, stderr, or event payload fields.
 
@@ -196,7 +234,7 @@ type FailureSummary struct {
 ```
 
 <a name="MessageMetadata"></a>
-## type [MessageMetadata](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/observe/snapshot.go#L544-L553>)
+## type [MessageMetadata](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/observe/snapshot.go#L609-L618>)
 
 MessageMetadata is the safe A2A envelope index. It deliberately is not an a2a.Message: message Parts are content and remain behind the store boundary.
 
@@ -214,7 +252,7 @@ type MessageMetadata struct {
 ```
 
 <a name="MessagePage"></a>
-## type [MessagePage](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/observe/snapshot.go#L556-L561>)
+## type [MessagePage](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/observe/snapshot.go#L621-L626>)
 
 MessagePage is one versioned chronological metadata page.
 
@@ -228,7 +266,7 @@ type MessagePage struct {
 ```
 
 <a name="MessageQuery"></a>
-## type [MessageQuery](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/observe/snapshot.go#L534-L540>)
+## type [MessageQuery](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/observe/snapshot.go#L599-L605>)
 
 MessageQuery selects bounded, oldest\-first, content\-free A2A message metadata. TaskID requires PlanID; the store validates every scope and cursor.
 
@@ -336,7 +374,7 @@ func New(reader Reader) (*Service, error)
 New constructs a read\-only observation service.
 
 <a name="Service.Messages"></a>
-### func \(\*Service\) [Messages](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/observe/snapshot.go#L621-L624>)
+### func \(\*Service\) [Messages](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/observe/snapshot.go#L693-L696>)
 
 ```go
 func (s *Service) Messages(ctx context.Context, q MessageQuery) (*MessagePage, error)
@@ -345,7 +383,7 @@ func (s *Service) Messages(ctx context.Context, q MessageQuery) (*MessagePage, e
 Messages reads and projects one bounded chronological A2A message metadata page. Message content is never requested from the Reader.
 
 <a name="Service.Snapshot"></a>
-### func \(\*Service\) [Snapshot](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/observe/snapshot.go#L565-L568>)
+### func \(\*Service\) [Snapshot](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/observe/snapshot.go#L630-L633>)
 
 ```go
 func (s *Service) Snapshot(ctx context.Context, q SnapshotQuery) (*Snapshot, error)
@@ -429,25 +467,44 @@ type Summary struct {
 ```
 
 <a name="Task"></a>
-## type [Task](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/observe/snapshot.go#L441-L455>)
+## type [Task](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/observe/snapshot.go#L441-L474>)
 
 Task is Ralph's safe DAG state plus its official A2A Task lifecycle projection. Description, acceptance commands, raw messages, and artifacts are intentionally absent.
 
 ```go
 type Task struct {
-    PlanID            string       `json:"plan_id"`
-    ID                string       `json:"id"`
-    CanonicalID       string       `json:"canonical_id"`
-    Status            string       `json:"status"`
-    ParallelGroup     *int64       `json:"parallel_group,omitempty"`
-    SequenceOrdinal   *int64       `json:"sequence_ordinal,omitempty"`
-    RetryCount        int          `json:"retry_count"`
-    ReclaimCount      int          `json:"reclaim_count"`
-    ParentTaskID      string       `json:"parent_task_id,omitempty"`
-    ClaimedByWorkerID string       `json:"claimed_by_worker_id,omitempty"`
-    CreatedAt         time.Time    `json:"created_at"`
-    UpdatedAt         time.Time    `json:"updated_at"`
-    A2ATask           *sdka2a.Task `json:"a2a_task"`
+    PlanID            string `json:"plan_id"`
+    ID                string `json:"id"`
+    CanonicalID       string `json:"canonical_id"`
+    Status            string `json:"status"`
+    ParallelGroup     *int64 `json:"parallel_group,omitempty"`
+    SequenceOrdinal   *int64 `json:"sequence_ordinal,omitempty"`
+    RetryCount        int    `json:"retry_count"`
+    ReclaimCount      int    `json:"reclaim_count"`
+    ParentTaskID      string `json:"parent_task_id,omitempty"`
+    ClaimedByWorkerID string `json:"claimed_by_worker_id,omitempty"`
+
+    // Blocked classifies a fail-closed pre-dispatch block, nil when the task is
+    // not blocked.
+    //
+    // Exposed because a blocked task is otherwise indistinguishable from one
+    // waiting on a dependency: both show zero progress, but one clears itself as
+    // upstream tasks finish and the other needs an operator to change
+    // configuration or fix the plan. Without it, "why is this stalled?" required
+    // raw SQLite — the access the dumb-client boundary removes.
+    //
+    // A CLASSIFICATION rather than the stored reason string. This package's
+    // contract is that raw payload text is never forwarded (see
+    // FailureCategory), and a stored reason is error-derived and unbounded, so
+    // passing it through would have made this the one field that leaks free text
+    // across the boundary. The category plus static remediation text answers the
+    // operator's question — which knob fixes this — without carrying whatever a
+    // wrapped error happened to say.
+    Blocked *BlockedSummary `json:"blocked,omitempty"`
+
+    CreatedAt time.Time    `json:"created_at"`
+    UpdatedAt time.Time    `json:"updated_at"`
+    A2ATask   *sdka2a.Task `json:"a2a_task"`
 }
 ```
 
@@ -496,7 +553,7 @@ type TaskDescriptionsQuery struct {
 ```
 
 <a name="TaskPage"></a>
-## type [TaskPage](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/observe/snapshot.go#L458-L462>)
+## type [TaskPage](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/observe/snapshot.go#L477-L481>)
 
 TaskPage is one deterministic composite\-key task page.
 
@@ -509,7 +566,7 @@ type TaskPage struct {
 ```
 
 <a name="Worker"></a>
-## type [Worker](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/observe/snapshot.go#L467-L476>)
+## type [Worker](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/observe/snapshot.go#L486-L495>)
 
 Worker is one active Ralph worker and all of its project task claims. Ralph worker IDs are stable control identifiers; process and provider session IDs are never projected.
 
@@ -527,7 +584,7 @@ type Worker struct {
 ```
 
 <a name="WorkerClaim"></a>
-## type [WorkerClaim](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/observe/snapshot.go#L479-L483>)
+## type [WorkerClaim](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/observe/snapshot.go#L498-L502>)
 
 WorkerClaim is one project task held by a worker.
 
