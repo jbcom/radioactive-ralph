@@ -33,6 +33,10 @@ func TestInitProviderSelectionReplacesPoolAndSingleWithoutStaleAlias(t *testing.
 	t.Setenv("RALPH_STATE_DIR", stateDir)
 	chdir(t, t.TempDir())
 
+	// Every CLI command is a dumb client now and refuses to run without a
+	// supervisor, so the behavior under test is only reachable with one live.
+	startTestSupervisor(t, stateDir)
+
 	if err := runProjectInit(t, writeRawProjectConfig(t,
 		`providers = ["claude", "codex"]`+"\n",
 	)); err != nil {
@@ -62,6 +66,10 @@ func TestInitRejectsInvalidProviderSelectionBeforeAnyConfigPersistence(t *testin
 	t.Setenv("RALPH_STATE_DIR", stateDir)
 	chdir(t, t.TempDir())
 
+	// Every CLI command is a dumb client now and refuses to run without a
+	// supervisor, so the behavior under test is only reachable with one live.
+	startTestSupervisor(t, stateDir)
+
 	err := runProjectInit(t, writeRawProjectConfig(t, `
 providers = ["claude", "not-a-provider"]
 model = "must-not-persist"
@@ -86,6 +94,10 @@ func TestInitRejectsBothProviderKeysBeforePersistence(t *testing.T) {
 	stateDir := t.TempDir()
 	t.Setenv("RALPH_STATE_DIR", stateDir)
 	chdir(t, t.TempDir())
+
+	// Every CLI command is a dumb client now and refuses to run without a
+	// supervisor, so the behavior under test is only reachable with one live.
+	startTestSupervisor(t, stateDir)
 
 	err := runProjectInit(t, writeRawProjectConfig(t, `
 provider = "codex"

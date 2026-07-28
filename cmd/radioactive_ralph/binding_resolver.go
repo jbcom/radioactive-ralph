@@ -154,6 +154,12 @@ func resolveProviderNames(ctx context.Context, st *store.Store, projectID string
 }
 
 func resolveProviderNamesFromUserConfig(ctx context.Context, st *store.Store, userCfg vconfig.UserConfig, projectID string) ([]string, bool, error) {
+	return resolveProviderNamesFromUserConfigSource(ctx, vconfig.NewStoreConfigSource(st), userCfg, projectID)
+}
+
+// resolveProviderNamesFromUserConfigSource is the ConfigSource form, so a
+// client resolving over the supervisor socket runs the same selection logic.
+func resolveProviderNamesFromUserConfigSource(ctx context.Context, src vconfig.ConfigSource, userCfg vconfig.UserConfig, projectID string) ([]string, bool, error) {
 	// A per-project stanza is the highest project layer. Resolve it before the
 	// stored project baseline so an alias change across layers still obeys
 	// precedence (provider="codex" overrides providers=[...] below it).
@@ -167,7 +173,7 @@ func resolveProviderNamesFromUserConfig(ctx context.Context, st *store.Store, us
 		}
 	}
 
-	storedProject, err := vconfig.ResolveProjects(ctx, st, vconfig.UserConfig{}, projectID)
+	storedProject, err := vconfig.ResolveProjectsFrom(ctx, src, vconfig.UserConfig{}, projectID)
 	if err != nil {
 		return nil, false, fmt.Errorf("resolve stored project config: %w", err)
 	}
