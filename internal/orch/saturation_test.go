@@ -132,3 +132,62 @@ func (r *slotHoldingRunner) Run(ctx context.Context, _ provider.Binding, _ provi
 	}
 	return provider.Result{AssistantOutput: "done"}, nil
 }
+
+// TestSaturationIsReportedPerPlan is a P2 on #257: the transition flag was
+// orchestrator-wide.
+//
+// The supervisor scans every active plan against ONE global semaphore. With a
+// single flag, the first plan to observe a full pipeline suppressed the event
+// for every other plan and project until a slot freed — so an operator watching
+// plan B saw nothing while plan A had already consumed the only report. Worse,
+// B's report would be suppressed even though B has its own waiting candidates,
+// which is a different fact about a different plan.
+//
+// Saturation is reported per plan, because "ready work is waiting" is a
+// statement about a plan's queue rather than about the semaphore.
+func TestSaturationIsReportedPerPlan(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	projectID := mustCreateTestProject(t, s, "sat-multi")
+	planA := mustCreateTestPlan(t, s, projectID, "sat-a", "A", threeStepParallelPlan)
+	planB := mustCreateTestPlan(t, s, projectID, "sat-b", "B", threeStepParallelPlan)
+
+	release := make(chan struct{})
+	runner := &slotHoldingRunner{release: release}
+	o := New(s,
+		WithRunnerFactory(func(provider.Binding) (provider.Runner, error) { return runner, nil }),
+		WithBindingResolver(fakeBindingResolver("claude", false)),
+		WithMaxParallel(1),
+	)
+
+	// Plan A takes the only slot and reports saturation for its own remainder.
+	if _, err := o.DispatchNext(ctx, projectID, planA); err != nil {
+		t.Fatalf("dispatch A: %v", err)
+	}
+	if _, err := o.DispatchNext(ctx, projectID, planA); err != nil {
+		t.Fatalf("A second pass: %v", err)
+	}
+	// Plan B now has ready work and no capacity — its OWN fact to report.
+	if _, err := o.DispatchNext(ctx, projectID, planB); err != nil {
+		t.Fatalf("dispatch B: %v", err)
+	}
+
+	events, err := s.ListProjectEvents(ctx, projectID, 400)
+	if err != nil {
+		t.Fatalf("ListProjectEvents: %v", err)
+	}
+	seen := map[string]bool{}
+	for _, e := range events {
+		if e.Kind == "dispatch.saturated" {
+			seen[e.PlanID] = true
+		}
+	}
+	if !seen[planB] {
+		t.Errorf("plan B never reported saturation; a single orchestrator-wide flag "+
+			"lets the first plan consume the only report, hiding that B's queue is "+
+			"also waiting (saw plans: %v)", seen)
+	}
+
+	close(release)
+	o.Wait()
+}
