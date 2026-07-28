@@ -68,12 +68,75 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
 
 ## Remaining
 
-- [ ] Land the 2 open PRs: 225 (queued), 272 (CI running on the review fixes).
-      #272's three Codex findings are fixed in 8d58fba and all threads resolved:
-      native fan-out bypassed differentFrom entirely (P1 -- coalesced groups
-      never reached the check, so the reviewer was the author), independence
-      rotation overrode `providers`, and a whitespace-padded peer ID passed
-      import then never resolved. Each has a negative proof.
+- [ ] [WAIT] Land the open PRs: 279, 281, 282.
+      (225, 274, 272, 275, 277 and 278 landed this pass.)
+      All four are QUEUED or auto-merge ARMED with zero unresolved threads and
+      zero failing checks; the only remaining work is CI on a serialized runner
+      pool. Pushing more at that pool measurably slows it (verified earlier this
+      session). Re-check with scripts/verify-repo-claims.sh before asserting.
+      (225, 274, 272 and 275 already landed this pass.)
+      All review threads resolved; each fix carries its own negative proof.
+        * #272 differentFrom enforcement -- MERGED. FIVE review findings, all real:
+          native fan-out bypassed the check entirely (coalesced groups return
+          before the per-step loop, so the reviewer WAS the author), rotation
+          overrode `providers`, a padded peer ID passed import then never
+          resolved, `providers` was unenforced on the fan-out path too, and a
+          differentFrom CYCLE deadlocked forever with no operator-visible
+          state. The fan-out rule is now stated ONCE -- a group is one binding
+          chosen before any member is examined, so NO per-step restriction can
+          be honoured by a coalesced turn -- because the field-by-field framing
+          is exactly what let the `providers` twin slip.
+        * #275 PTY cleanup budget (#273 family) -- MERGED. Product bug: the budget was
+          attempts*interval, but each pass walks the whole process table, so
+          under load 100 attempts elapse well before 500ms and abort a
+          CONVERGING cleanup. Now a 2s wall-clock deadline. The debugger's
+          third fix was DROPPED -- it could not be independently proven.
+        * #277 live contained turn -- MERGED. Its TestMain also answers the
+          Linux containment-helper re-exec, without which the contained turn
+          could never start and would have read as a PRODUCT failure.
+        * #278 claude API-failure categorization -- MERGED. Its first version
+          fixed the diagnosis and BROKE the retry policy: mapping an unstatused
+          api_error to ErrClaudeServiceUnavailable made a terminal auth failure
+          retryable, when the generic sentinel was already correctly terminal.
+          Naming a category is choosing a retry policy.
+
+- [ ] REOPENED by evidence: do NOT flip contain_provider_writes on yet.
+      ONE gate remains, stated in full at the containment item below. #277 has
+      LANDED, so the test exists on main. Short form: land #281, then run
+      TestE2E_LiveContainedTurnCompletes with RALPH_E2E_LIVE=1. THAT result is the answer -- do not infer it from the
+      CI E2E, which drives a fake CLI and cannot exercise what a real one does.
+
+- [ ] Land #281: NO real claude turn worked, at all. encoding/json emitted
+      "Message" for an untagged field, the CLI read `message.role`, found
+      nothing, and every turn died in 0.78s with "Expected message role 'user',
+      got 'undefined'". Fixed and verified end to end -- a live turn returns
+      output and usage, and TestE2E_LiveDispatchWithRealProviderCLI reaches
+      status=done.
+      The LESSON is the durable part: the unit tests round-tripped through the
+      SAME encoder, so the identical wrong tag governed both directions and they
+      agreed with each other while disagreeing with the CLI. Assert provider
+      wire formats on DECODED BYTES against the key the other process reads,
+      never on the producing struct. And CI has never run a real provider turn
+      (the live suite is opt-in), so green proved only self-consistency.
+
+- [ ] Issue #280: ralph-task `binding` is INERT. STORAGE HALF IN #282 --
+      ReadyPartitions now splits on the declared binding, so a coalesced turn
+      can no longer swallow a task's pin (the same hole `providers` had until
+      #272). The DISPATCH half is still open: nothing yet CONSUMES
+      ReadyPartition.BindingKey when resolving a partition's binding.
+      Original finding -- declared in plan/types.go,
+      parsed, validated, and read by ZERO production code. A plan pinning
+      {"binding":{"provider":"codex"}} imports clean and gets whatever the pool
+      resolves, silently. FOURTH instance of this class here (the contain key,
+      WithProviderWriteContainment, declarative stream-json, now this), with
+      differentFrom nearly the fifth. Either enforce it at dispatch -- in which
+      case it must ALSO be excluded from fan-out coalescing, exactly as
+      `providers` needed -- or reject the key at import. Parsed-and-ignored is
+      not an option: a field with no consumer reads as a guarantee.
+
+      (#276 was CLOSED as invalid: I blamed the harness for isolating HOME, but
+      Environ() applies only to driven subprocesses and the live tests dispatch
+      in-process. The real cause was #281.)
 
 - [ ] Issue #273: the observed-output ceiling does not trip under -race on
       main. TestOpencodeRunnerBoundsEndlessNonJSONProgress and
@@ -298,19 +361,33 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
       by PRODUCTION code at cmd/radioactive_ralph/binding_resolver.go:268, not
       only by tests. That distinction is the whole point here: the key was
       previously parsed and never read, which is the inert-feature defect this
-      item exists to close. Step 2 (flip the default on) is now ACTIONABLE with
-      no remaining gate -- its audit and real-turn evidence are both complete.
-      "REAL TURNS USING IT" IS NOW SATISFIED (14f58f7): tests/e2e now runs a real
-      orchestrator + real provider subprocess under its own pty, with the project
-      config key set exactly as an operator sets it and a fake CLI that genuinely
-      attempts to write outside the project. It runs in the REQUIRED check
-      "E2E (CI-feasible)", so it gates every merge rather than being a local
-      demo. Paired with an UNCONTAINED CONTROL that must escape -- without it, a
-      write that failed for an unrelated reason would make the contained case
-      pass while measuring nothing. Negative proof: dropping the resolver reds
-      the contained case with "a REAL provider turn wrote outside the project
-      while contain_provider_writes was set".
-      So the ONLY remaining gate on the flip is #251 merging.
+      item exists to close.
+
+      STEP 2 IS STILL GATED. I got this wrong THREE times in one session and
+      each correction narrowed it, so the gate is stated once, here, and the
+      superseded paragraphs have been DELETED rather than annotated -- an
+      executor reading a contradicted claim could flip the default early.
+
+      (1) I first wrote "real-turn evidence is complete" from the CI E2E alone.
+          That E2E drives a FAKE CLI, which attempts only what the test scripts,
+          so it cannot answer the question the flip turns on: does a REAL CLI
+          need something the project-root policy denies?
+      (2) I then blamed the harness (#276, isolated HOME stripping credentials).
+          Wrong: Environ() applies only to driven SUBPROCESSES, and the live
+          tests dispatch in-process with the real environment. #276 is CLOSED as
+          invalid.
+      (3) The actual cause was a one-word bug -- the stream-json stdin frame
+          emitted "Message" instead of "message", so EVERY real claude turn died
+          in 0.78s with "Expected message role 'user', got 'undefined'". Fixed
+          in #281; a live turn now returns output and usage, and
+          TestE2E_LiveDispatchWithRealProviderCLI reaches status=done.
+
+      THE ONE GATE: land #281, then run the #277 live CONTAINED turn
+      (RALPH_E2E_LIVE=1, TestE2E_LiveContainedTurnCompletes). If it reaches
+      status=done, flip the default. If it fails, the failure IS the
+      upgrade-breakage answer this item has been waiting for -- record what the
+      policy denied before changing anything.
+
       EVIDENCE ACQUIRED 2026-07-28 (cdc28d8), and it MOVED the bar for step 2.
       A CodeRabbit finding on #251 was verified true: declarativeStreamJSON
       called runStreamJSONCommand, which took no containment argument at all, so
