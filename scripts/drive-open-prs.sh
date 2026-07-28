@@ -118,7 +118,45 @@ for round in $(seq 1 400); do
   [ -n "$dirty" ]   && line="$line DIRTY:$dirty"
   [ -n "$failing" ] && line="$line FAILING:$failing"
   [ "$line" != "$prev" ] && { echo "$line"; prev="$line"; }
-  { [ -n "$dirty" ] || [ -n "$failing" ]; } && { echo "STOP: needs a decision"; exit 2; }
+  # A DIRTY branch is a stable fact — stop immediately.
+  [ -n "$dirty" ] && { echo "STOP: needs a decision (conflict)"; exit 2; }
+
+  # A failing check is NOT stable. CI re-runs on every rebase, and a flake or an
+  # in-flight re-run produces a FAILURE that is gone moments later. The driver
+  # exited permanently on exactly that: it read "FAILING: 222 (Test
+  # (ubuntu-latest))" in the same round the re-run was completing, stopped, and
+  # the failure was absent when checked seconds afterwards.
+  #
+  # So re-check before stopping. A real failure survives the second look; a
+  # transient one does not, and the driver keeps working instead of needing a
+  # manual restart. This is not tolerance for failures — it is refusing to act
+  # on a single sample of a value that is known to change under us.
+  if [ -n "$failing" ]; then
+    sleep 30
+    recheck=""
+    for pr in $prs; do
+      # Do NOT swallow the re-query's exit status. An auth failure, rate limit,
+      # or network blip makes this substitution empty, which is indistinguishable
+      # from "no failures" — so the loop would announce the failure CLEARED and
+      # continue past a PR it never actually re-checked. That is strictly worse
+      # than the stale-sample bug this whole block exists to fix: it would
+      # manufacture a false all-clear rather than merely acting on an old one.
+      # A query that did not answer is INCONCLUSIVE, and the only safe reading of
+      # an unverified failure is that it stands.
+      if ! rf=$(gh pr view "$pr" --json statusCheckRollup \
+        --jq '[.statusCheckRollup[]?|select(.conclusion=="FAILURE")|.name]|join(",")' 2>&1); then
+        echo "STOP: re-check of #$pr FAILED to query ($rf) — the reported failure" \
+          "$failing is UNVERIFIED, treating it as real" >&2
+        exit 3
+      fi
+      [ -n "$rf" ] && recheck="$recheck $pr($rf)"
+    done
+    if [ -n "$recheck" ]; then
+      echo "STOP: needs a decision (failing after re-check):$recheck"
+      exit 2
+    fi
+    echo "round $round: FAILING:$failing cleared on re-check — continuing"
+  fi
 
   # Do NOT cancel runs here. An earlier version cancelled every queued CI run
   # except the newest per branch, on the theory that superseded runs hold the
