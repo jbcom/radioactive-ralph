@@ -184,7 +184,21 @@ stale_refs=""
 # extracted, and the guard reported "no merged PRs listed as open" while the
 # line was stale. A check that passes because it found nothing to check is
 # worse than no check.
-open_line=$(grep -E '^- \[ \].*Land the .*open PRs' .agent-state/directive.md 2>/dev/null | head -1)
+# Matches "open PR" and "open PRs" alike. This is the THIRD time a formatting
+# choice silently disabled this guard: first bare numbers (no `#` tokens to
+# extract), then a singular label the pattern did not match. Each time the guard
+# reported success while checking NOTHING, which is worse than reporting a
+# failure -- a green tick that examined no data is indistinguishable from one
+# that examined all of it.
+#
+# The lesson is not "write the label carefully". It is that a guard whose
+# pattern can miss must SAY so rather than pass, which is what the empty-match
+# check below now does.
+open_line=$(grep -E '^- \[ \].*Land the .*open PRs?\b' .agent-state/directive.md 2>/dev/null | head -1)
+if [ -z "$open_line" ]; then
+  say "  open-PR line NOT FOUND" "guard 9 cannot check it — fix the label or this pattern"
+  fail=1
+fi
 for n in $(printf '%s' "$open_line" | grep -oE '[0-9]{3}' | sort -u); do
   # An OPEN item naming a MERGED PR reads as work still to do that is already
   # done — the exact drift that made this file claim seventeen open PRs when
