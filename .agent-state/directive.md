@@ -382,11 +382,27 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
           in #281; a live turn now returns output and usage, and
           TestE2E_LiveDispatchWithRealProviderCLI reaches status=done.
 
-      THE ONE GATE: land #281, then run the #277 live CONTAINED turn
-      (RALPH_E2E_LIVE=1, TestE2E_LiveContainedTurnCompletes). If it reaches
-      status=done, flip the default. If it fails, the failure IS the
-      upgrade-breakage answer this item has been waiting for -- record what the
-      policy denied before changing anything.
+      GATE MET FOR CLAUDE, AND THAT WAS NOT ENOUGH. #281 landed, the live
+      contained claude turn reached status=done with exit_code=0, so I flipped
+      the default in #284 -- and review caught that a real CODEX turn dies under
+      containment. Verified with a control: contained fails in 0.5s with
+      exit status 1, uncontained returns "CONFIRMED" in 12.6s.
+      Codex's own stderr: "failed to initialize in-process app-server client:
+      Operation not permitted". It dies at STARTUP, so it is not the
+      last-message.txt path -- I moved that under the root first and the turn
+      failed identically at 0.30s. #284 CLOSED, filed as #285.
+
+      THE LESSON, which is the durable part: the criterion was right and my
+      APPLICATION of it was wrong. "Real turns have run with it enabled" means
+      EVERY SHIPPED PROVIDER, not the one that happens to be installed and
+      convenient. Codex is Ralph's own second first-class provider, and testing
+      claude alone would have shipped a flip breaking every default-config
+      codex deployment.
+
+      THE ONE GATE NOW: resolve #285, then re-run the live contained turn for
+      claude AND codex (and opencode) before flipping. Also worth fixing on its
+      own: the failure surfaced as a bare "exit status 1" with no hint that
+      containment caused it.
 
       EVIDENCE ACQUIRED 2026-07-28 (cdc28d8), and it MOVED the bar for step 2.
       A CodeRabbit finding on #251 was verified true: declarativeStreamJSON
