@@ -32,6 +32,7 @@ viper does the mechanical defaults\<file merge \(TOML\) per layer; this package 
 - [Constants](<#constants>)
 - [func AddFlags\(cmd \*cobra.Command\)](<#AddFlags>)
 - [func AutoRemove\(incoming map\[string\]any, conflicts \[\]Conflict\) map\[string\]any](<#AutoRemove>)
+- [func ContainProviderWrites\(cfg ProjectConfig\) bool](<#ContainProviderWrites>)
 - [func FlagsFrom\(cmd \*cobra.Command\) \(configFile, userConfigFile, projectConfigFile string\)](<#FlagsFrom>)
 - [func FormatMissing\(missing \[\]MissingField\) string](<#FormatMissing>)
 - [func LoadFileValues\(path string\) \(map\[string\]any, error\)](<#LoadFileValues>)
@@ -74,6 +75,12 @@ const (
 )
 ```
 
+<a name="ContainProviderWritesKey"></a>ContainProviderWritesKey is the project config key that confines provider writes to the project directory, enforced by the kernel \(internal/contain\).
+
+```go
+const ContainProviderWritesKey = "contain_provider_writes"
+```
+
 <a name="AddFlags"></a>
 ## func [AddFlags](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/vconfig/flags.go#L29>)
 
@@ -97,6 +104,19 @@ func AutoRemove(incoming map[string]any, conflicts []Conflict) map[string]any
 ```
 
 AutoRemove returns a copy of incoming with every conflicting key deleted, leaving only the keys that didn't collide with a stored value. incoming itself is left untouched.
+
+<a name="ContainProviderWrites"></a>
+## func [ContainProviderWrites](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/vconfig/containment.go#L21>)
+
+```go
+func ContainProviderWrites(cfg ProjectConfig) bool
+```
+
+ContainProviderWrites reports whether an operator has asked for provider write containment on this project.
+
+Absent means OFF. Enabling containment changes what a provider is permitted to do — one that legitimately writes to a shared cache outside the checkout starts failing — so it is an operator's decision rather than something an upgrade turns on.
+
+A malformed value is also OFF. A typo must not silently ENABLE a boundary that makes provider writes fail, because that surfaces as unexplained provider errors far from their actual cause; behaving like the absent key it resembles is the honest failure direction.
 
 <a name="FlagsFrom"></a>
 ## func [FlagsFrom](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/vconfig/flags.go#L37>)
