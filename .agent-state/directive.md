@@ -68,8 +68,8 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
 
 ## Remaining
 
-- [ ] [WAIT] Land the open PRs: 278, 279, 281, 282.
-      (225, 274, 272, 275 and 277 landed this pass.)
+- [ ] [WAIT] Land the open PRs: 279, 281, 282.
+      (225, 274, 272, 275, 277 and 278 landed this pass.)
       All four are QUEUED or auto-merge ARMED with zero unresolved threads and
       zero failing checks; the only remaining work is CI on a serialized runner
       pool. Pushing more at that pool measurably slows it (verified earlier this
@@ -94,7 +94,11 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
         * #277 live contained turn -- MERGED. Its TestMain also answers the
           Linux containment-helper re-exec, without which the contained turn
           could never start and would have read as a PRODUCT failure.
-        * #278 claude API-failure categorization.
+        * #278 claude API-failure categorization -- MERGED. Its first version
+          fixed the diagnosis and BROKE the retry policy: mapping an unstatused
+          api_error to ErrClaudeServiceUnavailable made a terminal auth failure
+          retryable, when the generic sentinel was already correctly terminal.
+          Naming a category is choosing a retry policy.
 
 - [ ] REOPENED by evidence: do NOT flip contain_provider_writes on yet.
       ONE gate remains, stated in full at the containment item below. #277 has
