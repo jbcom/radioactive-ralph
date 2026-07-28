@@ -51,6 +51,7 @@ Orchestrator reads a plan \(internal/plan\), dispatches workers \(internal/provi
   - [func \(o \*Orchestrator\) PlanProgress\(ctx context.Context, planID string\) \(Progress, error\)](<#Orchestrator.PlanProgress>)
   - [func \(o \*Orchestrator\) SetBaseContext\(ctx context.Context\)](<#Orchestrator.SetBaseContext>)
   - [func \(o \*Orchestrator\) VerifyAndComplete\(ctx context.Context, planID, taskID string, ev a2a.Evidence\) \(done bool, err error\)](<#Orchestrator.VerifyAndComplete>)
+  - [func \(o \*Orchestrator\) VerifyAndCompleteAs\(ctx context.Context, planID, taskID, reportingSession string, ev a2a.Evidence\) \(done bool, err error\)](<#Orchestrator.VerifyAndCompleteAs>)
   - [func \(o \*Orchestrator\) Wait\(\)](<#Orchestrator.Wait>)
   - [func \(o \*Orchestrator\) WriteWorkerDecision\(workerID, decision string\) error](<#Orchestrator.WriteWorkerDecision>)
 - [type Progress](<#Progress>)
@@ -412,6 +413,19 @@ func (o *Orchestrator) VerifyAndComplete(ctx context.Context, planID, taskID str
 ```
 
 VerifyAndComplete is THE BACKBONE: it never trusts a worker's termination or self\-report. It checks ev against task's acceptance criteria — re\-running mechanical checks in pure Go — and only marks the task done in the store if verification passes. Otherwise it marks the task failed \(retryable, per the task's normal retry budget\) and emits a worker.verification\_failed event carrying the rejection reason.
+
+<a name="Orchestrator.VerifyAndCompleteAs"></a>
+### func \(\*Orchestrator\) [VerifyAndCompleteAs](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/orch/verify.go#L185-L189>)
+
+```go
+func (o *Orchestrator) VerifyAndCompleteAs(ctx context.Context, planID, taskID, reportingSession string, ev a2a.Evidence) (done bool, err error)
+```
+
+VerifyAndCompleteAs verifies evidence submitted BY reportingSession and completes the task only if that session still owns it.
+
+The session has to be passed in rather than read from the task. store.MarkDone and MarkFailed are owner\-guarded — they require claimed\_by\_session to match the session they are GIVEN — and reading the current owner here satisfied that guard with a session that did not produce the evidence. So when a worker stalled, was reaped, and its replacement claimed the task, the stale worker's late result was written under the REPLACEMENT's session: the guard passed, the replacement's attempt was overwritten, and ErrTaskNotOwnedRunning never fired, so nothing reported the loss \(\#248\).
+
+An empty reportingSession keeps the old behavior for orchestrator\-initiated verification, which has no separate reporter.
 
 <a name="Orchestrator.Wait"></a>
 ### func \(\*Orchestrator\) [Wait](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/orch/orchestrator.go#L837>)
