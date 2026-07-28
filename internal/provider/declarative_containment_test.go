@@ -95,7 +95,7 @@ func TestStreamJSONFailsClosedOnAnUnusableContainmentRoot(t *testing.T) {
 	}
 
 	_, _, err := runStreamJSONCommand(
-		context.Background(), 0, t.TempDir(), file, "/bin/sh", []string{"-c", "true"})
+		context.Background(), 0, t.TempDir(), file, nil, "/bin/sh", []string{"-c", "true"})
 	if err == nil {
 		t.Fatal("runStreamJSONCommand accepted an unusable containment root — " +
 			"it must fail closed rather than run the turn unconfined")

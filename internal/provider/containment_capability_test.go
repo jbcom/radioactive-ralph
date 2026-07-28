@@ -2,33 +2,41 @@ package provider
 
 import "testing"
 
-// TestCodexDeclaresItCannotBeContained pins the capability that keeps a
-// containment-incompatible provider from failing opaquely.
+// TestCodexIsContainableWithItsDeclaredPath replaces an earlier test asserting
+// codex CANNOT be contained. That was true, and is no longer.
 //
-// Verified against the installed codex 0.5x with real turns: it works
-// uncontained ("CONFIRMED" in 12.6s) and dies in 0.5s under containment with
+// It failed at startup under the write-deny profile, and I concluded from ONE
+// bisection step (TMPDIR re-allowed, still failing) that no policy widening
+// existed. Bisecting properly found it needs exactly $HOME/.codex, which it now
+// declares -- so it is contained rather than permanently spared.
 //
-//	Error: failed to initialize in-process app-server client: Operation not permitted
-//
-// It is NOT a file-path problem, which rules out widening the policy. Under
-// `(allow default)` with no write-deny at all codex succeeds; adding
-// `(deny file-write*)` breaks it EVEN WITH TMPDIR re-allowed. So there is no
-// narrow subpath to add -- the app-server needs a write the profile cannot
-// enumerate.
-//
-// Without this flag the failure surfaces as a bare nonzero exit with a retry,
-// which is the worst combination: nothing names containment as the cause and
-// the retry cannot succeed. Same class as classifying a terminal failure as
-// retryable (#278).
-func TestCodexDeclaresItCannotBeContained(t *testing.T) {
+// The capability itself is NOT removed. It remains the honest answer for a
+// provider whose requirement is unknown, and the refusal path it feeds is what
+// prevents a silent downgrade. What changed is that codex no longer needs it.
+func TestCodexIsContainableWithItsDeclaredPath(t *testing.T) {
 	cfg := defaultCodexProvider()
-	if cfg.SupportsContainment == nil {
-		t.Fatal("codex leaves SupportsContainment unset, so it reads as capable; " +
-			"a real codex turn cannot start under containment and must say so")
+	if !supportsContainment(cfg) {
+		t.Fatal("codex declares it cannot be contained, but with ~/.codex granted a " +
+			"real turn runs confined -- leaving the flag set means its turns run " +
+			"unconfined on projects that asked for a boundary")
 	}
-	if *cfg.SupportsContainment {
-		t.Fatal("codex declares SupportsContainment=true, but a real contained turn " +
-			"dies at startup with \"failed to initialize in-process app-server client\"")
+	if len(cfg.WritePaths) == 0 {
+		t.Fatal("codex declares no WritePaths; without ~/.codex it cannot start " +
+			"under containment, so marking it capable would break every contained turn")
+	}
+}
+
+// TestOpencodeIsContainableWithItsDeclaredPath is the same correction for
+// opencode, which was found only because the live test covers EVERY detected
+// provider rather than the first one.
+func TestOpencodeIsContainableWithItsDeclaredPath(t *testing.T) {
+	cfg := defaultOpencodeProvider()
+	if !supportsContainment(cfg) {
+		t.Fatal("opencode declares it cannot be contained, but with " +
+			"~/.local/share/opencode granted a real turn runs confined")
+	}
+	if len(cfg.WritePaths) == 0 {
+		t.Fatal("opencode declares no WritePaths")
 	}
 }
 
@@ -59,20 +67,5 @@ func TestContainmentCapabilityDefaultsToCapable(t *testing.T) {
 	if !supportsContainment(BindingConfig{}) {
 		t.Fatal("a BindingConfig that never mentions containment reads as INCAPABLE; " +
 			"that turns an omission into a silently skipped security boundary")
-	}
-}
-
-// TestOpencodeDeclaresItCannotBeContained covers the provider I did NOT find
-// first, and only found by making the live contained test cover every detected
-// provider instead of suggested[0].
-//
-// That omission is the whole reason this capability exists: I filed the
-// containment blocker from the codex reproduction alone, which was the same
-// narrow-evidence mistake one level down.
-func TestOpencodeDeclaresItCannotBeContained(t *testing.T) {
-	cfg := defaultOpencodeProvider()
-	if cfg.SupportsContainment == nil || *cfg.SupportsContainment {
-		t.Fatal("opencode does not declare SupportsContainment=false, but a real " +
-			"contained opencode turn fails (status=pending, retry_count=1)")
 	}
 }

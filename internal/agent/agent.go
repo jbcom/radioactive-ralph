@@ -95,6 +95,14 @@ type Options struct {
 	// exists to replace.
 	ContainmentRoot string
 
+	// ContainmentWritePaths are directories OUTSIDE ContainmentRoot that the
+	// bound CLI must be able to write for a contained turn to start -- codex's
+	// app-server directory, for instance. Declared by the provider's capability
+	// record and measured per CLI, never guessed.
+	//
+	// Ignored when ContainmentRoot is empty: there is no boundary to widen.
+	ContainmentWritePaths []string
+
 	// DisableEcho turns OFF the pty's terminal echo before the child starts.
 	DisableEcho bool
 
@@ -180,7 +188,7 @@ func Start(ctx context.Context, opts Options) (*Agent, error) {
 
 	command, args := opts.Command, opts.Args
 	if opts.ContainmentRoot != "" {
-		policy, err := contain.NewPolicy(opts.ContainmentRoot)
+		policy, err := contain.NewPolicy(opts.ContainmentRoot, opts.ContainmentWritePaths...)
 		if err != nil {
 			return nil, err
 		}

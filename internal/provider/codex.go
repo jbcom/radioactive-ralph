@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/jbcom/radioactive-ralph/internal/agent"
@@ -71,7 +72,43 @@ func (CodexRunner) Run(ctx context.Context, binding Binding, req Request) (Resul
 		}
 		defer func() { _ = os.RemoveAll(tmpDir) }()
 	}
+	// last-message.txt is written by CODEX, not by Ralph, so under containment it
+	// must live where the provider is permitted to write. A temp dir is outside
+	// the project root and the policy denies it -- TMPDIR was deliberately left
+	// out of the allow-set because on macOS it resolves under /private/tmp and
+	// re-opened the boundary wholesale.
+	//
+	// This is the SECOND of two distinct containment failures for codex, and I
+	// originally mistook it for the first: the app-server needs ~/.codex at
+	// STARTUP (now declared as a WritePath), and separately the result file
+	// needs somewhere writable at the END. Fixing only the path did nothing
+	// because the turn died before reaching it; fixing only the startup left
+	// this one, which fails with "authoritative result was not an
+	// identity-stable regular file".
+	//
+	// Ralph creates and removes it, so it never outlives the turn. The name is
+	// fixed rather than random so a crashed turn leaves at most one stale file
+	// that the next turn overwrites.
 	outPath := filepath.Join(tmpDir, "last-message.txt")
+	if root := strings.TrimSpace(req.ContainmentRoot); root != "" {
+		// A PER-TURN file, created inside the permitted root.
+		//
+		// A fixed name would be wrong twice over: concurrent codex workers on the
+		// same project would overwrite and then DELETE each other's result before
+		// it was read, and a checkout that already contains last-message.txt
+		// would have that file clobbered and removed by cleanup. Neither failure
+		// announces itself -- the turn just reports a missing or wrong result.
+		//
+		// CreateTemp both randomizes and creates, so two turns cannot select the
+		// same name in the gap between choosing and writing.
+		f, err := os.CreateTemp(root, ".ralph-codex-result-*.txt")
+		if err != nil {
+			return Result{}, fmt.Errorf("provider: create codex result file: %w", err)
+		}
+		outPath = f.Name()
+		_ = f.Close()
+		defer func() { _ = os.Remove(outPath) }()
+	}
 
 	// One resolution, reported on the Result and enforcing StrictBinding.
 	invocation, err := ResolveInvocation(binding, req)
@@ -85,6 +122,7 @@ func (CodexRunner) Run(ctx context.Context, binding Binding, req Request) (Resul
 		Args:                    args,
 		Dir:                     req.WorkingDir,
 		ContainmentRoot:         req.ContainmentRoot,
+		ContainmentWritePaths:   BindingWritePaths(binding),
 		ResultPath:              outPath,
 		MaxOutputRetentionBytes: agent.RetentionBudgetForLineBytes(codexRetainedJSONLLineBytes),
 		OversizeOutputPolicy:    agent.DiscardOversizeOutput,

@@ -1,5 +1,11 @@
 package provider
 
+import (
+	"os"
+	"path/filepath"
+	"strings"
+)
+
 // This file holds the provider capability record — spec
 // docs/superpowers/specs/2026-07-16-supervisor-architecture-design.md §9:
 // "Each provider profile is a CAPABILITY RECORD, not a persona: the binary,
@@ -86,6 +92,51 @@ type BindingConfig struct {
 	// boundary. Evidence per provider is documented at each default*Provider
 	// constructor below.
 	SupportsContainment *bool `toml:"supports_containment"`
+
+	// WritePaths are directories OUTSIDE the project that this CLI must be able
+	// to write for a contained turn to start. `~` expands to the operator's home
+	// directory, so a shipped default stays portable.
+	//
+	// MEASURED per provider, never guessed, by bisecting the sandbox profile one
+	// grant at a time and then running a real turn:
+	//   codex    -> ~/.codex                    (app-server init)
+	//   opencode -> ~/.local/share/opencode     (its own log file)
+	//
+	// Keep each entry as NARROW as the CLI actually requires. A blanket ~ grant
+	// satisfies both and makes containment vacuous -- the failure that got
+	// TMPDIR removed from the darwin allow-set, since on macOS it resolves under
+	// /private/tmp and re-opened the boundary wholesale. contain.NewPolicy
+	// refuses "/" and anything containing the home directory for that reason.
+	WritePaths []string `toml:"write_paths"`
+}
+
+// BindingWritePaths returns the absolute directories outside the project that
+// this binding's CLI must be able to write, with `~` expanded.
+//
+// An entry that cannot be expanded is DROPPED rather than passed through: a
+// literal "~/..." is not a real directory, so granting it would silently apply
+// to nothing while reading as an allowance.
+func BindingWritePaths(binding Binding) []string {
+	raw := binding.Config.WritePaths
+	if len(raw) == 0 {
+		return nil
+	}
+	home, err := os.UserHomeDir()
+	paths := make([]string, 0, len(raw))
+	for _, entry := range raw {
+		entry = strings.TrimSpace(entry)
+		if entry == "" {
+			continue
+		}
+		if strings.HasPrefix(entry, "~") {
+			if err != nil || home == "" {
+				continue
+			}
+			entry = filepath.Join(home, strings.TrimPrefix(entry, "~"))
+		}
+		paths = append(paths, entry)
+	}
+	return paths
 }
 
 // supportsContainment reports whether a binding may be confined, treating an
@@ -99,10 +150,6 @@ func supportsContainment(cfg BindingConfig) bool {
 func BindingSupportsContainment(binding Binding) bool {
 	return supportsContainment(binding.Config)
 }
-
-// containmentUnsupported is a fixed value for the flag, so the default
-// constructors read as declarations rather than as pointer plumbing.
-func containmentUnsupported() *bool { no := false; return &no }
 
 // File is the provider package's own minimal config surface: enough for
 // ResolveBinding to read DefaultProvider and look up a named provider's
@@ -179,7 +226,7 @@ func defaultClaudeProvider() BindingConfig {
 func defaultCodexProvider() BindingConfig {
 	return BindingConfig{
 		Type: "codex", Binary: "codex", NativeFanout: false,
-		SupportsContainment: containmentUnsupported(),
+		WritePaths: []string{"~/.codex"},
 	}
 }
 
@@ -202,7 +249,7 @@ func defaultCodexProvider() BindingConfig {
 func defaultOpencodeProvider() BindingConfig {
 	return BindingConfig{
 		Type: "opencode", Binary: "opencode", NativeFanout: true,
-		SupportsContainment: containmentUnsupported(),
+		WritePaths: []string{"~/.local/share/opencode"},
 	}
 }
 

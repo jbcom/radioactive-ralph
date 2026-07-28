@@ -73,11 +73,12 @@ func (OpencodeRunner) Run(ctx context.Context, binding Binding, req Request) (Re
 	args := opencodeArgs(binding, req, invocation)
 
 	opts := agent.Options{
-		Command:         binding.Config.Binary,
-		Args:            args,
-		Dir:             req.WorkingDir,
-		ContainmentRoot: req.ContainmentRoot,
-		ResultPath:      resultPath,
+		Command:               binding.Config.Binary,
+		Args:                  args,
+		Dir:                   req.WorkingDir,
+		ContainmentRoot:       req.ContainmentRoot,
+		ContainmentWritePaths: BindingWritePaths(binding),
+		ResultPath:            resultPath,
 		// Count raw PTY reads so discarded/partial/non-JSON progress cannot
 		// refresh the watchdog indefinitely without consuming a hard budget.
 		MaxObservedOutputBytes: maxStructuredEvidenceBytes,
