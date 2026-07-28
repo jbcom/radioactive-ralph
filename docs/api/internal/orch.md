@@ -18,6 +18,7 @@ Orchestrator reads a plan \(internal/plan\), dispatches workers \(internal/provi
 ## Index
 
 - [Constants](<#constants>)
+- [Variables](<#variables>)
 - [func EnforcementPrompt\(ctx context.Context, a \*agent.Agent, interval time.Duration\)](<#EnforcementPrompt>)
 - [func HandleWatchdogSignal\(sig agent.Signal\) \(shouldKill bool\)](<#HandleWatchdogSignal>)
 - [type Acceptance](<#Acceptance>)
@@ -63,6 +64,26 @@ Orchestrator reads a plan \(internal/plan\), dispatches workers \(internal/provi
 
 ```go
 const EnforcementPromptText = "Stay on task. If you can fan out to subagents or workflows, do. Otherwise, self-check your progress against the assigned step now.\n"
+```
+
+## Variables
+
+<a name="ErrTaskInputPinMismatch"></a>ErrTaskInputPinMismatch reports a declared input whose bytes do not match the sha256 the plan pinned it to. Distinct from a containment refusal: the path is in scope, its CONTENT is not what the task was written against.
+
+```go
+var ErrTaskInputPinMismatch = errors.New("orch: declared input does not match its pinned hash")
+```
+
+<a name="ErrTaskPathEscapesProject"></a>ErrTaskPathEscapesProject reports a declared input or output that does not resolve to a location inside the project root. Callers distinguish it from an I/O fault: containment is a refusal, not a transient failure.
+
+```go
+var ErrTaskPathEscapesProject = errors.New("orch: declared path escapes the project root")
+```
+
+<a name="ErrTaskPathUnresolvable"></a>ErrTaskPathUnresolvable reports a path that could not be resolved for a reason that is NOT an escape — a symlink loop, a permission error, transient I/O. Kept separate because the caller's response differs: a containment refusal blocks the task permanently, while a fault may clear on its own and must not strand the task.
+
+```go
+var ErrTaskPathUnresolvable = errors.New("orch: declared path could not be resolved")
 ```
 
 <a name="EnforcementPrompt"></a>
