@@ -69,6 +69,25 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
 ## Remaining
 
 - [ ] Land the 3 open PRs: 225, 251, 271.
+
+- [ ] [WAIT-AGENT] PTY process-group reaping: cleanup can leave a live child.
+      Surfaced in a merge_group run of #252 (a PR touching only two workflow
+      YAML files, so the bug is on MAIN):
+        TestAgentObservedOutputCeilingKillsReapsDiscardedEndlessLine
+        agent: PTY process group 2709 still has live members after cleanup:
+        [2710], want static ErrObservedOutputTooLarge
+      After the agent kills the group for exceeding the output ceiling, a child
+      survives cleanup, so the error wraps and no longer matches the sentinel.
+      POTENTIALLY A REAL PRODUCT BUG, not just a test-timing issue: if the kill
+      path does not actually wait for the group to die, a real provider turn can
+      LEAK PROCESSES. That is the never-block invariant's blind spot -- cleanup
+      must not hang the supervisor, but it also must not silently give up.
+      NOT reproducible locally (4+ runs pass on an idle machine); same CI-only,
+      load-sensitive profile as the watchdog flake fixed in #267.
+      Dispatched to stuck-loop-debugger WITH the ruled-out list, and the
+      explicit question of test-bug vs product-bug -- that determines the fix
+      and must not be guessed. Escalated immediately rather than after four
+      wrong theories, which is what the watchdog flake cost.
       WAIT-labelled 2026-07-28 after verifying NOTHING is actionable: zero DIRTY,
       zero unresolved threads, and #252's only "failure" is STALE -- Package GUI
       reads FAILURE on its PR branch but completed/SUCCESS on its queue branch
