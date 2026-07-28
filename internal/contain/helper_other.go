@@ -6,6 +6,6 @@ package contain
 // sandbox-exec, which needs no cooperation from the wrapped binary, and other
 // platforms have no primitive at all. So a helper argv can never legitimately
 // appear here.
-func isHelperInvocation([]string) (string, []string, bool) { return "", nil, false }
+func isHelperInvocation([]string) (string, []string, []string, bool) { return "", nil, nil, false }
 
-func runHelper(string, []string) error { return ErrContainmentUnavailable }
+func runHelper(string, []string, []string) error { return ErrContainmentUnavailable }

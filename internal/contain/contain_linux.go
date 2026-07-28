@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math"
 	"os"
+	"strconv"
 	"syscall"
 	"unsafe"
 
@@ -126,8 +127,10 @@ func wrapCommand(p Policy, name string, args []string) (string, []string, error)
 	if err != nil {
 		return "", nil, fmt.Errorf("contain: locate self for containment helper: %w", err)
 	}
-	wrapped := make([]string, 0, 3+len(args))
-	wrapped = append(wrapped, helperFlag, p.Root, name)
+	wrapped := make([]string, 0, 4+len(p.ExtraWritable)+len(args))
+	wrapped = append(wrapped, helperFlag, p.Root, strconv.Itoa(len(p.ExtraWritable)))
+	wrapped = append(wrapped, p.ExtraWritable...)
+	wrapped = append(wrapped, name)
 	return self, append(wrapped, args...), nil
 }
 
@@ -151,19 +154,47 @@ const helperFlag = "--radioactive-ralph-contain-exec"
 // is to restrict and exec, and any work done before that either escapes the
 // restriction or is thrown away by the exec.
 func IsHelperInvocation(argv []string) (root string, command []string, ok bool) {
-	if len(argv) < 4 || argv[1] != helperFlag {
-		return "", nil, false
+	r, _, cmd, k := parseHelperInvocation(argv)
+	return r, cmd, k
+}
+
+// parseHelperInvocation splits a helper argv into root, extra writable paths,
+// and the command to exec.
+//
+// The extras are length-PREFIXED rather than delimited, because a path is
+// arbitrary text: any sentinel token could legitimately appear as a directory
+// name and would silently truncate the grant list, turning a contained turn
+// into one with the wrong boundary. A count cannot collide with its own data.
+func parseHelperInvocation(argv []string) (root string, extra []string, command []string, ok bool) {
+	if len(argv) < 5 || argv[1] != helperFlag {
+		return "", nil, nil, false
 	}
-	return argv[2], argv[3:], true
+	root = argv[2]
+	n, err := strconv.Atoi(argv[3])
+	if err != nil || n < 0 || len(argv) < 4+n+1 {
+		return "", nil, nil, false
+	}
+	extra = argv[4 : 4+n]
+	command = argv[4+n:]
+	if len(command) == 0 {
+		return "", nil, nil, false
+	}
+	return root, extra, command, true
 }
 
 // RunHelper applies the containment policy to the current process and execs
 // command. It never returns on success.
 func RunHelper(root string, command []string) error {
+	return RunHelperWithExtras(root, nil, command)
+}
+
+// RunHelperWithExtras is RunHelper with additional writable subtrees, declared
+// by the provider's binding because its CLI cannot start without them.
+func RunHelperWithExtras(root string, extra []string, command []string) error {
 	if len(command) == 0 {
 		return fmt.Errorf("contain: helper invoked with no command")
 	}
-	if err := restrictSelfToRoot(root); err != nil {
+	if err := restrictSelfToRoot(root, extra...); err != nil {
 		return err
 	}
 	// syscall.Exec replaces this image; the Landlock domain is inherited.
@@ -178,7 +209,7 @@ func RunHelper(root string, command []string) error {
 }
 
 // restrictSelfToRoot builds and enforces the ruleset.
-func restrictSelfToRoot(root string) error {
+func restrictSelfToRoot(root string, extra ...string) error {
 	abi, _, errno := syscall.Syscall(
 		sysLandlockCreateRuleset, 0, 0, landlockCreateRulesetVersion)
 	if errno != 0 || abi < 1 {
@@ -200,9 +231,19 @@ func restrictSelfToRoot(root string) error {
 	}
 	defer func() { _ = syscall.Close(int(fd)) }()
 
-	// The project root is the only subtree granted full write rights.
+	// The project root is granted full write rights.
 	if err := allowWritesBeneath(fd, root, handled); err != nil {
 		return err
+	}
+
+	// Plus any subtree the bound CLI declared it must write to start -- codex's
+	// app-server directory, for instance. Measured per provider and validated by
+	// NewPolicy, which refuses "/" and anything containing the home directory so
+	// a grant cannot swallow the boundary it is widening.
+	for _, path := range extra {
+		if err := allowWritesBeneath(fd, path, handled); err != nil {
+			return err
+		}
 	}
 
 	// /dev gets WRITE_FILE ONLY — enough for stdio and the pty, which a provider

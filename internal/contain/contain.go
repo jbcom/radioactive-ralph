@@ -179,9 +179,9 @@ func Available() bool { return available() }
 //
 // On success it never returns — the process is replaced by the provider.
 func MaybeRunHelper(argv []string) (handled bool, err error) {
-	root, command, ok := isHelperInvocation(argv)
+	root, extra, command, ok := isHelperInvocation(argv)
 	if !ok {
 		return false, nil
 	}
-	return true, runHelper(root, command)
+	return true, runHelper(root, extra, command)
 }
