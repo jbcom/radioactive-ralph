@@ -68,11 +68,15 @@ jobs:
       - name: go test (Unix)
         if: runner.os != 'Windows'
         # -timeout explicitly, NOT the 10-minute default. Under -race the
-        # provider package's endless-output tests each budget 150s (they push
+        # provider package's endless-output tests each budget 300s (they push
         # 16 MiB through a pty and the detector costs ~19x), and the package
-        # clock covers the whole binary. Relying on the default made a
-        # per-test budget unspendable: the binary would panic before a test
-        # could use the time it was given.
+        # clock covers the whole BINARY, not each test. Relying on the default
+        # made a per-test budget unspendable: 3 x 300s + ~190s for the rest of
+        # the package is ~1090s, so the binary would have panicked at 600s
+        # before a test could use the time it was given.
+        # Keep this in step with endlessOutputBudget in
+        # internal/provider/race_budget_race_test.go -- the two numbers are one
+        # decision split across two files, and only their SUM is meaningful.
         run: go test -race -timeout 20m -coverprofile=coverage.out -covermode=atomic ./...
       - name: go test (Windows)
         if: runner.os == 'Windows'
