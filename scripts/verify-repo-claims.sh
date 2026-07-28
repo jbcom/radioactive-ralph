@@ -209,8 +209,18 @@ stale_refs=""
 # check below now does.
 open_line=$(grep -E '^- \[ \].*Land the .*open PRs?\b' .agent-state/directive.md 2>/dev/null | head -1)
 if [ -z "$open_line" ]; then
-  say "  open-PR line NOT FOUND" "guard 9 cannot check it — fix the label or this pattern"
-  fail=1
+  # An ABSENT line is legitimate when there are genuinely no open PRs to list --
+  # the queue draining is a real state, not a broken pattern. Distinguished by
+  # asking GitHub rather than guessing, because "pattern broke" and "nothing to
+  # list" are otherwise indistinguishable, which is the very ambiguity this
+  # guard exists to eliminate.
+  if [ "${open:-0}" = "0" ]; then
+    say "directive open-PR list" "absent, and no open PRs exist — consistent"
+  else
+    say "  open-PR line NOT FOUND" \
+      "but $open PR(s) are open — guard 9 cannot check it; fix the label or this pattern"
+    fail=1
+  fi
 fi
 for n in $(printf '%s' "$open_line" | grep -oE '[0-9]{3}' | sort -u); do
   # An OPEN item naming a MERGED PR reads as work still to do that is already

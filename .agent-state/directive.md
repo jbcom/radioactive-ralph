@@ -68,7 +68,9 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
 
 ## Remaining
 
-- [ ] [WAIT] Land the open PRs: #302 (the silent-no-op rule).
+- [x] QUEUE DRAINED. Every PR from this arc landed: #290 #292 #293 #294 #295
+      #297 #298 #299 #300 #302. Zero open non-release PRs, zero unresolved
+      threads, zero failing checks.
       (#299 landed: config write_paths is verified from an operator's toml.)
       The containment stack all LANDED: #292 #294 #295 #297 #298.
       #290 and #293 LANDED. Hash-prefixed deliberately: guard 9 extracts
@@ -360,9 +362,19 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
       blocked_input and its default fails the WHOLE projection — one blocked
       task returned "unknown Ralph task status" for the entire snapshot, so the
       status meant to make a stall visible hid everything instead.
-      - [ ] [WAIT] Remaining half: ready partitions + per-task provenance over
-            the observe surface. RE-VERIFIED 2026-07-28 after #236 merged
-            (9c04550) — the gate is now HALF open:
+      - [ ] UNBLOCKED 2026-07-28: ready partitions + per-task provenance over
+            the observe surface. BOTH gates are now on main -- verified by
+            grepping, as this item insists:
+              * `func (s *Store) ReadyPartitions` IS on main (#225, refined by
+                #282 to split on the declared binding).
+              * `recordExecutionProvenance` IS on main (#262), 6 call sites.
+            NEITHER is projected over the observe surface yet: grepping
+            internal/observe/snapshot.go for ReadyPartition,
+            AssignedIndependenceDomain, and assigned_alias returns ZERO. So
+            this is real work, not a wait -- the gate opened and nobody walked
+            through it.
+            Prior gating notes follow. RE-VERIFIED 2026-07-28 after #236 merged
+            (9c04550) — the gate was then HALF open:
               * per-task provenance: UNBLOCKED. internal/store/calibrations.go
                 is on main, so the types exist to project.
               * ready partitions: still gated. `func (s *Store) ReadyPartitions`
