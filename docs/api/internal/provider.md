@@ -19,6 +19,7 @@ Package provider adapts configured CLI backends into radioactive\_ralph's provid
 - [Variables](<#variables>)
 - [func BindingCapabilities\(cfg BindingConfig\) map\[string\]bool](<#BindingCapabilities>)
 - [func BindingSupportsContainment\(binding Binding\) bool](<#BindingSupportsContainment>)
+- [func BindingWritePaths\(binding Binding\) \[\]string](<#BindingWritePaths>)
 - [func CheckAllowedProviders\(binding Binding, providers \[\]string\) error](<#CheckAllowedProviders>)
 - [func CheckRequirements\(binding Binding, requires \[\]string\) error](<#CheckRequirements>)
 - [func DefaultWatchdogConfig\(\) agent.WatchdogConfig](<#DefaultWatchdogConfig>)
@@ -302,13 +303,24 @@ BindingCapabilities reports the capability keys a binding satisfies.
 Derived from the binding's own config rather than a per\-provider table: the config already declares these, and a second table would drift the first time a provider gained or lost one. Absent means NOT satisfied — callers must not read a missing key as "unknown, assume yes".
 
 <a name="BindingSupportsContainment"></a>
-## func [BindingSupportsContainment](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/binding.go#L99>)
+## func [BindingSupportsContainment](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/binding.go#L150>)
 
 ```go
 func BindingSupportsContainment(binding Binding) bool
 ```
 
 BindingSupportsContainment is supportsContainment for callers outside this package \-\- the orchestrator asks before deciding to confine a turn.
+
+<a name="BindingWritePaths"></a>
+## func [BindingWritePaths](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/binding.go#L119>)
+
+```go
+func BindingWritePaths(binding Binding) []string
+```
+
+BindingWritePaths returns the absolute directories outside the project that this binding's CLI must be able to write, with \`\~\` expanded.
+
+An entry that cannot be expanded is DROPPED rather than passed through: a literal "\~/..." is not a real directory, so granting it would silently apply to nothing while reading as an allowance.
 
 <a name="CheckAllowedProviders"></a>
 ## func [CheckAllowedProviders](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/capabilities.go#L134>)
@@ -373,7 +385,7 @@ func StreamJSONWatchdogConfig() agent.WatchdogConfig
 StreamJSONWatchdogConfig is the watchdog config for providers driven in a structured stream\-json mode \(claude/opencode: \`\-\-output\-format stream\-json\`\). Their normal output is JSON frames whose text can innocently contain prompt\-like words \("permission", "continue?"\), which content\-blind matching would misread and KILL a valid turn. It keeps the prompt patterns but sets SkipPromptMatchOnJSONLines: patterns are matched ONLY on lines that are NOT valid JSON, so a legitimate JSON frame is never a false prompt while a GENUINE raw interactive prompt \(never valid JSON\) is still caught immediately — not merely by the slower stall timeout.
 
 <a name="ValidateBinding"></a>
-## func [ValidateBinding](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/declarative.go#L191>)
+## func [ValidateBinding](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/declarative.go#L194>)
 
 ```go
 func ValidateBinding(binding Binding) error
@@ -442,7 +454,7 @@ func ResolveBinding(cfg File, local Local, fromConfig VariantFile) (Binding, err
 ResolveBinding picks the provider for one variant.
 
 <a name="BindingConfig"></a>
-## type [BindingConfig](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/binding.go#L37-L89>)
+## type [BindingConfig](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/binding.go#L43-L111>)
 
 BindingConfig is one provider's capability record: what binary to run, how to invoke it non\-interactively, how to read back its structured result and resume a session, and whether it can fan out work itself.
 
@@ -501,6 +513,22 @@ type BindingConfig struct {
     // boundary. Evidence per provider is documented at each default*Provider
     // constructor below.
     SupportsContainment *bool `toml:"supports_containment"`
+
+    // WritePaths are directories OUTSIDE the project that this CLI must be able
+    // to write for a contained turn to start. `~` expands to the operator's home
+    // directory, so a shipped default stays portable.
+    //
+    // MEASURED per provider, never guessed, by bisecting the sandbox profile one
+    // grant at a time and then running a real turn:
+    //   codex    -> ~/.codex                    (app-server init)
+    //   opencode -> ~/.local/share/opencode     (its own log file)
+    //
+    // Keep each entry as NARROW as the CLI actually requires. A blanket ~ grant
+    // satisfies both and makes containment vacuous -- the failure that got
+    // TMPDIR removed from the darwin allow-set, since on macOS it resolves under
+    // /private/tmp and re-opened the boundary wholesale. contain.NewPolicy
+    // refuses "/" and anything containing the home directory for that reason.
+    WritePaths []string `toml:"write_paths"`
 }
 ```
 
@@ -574,7 +602,7 @@ func (ClaudeRunner) Run(ctx context.Context, binding Binding, req Request) (Resu
 Run spawns \`claude \-p \-\-input\-format stream\-json \-\-output\-format stream\-json\` under agent.Start, feeds req.UserPrompt through a finite stdin pipe \(claude in \-\-input\-format stream\-json mode reads a JSON\-line user message from stdin\), tees stdout into a bounded ResultPath evidence file, and parses the terminal result frame for Usage.
 
 <a name="CodexRunner"></a>
-## type [CodexRunner](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/codex.go#L23>)
+## type [CodexRunner](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/codex.go#L24>)
 
 CodexRunner executes a single \`codex exec\` turn.
 
@@ -585,7 +613,7 @@ type CodexRunner struct{}
 ```
 
 <a name="CodexRunner.Run"></a>
-### func \(CodexRunner\) [Run](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/codex.go#L52>)
+### func \(CodexRunner\) [Run](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/codex.go#L53>)
 
 ```go
 func (CodexRunner) Run(ctx context.Context, binding Binding, req Request) (Result, error)
@@ -717,7 +745,7 @@ const (
 ```
 
 <a name="File"></a>
-## type [File](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/binding.go#L112-L115>)
+## type [File](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/binding.go#L163-L166>)
 
 File is the provider package's own minimal config surface: enough for ResolveBinding to read DefaultProvider and look up a named provider's BindingConfig. A later phase may replace this with a direct internal/vconfig\-backed decode; the shape here matches what committed config.toml historically expressed for the equivalent keys.
 
@@ -760,7 +788,7 @@ By default it reproduces today's LOOSE resolution exactly — every existing pla
 With Request.StrictBinding it additionally REFUSES a request the binding cannot honor exactly. That matters because the loose path substitutes silently: resolveModel treats the sonnet override as a general fallback, so a codex binding configured only with SonnetModel="gpt\-5" answers a request for OPUS with "gpt\-5" and no error. A task pinned to a model then runs on a different one with nothing reporting it, which defeats the point of pinning.
 
 <a name="Local"></a>
-## type [Local](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/binding.go#L120-L123>)
+## type [Local](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/binding.go#L171-L174>)
 
 Local is the provider package's local\-override surface: just enough for ResolveBinding's local\-binary\-override lookup \(the gitignored local.toml escape hatch for pointing a provider at a non\-shipped binary\).
 
@@ -772,7 +800,7 @@ type Local struct {
 ```
 
 <a name="Local.BinaryFor"></a>
-### func \(Local\) [BinaryFor](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/binding.go#L128>)
+### func \(Local\) [BinaryFor](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/binding.go#L179>)
 
 ```go
 func (l Local) BinaryFor(providerName string) (string, bool)
@@ -781,7 +809,7 @@ func (l Local) BinaryFor(providerName string) (string, bool)
 BinaryFor resolves the local\-override binary for providerName. A per\-provider override takes precedence over the single legacy ProviderBinary field.
 
 <a name="Model"></a>
-## type [Model](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/binding.go#L20>)
+## type [Model](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/binding.go#L26>)
 
 Model is a provider\-neutral model\-tier selector.
 
@@ -947,7 +975,7 @@ type Usage struct {
 ```
 
 <a name="VariantFile"></a>
-## type [VariantFile](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/binding.go#L142-L144>)
+## type [VariantFile](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/binding.go#L193-L195>)
 
 VariantFile is the provider package's per\-binding\-request input — despite the name \(kept for config\-key compatibility with existing committed config.toml files\), it carries no persona: it is just the provider override for one binding request.
 

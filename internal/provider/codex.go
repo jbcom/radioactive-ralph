@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/jbcom/radioactive-ralph/internal/agent"
@@ -71,7 +72,31 @@ func (CodexRunner) Run(ctx context.Context, binding Binding, req Request) (Resul
 		}
 		defer func() { _ = os.RemoveAll(tmpDir) }()
 	}
-	outPath := filepath.Join(tmpDir, "last-message.txt")
+	// last-message.txt is written by CODEX, not by Ralph, so under containment it
+	// must live where the provider is permitted to write. A temp dir is outside
+	// the project root and the policy denies it -- TMPDIR was deliberately left
+	// out of the allow-set because on macOS it resolves under /private/tmp and
+	// re-opened the boundary wholesale.
+	//
+	// This is the SECOND of two distinct containment failures for codex, and I
+	// originally mistook it for the first: the app-server needs ~/.codex at
+	// STARTUP (now declared as a WritePath), and separately the result file
+	// needs somewhere writable at the END. Fixing only the path did nothing
+	// because the turn died before reaching it; fixing only the startup left
+	// this one, which fails with "authoritative result was not an
+	// identity-stable regular file".
+	//
+	// Ralph creates and removes it, so it never outlives the turn. The name is
+	// fixed rather than random so a crashed turn leaves at most one stale file
+	// that the next turn overwrites.
+	outDir := tmpDir
+	if root := strings.TrimSpace(req.ContainmentRoot); root != "" {
+		outDir = root
+	}
+	outPath := filepath.Join(outDir, "last-message.txt")
+	if outDir != tmpDir {
+		defer func() { _ = os.Remove(outPath) }()
+	}
 
 	// One resolution, reported on the Result and enforcing StrictBinding.
 	invocation, err := ResolveInvocation(binding, req)
@@ -85,6 +110,7 @@ func (CodexRunner) Run(ctx context.Context, binding Binding, req Request) (Resul
 		Args:                    args,
 		Dir:                     req.WorkingDir,
 		ContainmentRoot:         req.ContainmentRoot,
+		ContainmentWritePaths:   BindingWritePaths(binding),
 		ResultPath:              outPath,
 		MaxOutputRetentionBytes: agent.RetentionBudgetForLineBytes(codexRetainedJSONLLineBytes),
 		OversizeOutputPolicy:    agent.DiscardOversizeOutput,

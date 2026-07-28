@@ -23,7 +23,7 @@ The two layers are complementary. Validation catches the honest mistake early, w
 - [func Available\(\) bool](<#Available>)
 - [func MaybeRunHelper\(argv \[\]string\) \(handled bool, err error\)](<#MaybeRunHelper>)
 - [type Policy](<#Policy>)
-  - [func NewPolicy\(root string\) \(Policy, error\)](<#NewPolicy>)
+  - [func NewPolicy\(root string, extra ...string\) \(Policy, error\)](<#NewPolicy>)
   - [func \(p Policy\) Wrap\(name string, args \[\]string\) \(string, \[\]string, error\)](<#Policy.Wrap>)
 
 
@@ -35,6 +35,20 @@ Returned rather than silently passing the command through: a caller that believe
 
 ```go
 var ErrContainmentUnavailable = errors.New("contain: no write containment primitive on this platform")
+```
+
+<a name="ErrExtraPathNotAbsolute"></a>ErrExtraPathNotAbsolute rejects a relative allowance: it would resolve against whatever cwd the provider happens to have, so the granted boundary would depend on where the turn runs.
+
+```go
+var ErrExtraPathNotAbsolute = errors.New("contain: extra writable path is not absolute")
+```
+
+<a name="ErrExtraPathTooBroad"></a>ErrExtraPathTooBroad rejects an allowance that swallows the boundary.
+
+Granting "/" or the whole home directory satisfies every provider and destroys the point of containment. The allowance exists for a CLI's own state directory; anything wide enough to contain the home directory is an opt\-out wearing the shape of a grant.
+
+```go
+var ErrExtraPathTooBroad = errors.New("contain: extra writable path is too broad")
 ```
 
 <a name="ErrRootNotAbsolute"></a>ErrRootNotAbsolute reports a containment root that is not an absolute path.
@@ -54,7 +68,7 @@ var ErrRootNotDirectory = errors.New("contain: containment root is not a directo
 ```
 
 <a name="Available"></a>
-## func [Available](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/contain/contain.go#L93>)
+## func [Available](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/contain/contain.go#L171>)
 
 ```go
 func Available() bool
@@ -65,7 +79,7 @@ Available reports whether this platform can enforce a write boundary.
 Callers check it to decide policy — refuse to dispatch, or proceed with the weaker validation\-only guarantee — rather than discovering at Wrap time.
 
 <a name="MaybeRunHelper"></a>
-## func [MaybeRunHelper](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/contain/contain.go#L103>)
+## func [MaybeRunHelper](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/contain/contain.go#L181>)
 
 ```go
 func MaybeRunHelper(argv []string) (handled bool, err error)
@@ -78,7 +92,7 @@ main\(\) must call this FIRST, before flags, config, or logging: the helper's en
 On success it never returns — the process is replaced by the provider.
 
 <a name="Policy"></a>
-## type [Policy](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/contain/contain.go#L50-L56>)
+## type [Policy](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/contain/contain.go#L51-L72>)
 
 Policy is a resolved write boundary: the provider may write beneath Root and nowhere else.
 
@@ -89,20 +103,35 @@ type Policy struct {
     // rather than its target, so a provider writing through the resolved path
     // would land outside a boundary that appears to contain it.
     Root string
+
+    // ExtraWritable are additional absolute, symlink-resolved subpaths the
+    // provider may write under, declared by its binding because the CLI cannot
+    // start without them.
+    //
+    // Measured, never guessed: codex fails to initialize its app-server without
+    // $HOME/.codex, and opencode cannot open its own log without
+    // $HOME/.local/share/opencode. Each entry belongs to ONE provider's state
+    // directory.
+    //
+    // Kept narrow on purpose. A blanket $HOME grant also satisfies both and
+    // would make containment vacuous -- the same failure that got TMPDIR
+    // removed from the darwin allow-set, since on macOS it resolves under
+    // /private/tmp and re-opened the boundary wholesale.
+    ExtraWritable []string
 }
 ```
 
 <a name="NewPolicy"></a>
-### func [NewPolicy](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/contain/contain.go#L59>)
+### func [NewPolicy](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/contain/contain.go#L88>)
 
 ```go
-func NewPolicy(root string) (Policy, error)
+func NewPolicy(root string, extra ...string) (Policy, error)
 ```
 
-NewPolicy resolves root into a containment policy.
+NewPolicy resolves root and any declared extra writable paths into a policy.
 
 <a name="Policy.Wrap"></a>
-### func \(Policy\) [Wrap](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/contain/contain.go#L82>)
+### func \(Policy\) [Wrap](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/contain/contain.go#L160>)
 
 ```go
 func (p Policy) Wrap(name string, args []string) (string, []string, error)
