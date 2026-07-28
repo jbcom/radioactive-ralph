@@ -135,7 +135,7 @@ func UserScopeProjectID(ctx context.Context, st *store.Store) (string, error)
 UserScopeProjectID returns the reserved store project id that backs USER\-level \(as opposed to per\-project\) DB\-resident config, creating the backing projects row on first use. It is idempotent: subsequent calls resolve the same row via its fingerprint rather than creating duplicates.
 
 <a name="ConfigSource"></a>
-## type [ConfigSource](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/vconfig/source.go#L20-L30>)
+## type [ConfigSource](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/vconfig/source.go#L21-L31>)
 
 ConfigSource is where vconfig reads and writes project config.
 
@@ -313,7 +313,7 @@ func ResolveProjectsFrom(ctx context.Context, src ConfigSource, userCfg UserConf
 ResolveProjectsFrom is ResolveProjects against any ConfigSource.
 
 <a name="StoreConfigSource"></a>
-## type [StoreConfigSource](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/vconfig/source.go#L34-L36>)
+## type [StoreConfigSource](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/vconfig/source.go#L35-L37>)
 
 StoreConfigSource adapts a \*store.Store to ConfigSource. Used by the supervisor, which legitimately owns the database.
 
@@ -324,7 +324,7 @@ type StoreConfigSource struct {
 ```
 
 <a name="NewStoreConfigSource"></a>
-### func [NewStoreConfigSource](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/vconfig/source.go#L40>)
+### func [NewStoreConfigSource](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/vconfig/source.go#L41>)
 
 ```go
 func NewStoreConfigSource(st *store.Store) *StoreConfigSource
@@ -333,7 +333,7 @@ func NewStoreConfigSource(st *store.Store) *StoreConfigSource
 NewStoreConfigSource returns a ConfigSource backed by st, or nil when st is nil so callers can keep the "no store, file layers only" behavior.
 
 <a name="StoreConfigSource.ApplyProjectConfigValues"></a>
-### func \(\*StoreConfigSource\) [ApplyProjectConfigValues](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/vconfig/source.go#L59-L61>)
+### func \(\*StoreConfigSource\) [ApplyProjectConfigValues](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/vconfig/source.go#L60-L62>)
 
 ```go
 func (s *StoreConfigSource) ApplyProjectConfigValues(ctx context.Context, projectID string, upserts map[string]string, deleteKeys []string) error
@@ -342,7 +342,7 @@ func (s *StoreConfigSource) ApplyProjectConfigValues(ctx context.Context, projec
 ApplyProjectConfigValues upserts and deletes config keys in one operation.
 
 <a name="StoreConfigSource.ProjectConfigValues"></a>
-### func \(\*StoreConfigSource\) [ProjectConfigValues](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/vconfig/source.go#L54>)
+### func \(\*StoreConfigSource\) [ProjectConfigValues](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/vconfig/source.go#L55>)
 
 ```go
 func (s *StoreConfigSource) ProjectConfigValues(ctx context.Context, projectID string) (map[string]string, error)
@@ -351,7 +351,7 @@ func (s *StoreConfigSource) ProjectConfigValues(ctx context.Context, projectID s
 ProjectConfigValues returns one project's raw stored config values.
 
 <a name="StoreConfigSource.UserScopeProject"></a>
-### func \(\*StoreConfigSource\) [UserScopeProject](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/vconfig/source.go#L49>)
+### func \(\*StoreConfigSource\) [UserScopeProject](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/vconfig/source.go#L50>)
 
 ```go
 func (s *StoreConfigSource) UserScopeProject(ctx context.Context) (string, error)
