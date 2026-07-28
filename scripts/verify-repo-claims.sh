@@ -166,6 +166,19 @@ done
 tot_items=$(grep -cE '^- \[ \]|^      - \[ \]' .agent-state/directive.md 2>/dev/null)
 wait_items=$(grep -cE '^- \[ \] \[WAIT|^      - \[ \] \[WAIT' .agent-state/directive.md 2>/dev/null)
 say "directive open items" "$tot_items ($wait_items wait-labelled)"
+# ZERO open items is only credible while the directive is RELEASED. An ACTIVE
+# directive with nothing open means the checkbox pattern above stopped matching
+# -- the same silent no-op that disabled guard 9 twice, where a count of zero
+# and a genuinely empty queue print identically.
+#
+# Checked against the file's own Status line rather than assumed, so finishing
+# the queue legitimately does not trip it.
+if [ "$tot_items" = "0" ] && grep -q '^\*\*Status:\*\* ACTIVE' .agent-state/directive.md 2>/dev/null; then
+  say "  directive is ACTIVE with ZERO open items" \
+    "the checkbox pattern matched nothing — guard 8 is not checking anything"
+  fail=1
+fi
+
 actionable=$(( ${tot:-0} + ${f:-0} + ${d:-0} ))
 if [ "$tot_items" != "0" ] && [ "$tot_items" = "$wait_items" ] && [ "$actionable" != "0" ]; then
   say "  ALL open items are [WAIT]" \
