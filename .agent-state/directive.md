@@ -116,7 +116,9 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
             #236 (calibration provenance) are both still OPEN, and neither type
             exists on main to project.
 
-- [ ] Make provider write containment reachable from config, then default it on.
+- [ ] [WAIT] Make provider write containment reachable from config, then default
+      it on. Step 1 (the config key) is DONE on #251; step 2 is gated on that PR
+      merging and on real turns using it.
       macOS and Linux both enforce in #251; native Windows is closed as
       not-needed (no provider runs there). Two steps, in order:
       1. [x] DONE on #251: contain_provider_writes project config key. Absent
