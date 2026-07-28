@@ -182,15 +182,18 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
       self-reference is unsatisfiable, so dispatch could only block it forever.
       walkPlanSteps derives ids the way import does, so validation and dispatch
       share one notion of identity. Guide says validated-not-enforced.
-      - [ ] [WAIT] Populate the independence domains, THEN enforce differentFrom.
-            Steps 1 and 2 are DONE but neither is on main yet: #262 writes the
-            domain, #263 populates it, both OPEN as of 2026-07-28. VERIFIED --
-            git grep on origin/main finds recordExecutionProvenance absent,
-            HandleCalibrationPut absent, and AssignedIndependenceDomain only in
-            internal/store/task_metadata.go, i.e. the type with no writer.
-            Building step 3 now would compare "" against "" and permit
-            everything: the same vacuous guarantee, one layer further in. It
-            unblocks the moment #262 and #263 merge -- no other work needed.
+      - [ ] Populate the independence domains, THEN enforce differentFrom.
+            UNGATED 2026-07-28: #262 and #263 are both MERGED, and re-verified
+            on origin/main rather than trusted -- recordExecutionProvenance
+            present in internal/orch/orchestrator.go, HandleCalibrationPut
+            present in internal/supervisor/calibration.go. Step 3 (enforcement)
+            is BUILT and in review as #272, including the three findings that
+            review surfaced: native fan-out bypassed the check entirely,
+            rotation overrode `providers`, and a padded peer ID never resolved.
+            Closes when #272 lands.
+            Historical note on why this WAS gated: building enforcement before
+            the domains had a writer would have compared "" against "" and
+            permitted everything -- the same vacuous guarantee, one layer in.
             Original scoping follows. #236
             (9c04550) shipped the STORAGE for both halves, and I briefly marked
             this ungated on that alone. Checking the write paths corrected it:
@@ -289,9 +292,14 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
             by grepping origin/main for each symbol, not by assuming the pair
             moves together.
 
-- [ ] [WAIT] Make provider write containment reachable from config, then default
-      it on. Step 1 (the config key) is DONE on #251; step 2 is gated on that PR
-      merging.
+- [ ] Make provider write containment reachable from config, then default it on.
+      UNGATED 2026-07-28: #251 is MERGED, and the wiring re-verified on
+      origin/main rather than trusted -- vconfig.ContainProviderWrites is read
+      by PRODUCTION code at cmd/radioactive_ralph/binding_resolver.go:268, not
+      only by tests. That distinction is the whole point here: the key was
+      previously parsed and never read, which is the inert-feature defect this
+      item exists to close. Step 2 (flip the default on) is now ACTIONABLE with
+      no remaining gate -- its audit and real-turn evidence are both complete.
       "REAL TURNS USING IT" IS NOW SATISFIED (14f58f7): tests/e2e now runs a real
       orchestrator + real provider subprocess under its own pty, with the project
       config key set exactly as an operator sets it and a fake CLI that genuinely
