@@ -68,164 +68,44 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
 
 ## Remaining
 
-- [ ] [WAIT-AGENT] Land the 10 open PRs: 222, 225, 251, 252, 255, 257, 259, 262,
-      263, 268. Delegated to scripts/drive-open-prs.sh, running in the
-      background: it rebases the leader, arms auto-merge, merges CLEAN/UNSTABLE
-      with no failures, and exits 2/3/4 the moment anything needs a decision
-      rather than reporting false success. The monitor reports failures,
-      conflicts, and driver death.
-      RE-LABEL TO `[ ]` THE MOMENT any PR has a FAILING check, a DIRTY branch,
-      or an unresolved thread -- all three are agent-doable and none is a wait.
-      verify-repo-claims.sh guard 8 enforces exactly that and will fail the
-      verifier if this label outlives its justification.
-      WHY THIS IS A WAIT, verified 2026-07-28: all 10 read BLOCKED/MERGEABLE with
-      0 failures, 0 DIRTY, 0 unresolved threads. Every outstanding check is a CI
-      job on a serialized runner pool. Pushing more work at that pool measurably
-      SLOWS it -- I did it twice (a burst of state-only commits, then rebasing
-      every branch at once) and both made the queue worse. #236, #258, and #261
-      all merged through this path with no manual step.
-      NOT wait-labelled, deliberately, and I tried it the other way: labelling
-      this [WAIT-AGENT] because the background driver owns it made EVERY open
-      item a wait, and verify-repo-claims.sh guard 8 caught it --
-      "ALL open items are [WAIT] but 10 PRs are still open". That guard exists
-      because an all-wait queue tells the anti-stop hook the turn may end, which
-      is precisely how a session once stopped with PRs open. The driver running
-      does not make the item a wait: a FAILING check, a DIRTY branch, or an
-      unresolved thread can appear at any moment and every one of those is
-      agent-doable. Delegation is not absence of work.
-      The driver (scripts/drive-open-prs.sh) rebases BEHIND, arms auto-merge,
-      merges CLEAN/UNSTABLE with no failures, and exits 2 the moment anything
-      needs a decision (3 on a gh failure, 4 on a verifier failure) rather than
-      reporting false success.
-      Verified actionable-empty 2026-07-28: all 10 read BLOCKED/MERGEABLE with
-      zero failures, zero DIRTY, zero unresolved threads; every outstanding check
-      is a macOS job, and the queue is confirmed MOVING (rotating run ids), not
-      wedged. #236 and #261 both merged this way with no manual step.
-      MERGED since this item was written: #246 (desktop launch), #256
-      (reporting owner), #245 (init over supervisor), #247 (capability
-      requirements, squashed as 82ff030), #236 (calibration records, 9c04550 --
-      merged by the driver with no manual step once its checks went green),
-      #267 (watchdog test barrier, 5d23e3c), #265 (leader-only rebase +
-      leader-hold, b9313db), #261 (shellcheck
-      coverage + the non-cancelling driver), #258 (observe
-      blocked-reason, c94ca79 -- merged by the driver, and it conflicted NOTHING:
-      all eight others went BEHIND, none DIRTY).
-      DIRTY CLEARED 2026-07-28: #259, #251, #225 all conflicted on #247 merging
-      and are now BLOCKED/MERGEABLE again. Nearly every conflict was in
-      GENERATED docs (docs/api/internal/*.md) -> `make docs-api`, then
-      `git add` the path (regeneration rewrites the file but does NOT mark the
-      conflict resolved). Only #225 had a real code conflict, and resolving it
-      surfaced a genuine bug -- see the ready-walk asymmetry in
-      decisions.ndjson. When a parent PR squash-merges, MERGE origin/main AGAIN:
-      the content is absorbed but the commit is not, so git re-raises the region.
-      DO NOT CANCEL CI RUNS. A run's top-level status stays "queued" until its
-      LAST job finishes, so a "queued" run routinely has 19-22 of 23 jobs already
-      SUCCESS -- cancelling it throws away completed macOS work and forces a full
-      re-run. #236 sat ONE job from done inside a run reading "queued".
-      The queued=14/running=1 -> queued=6/running=8 shift I once cited as proof
-      was coincidence: runs start and finish continuously, so sampling either
-      side of any action shows movement. Measured properly: queued=7/running=4,
-      22 jobs executing, ZERO macOS among them, ubuntu+windows flowing. macOS is
-      constrained UPSTREAM; waiting is what drains it.
-      Remaining checks on every open PR are macOS jobs draining upstream.
-      MOVEMENT RE-MEASURED 2026-07-28 at queued=19/running=1, which looks alarming
-      and is not: sampling the SET of executing run ids 45s apart showed a
-      different set, so the queue is moving rather than wedged. Count alone
-      cannot tell those apart -- compare run ids, not totals. The monitor now
-      reports queue=moving/same-runs on that basis.
+- [ ] [WAIT-AGENT] Land the 9 open PRs: 222, 225, 251, 252, 255, 257, 259, 262,
+      268. MERGED: #263 (calibration IPC, 9fe7d33), #267 (watchdog barrier),
+      #265, #261, #258, #236, #247, #256, #245, #246.
 
-      I AM A LOAD SOURCE. Measured 2026-07-28: ALL 8 of the most recent CI runs
-      were on chore/directive-sync, and 8 of 8 sampled commits there touch ONLY
-      .agent-state. ci.yml has no paths-ignore, so each bookkeeping commit starts
-      the full 23-job matrix including FOUR macOS jobs -- roughly 32 macOS jobs
-      spent on state notes while nine code PRs wait for the same pool. The
-      starvation I kept attributing to upstream scarcity was substantially
-      self-inflicted.
-      DO NOT push .agent-state incrementally. Batch state edits and push once per
-      unit of real work.
-      MEASURED CONSEQUENCE 2026-07-28: my 8 state pushes created 8 PARALLEL CI
-      matrices on one branch, together holding 68 queued jobs, each with exactly
-      4 outstanding -- the four macOS jobs. Nine code PRs waited behind my
-      bookkeeping. Confirmed causally, not just correlationally: within one pass
-      of stopping, every PR's outstanding-check count fell sharply (#262 7->3,
-      #259 16->3, #251 29->4, #255 22->4).
-      Cancelling those runs is NOT the remedy -- checked all 7 superseded ones
-      and every single one had started jobs, so cancelling would discard 2-17
-      completed jobs apiece and force a full re-run. Add nothing, cancel nothing,
-      let them drain.
-      SECOND LOAD SOURCE, found 2026-07-28 after #258 merged: the DRIVER
-      rebased all eight BEHIND PRs in one round, restarting eight full 23-job
-      matrices at once. Measured queued=42 running=0 immediately after, with
-      every PR's outstanding count jumping from 1-4 back to ~30. Fixed in
-      a0cf1b2 (+ 7b8d5ec), shipped as PR #265 on a CLEAN branch off main -- the
-      original commit sat on ci/shellcheck-coverage, whose PR (#261) had already
-      merged, so it had NO path to main. A fix committed to a merged branch is a
-      fix that never ships.
-      Rebase exactly ONE per round -- fewest outstanding checks, never a failing
-      PR, never while another is merging. Protection is `strict`, so the merge
-      queue is serialized and only the leader's rebase can pay off; the rest are
-      re-run after the next merge regardless.
-      REVIEW CAUGHT THAT THE FIRST FIX DEFEATED ITSELF (7b8d5ec): a just-rebased
-      PR reports BLOCKED while its checks run, so it stopped being a BEHIND
-      candidate and the NEXT round picked a different branch -- walking the whole
-      queue over several rounds and recreating the flood. The leader is now HELD
-      in `inflight` until it merges, leaves the queue, goes DIRTY, or fails.
-      Same review caught a discarded `gh pr update-branch` exit status that would
-      print "rebased #N" every round while rebasing NOTHING -- the THIRD time
-      this one script has had an error path indistinguishable from its success
-      path.
-      CONFIRMED IN PRODUCTION when #265 merged (b9313db) -- the first merge under
-      the new logic, and the direct before/after: the all-at-once rebase after
-      #258 produced queued=42/running=0; the leader-only rebase after #265
-      produced queued=9. Driver log shows exactly the intended sequence:
-      "leader #265 left the queue; releasing" then "rebased #222 only (4 checks
-      out, 1 behind)". Rounds 42-44 also show behind=9 with NO rebase, proving
-      the hold survives multiple rounds instead of releasing to a different
-      branch each time -- the P1 defect review caught.
-      SAME LESSON as the state-push storm, one level up: the constraint is a
-      small serialized pool, so the winning move is always to add LESS work.
-      #252 IS THE PREVENTION and is therefore the highest-priority PR: its
-      concurrency group is per-PR-number with cancel-in-progress on
-      pull_request, so each push cancels its predecessor AT PUSH TIME, before
-      jobs start. My 8 matrices would have been 1.
-      The structural fix already EXISTS as #252 (concurrency group +
-      cancel-in-progress on pull_request), whose title names this exact problem.
-      It cancels at PUSH time, before jobs start, which is why it is correct
-      where cancelling by run status was destructive. It needs 5 checks, 4 of
-      them macOS. LANDING #252 FIRST unblocks every other PR, so the highest-value
-      action is to stop adding load and let it through. A paths-ignore of my own
-      would be WRONG here anyway: 25 checks are required, and paths-ignore makes
-      them report nothing at all, so every PR would block forever.
+      MECHANISM CHANGED 2026-07-28 (user-directed). The driver is STOPPED and
+      obsolete; GitHub now does the merging. Three changes, all live:
+        1. MERGE QUEUE (ruleset 19896999): squash, ALLGREEN, batches up to 5.
+           This is the structural fix for `strict` protection -- the queue tests
+           base + PR + everything ahead of it ONCE, in order, instead of making
+           every author rebase into a moving target. I had been throttling
+           rebases to work around this rather than solving it.
+        2. REQUIRED CHECKS 25 -> 13, macOS 4 -> 1. User: "why are we validating
+           builds in CI they will validate in CD". Correct -- release.yml runs
+           GoReleaser, which rebuilds and smoke-tests every platform target and
+           the installer, so CI gating 7 cross-compile Build jobs and 6
+           packaging jobs re-validated at merge time what CD validates at
+           release time. Dropped checks STILL RUN on every PR; they just stop
+           blocking. Immediate effect: #257/#255/#252 flipped BLOCKED -> CLEAN.
+        3. ci.yml is PR + merge_group ONLY. User: "why is ci.yml running on
+           anything other than pull requests". The push trigger re-ran the whole
+           23-job matrix on every merge, which under a queue verifies nothing --
+           the queued commit IS main's future state and merging happens BECAUSE
+           those checks passed. Verified no workflow_run consumer depends on it.
 
-      HYGIENE (2026-07-28): 13 merged worktrees + 13 stale local branches
-      removed. `merge-tree --write-tree` reported 7 of them NOT-absorbed, which
-      is the SQUASH-MERGE FALSE NEGATIVE — a squash rewrites patch ids and the
-      branch is behind main, so its tree differs even though every change
-      landed. The reliable check is whether the branch's PR merged; all 7 had.
-      Never delete on the merge-tree signal alone.
+      BOOTSTRAP: the queue cannot run until ci.yml's merge_group trigger is on
+      MAIN, and that ships in #268 -- so #268 must land through the pre-queue
+      path first. Everything is auto-merge armed and flows once it does.
+      ROLLBACK: /tmp/protection-backup.json holds the original 25-check config.
 
-      ISSUE #204 IS NOW FULLY CLOSED on main — the client/store exemption list
-      reads "REAL DEBT: NONE REMAINING". Every CLI client reaches the store
-      through the supervisor; init_cmd.go was the last one.
-      #261 shellchecks every repo script and fails when one is missing from
-      ci.yml's allowlist — seven had accumulated unchecked, including the two
-      that back this file's own verification workflow.
-      #222 is directive-only again: it had grown to carry the CI work, which a
-      reviewer opening a directive-sync PR would not expect to review.
       There is ALWAYS an action here; this is not a wait.
-      1. `bash scripts/verify-repo-claims.sh` first — never assert status from
-         memory.
-      2. DIRTY -> resolve. A semantic conflict needs the correct half CHOSEN;
-         `--ours`/`--theirs` by reflex is how a fix gets reverted (main's
-         held-client config source vs #245's per-call dial was exactly this).
-      3. FAILING -> read the job log, fix the cause.
-      4. BEHIND -> `gh pr update-branch`.
-      5. Unresolved thread -> verify against the code, then fix or counter it
-         with evidence.
-      6. Every PR blocked on CI with no failures -> WAIT. Do NOT cancel runs;
-         see the DO NOT CANCEL note above. Proven 2026-07-28: #236 went green
-         and the driver merged it with no manual step at all.
-      7. Still nothing -> work an item below. Do not report status.
+      1. `bash scripts/verify-repo-claims.sh` first -- never assert from memory.
+      2. DIRTY -> resolve. Nearly every conflict is GENERATED docs
+         (docs/api/internal/*.md): run `make docs-api`, then `git add` the path
+         (regeneration rewrites the file but does NOT mark it resolved).
+      3. FAILING -> read the job log, fix the cause. Re-check before believing
+         it: CI re-runs constantly and a FAILURE seen once is often already gone.
+      4. Unresolved thread -> verify against the code, then fix or counter it.
+      5. Nothing actionable -> the queue is working; do not add CI load.
 
 - [x] docs/design/exact-provider-identity.md — DONE (PR #255). Documents
       Invocation/StrictBinding/InvocationConfigHash and the transferable rule:
