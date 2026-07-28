@@ -68,7 +68,7 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
 
 ## Remaining
 
-- [ ] [WAIT] Land the open PRs: 279, 281, 282.
+- [ ] [WAIT] Land the open PRs: 279, 282, 283, 286.
       (225, 274, 272, 275, 277 and 278 landed this pass.)
       All four are QUEUED or auto-merge ARMED with zero unresolved threads and
       zero failing checks; the only remaining work is CI on a serialized runner
@@ -100,26 +100,28 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
           retryable, when the generic sentinel was already correctly terminal.
           Naming a category is choosing a retry policy.
 
-- [ ] REOPENED by evidence: do NOT flip contain_provider_writes on yet.
-      ONE gate remains, stated in full at the containment item below. #277 has
-      LANDED, so the test exists on main. Short form: land #281, then run
-      TestE2E_LiveContainedTurnCompletes with RALPH_E2E_LIVE=1. THAT result is the answer -- do not infer it from the
-      CI E2E, which drives a fake CLI and cannot exercise what a real one does.
+- [ ] [WAIT-BLOCKED-BY-#285] contain_provider_writes stays OFF by default.
+      Opened and CLOSED #284 in one pass. The flip is right in principle and
+      breaks TWO of three shipped providers in practice: a real codex turn and
+      a real opencode turn both fail under containment, while claude passes.
+      Codex dies at STARTUP ("failed to initialize in-process app-server
+      client: Operation not permitted"), so it is NOT the last-message.txt path
+      -- I moved that under the root first and it failed identically at 0.30s.
 
-- [ ] Land #281: NO real claude turn worked, at all. encoding/json emitted
-      "Message" for an untagged field, the CLI read `message.role`, found
-      nothing, and every turn died in 0.78s with "Expected message role 'user',
-      got 'undefined'". Fixed and verified end to end -- a live turn returns
-      output and usage, and TestE2E_LiveDispatchWithRealProviderCLI reaches
-      status=done.
-      The LESSON is the durable part: the unit tests round-tripped through the
-      SAME encoder, so the identical wrong tag governed both directions and they
-      agreed with each other while disagreeing with the CLI. Assert provider
-      wire formats on DECODED BYTES against the key the other process reads,
-      never on the producing struct. And CI has never run a real provider turn
-      (the live suite is opt-in), so green proved only self-consistency.
+      HOW I GOT IT WRONG, since the criterion itself was fine: "real turns have
+      run with it enabled" means EVERY SHIPPED PROVIDER. I ran the live test
+      once, it picked suggested[0] = claude, claude passed, and I called the
+      gate met. TestE2E_LiveContainedTurnCompletes now runs every detected
+      provider as its own subtest, so this cannot recur -- and running it
+      immediately found opencode, which #285 did not know about.
 
-- [ ] Issue #280: ralph-task `binding` is INERT. STORAGE HALF IN #282 --
+      NOT a wait on CI. It waits on a DECISION in #285: widen the policy for
+      what agent CLIs actually need at startup, or let a binding declare it
+      cannot be contained so the resolver refuses rather than failing opaquely.
+      A codex-specific carve-out is now insufficient -- opencode needs it too.
+
+- [ ] [WAIT] Issue #280: ralph-task `binding` was INERT. BOTH halves are open
+      as PRs -- storage #282, dispatch #283. STORAGE HALF --
       ReadyPartitions now splits on the declared binding, so a coalesced turn
       can no longer swallow a task's pin (the same hole `providers` had until
       #272). The DISPATCH half is still open: nothing yet CONSUMES
@@ -138,7 +140,15 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
       Environ() applies only to driven subprocesses and the live tests dispatch
       in-process. The real cause was #281.)
 
-- [ ] Issue #273: the observed-output ceiling does not trip under -race on
+- [ ] Issue #273 REPRODUCED DETERMINISTICALLY 2026-07-28: it is LOAD-dependent,
+      not a code regression. Passes in ~40s on an idle machine at every commit I
+      tried (including before #275). Under ~12 spinners/core it fails at exactly
+      90.01s -- the TEST's own context deadline -- with "context deadline
+      exceeded, want ErrObservedOutputTooLarge". So the open question is whether
+      the ceiling is genuinely too slow to trip (a PRODUCT issue: an endless
+      provider runs 90s before being stopped) or the test is under-budgeted.
+      Establish that before changing either. Original report:
+      the observed-output ceiling does not trip under -race on
       main. TestOpencodeRunnerBoundsEndlessNonJSONProgress and
       TestCodexRunnerBoundsEndlessObservationalProgress both hit the 90s
       deadline instead of ErrObservedOutputTooLarge. Reproduced on clean main
@@ -355,7 +365,8 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
             by grepping origin/main for each symbol, not by assuming the pair
             moves together.
 
-- [ ] Make provider write containment reachable from config, then default it on.
+- [ ] [WAIT-BLOCKED-BY-#285] Provider write containment: reachable from config
+      (DONE), default on (BLOCKED -- codex AND opencode cannot run confined).
       UNGATED 2026-07-28: #251 is MERGED, and the wiring re-verified on
       origin/main rather than trusted -- vconfig.ContainProviderWrites is read
       by PRODUCTION code at cmd/radioactive_ralph/binding_resolver.go:268, not
