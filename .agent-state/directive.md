@@ -161,12 +161,29 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
       a stream-json binding ran UNCONFINED while the config claimed
       "confines the provider process AND everything it spawns". Fail-open on a
       security boundary, and worse than no containment because an operator
-      trusts the claim. Before flipping the default, audit every exec path for
-      the SAME class of miss: enforcement now lives at one choke point
+      trusts the claim. Enforcement now lives at one choke point
       (applyContainment) and TestEveryDeclarativeShapeConfinesItsTurn measures
       whether a write ESCAPES rather than whether an argument was passed --
       a signature check would not have caught this one. Any new runner shape
       added before the flip needs a subtest there.
+
+      EXEC-PATH AUDIT DONE 2026-07-28 (fc9c4a0) — the precondition step 2 needed.
+      Every process-launching site classified:
+        CONFINED: provider/exec.go (plain-stdout, last-message-file),
+          declarative.go stream-json (fixed cdc28d8), agent/agent.go,
+          claudesession/session.go Spawn (wired pre-emptively -- it launches
+          `claude -p` with NO containment and no production caller yet, which is
+          precisely how stream-json shipped broken).
+        DELIBERATELY NOT: orch/verify.go checkCommandExitsZero. It is the
+          ORCHESTRATOR running the plan author's acceptance criterion, not a
+          provider turn, and those legitimately write outside the project
+          (go build -> GOCACHE, test runners -> TMPDIR). The project-root policy
+          would fail them and report the task unverified for an unrelated
+          reason. If plans ever come from an untrusted source this needs its own
+          wider-root policy. Documented in place, not changed silently.
+        N/A: doctor, service, projectid, agentdetect, genesis (fixed argv);
+          tests/e2e and cassette/recorder (test-only).
+      So step 2 is now gated ONLY on #251 merging.
       macOS and Linux both enforce in #251; native Windows is closed as
       not-needed (no provider runs there). Two steps, in order:
       1. [x] DONE on #251: contain_provider_writes project config key. Absent
