@@ -75,8 +75,14 @@ func (ClaudeRunner) Run(ctx context.Context, binding Binding, req Request) (Resu
 	ctx, cancelTurn := WithTurnDeadline(ctx, limits.TurnTimeout)
 	defer cancelTurn()
 
-	model := resolveModel(binding.Config, req.Model)
-	effort := resolveEffort(binding.Config, req.Effort)
+	// One resolution, reported back on the Result: the caller asked for a tier,
+	// and only this says which concrete model actually ran. Also the point at
+	// which StrictBinding refuses a request the binding cannot honor.
+	invocation, err := ResolveInvocation(binding, req)
+	if err != nil {
+		return Result{}, err
+	}
+	model, effort := invocation.Model, invocation.Effort
 	input, err := streamJSONInput(req.UserPrompt)
 	if err != nil {
 		return Result{}, fmt.Errorf("provider: encode claude input: %w", err)
@@ -205,6 +211,7 @@ func (ClaudeRunner) Run(ctx context.Context, binding Binding, req Request) (Resu
 		SessionID:       sessionID,
 		AssistantOutput: normalizeStructuredOutput(assistant.String(), req),
 		Usage:           frame.usage(),
+		Invocation:      invocation,
 	}, nil
 }
 

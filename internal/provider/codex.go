@@ -73,24 +73,12 @@ func (CodexRunner) Run(ctx context.Context, binding Binding, req Request) (Resul
 	}
 	outPath := filepath.Join(tmpDir, "last-message.txt")
 
-	args := []string{
-		"exec",
-		"--json",
-		"--color", "never",
-		"--skip-git-repo-check",
-		"--dangerously-bypass-approvals-and-sandbox",
-		"-C", req.WorkingDir,
-		"--output-last-message", outPath,
+	// One resolution, reported on the Result and enforcing StrictBinding.
+	invocation, err := ResolveInvocation(binding, req)
+	if err != nil {
+		return Result{}, err
 	}
-	model := resolveModel(binding.Config, req.Model)
-	if model != "" {
-		args = append(args, "-m", model)
-	}
-	if schemaPath != "" {
-		args = append(args, "--output-schema", schemaPath)
-	}
-	args = append(args, binding.Config.Args...)
-	args = append(args, combinePrompt(req))
+	args := append(codexArgs(binding, req, invocation, outPath, schemaPath), combinePrompt(req))
 
 	a, err := agent.Start(ctx, agent.Options{
 		Command:                 binding.Config.Binary,
@@ -144,5 +132,44 @@ func (CodexRunner) Run(ctx context.Context, binding Binding, req Request) (Resul
 	if err != nil {
 		return Result{}, fmt.Errorf("provider: read codex output: %w", err)
 	}
-	return Result{AssistantOutput: normalizeStructuredOutput(string(raw), req)}, nil
+	return Result{
+		AssistantOutput: normalizeStructuredOutput(string(raw), req),
+		Invocation:      invocation,
+	}, nil
+}
+
+// codexArgs builds the codex command line for one resolved invocation.
+//
+// Extracted so the effort mapping is testable without spawning a CLI: the
+// resolved effort was previously recorded on Result.Invocation but never
+// reached the process, so provenance claimed an effort that had not run.
+func codexArgs(binding Binding, req Request, invocation Invocation, outPath, schemaPath string) []string {
+	args := []string{
+		"exec",
+		"--json",
+		"--color", "never",
+		"--skip-git-repo-check",
+		"--dangerously-bypass-approvals-and-sandbox",
+		"-C", req.WorkingDir,
+		"--output-last-message", outPath,
+	}
+	if invocation.Model != "" {
+		args = append(args, "-m", invocation.Model)
+	}
+	// codex has no dedicated effort flag; reasoning effort is a CONFIG value
+	// (`model_reasoning_effort` in ~/.codex/config.toml) and `-c key=value`
+	// overrides config for one invocation. Verified against `codex exec --help`
+	// on the installed CLI: "-c, --config <key=value> Override a configuration
+	// value that would otherwise be loaded from `~/.codex/config.toml`".
+	//
+	// "default" is skipped deliberately: it names codex's own configured lane
+	// rather than a value Ralph translates, so overriding it would REPLACE the
+	// operator's config.toml setting with a literal that is not a valid effort.
+	if invocation.Effort != "" && invocation.Effort != "default" {
+		args = append(args, "-c", fmt.Sprintf("model_reasoning_effort=%q", invocation.Effort))
+	}
+	if schemaPath != "" {
+		args = append(args, "--output-schema", schemaPath)
+	}
+	return append(args, binding.Config.Args...)
 }
