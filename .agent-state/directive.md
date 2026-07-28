@@ -59,337 +59,60 @@ compiles + passes its own tests). One large branch; final PR(s) at the end.
 Full decision trail: .agent-state/decisions.ndjson. Spec:
 docs/superpowers/specs/2026-07-16-supervisor-architecture-design.md.
 
-## Shipped (compressed → docs/superpowers/PILLARS.md)
+## Shipped
 
-- Supervisor-architecture rewrite (v0.10.0) — PRs #73/#74/#75.
-- Post-release multi-lens audit (→ v0.10.3, converged) — PRs #76/#79/#81/#83.
-- Guided first-run onboarding — PR #85 (80daad9).
-- Versioned IPC drive+observe API — PR #87 (2f20adf).
-- Fyne desktop GUI client — PR #89 (e969551).
-- Desktop app + packaging + GUI polish (v0.15.0 + since) — native installers #92,
-  desktop-app docs #94, GUI macro-view richness #96, deps #97, TUI liveness
-  header #98, GUI guide #101, GUI+packaging correctness #102 (P1 AppImage-FUSE
-  release-blocker), API-docs regen #104, arch cask #106, GUI Escape-back nav #107,
-  directive/PILLARS baseline #108, GUI CI locale-flake fix #110.
-- Doctor codex-metering blind-spot check (guidance in Detail, not the dropped
-  OK-check Remediate) — PR #112 (v0.18.0).
-- Dependabot security sweep: x/image 0.41.0, protobuf 6.33.6 (via semgrep
-  1.170.0 lifting the OTel<protobuf-5 ceiling), js-yaml 4.3.0 — PR #114.
-- GUI+doctor forward-exploration arc (2-reviewer pass → 6 findings, all shipped):
-  focus-first-action + its focus-steal fix #116, directive-sync #117, drive-error
-  coordination + nav-token + import-form fix #119, doctor state-dir usability
-  check #120, destructive-action confirm dialogs #122, GUI scroll-to-top #123,
-  doctor claude-auth ErrNotFound classification #125 (releases v0.19–v0.21).
+Compressed to docs/superpowers/PILLARS.md and the git log. This file tracks
+only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
+#220, #221, #224, #226, #228, #229, #230, #231, #232, #233, #234, #235, #237,
+#238, #240, #250 — releases through v0.30.0.
 
-- Never-block / async-dispatch arc (supervisor/store review → 2 findings +
-  cascade): async dispatch so a slow provider turn can't wedge the
-  tick/enqueue/reaper — goroutine-per-worker + maxParallel semaphore + shutdown
-  drain + baseCtx, plus a running-worker heartbeat (so the reaper doesn't reclaim
-  a healthy long turn), persistCtx (results survive shutdown), and fan-out leak
-  fixes #127; SQLite pool cap at 4 (not 1 — avoids the single-conn deadlock +
-  backup-freeze) #129; per-project spend reservation so a capped provider can't
-  overspend under concurrency #131; supervisor concurrent-start test de-flaked
-  #132 (releases v0.21.0–v0.21.2).
+## Remaining
 
-- Never-block hardening & audit-driven correctness (two opus adversarial audits —
-  orchestrator concurrency + store claim-path — drove the fixes): dispatch-turn
-  panic containment + immediate claim reclaim, and heartbeat-leak-on-panic fix
-  #146; oversized stream-json line FAILS the turn (retryable) instead of masking
-  a killed worker as a done step, + process-tree reap so it can't hang #144;
-  approval-gate dead-end closed — an approved 'ready' task is now claimable #147;
-  ResourceExceeded purged from generated API docs #143; and the store audit's C2,
-  which a codex P1 on the follow-up proved a LIVE reaper double-execution bug
-  (unheartbeated worker session → step-2 delete → cascade-kill live worker →
-  re-dispatch), fixed via worker-session heartbeat + a step-2 session-delete
-  guard #149. Dead-raw error-contract cleanup #150 (v0.21.3+). The orchestrator
-  audit otherwise gave async dispatch a clean bill (no races/leaks).
+- [ ] Land the 8 open PRs: 222, 225, 236, 245, 246, 247, 251, 252.
+      There is ALWAYS an action here; this is not a wait.
+      1. `bash scripts/verify-repo-claims.sh` first — never assert status from
+         memory.
+      2. DIRTY -> resolve. A semantic conflict needs the correct half CHOSEN;
+         `--ours`/`--theirs` by reflex is how a fix gets reverted (main's
+         held-client config source vs #245's per-call dial was exactly this).
+      3. FAILING -> read the job log, fix the cause.
+      4. BEHIND -> `gh pr update-branch`.
+      5. Unresolved thread -> verify against the code, then fix or counter it
+         with evidence.
+      6. Nothing to do on any PR -> work an item below. Do not report status.
 
-Detail lives in PILLARS.md; consult .agent-state/decisions.ndjson for the why
-behind any load-bearing call.
+- [ ] Write docs/design/exact-provider-identity.md. UNBLOCKED: #234 merged, so
+      Invocation, ResolveInvocation, StrictBinding and InvocationConfigHash are
+      on main. Document what identifies an exact provider invocation and why
+      strict binding compares against the RESOLVED model rather than the config
+      shape — a mask-shaped check approved the substitutions it existed to
+      refuse. Anchor it with an executable example the way plan-format.md is.
 
-## Concrete queue (current)
+- [ ] Enforce `differentFrom`. It is the last ralph-task field with no reader
+      (`requires` #247, `providers` #250, `inputs`/`outputs` #228/#229 all
+      landed). It names tasks that must not share this task's INDEPENDENCE
+      DOMAIN. #234 shipped the invocation identity; #236 (calibrations, with
+      inference/control/independence domains) is still open, so build the
+      comparison against the domain #236 defines and land after it.
 
-Worktree/branch reconciliation is DONE (2026-07-26): 18 worktrees -> 5, 17 local
-branches -> 5, remote heads -> 2. Method note for future passes: `git cherry`
-and three-dot diffs BOTH give false positives here (squash-merge changes
-patch-ids; branch-behind-main inflates diffs). The decisive test is
-`git merge-tree --write-tree origin/main <branch>` compared against main's tree
-— a no-op merge proves full absorption. Never-reviewed branches were archived as
-tags before deletion: `archive/plan-v2-dag`, `archive/release-022-recovery-scratch`,
-`archive/release-v0220-manual-recovery` (all pushed to github).
+- [ ] Increment 11: IPC + clients over the DAG. Increment 10's orch half is on
+      main now (#234). Extend the drive/observe surface so a client can see and
+      act on the graph — ready partitions, blocked reasons, and the per-task
+      provenance the store already records.
 
-- [x] PR #208 admission token boundary — CodeRabbit was right and my first
-      counter was wrong: `persist-credentials: false` does NOT scope a token to a
-      step; GITHUB_TOKEN stays available to every step via
-      `secrets.GITHUB_TOKEN`/`github.token`, so job-level `contents: write` was a
-      job-wide write capability and the "only step receives the write token"
-      comment was false. Fixed by REMOVING the capability rather than relocating
-      it (the reviewer proposed a second write job): built-in token drops to
-      `contents: read` and the draft read uses the existing CI_GITHUB_TOKEN. Also
-      replaced the admission command blocklist with a structural allowlist —
-      `gh api -f x=1 --method PATCH` evaded the old literal `gh api --method`
-      check; proven by a negative test. Both threads resolved.
-- [x] PR #209 (issue #205) — MERGED as 3045d07; issue #205 auto-closed. Turn
-      deadlines separated from stall detection + Darwin process-tree containment.
-      The branch was based on v0.22.0 and would have DELETED PR #206's three
-      release-authority files and reverted the released 0.22.1 CHANGELOG heading;
-      rebased so the diff is purely the fix. Three further defects found and
-      fixed during review: (1) the cleanup path guarded on
-      `errors.Is(err, syscall.ESRCH)` but `auditTokenForPID` never wraps ESRCH
-      (`task_name_for_pid` reports a dead PID as KERN_FAILURE / Mach code 5), so
-      the guard could never fire and an ordinary teardown race failed the whole
-      cleanup — the exact false-cleanup failure #205 exists to eliminate, fixed
-      via an `errDarwinProcessGone` sentinel; (2) unbounded stdout/stderr and
-      stream-JSON aggregate sinks, which the 30m turn default widened into an OOM
-      path since every write renews the stall lease — now bounded inline at
-      16MiB, verified 0.34s vs a 90s timeout without the ceiling; (3)
-      `layeredTimeoutValue` accepted any non-empty string, so `turn_timeout =
-      "banana"` let dispatch claim a task that then looped forever until stale
-      reclamation — now validated at binding resolution via
-      `ValidateConfiguredTimeout`.
-- [x] PR #212 (DAG increment 1) — MERGED as 72b75b5. Two pre-existing races
-      proven on main and fixed: `journal_mode` as a DSN `_pragma` re-ran a
-      lock-taking pragma on every pooled connection, and `Migrate` read the
-      schema version outside any lock so concurrent first-openers all ran the
-      same DDL. Review then caught a bug the fix introduced — the early return
-      swallowed the newer-schema case, letting an old binary treat a newer schema
-      as already-applied — fixed with `ErrSchemaNewerThanBinary` checked inside
-      the transaction, plus cancellation-aware retries. A Windows CI failure I had
-      first misattributed to a pre-existing flake turned out to be mine: the retry
-      loops stacked on the DSN's own `busy_timeout`, so one contended Open could
-      burn >10s of backoff against a 15s test bound. Retries are now a 3-attempt
-      backstop (240ms/Open, 44x reduction).
-- [x] PR #210 — MERGED. Directive re-armed + the DAG integration spec landed.
-- [x] DAG increment 4 (#217) — MERGED, released v0.23.0.
-- [ ] [WAIT-CI] Seventeen PRs open (222, 224, 225, 228, 229, 233, 234, 236,
-      237, 238, 239, 240, 245, 246, 247, 250, 251). ALL review threads are
-      RESOLVED as of 2026-07-27 16:20Z. The only thing between them and merge
-      is macOS CI.
-      BLOCKER: every macOS job — Test/GUI/Package GUI (macos-latest) and
-      Package GUI (macos-15-intel) — is QUEUED and NONE has started across the
-      last 40+ CI runs.
-      PARTLY REPO-SIDE, and fixed in PR #252: ci.yml had NO concurrency group,
-      so every push started a full run (four macOS jobs among them) while every
-      superseded run kept its queued slots. Measured: chore/directive-sync alone
-      had EIGHT queued CI runs, seven obsolete, holding 28 macOS jobs for work
-      that no longer existed. #252 adds one-in-flight-per-PR with main EXCLUDED
-      (its runs gate releases; github.run_id makes each unique so nothing can
-      cancel them). PROVEN LIVE: an empty second push cancelled the prior run
-      (conclusion=cancelled), leaving exactly one in flight.
-      Whether that ALONE unblocks macOS is NOT yet known — the queue was still
-      ~11 CI runs deep after, and #252 only governs its OWN branch until it
-      merges, which it cannot do because the macOS checks it fixes are the ones
-      blocking it. That deadlock is real and is NOT resolvable from here:
-      enforce_admins=true on main, and --admin / force-merge past red CI are
-      forbidden by standing rules regardless.
-      RULED OUT as causes (verified, not assumed):
-        * Bad runner label — `macos-latest` and `macos-15-intel` are BOTH
-          current, checked against actions/runner-images README rather than
-          memory.
-        * Billing/minutes — repo is PUBLIC, so macOS minutes are free and
-          unmetered.
-        * GitHub incident — githubstatus.com reports all systems operational.
-        * Workflow defect — actionlint clean; ubuntu, windows, CodeQL, E2E and
-          GUI (ubuntu) all pass on the same runs.
-      DECISIVE TEST (2026-07-27 ~19:00Z): manually cancelled ~28 obsolete
-      queued runs across every branch, taking the repo-wide CI queue from 11
-      live runs to 3 and freeing 100+ macOS job slots. macOS jobs on the two
-      remaining runs STAYED QUEUED. So contention was never the binding
-      constraint — the repo can hold zero backlog and macOS still will not
-      start. Remaining cause is GitHub-side macOS capacity, which no repo
-      change can fix. #252 is still correct (it stops the backlog rebuilding
-      on every push) but it was never going to be sufficient. Watcher armed that asserts a macOS job actually REACHED in_progress
-      (cancelled/skipped explicitly excluded, after an earlier watcher reported
-      success by matching a run this session had itself cancelled). ubuntu, windows, CodeQL, E2E and GUI
-      (ubuntu) all pass. githubstatus.com reports all systems operational and
-      the repo is PUBLIC (macOS minutes are free and unmetered), so this is
-      GitHub-side runner capacity, not billing and not a workflow defect. Four
-      of the 25 required checks are macOS-only, so nothing can merge until the
-      pool frees. Watcher armed; route to other work rather than idling.
-      MERGED in this arc: #215, #216, #219, #220, #221, #226, #230, #231, #232,
-      #235, plus releases through v0.29.1. Worktrees reconciled 2026-07-28 UTC:
-      23 -> 13, every one current with main (behind_main=0), and remotes renamed
-      so origin=GitHub.
-      Reconciliation lesson (2026-07-27): after a stacked parent squash-merges,
-      REBUILD the child from main and cherry-pick only its unique commits —
-      applies everywhere; git rewrote every upstream to origin/* automatically.
+- [ ] Provider write containment beyond macOS+Linux. Both ship in #251
+      (sandbox-exec; Landlock via a re-exec helper). Native Windows is CLOSED
+      as not-needed — no provider runs there (creack/pty returns
+      ErrPTYUnsupported). What remains is turning containment ON by default
+      once enough real turns have run with `WithProviderWriteContainment(true)`
+      to know nothing legitimate writes outside a checkout.
 
-- [x] Remote naming FIXED (2026-07-28 UTC, user-confirmed direction): origin=GitHub
-      (source of truth), gitea=no-CI backup mirror. Previously origin pointed at
-      Gitea, so an unqualified push/pull/gh targeted the MIRROR. Direction was
-      verified EMPIRICALLY before renaming: Gitea's main matched GitHub exactly,
-      it held no branches GitHub lacked, and it had ALREADY dropped the ten
-      branches deleted from GitHub minutes earlier — only a pull mirror does
-      that. All 13 worktrees share the repo's remote config so the rename
-      applies everywhere; git rewrote every upstream to origin/* automatically.
+- [ ] Close #248 (VerifyAndComplete attributes a stale worker's result to the
+      CURRENT owner, defeating the store's owner guard) and #249 (dispatch-slot
+      saturation is silent, indistinguishable from an empty ready set). Both
+      were filed from verified findings and both need the transition-only emit
+      treatment #247 established, or they flood the event stream.
 
-- [x] Issue #204 — ALL THREE criteria DONE. #220 merged, unblocking part 2.
-      1. DONE. init no longer imports store: project resolution reuses
-         ensureProjectKnown, config resolution goes through
-         vconfig.ConfigSource. The self-verifying gate PROVED it — removing the
-         import made TestOperatorClientsDoNotImportStore fail demanding the
-         exemption be deleted. Two bugs surfaced while wiring: the drive surface
-         has TWO command lists (allow-list in handleConn AND the dispatchDrive
-         switch) so config commands were rejected as "unknown command" before
-         reaching their handler; and ipc.Client is ONE request per connection,
-         so a held client broke on its second call. Remaining CLI store readers
-         are desktop_launch.go (real debt) plus supervisor_cmd.go and
-         binding_resolver.go (supervisor-side, permanent).
-         History: the config surface shipped (branch
-         feat/config-apply-over-ipc, PR pending — GitHub GraphQL rate limit was
-         exhausted at the time, resets 05:38Z). vconfig.ConfigSource is the
-         seam: the supervisor passes a store-backed source, the CLI an
-         IPC-backed one, and BOTH run the same resolution code. Raw JSON
-         strings cross the wire (vconfig owns the encoding); upserts+deletes
-         travel in ONE call (vconfig computes them together, and splitting them
-         could leave a project holding both a new provider selection and the
-         stale key it replaced); the SUPERVISOR resolves user scope because
-         doing so may CREATE the project, which is a store write.
-         (An earlier "REMAINING: init_cmd.go still opens the store for PROJECT
-         RESOLUTION" note is stale and removed — that is the same claim the
-         DONE above resolves. It was written before #220 merged and shipped
-         ProjectEnsure; ensureProjectKnown now does the resolution.)
-      2. DONE (PR #231). All three had ZERO production consumers — a grep
-         across internal/ and cmd/ found only tests. RepoPath and
-         ProviderSessionID were never populated at all. They describe the
-         supervisor HOST (absolute path, OS pid), not the work, and went to
-         every attached client on every poll. Removed rather than left: a field
-         nothing populates and nothing reads invites a future implementer to
-         fill it in, which is exactly how RepoPath came to be declared. The four
-         referencing tests were about round-tripping and liveness, not these
-         fields; ActiveWorkers and ProtoVersion carry those properties now.
-      3. DONE (PR #230). Claude failure classification shipped, keyed on the
-         result frame's api_error_status. The real-CLI capture REFUTED the
-         assumed shape: a rejected key emits
-         {"is_error":true,"subtype":"success","api_error_status":401}, so
-         subtype says SUCCESS on a hard failure and subtype-keyed logic reads
-         it as a completed turn. Categories reach the durable surface
-         (provider_auth non-retryable, provider_throttled, provider_unavailable)
-         so classification changes what an operator sees, not just an internal
-         error. Unrecognized statuses stay generic on purpose.
-      Note for whoever picks this up: `ensureProjectKnown` must stay AFTER
-      supervisor discovery in client.go. Moving it earlier breaks the first-run
-      wizard, which exists for the operator who has no supervisor yet —
-      `TestE2E_FirstRunWizardDeclinePath` is the guard.
-- [ ] [WAIT] DAG integration — every remaining piece is gated on an open PR,
-      nothing is independently actionable. Increments 1-10 and most of 12 are
-      SHIPPED or in flight (#212, #215, #216, #217, #221, #225, #228, #229,
-      #234, #236, #238, #239, #240). The one unwritten page,
-      docs/design/exact-provider-identity.md, would document Invocation and
-      StrictBinding — which live in unmerged #234, so writing it now documents
-      absent code. Increment 11 (IPC + clients) depends on 10's orch half,
-      which depends on #234's InvocationConfigHash. Original finding stands: Central verified finding stands:
-      **main already had the DAG store layer** (`task_deps` in 0001_initial,
-      cycle prevention in `AddDep`, `Ready`/`ClaimNextReady` already walking the
-      edges). The gap was confined to the orchestrator. Shipped/open:
-      increment 1 = #212 (WAL + migration races, merged); 2 = #215 (schema 0003 +
-      task_metadata, MERGED); 3 = #216 (`ClaimTask`); 4 = #217 (plan model learns
-      edges, merged); 5 = #221 (`CreatePlanGraph` + `ImportPlan`, the keystone);
-      6 = #225 (dispatch walks the graph); 7 = #228 (CWE-22 path containment).
-      Increment 6's real lesson: partitioning the ready wave by persisted
-      `group_path` is load-bearing, because native fan-out delegates a whole
-      partition to ONE provider under one heading and binding — deciding to fan
-      out from `len(ready) > 1` would hand one worker tasks from unrelated
-      groups. It also surfaced a compatibility gap the spec had not anticipated:
-      sourcing readiness from `task_deps` made `ImportPlan` a PRECONDITION, so
-      any plan written by `CreatePlan` directly (or predating the graph) silently
-      never dispatched — no error, no event. Dispatch now materializes the graph
-      on first sight, which the E2E test caught.
-      Increment 7's scope limit is stated rather than implied, per Codex's
-      accepted P1 on #210: declared-path containment is best-effort VALIDATION,
-      not a write-side boundary. It constrains Ralph's reads and what Ralph will
-      dispatch; it does NOT constrain the provider, a separate process opening by
-      pathname minutes later. Ralph's guarantee is DETECTION at completion. A
-      real write-side guarantee needs a sandbox/namespace/brokered-FS primitive
-      around the provider process — separate work, filed as follow-up.
-      Increment 9 SHIPPED (branch feat/provider-invocation, PR pending on the
-      GraphQL rate limit): Result.Invocation reports what a turn ACTUALLY ran as
-      rather than what was requested, and StrictBinding refuses a request the
-      binding cannot honor exactly. That closes a LIVE hole verified against
-      main first — resolveModel treats the sonnet override as a general
-      fallback, so a codex binding with only SonnetModel="gpt-5" answers a
-      request for OPUS with "gpt-5" and no error, meaning a pinned task runs on
-      the wrong model silently. Strictness is off by default and loose
-      resolution is byte-identical, since every existing plan relies on tiers
-      falling back. Validation is CONFIG-DRIVEN, unlike the archived branch's
-      hardcoded per-provider model/effort tables, which would duplicate what
-      BindingConfig already declares and drift on the first new model.
-      Increment 12 (docs) PARTIALLY SHIPPED (PRs #238, #239, #240): the ralph-task grammar
-      was entirely undocumented despite shipping in #217/#221. The guide now
-      covers it with EXECUTABLE examples — docs_example_test.go runs the page's
-      example, the three-row after table, and the whole fails-closed list, so a
-      documented guarantee cannot drift from the parser. Fields are split by
-      ENFORCED (id, after, team) vs merely PARSED (binding, requires, providers,
-      differentFrom, inputs, outputs), verified against main rather than the
-      spec — listing the second group as working would be a lie.
-      #239 adds docs/design/plan-adaptive-concurrency.md, based on the CHAIN
-      TIP rather than main on purpose: it describes ReadyPartitions,
-      project-scoped reservations, canonicalization, and worker-vs-task
-      accounting, none of which are on main yet, so publishing it there would
-      document features that do not exist. Every claim was checked against a
-      backing test before being written. Still missing from increment 12:
-      docs/design/deterministic-execution.md and
-      docs/design/exact-provider-identity.md (the latter needs #234's
-      Invocation/StrictBinding to have landed, since that IS the mechanism).
-      Increment 10 store layer SHIPPED (PR #236): calibrations are
-      content-addressed so re-probing one command line is idempotent, and a
-      CONFLICTING remeasurement FAILS rather than overwrites — tasks bind to a
-      calibration id to document what they ran on, so replacing the row when a
-      binary is upgraded would retroactively rewrite that history. Capabilities
-      and evidence are excluded from the address (they are what was observed,
-      not what was observed ABOUT; including them mints a new id per timestamp).
-      Attempts are stored per REPETITION because agreement across repetitions
-      IS the calibration signal and cannot be computed from a collapsed row.
-      The orch admission half needs increment 9's InvocationConfigHash (#234).
-      Remaining: 10-orch (needs #234), 11 (IPC + clients), 12. Full plan in
-      `docs/superpowers/specs/2026-07-26-dag-integration-design.md`.
-      Hard discards (unchanged) — note these name the SOURCE BRANCH's versions,
-      NOT the reimplementations that shipped. The archived `CreatePlanGraph` is
-      discarded; the one on main (#221) is a different function that composes
-      `createPlanOn`/`createTaskOn`/`addDepOn` through the `execer` interface so
-      it keeps AddDep's cycle check. Same name, opposite verdict:
-      the source branch's `CreatePlanGraph`
-      (duplicated CreatePlan+CreateTask+AddDep AND bypassed the cycle check),
-      `graph_validate.go`, `enrichTaskMetadata` + the `Task` widening, `Plan.V2`
-      and every `parsed.V2` fork, the Codex arg expansion, and the double
-      filesystem verification in `VerifyAndComplete`.
-- [x] Deferred provider CLI flag decisions — DONE (branch
-      feat/provider-cli-flags, PR pending on the GraphQL rate limit). All four
-      verified present on the installed CLIs; the two that ship verified with
-      real successful turns, not from --help alone.
-      SHIPPED: claude `--no-chrome` (Ralph drives claude head-authoritatively
-      under its own pty, so the Chrome integration would attach a browser to a
-      session nobody is watching; passed explicitly because the default is
-      whatever the operator's interactive config says). opencode `--pure` (a
-      supervised turn must be reproducible from the plan alone — an
-      environment-installed plugin would silently change what the agent can do,
-      so one plan behaves differently on two machines for reasons nothing
-      records; a DETERMINISM choice, which is why it lands and --auto does not).
-      REFUSED: claude `--permission-mode bypassPermissions` and opencode
-      `--auto`. Neither is needed for the never-block invariant — the watchdog
-      already kills a prompting turn and reports FailureInteractivePrompt. What
-      they WOULD change is the blast radius of an agent running unattended
-      against a real checkout. opencode's own help calls its flag
-      "(dangerous!)". AGENTS.md sanctions "auto-resolves, DENIES, or
-      kills-and-reclaims" — deny is listed, bypass is not. Both refusals are
-      TESTS so they cannot be re-added as an oversight; binding config Args
-      still append last, so an operator can opt in visibly per binding.
-      Already-discarded (unchanged): the `defaultOpencodeProvider` NativeFanout
-      true->false flip, which regresses a capability main documents as verified
-      against installed opencode 1.18.3.
-- [x] Windows shutdown flake in `TestRun_SecondRunRefuses`
-      (supervisor_test.go:133). Pre-existing — PR #209 changed only COMMENTS in
-      internal/supervisor/supervisor.go, and the file's own comments at :17/:153
-      document this named-pipe timing flake while :158 calls this very test the
-      "deterministic" alternative. ROOT CAUSE (single, authoritative): retry
-      loops stacked on the DSN's busy_timeout(5000), producing ~10.5s of backoff
-      against a 15s bound. Mine, not pre-existing — I called it pre-existing
-      first and the evidence refuted that (main green, PR #209 zero failures
-      across 10 runs, both failures on the one PR touching store.Open). Fixed in
-      #212 to
-      a 3-attempt/20ms backstop (240ms per Open, 44x reduction). The SEPARATE
-      Windows hang in TestAcquire_SecondFailsWhileFirstHolds is the winio
-      deadlock, fixed by #224.
 
 ## Rolling improvement queue (directive 0 appends here)
 
@@ -471,48 +194,6 @@ tags before deletion: `archive/plan-v2-dag`, `archive/release-022-recovery-scrat
       import made the boundary test demand the exemption be deleted. Only
       supervisor_cmd.go and binding_resolver.go remain exempt, both
       supervisor-side by design, so a new entry now means a NEW violation.
-
-- [ ] [WAIT] Five ralph-task metadata fields that parsed and persisted with
-      ZERO consumers — FOUR are now enforced, and the fifth cannot be started.
-      `inputs`/`outputs` are consumed by #228 (path containment) and #229
-      (output reservations); `requires` by #247; `providers` by #250. Only
-      `differentFrom` remains, and it is gated on #234/#236 merging (see the
-      child item) rather than on anything doable now. This item closes when
-      those PRs land and differentFrom can be built against a real
-      independence domain.
-      docs/guides/plan-format.md tells operators which fields are enforced vs
-      merely parsed, so this is honest rather than broken; it is the work those
-      fields were added for.
-      - [x] `requires` — ENFORCED (PR #247). Closed capability vocabulary
-            (`native_fanout`, `resume`, `append_system_prompt`) derived from
-            BindingConfig rather than a per-provider table, checked in
-            stepGateBlocks before any session/worker/slot is allocated. An
-            unknown key is refused DISTINCTLY from an unmet one: a typo cannot
-            be satisfied by any binding, so passing it through would run the
-            task on a provider chosen by accident. Blocks visibly via
-            MarkBlockedCapability + a task.blocked_capability event.
-            Surfaced and fixed a LATENT HOLE: nothing in production ever wrote
-            a task_metadata row (PutTaskMetadata had zero non-test callers), so
-            BOTH MarkBlockedCapability and MarkBlockedInput — which record
-            their reason there and fail closed without it — were unreachable
-            for every dispatch-materialized task. #228 depends on the same
-            primitive. Metadata is now written as part of materializing a task.
-      - [x] `providers` — ENFORCED (PR #250, stacked on #247). Matches the
-            binding ALIAS or the provider TYPE, since several aliases can share
-            a type and "any claude" vs "this pool member" are different asks.
-            Shares blocked_capability with `requires`: same class of refusal,
-            same remedy. NO closed vocabulary, unlike `requires` — provider
-            names are operator config, so an unrecognized name is
-            indistinguishable from one this project is simply not bound to; it
-            blocks with the allowed list named either way. An all-blank list
-            restricts nothing rather than blocking everywhere.
-      - [ ] [WAIT] `differentFrom` — still no reader, and cannot get one yet: it names
-            tasks that must not share this task's INDEPENDENCE DOMAIN, and no
-            dispatch path reads a domain today. The domain arrives with the
-            calibration identity work (#234 resolves the invocation, #236
-            records inference/control/independence domains per calibration).
-            Sequence after both merge rather than inventing a domain notion
-            that would then disagree with the one they ship.
 
 - [x] Two LOAD-SENSITIVE timing tests — FIXED (PR #237). Both verified not
       caused by the branch that surfaced them (each passed 3/3 and 4/4 in

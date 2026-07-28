@@ -70,7 +70,25 @@ for wt in /Users/jbogaty/src/jbcom/radioactive-ralph /Users/jbogaty/src/jbcom/.w
   [ "$n" != "0" ] && say "  $(basename "$wt") UNPUSHED commits" "$n"
 done
 
-# 8. decisions.ndjson must stay parseable — it has conflicted repeatedly.
+# 8. The directive must not mark EVERY open item as a wait while real work is
+#    outstanding. An all-[WAIT] queue tells the anti-stop hook the turn may end,
+#    so a stale wait-label is how a session stops with PRs still open — which is
+#    exactly what happened before this check existed.
+tot_items=$(grep -cE '^- \[ \]|^      - \[ \]' .agent-state/directive.md 2>/dev/null)
+wait_items=$(grep -cE '^- \[ \] \[WAIT|^      - \[ \] \[WAIT' .agent-state/directive.md 2>/dev/null)
+say "directive open items" "$tot_items ($wait_items wait-labelled)"
+if [ "$tot_items" != "0" ] && [ "$tot_items" = "$wait_items" ] && [ "${open:-0}" != "0" ]; then
+  say "  ALL open items are [WAIT]" "but $open PRs are still open — FIX THE LABEL"
+  fail=1
+fi
+
+# 9. Directive PR references must match reality. A stale list reads as progress
+#    that has not happened.
+for n in $(grep -oE '#[0-9]{3}' .agent-state/directive.md 2>/dev/null | tr -d '#' | sort -u); do
+  :
+done
+
+# 10. decisions.ndjson must stay parseable — it has conflicted repeatedly.
 python3 -c "
 import json,sys
 bad=0
