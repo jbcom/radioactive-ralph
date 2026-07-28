@@ -89,12 +89,24 @@ func (CodexRunner) Run(ctx context.Context, binding Binding, req Request) (Resul
 	// Ralph creates and removes it, so it never outlives the turn. The name is
 	// fixed rather than random so a crashed turn leaves at most one stale file
 	// that the next turn overwrites.
-	outDir := tmpDir
+	outPath := filepath.Join(tmpDir, "last-message.txt")
 	if root := strings.TrimSpace(req.ContainmentRoot); root != "" {
-		outDir = root
-	}
-	outPath := filepath.Join(outDir, "last-message.txt")
-	if outDir != tmpDir {
+		// A PER-TURN file, created inside the permitted root.
+		//
+		// A fixed name would be wrong twice over: concurrent codex workers on the
+		// same project would overwrite and then DELETE each other's result before
+		// it was read, and a checkout that already contains last-message.txt
+		// would have that file clobbered and removed by cleanup. Neither failure
+		// announces itself -- the turn just reports a missing or wrong result.
+		//
+		// CreateTemp both randomizes and creates, so two turns cannot select the
+		// same name in the gap between choosing and writing.
+		f, err := os.CreateTemp(root, ".ralph-codex-result-*.txt")
+		if err != nil {
+			return Result{}, fmt.Errorf("provider: create codex result file: %w", err)
+		}
+		outPath = f.Name()
+		_ = f.Close()
 		defer func() { _ = os.Remove(outPath) }()
 	}
 
