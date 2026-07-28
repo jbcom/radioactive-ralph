@@ -21,7 +21,7 @@ const (
 	// attempts. Each attempt walks all of /proc, so under CPU contention an
 	// attempt-count budget elapses far sooner than attempts*interval of real
 	// time and aborts a converging cleanup.
-	sessionCleanupBudget = 5 * time.Second
+	sessionCleanupBudget = 2 * time.Second
 )
 
 // cleanupOriginalProcessSession reclaims descendants that moved to another

@@ -68,66 +68,48 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
 
 ## Remaining
 
-- [ ] [WAIT-AGENT] Land the 8 open PRs: 222, 225, 251, 252, 255, 257, 262, 268.
-      MERGED: #259 (differentFrom import validation), #263 (calibration IPC,
-      9fe7d33), #267 (watchdog barrier),
-      #265, #261, #258, #236, #247, #256, #245, #246.
+- [ ] Land the 5 open PRs: 225, 251, 252, 257, 262.
+      NOT wait-labelled: two have a failing check, which is agent-doable.
+      MERGED via the queue this session: #222, #270, #255, #268, #267, #263,
+      #259, #265, #261, #258, #236, #247, #256, #245, #246.
 
-      MECHANISM CHANGED 2026-07-28 (user-directed). The driver is STOPPED and
-      obsolete; GitHub now does the merging. Three changes, all live:
-        1. MERGE QUEUE (ruleset 19896999): squash, ALLGREEN, batches up to 5.
-           This is the structural fix for `strict` protection -- the queue tests
-           base + PR + everything ahead of it ONCE, in order, instead of making
-           every author rebase into a moving target. I had been throttling
-           rebases to work around this rather than solving it.
-        2. REQUIRED CHECKS 25 -> 13, macOS 4 -> 1. User: "why are we validating
-           builds in CI they will validate in CD". Correct -- release.yml runs
-           GoReleaser, which rebuilds and smoke-tests every platform target and
-           the installer, so CI gating 7 cross-compile Build jobs and 6
-           packaging jobs re-validated at merge time what CD validates at
-           release time. Dropped checks STILL RUN on every PR; they just stop
-           blocking. Immediate effect: #257/#255/#252 flipped BLOCKED -> CLEAN.
-        3. ci.yml is PR + merge_group ONLY. User: "why is ci.yml running on
-           anything other than pull requests". The push trigger re-ran the whole
-           23-job matrix on every merge, which under a queue verifies nothing --
-           the queued commit IS main's future state and merging happens BECAUSE
-           those checks passed. Verified no workflow_run consumer depends on it.
+      MECHANISM: GitHub merge queue (ruleset 19896999, squash, ALLGREEN, batches
+      up to 5). The driver is STOPPED and obsolete. Three user-directed changes
+      made this work:
+        1. MERGE QUEUE -- the structural fix for `strict` protection. The queue
+           tests base + PR + everything ahead of it ONCE, in order, instead of
+           making every author rebase into a moving target.
+        2. REQUIRED CHECKS 25 -> 11. CD re-validates every build/package target
+           via GoReleaser, so CI gating them re-ran at merge time what CD runs
+           at release time. CodeQL came out too: codeql.yml excludes
+           gh-readonly-queue/** and is fleet-synced from jbdevprimary/gh-fleet-sync
+           ("Do not edit in place"), so its two required checks could NEVER
+           report on a queue branch. Everything dropped still RUNS on each PR.
+        3. ci.yml is PR + merge_group ONLY. The push trigger re-ran the whole
+           matrix on a tree the queue had just tested.
 
-      BOOTSTRAP -- I GOT THIS WRONG ONCE. The queue cannot run until ci.yml's
-      merge_group trigger is on MAIN, and that ships in #268. I enabled the
-      queue anyway, in the same pass as naming the dependency; it accepted #259
-      and parked it in AWAITING_CHECKS waiting for a merge_group run that could
-      never be created. Ruleset 19896999 is now DISABLED and #259 merged fine
-      through the normal path.
-      CORRECT ORDER: (1) land #268, (2) then re-enable ruleset 19896999,
-      (3) verify a merge_group CI run actually APPEARS before trusting it.
-      Naming a prerequisite is not satisfying it.
-      DONE 2026-07-28: #268 merged (5c5159a), ruleset re-enabled, and the
-      verification passed -- 5 entries queued and merge_group CI runs started.
+      QUEUE MECHANICS worth knowing:
+      * `gh pr merge --auto` DOES enqueue; "The merge strategy for main is set
+        by the merge queue" is INFORMATIONAL, not an error. `--delete-branch` is
+        rejected -- the queue owns deletion.
+      * Query entries with entries(first:N){totalCount ...} and trust
+        totalCount; the nodes list can come back empty while entries exist.
+      * A queue entry reading UNMERGEABLE while the PR reads CLEAN means it
+        conflicts with the BATCH ahead of it -- the queue doing its job.
+      * ALLGREEN dissolves the whole batch when one entry fails, ejecting
+        PASSING entries too. They are re-added automatically. Measured 1
+        dissolution against 4 successes -- not worth reconfiguring.
+      * Each queue branch carries ~23 check-runs. A snapshot showing required
+        checks "missing" usually means NOT YET COMPLETE. Watch completed-vs-
+        running across two samples before calling it a stall.
 
-      QUEUE MECHANICS, learned the hard way:
-      * `gh pr merge --auto` DOES enqueue. My repeated "queued=[]" readings were
-        a stale/empty GraphQL response, not a stall -- confirmed by trying an
-        explicit enqueuePullRequest and getting "Pull request is already in the
-        queue" for all four. Query entries with entries(first:N){totalCount ...}
-        and trust totalCount over an empty nodes list.
-      * `gh pr merge --squash` prints "The merge strategy for main is set by the
-        merge queue" -- that is INFORMATIONAL, not a failure. The enqueue
-        succeeded.
-      * `--delete-branch` is REJECTED under a queue; the queue owns deletion.
-      * A queue entry can read UNMERGEABLE while the PR itself reads
-        CLEAN/MERGEABLE. That is the queue doing its job: the PR conflicts with
-        the BATCH ahead of it, which is the semantic conflict a queue exists to
-        catch before it reaches main.
-      ROLLBACK: /tmp/protection-backup.json holds the original 25-check config.
-
-      There is ALWAYS an action here; this is not a wait.
-      1. `bash scripts/verify-repo-claims.sh` first -- never assert from memory.
-      2. DIRTY -> resolve. Nearly every conflict is GENERATED docs
-         (docs/api/internal/*.md): run `make docs-api`, then `git add` the path
-         (regeneration rewrites the file but does NOT mark it resolved).
-      3. FAILING -> read the job log, fix the cause. Re-check before believing
-         it: CI re-runs constantly and a FAILURE seen once is often already gone.
+      ACTIONS, in order:
+      1. `bash scripts/verify-repo-claims.sh` -- never assert status from memory.
+      2. DIRTY -> resolve. Most conflicts are GENERATED docs
+         (docs/api/internal/*.md): `make docs-api`, then `git add` the path.
+         docs/design/index.md conflicts are additive -- keep BOTH entries.
+      3. FAILING -> read the job log. Re-check before believing it: CI re-runs
+         constantly and a FAILURE seen once is often already gone.
       4. Unresolved thread -> verify against the code, then fix or counter it.
       5. Nothing actionable -> the queue is working; do not add CI load.
 

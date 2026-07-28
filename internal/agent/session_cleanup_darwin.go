@@ -21,9 +21,10 @@ const (
 	// a getsid(2) per process, so on an oversubscribed host 100 attempts elapse
 	// long before 100*interval of real time and abort a converging cleanup.
 	// Measured convergence for a 32-descendant tree on a loaded 16-core macOS
-	// host reaches ~1.1s, so the budget clears that with margin while still
-	// bounding the supervisor's never-block invariant.
-	sessionCleanupBudget = 5 * time.Second
+	// host reaches ~1.1s, so the budget clears that with margin while staying
+	// under the ~3s ceiling callers allow for a terminate-and-join, preserving
+	// the supervisor's never-block invariant.
+	sessionCleanupBudget = 2 * time.Second
 )
 
 type darwinSessionMember struct {
