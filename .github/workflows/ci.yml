@@ -571,15 +571,29 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y shellcheck desktop-file-utils
+      - name: Shellcheck coverage (every repo script is on the list)
+        run: bash scripts/ci/test_shellcheck_coverage.sh
+
       - name: Shellcheck packaging + install scripts
         run: |
-          shellcheck \
+          # -x so sourced files are followed. Without it a `source` of a real,
+          # in-repo helper reports SC1091 and the only fixes are a blanket
+          # disable or leaving the script off this list entirely.
+          shellcheck -x \
             packaging/linux/build-appimage.sh \
             packaging/publish-cli-manifests.sh \
             packaging/macos/push-version-branch.sh \
             docs/install.sh \
             scripts/ci/test_install_signature_policy.sh \
             scripts/verify-docs-artifact.sh \
+            scripts/verify-repo-claims.sh \
+            scripts/drive-open-prs.sh \
+            scripts/generate-api-docs.sh \
+            scripts/record-demo.sh \
+            scripts/validate-docs.sh \
+            scripts/ci/smoke_launchd.sh \
+            scripts/ci/smoke_systemd_user.sh \
+            scripts/ci/test_shellcheck_coverage.sh \
             scripts/ci/wait_for_package_publication.sh \
             scripts/ci/test_wait_for_package_publication.sh \
             scripts/ci/test_publish_cli_manifests.sh \
