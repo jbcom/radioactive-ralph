@@ -6,10 +6,16 @@ on:
 permissions:
   contents: read
 
-# See ci.yml: one in-flight run per PR, and never cancel a main run.
+# Keyed on the REF, not a PR number: this workflow is workflow_dispatch-only,
+# so github.event.pull_request.number is always empty and the run_id fallback
+# would give every run a unique group — a concurrency block that can never
+# cancel anything. Re-dispatching for the same ref supersedes the previous run.
+#
+# main is excluded from cancellation for the same reason as ci.yml: its runs
+# can gate a release, and a unique group means nothing can cancel them.
 concurrency:
-  group: service-managers-${{ github.event.pull_request.number || github.run_id }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: service-managers-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
   launchd:
