@@ -99,11 +99,20 @@ than a separate code path.
 
 ### Fields
 
-`id` and `after` and `team` are acted on today. The remaining fields
-**parse and persist** but are not yet enforced — they are recorded on the
-task so the features that consume them can be added without a plan-format
-change, and they are listed here so the format is documented once rather
-than in pieces.
+Each field's **Status** column says what it actually does today, and the
+distinction is load-bearing rather than bookkeeping:
+
+- **enforced** — dispatch acts on it and refuses or defers when it cannot be
+  satisfied. `id`, `after`, `providers`, `differentFrom`, and
+  `binding.provider` are here.
+- **persisted** — recorded on the task, consumed by nothing yet (`team`).
+- **parsed** — accepted by the grammar and not yet acted on.
+
+A field that only parses is NOT a guarantee, and this table is the place to
+check before relying on one. Fields are recorded even before they are enforced
+so the consuming feature can be added without a plan-format change — but that
+also means a plan can declare something the runtime ignores, which is exactly
+what the Status column exists to make visible.
 
 | Field | Status | Meaning |
 |---|---|---|

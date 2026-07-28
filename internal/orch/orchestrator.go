@@ -2000,6 +2000,15 @@ func (o *Orchestrator) dispatchWorker(ctx context.Context, projectID, projectDir
 //   - A step declaring `providers`: the group's binding is resolved without
 //     consulting it, so a task pinned to codex would otherwise be swept into a
 //     claude turn and executed there.
+//   - A step declaring `binding.provider`: same reason, different field.
+//
+// The pin is ALSO protected upstream — ReadyPartitions splits a wave on the
+// declared binding, so a pinned task does not share a partition with a
+// differently-pinned or unpinned one and never reaches a mismatched fan-out
+// group. Excluding it here anyway is deliberate redundancy: a restriction whose
+// only guard lives in another package is one refactor away from silently
+// lapsing, and this function's whole point is that the rule is stated ONCE for
+// every per-step binding restriction rather than rediscovered per field.
 //
 // Both restriction exclusions exist because the failure is SILENT. The step runs,
 // provenance records it as having run, and the plan reads as satisfied — while
@@ -2023,7 +2032,8 @@ func (o *Orchestrator) coalescableSteps(
 	stepRefs := make([]plan.StepRef, 0, candidateLimit)
 	for i := 0; i < candidateLimit; i++ {
 		if len(readySteps[i].Metadata.IndependencePeers()) > 0 ||
-			len(readySteps[i].Metadata.AllowedProviders()) > 0 {
+			len(readySteps[i].Metadata.AllowedProviders()) > 0 ||
+			readySteps[i].Metadata.PinnedProviderType() != "" {
 			continue
 		}
 		gated, err := o.stepGateBlocks(ctx, planID, projectID, parallel, refs[i], readySteps[i])

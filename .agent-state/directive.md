@@ -109,6 +109,12 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
       correctly under a containment-on default -- claude completes confined,
       codex and opencode refuse visibly with worker.admission_refused.
       Remaining: land #290 then #292. Nothing to decide.
+
+      --- HISTORY BELOW THIS LINE. Everything that follows describes how the
+      --- decision was REACHED and is kept for the evidence trail. It contains
+      --- questions that were open at the time and are now ANSWERED; do not
+      --- action anything below as if it were live work.
+
       Opened and CLOSED #284 in one pass. The flip is right in principle and
       breaks TWO of three shipped providers in practice: a real codex turn and
       a real opencode turn both fail under containment, while claude passes.
@@ -123,7 +129,8 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
       provider as its own subtest, so this cannot recur -- and running it
       immediately found opencode, which #285 did not know about.
 
-      NOT a wait on CI. It waits on a DECISION in #285: widen the policy for
+      (ANSWERED -- resolved in #290 as the capability option.) At the time,
+      this was not a wait on CI; it waited on a DECISION in #285: widen the policy for
       what agent CLIs actually need at startup, or let a binding declare it
       cannot be contained so the resolver refuses rather than failing opaquely.
       A codex-specific carve-out is now insufficient -- opencode needs it too.
