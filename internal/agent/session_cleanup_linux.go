@@ -16,8 +16,12 @@ import (
 )
 
 const (
-	sessionCleanupAttempts = 100
 	sessionCleanupInterval = 5 * time.Millisecond
+	// sessionCleanupBudget bounds reclamation in WALL-CLOCK time, not in poll
+	// attempts. Each attempt walks all of /proc, so under CPU contention an
+	// attempt-count budget elapses far sooner than attempts*interval of real
+	// time and aborts a converging cleanup.
+	sessionCleanupBudget = 5 * time.Second
 )
 
 // cleanupOriginalProcessSession reclaims descendants that moved to another
@@ -25,16 +29,14 @@ const (
 // Linux pidfds make each descendant signal stable against PID reuse. A child
 // that creates a new session with setsid(2) is intentionally undiscoverable by
 // this session-scoped contract.
-func cleanupOriginalProcessSession(
-	process *os.Process,
-	originalGroupSignaled bool,
-) error {
+func cleanupOriginalProcessSession(process *os.Process) error {
 	if process == nil || process.Pid <= 1 {
 		return nil
 	}
 	sessionID := process.Pid // creack/pty Start makes the child the session leader.
 	var remaining []int
-	for range sessionCleanupAttempts {
+	deadline := time.Now().Add(sessionCleanupBudget)
+	for {
 		members, err := linuxSessionMembers(sessionID)
 		if err != nil {
 			return err
@@ -44,15 +46,29 @@ func cleanupOriginalProcessSession(
 			if member.pid == sessionID || member.state == 'Z' {
 				continue
 			}
-			if !originalGroupSignaled || member.group != sessionID {
-				if err := signalLinuxSessionMember(member.pid, sessionID); err != nil {
-					return err
-				}
+			// Re-signal every member every attempt. The caller's single
+			// kill(-pgid) cannot reach a process forked after it landed, so
+			// "same group" is not evidence the member was ever signalled.
+			if err := signalLinuxSessionMember(member.pid, sessionID); err != nil {
+				return err
+			}
+			// signalLinuxSessionMember revalidates liveness behind a pidfd; a
+			// member that is gone or already a zombie is not outstanding. Re-read
+			// rather than trusting the enumeration snapshot.
+			current, found, err := readLinuxSessionMember(member.pid)
+			if err != nil {
+				return err
+			}
+			if !found || current.state == 'Z' || current.session != sessionID {
+				continue
 			}
 			remaining = append(remaining, member.pid)
 		}
 		if len(remaining) == 0 {
 			return nil
+		}
+		if time.Now().After(deadline) {
+			break
 		}
 		time.Sleep(sessionCleanupInterval)
 	}

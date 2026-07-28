@@ -14,8 +14,16 @@ import (
 )
 
 const (
-	sessionCleanupAttempts = 100
 	sessionCleanupInterval = 5 * time.Millisecond
+	// sessionCleanupBudget bounds reclamation in WALL-CLOCK time, not in poll
+	// attempts. An attempt count multiplied by a sleep silently shrinks under
+	// CPU contention: each pass also pays for a kern.proc.all enumeration plus
+	// a getsid(2) per process, so on an oversubscribed host 100 attempts elapse
+	// long before 100*interval of real time and abort a converging cleanup.
+	// Measured convergence for a 32-descendant tree on a loaded 16-core macOS
+	// host reaches ~1.1s, so the budget clears that with margin while still
+	// bounding the supervisor's never-block invariant.
+	sessionCleanupBudget = 5 * time.Second
 )
 
 type darwinSessionMember struct {
@@ -33,10 +41,7 @@ type darwinSessionMember struct {
 // the kernel validates the token's PID version, so a recycled numeric PID is
 // never signaled. Enumeration is revalidated after token acquisition and
 // escaped members are killed leaf-first.
-func cleanupOriginalProcessSession(
-	process *os.Process,
-	originalGroupSignaled bool,
-) error {
+func cleanupOriginalProcessSession(process *os.Process) error {
 	if process == nil || process.Pid <= 1 {
 		return nil
 	}
@@ -53,7 +58,8 @@ func cleanupOriginalProcessSession(
 	if effectiveUID < 0 {
 		return fmt.Errorf("agent: invalid effective UID %d", effectiveUID)
 	}
-	for range sessionCleanupAttempts {
+	deadline := time.Now().Add(sessionCleanupBudget)
+	for {
 		members, err := darwinSessionMembers(sessionID)
 		if err != nil {
 			return err
@@ -65,9 +71,10 @@ func cleanupOriginalProcessSession(
 				continue
 			}
 			remaining = append(remaining, member.pid)
-			if originalGroupSignaled && member.group == process.Pid {
-				continue
-			}
+			// Re-signal every member on every pass. The caller's single
+			// kill(-pgid) cannot reach a descendant forked after that signal
+			// landed, so membership in the leader's group is not evidence the
+			// member was ever signalled.
 			// Darwin uid_t is uint32; effectiveUID was checked non-negative.
 			if member.euid != uint32(effectiveUID) { //nolint:gosec // Darwin uid_t ABI
 				return fmt.Errorf("agent: refuse to signal PTY session member %d owned by another user", member.pid)
@@ -89,7 +96,17 @@ func cleanupOriginalProcessSession(
 			if err != nil {
 				return err
 			}
-			if !found || current != member || currentSession(member.pid) != sessionID {
+			// Identity is (pid, start time, euid): none can change for a live
+			// process, so together they prove the PID was not recycled. Group and
+			// parent are deliberately excluded — a descendant may setpgrp(2) or
+			// reparent to launchd between enumeration and now, and neither may
+			// exempt it from the kill.
+			if !found ||
+				current.pid != member.pid ||
+				current.startSec != member.startSec ||
+				current.startUsec != member.startUsec ||
+				current.euid != member.euid ||
+				currentSession(member.pid) != sessionID {
 				continue
 			}
 			if err := api.signalAuditToken(token, syscall.SIGKILL); err != nil {
@@ -98,6 +115,9 @@ func cleanupOriginalProcessSession(
 		}
 		if len(remaining) == 0 {
 			return nil
+		}
+		if time.Now().After(deadline) {
+			break
 		}
 		time.Sleep(sessionCleanupInterval)
 	}

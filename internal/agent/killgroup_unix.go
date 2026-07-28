@@ -18,7 +18,6 @@ func cleanupExitedProcessTree(process *os.Process) error {
 		return nil
 	}
 	err := syscall.Kill(-process.Pid, syscall.SIGKILL)
-	groupSignaled := err == nil
 	// Darwin reports EPERM when the only remaining group member is the
 	// already-observed zombie leader. If any live same-UID descendant remains,
 	// that descendant is signalable and the group kill succeeds. Linux reports
@@ -28,7 +27,7 @@ func cleanupExitedProcessTree(process *os.Process) error {
 		(runtime.GOOS == "darwin" && errors.Is(err, syscall.EPERM)) {
 		err = nil
 	}
-	return errors.Join(err, cleanupOriginalProcessSession(process, groupSignaled))
+	return errors.Join(err, cleanupOriginalProcessSession(process))
 }
 
 // terminateProcessTree first signals the whole PTY process group. If group
@@ -51,7 +50,7 @@ func terminateProcessTreeWithGroupSignal(
 		if err := signalGroup(-process.Pid, syscall.SIGKILL); err == nil {
 			return terminationOutcome{
 				cleanupErr: wrapSessionCleanup(
-					cleanupOriginalProcessSession(process, true),
+					cleanupOriginalProcessSession(process),
 				),
 			}
 		} else if !errors.Is(err, syscall.ESRCH) {
@@ -69,7 +68,7 @@ func terminateProcessTreeWithGroupSignal(
 						errors.Is(groupProbeErr, syscall.ESRCH) {
 						return terminationOutcome{
 							cleanupErr: wrapSessionCleanup(
-								cleanupOriginalProcessSession(process, false),
+								cleanupOriginalProcessSession(process),
 							),
 						}
 					}
@@ -78,7 +77,7 @@ func terminateProcessTreeWithGroupSignal(
 					cleanupErr: errors.Join(
 						ErrProcessSessionCleanup,
 						err,
-						cleanupOriginalProcessSession(process, false),
+						cleanupOriginalProcessSession(process),
 					),
 				}
 			}
@@ -97,7 +96,7 @@ func terminateProcessTreeWithGroupSignal(
 	if directErr == nil || errors.Is(directErr, os.ErrProcessDone) {
 		return terminationOutcome{
 			cleanupErr: wrapSessionCleanup(
-				cleanupOriginalProcessSession(process, false),
+				cleanupOriginalProcessSession(process),
 			),
 		}
 	}

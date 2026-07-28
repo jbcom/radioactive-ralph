@@ -122,6 +122,14 @@ func (api darwinProcessAPI) auditTokenForPID(pid int) (darwinAuditToken, error) 
 	var token darwinAuditToken
 	count := uint32(len(token))
 	if code := api.taskInfo(taskName, taskAuditTokenFlavor, &token[0], &count); code != machSuccess {
+		// The same exit race as task_name_for_pid above, one call later: the
+		// member can die between acquiring its task-name port and reading the
+		// token, which leaves a dead port that fails the query. Report it as a
+		// vanished member rather than a cleanup failure.
+		if code == machKernFailure || code == machKernInvalidArgument {
+			return darwinAuditToken{}, fmt.Errorf(
+				"%w: TASK_AUDIT_TOKEN for PID %d failed with Mach code %d", errDarwinProcessGone, pid, code)
+		}
 		return darwinAuditToken{}, fmt.Errorf("agent: TASK_AUDIT_TOKEN for PID %d failed with Mach code %d", pid, code)
 	}
 	if count != uint32(len(token)) || token.pid() != pid {
