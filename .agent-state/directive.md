@@ -68,7 +68,7 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
 
 ## Remaining
 
-- [ ] [WAIT] Land the open PRs: 279, 281, 282.
+- [ ] [WAIT] Land the open PRs: 279, 282, 283, 286.
       (225, 274, 272, 275, 277 and 278 landed this pass.)
       All four are QUEUED or auto-merge ARMED with zero unresolved threads and
       zero failing checks; the only remaining work is CI on a serialized runner
@@ -100,26 +100,22 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
           retryable, when the generic sentinel was already correctly terminal.
           Naming a category is choosing a retry policy.
 
-- [ ] REOPENED by evidence: do NOT flip contain_provider_writes on yet.
+- [ ] [WAIT-BLOCKED-BY-#285] do NOT flip contain_provider_writes on yet.
       ONE gate remains, stated in full at the containment item below. #277 has
       LANDED, so the test exists on main. Short form: land #281, then run
       TestE2E_LiveContainedTurnCompletes with RALPH_E2E_LIVE=1. THAT result is the answer -- do not infer it from the
       CI E2E, which drives a fake CLI and cannot exercise what a real one does.
 
-- [ ] Land #281: NO real claude turn worked, at all. encoding/json emitted
-      "Message" for an untagged field, the CLI read `message.role`, found
-      nothing, and every turn died in 0.78s with "Expected message role 'user',
-      got 'undefined'". Fixed and verified end to end -- a live turn returns
-      output and usage, and TestE2E_LiveDispatchWithRealProviderCLI reaches
-      status=done.
-      The LESSON is the durable part: the unit tests round-tripped through the
-      SAME encoder, so the identical wrong tag governed both directions and they
-      agreed with each other while disagreeing with the CLI. Assert provider
-      wire formats on DECODED BYTES against the key the other process reads,
-      never on the producing struct. And CI has never run a real provider turn
-      (the live suite is opt-in), so green proved only self-consistency.
+- [ ] [WAIT-BLOCKED-BY-#285] contain_provider_writes stays OFF by default.
+      #284 was opened and CLOSED in the same pass: the flip is correct in
+      principle and breaks CODEX in practice. Full evidence at the containment
+      item below and in #285. This is not a wait on CI -- it is a wait on
+      deciding HOW codex runs confined (widen the policy narrowly, or let a
+      binding declare it cannot be contained and refuse rather than fail
+      opaquely).
 
-- [ ] Issue #280: ralph-task `binding` is INERT. STORAGE HALF IN #282 --
+- [ ] [WAIT] Issue #280: ralph-task `binding` was INERT. BOTH halves are now
+      open as PRs -- storage in #282, dispatch in #283. STORAGE HALF --
       ReadyPartitions now splits on the declared binding, so a coalesced turn
       can no longer swallow a task's pin (the same hole `providers` had until
       #272). The DISPATCH half is still open: nothing yet CONSUMES
@@ -355,7 +351,8 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
             by grepping origin/main for each symbol, not by assuming the pair
             moves together.
 
-- [ ] Make provider write containment reachable from config, then default it on.
+- [ ] [WAIT-BLOCKED-BY-#285] Provider write containment: reachable from config
+      (DONE), default it on (BLOCKED -- codex cannot run confined).
       UNGATED 2026-07-28: #251 is MERGED, and the wiring re-verified on
       origin/main rather than trusted -- vconfig.ContainProviderWrites is read
       by PRODUCTION code at cmd/radioactive_ralph/binding_resolver.go:268, not
