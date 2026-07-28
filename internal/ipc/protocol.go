@@ -33,13 +33,33 @@ import (
 // ProtoVersion is the wire protocol version this build speaks. The original
 // read-only-TUI surface (status/attach/enqueue/stop/reload-config) is v1; the
 // drive commands (plan-import/plan-set-status/task-approve/worker-kill) are v2;
-// safe project-scoped snapshot/message queries are v3. A client omitting
-// Request.ProtoVersion is treated as v1 for back-compat.
+// safe project-scoped snapshot/message queries are v3; ProjectEnsure's
+// resolve-only mode is v4. A client omitting Request.ProtoVersion is treated as
+// v1 for back-compat.
 const (
-	ProtoVersion       = 3
+	ProtoVersion       = 4
 	DriveProtoVersion  = 2
 	QueryProtoVersion  = 3
 	AttachProtoVersion = 3
+
+	// ResolveOnlyProtoVersion floors a ProjectEnsure request that sets
+	// ResolveOnly.
+	//
+	// The flag CHANGES an existing command's meaning — ProjectEnsure normally
+	// accumulates and touches the project, and ResolveOnly promises it will not.
+	// A supervisor predating the flag does not know the field, ignores it, and
+	// runs the mutating path anyway; a resolve through a git fingerprint from a
+	// moved checkout would then record that path as the project's newest worker
+	// directory, precisely the mutation the flag promises to avoid. Version skew
+	// is routine here: the desktop binary is upgraded while a long-lived
+	// supervisor keeps running the previous build.
+	//
+	// Sending it above the old maximum makes such a supervisor REJECT the
+	// request (it refuses req.ProtoVersion > its own ProtoVersion) instead of
+	// silently breaking the promise. Only the changed semantic carries this
+	// floor — a plain ProjectEnsure stays on DriveProtoVersion so a rolling
+	// client can still drive an otherwise-compatible older supervisor.
+	ResolveOnlyProtoVersion = 4
 )
 
 // Command names for the JSON-line protocol.
@@ -252,6 +272,14 @@ type ProjectFingerprint struct {
 type ProjectEnsureArgs struct {
 	Fingerprints []ProjectFingerprint `json:"fingerprints"`
 	DisplayName  string               `json:"display_name"`
+	// ResolveOnly answers "is this a project I already know?" WITHOUT creating
+	// one on a miss, returning an empty ProjectID instead.
+	//
+	// It exists for the desktop-launch path, whose working directory is
+	// whatever a file manager handed it — usually not a repo, sometimes "/".
+	// Create-on-miss there would register that directory as a durable,
+	// operator-visible project just because someone double-clicked an icon.
+	ResolveOnly bool `json:"resolve_only,omitempty"`
 }
 
 // ProjectEnsureReply reports the resolved project and whether this call created
