@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 
 	"github.com/yuin/goldmark/ast"
 )
@@ -85,7 +86,54 @@ func parseTaskMetadataBlock(item ast.Node, source []byte) (*TaskMetadata, error)
 	if metadata.ID == "" {
 		return nil, fmt.Errorf("%s block requires a non-empty %q", taskMetadataLanguage, "id")
 	}
+	if err := rejectPaddedTaskIDs(&metadata); err != nil {
+		return nil, err
+	}
 	return &metadata, nil
+}
+
+// rejectPaddedTaskIDs refuses a task ID carrying leading or trailing whitespace,
+// in `id` or in any reference to one.
+//
+// These strings are used verbatim as lookup keys — `differentFrom` entries reach
+// GetTaskExecutionMetadata as task IDs, and `after` entries resolve to graph
+// edges. Whitespace makes the key un-matchable against the real task, and the
+// resulting failure is the quiet kind: the step is not rejected, not marked
+// blocked, and not reported. It simply never becomes dispatchable, forever,
+// because no amount of running `produce` creates a task named " produce ".
+//
+// Rejected rather than silently trimmed, for the same reason a null or a
+// duplicate key is rejected above: the author is present at import to fix it,
+// and quietly repairing input means a plan that reads one way runs another. It
+// also keeps validation honest — validateDifferentFrom compares TrimSpace'd
+// values, so without this an entry could PASS validation and then fail every
+// lookup it was validated for.
+func rejectPaddedTaskIDs(m *TaskMetadata) error {
+	check := func(field, value string) error {
+		if value != strings.TrimSpace(value) {
+			return fmt.Errorf(
+				"%s field %q contains the task ID %q with surrounding whitespace; "+
+					"task IDs are matched exactly, so this can never resolve",
+				taskMetadataLanguage, field, value)
+		}
+		return nil
+	}
+	if err := check("id", m.ID); err != nil {
+		return err
+	}
+	for _, peer := range m.DifferentFrom {
+		if err := check("differentFrom", peer); err != nil {
+			return err
+		}
+	}
+	if m.After != nil {
+		for _, dep := range *m.After {
+			if err := check("after", dep); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 // rejectDuplicateKeys refuses any object in the metadata that repeats a key, at

@@ -572,57 +572,51 @@ func (o *Orchestrator) DispatchNext(ctx context.Context, projectID, planID strin
 			return dispatched, fmt.Errorf("orch: resolve binding: %w", err)
 		}
 		if binding.Config.NativeFanout {
-			// Native fan-out consumes one Ralph worker, so scan the complete
-			// ready group. maxParallel bounds admitted workers, not the number
-			// of independent tasks that one provider-native fan-out may own.
-			eligibleSteps := make([]plan.Step, 0, candidateLimit)
-			eligibleRefs := make([]plan.StepRef, 0, candidateLimit)
-			for i := 0; i < candidateLimit; i++ {
-				gated, err := o.stepGateBlocks(ctx, planID, projectID, parallel, refs[i], readySteps[i])
-				if err != nil {
-					return dispatched, err
-				}
-				if !gated {
-					eligibleSteps = append(eligibleSteps, readySteps[i])
-					eligibleRefs = append(eligibleRefs, refs[i])
-				}
-			}
-			if len(eligibleSteps) == 0 {
-				return dispatched, nil
-			}
-
-			// A fan-out group is one worker / one provider turn, so it takes ONE
-			// dispatch slot. If the pipeline is full there's no capacity now —
-			// return without dispatching; the next pass retries.
-			if !o.acquireDispatchSlot() {
-				o.reportSaturation(ctx, projectID, planID, len(eligibleSteps))
-				return dispatched, nil
-			}
-			slotReleased := false
-			releaseSlot := func() {
-				if !slotReleased {
-					o.releaseDispatchSlot()
-					slotReleased = true
-				}
-			}
-			binding, err = o.resolveBinding(ctx, projectID, parallel, BindingDispatch)
+			eligibleSteps, eligibleRefs, err := o.coalescableSteps(
+				ctx, planID, projectID, parallel, refs, readySteps, candidateLimit)
 			if err != nil {
-				releaseSlot()
-				return dispatched, fmt.Errorf("orch: resolve binding for dispatch: %w", err)
-			}
-			if !binding.Config.NativeFanout {
-				releaseSlot()
-				return dispatched, fmt.Errorf("orch: binding capability changed between probe and dispatch")
-			}
-			n, err := o.dispatchFanoutGroup(ctx, projectID, projectDir, planID, parsedPlan, storedPlan.Title, groupHeading, binding, eligibleSteps, eligibleRefs, releaseSlot)
-			if err != nil {
-				// dispatchFanoutGroup only returns an error on a synchronous
-				// pre-launch failure (claim/spend); the async turn was never
-				// started, so release the slot here.
-				releaseSlot()
 				return dispatched, err
 			}
-			return n, nil
+			// An empty set means nothing here can be coalesced, so this branch
+			// does not apply and control falls through to the per-step loop
+			// below. Returning instead would strand a group whose every ready
+			// step is independence-constrained: this branch would re-scan and
+			// dispatch none of it on every tick, with no operator-visible reason
+			// and no state for anyone to clear.
+			if len(eligibleSteps) > 0 {
+				// A fan-out group is one worker / one provider turn, so it takes
+				// ONE dispatch slot. If the pipeline is full there's no capacity
+				// now — return without dispatching; the next pass retries.
+				if !o.acquireDispatchSlot() {
+					o.reportSaturation(ctx, projectID, planID, len(eligibleSteps))
+					return dispatched, nil
+				}
+				slotReleased := false
+				releaseSlot := func() {
+					if !slotReleased {
+						o.releaseDispatchSlot()
+						slotReleased = true
+					}
+				}
+				binding, err = o.resolveBinding(ctx, projectID, parallel, BindingDispatch)
+				if err != nil {
+					releaseSlot()
+					return dispatched, fmt.Errorf("orch: resolve binding for dispatch: %w", err)
+				}
+				if !binding.Config.NativeFanout {
+					releaseSlot()
+					return dispatched, fmt.Errorf("orch: binding capability changed between probe and dispatch")
+				}
+				n, err := o.dispatchFanoutGroup(ctx, projectID, projectDir, planID, parsedPlan, storedPlan.Title, groupHeading, binding, eligibleSteps, eligibleRefs, releaseSlot)
+				if err != nil {
+					// dispatchFanoutGroup only returns an error on a synchronous
+					// pre-launch failure (claim/spend); the async turn was never
+					// started, so release the slot here.
+					releaseSlot()
+					return dispatched, err
+				}
+				return n, nil
+			}
 		}
 	}
 
@@ -1266,6 +1260,18 @@ func (o *Orchestrator) resolveIndependentBinding(
 		peerDomains[meta.AssignedIndependenceDomain] = struct{}{}
 	}
 
+	// allowedHere re-applies the step's `providers` restriction, if it has one,
+	// to every candidate this rotation considers. The earlier allowed-providers
+	// pass constrained only the binding it handed us; rotating away from that one
+	// leaves its restriction behind unless it is re-checked here.
+	allowed := a.step.Metadata.AllowedProviders()
+	allowedHere := func(b provider.Binding) bool {
+		if len(allowed) == 0 {
+			return true
+		}
+		return provider.CheckAllowedProviders(b, allowed) == nil
+	}
+
 	seen := map[string]struct{}{}
 	candidate := first
 	for i := 0; i <= maxProviderRotations; i++ {
@@ -1275,7 +1281,16 @@ func (o *Orchestrator) resolveIndependentBinding(
 		}
 		// An UNCALIBRATED candidate is not usable here either: an unknown domain
 		// cannot be shown to differ from a peer's.
-		if domain != "" {
+		// Both predicates are evaluated TOGETHER. `providers` and `differentFrom`
+		// are resolved by two separate rotations and this one runs second, so
+		// returning on the domain alone would let it hand back a binding the
+		// allowed-providers pass had already refused -- a task pinned to codex
+		// quietly running on claude because claude happened to be independent.
+		//
+		// Both restrictions were written down, so both must hold: an operator who
+		// pins a reviewer AND demands independence gets a reviewer that is pinned
+		// and independent, or none at all.
+		if domain != "" && allowedHere(candidate) {
 			if _, clash := peerDomains[domain]; !clash {
 				return candidate, nil
 			}
@@ -1289,6 +1304,15 @@ func (o *Orchestrator) resolveIndependentBinding(
 			return provider.Binding{}, fmt.Errorf("orch: resolve independent binding: %w", err)
 		}
 		candidate = next
+	}
+	if len(allowed) > 0 {
+		// Naming BOTH restrictions matters: with a `providers` list in play the
+		// exhausted pool may be the restriction's doing, and an error citing only
+		// independence sends an operator looking for a calibration problem that
+		// is not there.
+		return provider.Binding{}, fmt.Errorf(
+			"orch: no provider permitted by %v has an independence domain distinct "+
+				"from peers %v", allowed, peers)
 	}
 	return provider.Binding{}, fmt.Errorf(
 		"orch: no configured provider has an independence domain distinct from peers %v", peers)
@@ -1760,6 +1784,56 @@ func (o *Orchestrator) dispatchWorker(ctx context.Context, projectID, projectDir
 // runFanoutGroup. releaseFanoutSlot returns the dispatch slot the caller
 // acquired; ownership transfers to the async goroutine on a successful launch,
 // and dispatchFanoutGroup releases it inline on any synchronous early exit.
+
+// coalescableSteps selects which of a ready parallel group may be handed to a
+// single native fan-out turn.
+//
+// Two exclusions, for different reasons:
+//
+//   - A capability-gated step (stepGateBlocks) is excluded because it cannot run
+//     on this binding at all.
+//   - A step declaring differentFrom is excluded because fan-out is ONE binding
+//     for the whole group by construction, so every coalesced member necessarily
+//     shares one independence domain. No binding choice can satisfy the
+//     constraint, which makes rotation — the per-step remedy — meaningless here.
+//
+// The independence exclusion is the load-bearing one. The fan-out branch returns
+// BEFORE the per-step admission loop, so a coalesced constrained step never
+// reaches the independence check: it runs alongside its own peer in a single
+// turn that sees both prompts, and runFanoutGroup then stamps that one shared
+// domain onto both. The plan reads as protected while the reviewer IS the
+// author, and provenance records it as having run independently — the vacuous
+// guarantee this constraint exists to prevent, in its worst form.
+//
+// Excluded steps are not refused, only left out of the coalesced set; they are
+// dispatched by the per-step loop, which enforces independence properly. An
+// empty result therefore means "fan-out does not apply here", not "nothing runs".
+func (o *Orchestrator) coalescableSteps(
+	ctx context.Context,
+	planID, projectID string,
+	parallel bool,
+	refs []plan.StepRef,
+	readySteps []plan.Step,
+	candidateLimit int,
+) ([]plan.Step, []plan.StepRef, error) {
+	steps := make([]plan.Step, 0, candidateLimit)
+	stepRefs := make([]plan.StepRef, 0, candidateLimit)
+	for i := 0; i < candidateLimit; i++ {
+		if len(readySteps[i].Metadata.IndependencePeers()) > 0 {
+			continue
+		}
+		gated, err := o.stepGateBlocks(ctx, planID, projectID, parallel, refs[i], readySteps[i])
+		if err != nil {
+			return nil, nil, err
+		}
+		if !gated {
+			steps = append(steps, readySteps[i])
+			stepRefs = append(stepRefs, refs[i])
+		}
+	}
+	return steps, stepRefs, nil
+}
+
 func (o *Orchestrator) dispatchFanoutGroup(ctx context.Context, projectID, projectDir, planID string, parsedPlan *plan.Plan, storeTitle, groupHeading string, binding provider.Binding, steps []plan.Step, refs []plan.StepRef, releaseFanoutSlot func()) (dispatched int, err error) {
 	if err := o.checkSpendCap(ctx, projectID, binding.Name); err != nil {
 		releaseFanoutSlot()
