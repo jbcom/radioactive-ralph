@@ -146,3 +146,53 @@ func TestHomeIsRejectedByBothChecks(t *testing.T) {
 		t.Fatalf("NewPolicy($HOME) = %v, want ErrExtraPathTooBroad", err)
 	}
 }
+
+// TestSymlinkedAllowanceIsRejectedByItsTARGET pins that the breadth check
+// follows the link.
+//
+// A symlink named something innocuous can point at $HOME or "/". Validating
+// only the declared spelling let a binding grant the entire home directory
+// through a harmless-looking path: the RESOLVED target is what reaches the
+// Seatbelt subpath grant and the Landlock rule, so it is what must be checked.
+//
+// Verified before fixing: NewPolicy(root, link->$HOME) returned nil error with
+// ExtraWritable = [/Users/<me>].
+func TestSymlinkedAllowanceIsRejectedByItsTARGET(t *testing.T) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Skipf("no home dir: %v", err)
+	}
+	link := filepath.Join(t.TempDir(), "innocent-looking")
+	if err := os.Symlink(home, link); err != nil {
+		t.Skipf("symlink unsupported: %v", err)
+	}
+
+	p, err := NewPolicy(t.TempDir(), link)
+	if err == nil {
+		t.Fatalf("a symlink to $HOME was accepted, granting %v; the check validated "+
+			"the link's spelling rather than the target the kernel actually enforces",
+			p.ExtraWritable)
+	}
+	if !errors.Is(err, ErrExtraPathTooBroad) {
+		t.Fatalf("NewPolicy(symlink->$HOME) = %v, want ErrExtraPathTooBroad", err)
+	}
+}
+
+// TestSymlinkedNarrowAllowanceStillWorks keeps the target check from rejecting
+// the ordinary case: a link to a legitimate narrow directory must resolve and
+// be granted, or the resolution step would break real configs.
+func TestSymlinkedNarrowAllowanceStillWorks(t *testing.T) {
+	target := t.TempDir()
+	link := filepath.Join(t.TempDir(), "link")
+	if err := os.Symlink(target, link); err != nil {
+		t.Skipf("symlink unsupported: %v", err)
+	}
+	p, err := NewPolicy(t.TempDir(), link)
+	if err != nil {
+		t.Fatalf("a symlink to a NARROW directory was rejected: %v", err)
+	}
+	resolved, _ := filepath.EvalSymlinks(target)
+	if len(p.ExtraWritable) != 1 || p.ExtraWritable[0] != resolved {
+		t.Fatalf("ExtraWritable = %v, want [%s]", p.ExtraWritable, resolved)
+	}
+}

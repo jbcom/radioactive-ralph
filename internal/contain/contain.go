@@ -122,25 +122,48 @@ func resolveExtraWritable(raw string) (string, error) {
 		return "", fmt.Errorf("%w: %q", ErrExtraPathNotAbsolute, raw)
 	}
 	cleaned := filepath.Clean(raw)
-	if cleaned == string(filepath.Separator) {
-		return "", fmt.Errorf("%w: %q grants the entire filesystem", ErrExtraPathTooBroad, raw)
-	}
-	if home, err := os.UserHomeDir(); err == nil && home != "" {
-		resolvedHome, herr := filepath.EvalSymlinks(home)
-		if herr != nil {
-			resolvedHome = filepath.Clean(home)
-		}
-		// The home directory ITSELF (or any ancestor of it) is too broad. A
-		// SUBPATH of home is exactly what these allowances are for.
-		if cleaned == filepath.Clean(home) || cleaned == resolvedHome ||
-			isAncestor(cleaned, resolvedHome) {
-			return "", fmt.Errorf("%w: %q contains the home directory", ErrExtraPathTooBroad, raw)
-		}
+	// The home directory ITSELF (or any ancestor of it) is too broad. A SUBPATH
+	// of home is exactly what these allowances are for.
+	if err := checkExtraBreadth(cleaned); err != nil {
+		return "", err
 	}
 	if resolved, err := filepath.EvalSymlinks(cleaned); err == nil {
+		// RE-CHECK the resolved target, not just the spelling. A symlink named
+		// something innocuous can point at $HOME or "/", and validating only the
+		// link would let a binding grant the entire home directory through a
+		// harmless-looking path -- the resolved target is what actually reaches
+		// the Seatbelt subpath grant or the Landlock rule.
+		if err := checkExtraBreadth(resolved); err != nil {
+			return "", err
+		}
 		return resolved, nil
 	}
 	return cleaned, nil
+}
+
+// checkExtraBreadth refuses a path wide enough to swallow the boundary.
+//
+// Applied to BOTH the declared spelling and its symlink-resolved target,
+// because either can be the broad one: the declaration is what an operator
+// reads, and the target is what the kernel enforces.
+func checkExtraBreadth(path string) error {
+	cleaned := filepath.Clean(path)
+	if cleaned == string(filepath.Separator) {
+		return fmt.Errorf("%w: %q grants the entire filesystem", ErrExtraPathTooBroad, path)
+	}
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return nil
+	}
+	resolvedHome, herr := filepath.EvalSymlinks(home)
+	if herr != nil {
+		resolvedHome = filepath.Clean(home)
+	}
+	if cleaned == filepath.Clean(home) || cleaned == resolvedHome ||
+		isAncestor(cleaned, resolvedHome) {
+		return fmt.Errorf("%w: %q contains the home directory", ErrExtraPathTooBroad, path)
+	}
+	return nil
 }
 
 // isAncestor reports whether dir contains target.
