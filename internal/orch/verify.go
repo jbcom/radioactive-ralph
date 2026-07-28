@@ -222,8 +222,17 @@ func (o *Orchestrator) VerifyAndCompleteAs(
 		if _, err := o.store.MarkFailedWithPayload(ctx, planID, taskID, sessionID, store.EventPayload{
 			Reason:    reason,
 			Retryable: true,
-		}, 3); err != nil && !errors.Is(err, store.ErrTaskNotOwnedRunning) {
-			return false, fmt.Errorf("orch: mark failed on verification rejection: %w", err)
+		}, 3); err != nil {
+			if !errors.Is(err, store.ErrTaskNotOwnedRunning) {
+				return false, fmt.Errorf("orch: mark failed on verification rejection: %w", err)
+			}
+			// A stale reporter lost the task to a replacement. The mark is a
+			// benign no-op — and the event must be suppressed with it, or a
+			// reaped worker's late rejection announces a failure against a task
+			// whose CURRENT owner is still running. The store stays correct while
+			// the event stream lies, which is worse than either alone: an
+			// operator reads the event, not the row.
+			return false, nil
 		}
 		if err := o.store.Emit(ctx, store.EmitOpts{
 			PlanID: planID,

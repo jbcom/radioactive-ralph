@@ -168,3 +168,67 @@ func TestDispatchAttributesEvidenceToTheReportingSession(t *testing.T) {
 			"fan-out); a new dispatch path may be unattributed", n)
 	}
 }
+
+// TestStaleReporterFailureDoesNotEmitVerificationFailed is CodeRabbit's P2 on
+// #256, and it is the mirror of the bug the PR fixes.
+//
+// MarkFailedWithPayload correctly no-ops for a stale reporter — that is the
+// owner guard working. But the worker.verification_failed event fired
+// unconditionally afterward, so a reaped worker's late rejection announced a
+// failure against a task whose CURRENT owner is still running. The store stays
+// correct and the event stream lies, which is worse than either alone: an
+// operator reads the event, not the row.
+func TestStaleReporterFailureDoesNotEmitVerificationFailed(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	projectID := mustCreateTestProject(t, s, "stale-fail")
+	planID := mustCreateTestPlan(t, s, projectID, "stale-fail", "Own", "# Own\n\n- do the thing\n")
+	o := New(s)
+
+	// Acceptance FAILS, so this exercises the rejection path specifically.
+	if err := s.CreateTask(ctx, store.CreateTaskOpts{
+		PlanID: planID, ID: "0.0", Description: "do the thing",
+		AcceptanceJSON: `{"command":"exit 1"}`,
+	}); err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+
+	sessA, workerA := sessionAndWorker(t, s, "A", 4101)
+	taskA, err := s.ClaimNextReady(ctx, planID, sessA, workerA)
+	if err != nil {
+		t.Fatalf("A claim: %v", err)
+	}
+	if err := s.ReleaseClaim(ctx, planID, taskA.ID, sessA, "reaped"); err != nil {
+		t.Fatalf("release A: %v", err)
+	}
+	sessB, workerB := sessionAndWorker(t, s, "B", 4102)
+	if _, err := s.ClaimTask(ctx, planID, taskA.ID, sessB, workerB); err != nil {
+		t.Fatalf("B claim: %v", err)
+	}
+
+	if _, err := o.VerifyAndCompleteAs(ctx, planID, taskA.ID, sessA, a2a.Evidence{
+		Ran: "exit 1", ExitCode: 1, Output: "stale A failure",
+	}); err != nil {
+		t.Fatalf("VerifyAndCompleteAs: %v", err)
+	}
+
+	events, err := s.ListProjectEvents(ctx, projectID, 200)
+	if err != nil {
+		t.Fatalf("ListProjectEvents: %v", err)
+	}
+	for _, e := range events {
+		if e.Kind == "worker.verification_failed" {
+			t.Fatalf("a stale reporter emitted worker.verification_failed; the "+
+				"current owner (%s) is still running, so the event announces a "+
+				"failure that did not happen to the attempt that matters", sessB)
+		}
+	}
+
+	cur, err := s.GetTask(ctx, planID, taskA.ID)
+	if err != nil {
+		t.Fatalf("GetTask: %v", err)
+	}
+	if cur.ClaimedBySession != sessB {
+		t.Errorf("owner = %q, want B still holding it", cur.ClaimedBySession)
+	}
+}
