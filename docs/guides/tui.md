@@ -27,6 +27,22 @@ not something a human triggers from the client.
 Each level is a view over the same live snapshot the supervisor holds;
 there is no separate client-side state to get out of sync.
 
+### Task rows
+
+A meso task row reads `<id> <status> <description>`, followed by two
+markers that appear only once they are known:
+
+- `worker=<id>` — the Ralph worker currently holding the task's claim.
+- `via=<alias>` — the provider that actually executed the task, by its
+  configured alias (falling back to the provider type when no alias was
+  set).
+
+`via=` is per task rather than per worker because native fan-out lets one
+worker own several tasks in a partition: `worker=w1` can be shared by rows
+that different providers executed, so the worker id alone cannot answer
+"what ran this?". A task that has not been dispatched shows no `via=` at
+all — an unexecuted task must not read as though some provider owned it.
+
 ## What it reads
 
 - `Status` — supervisor status snapshot (worker counts, task counts,

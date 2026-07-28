@@ -435,6 +435,24 @@ type PlanPage struct {
 	NextAfterID string `json:"next_after_id,omitempty"`
 }
 
+// ProvenanceLabel names the provider that executed this task, preferring the
+// operator-facing alias over the raw provider type, and returning "" when the
+// task has not run.
+//
+// Alias first because that is the name the operator configured and recognizes;
+// two aliases can share a provider type, so showing the type would collapse
+// distinct pool entries into one indistinguishable label.
+//
+// It lives here rather than in each UI because the TUI and GUI both render it
+// and a divergent fallback rule would make the same task read differently
+// depending on which surface an operator happened to open.
+func (t Task) ProvenanceLabel() string {
+	if t.AssignedAlias != "" {
+		return t.AssignedAlias
+	}
+	return t.AssignedProvider
+}
+
 // Task is Ralph's safe DAG state plus its official A2A Task lifecycle
 // projection. Description, acceptance commands, raw messages, and artifacts
 // are intentionally absent.
@@ -449,6 +467,20 @@ type Task struct {
 	ReclaimCount      int    `json:"reclaim_count"`
 	ParentTaskID      string `json:"parent_task_id,omitempty"`
 	ClaimedByWorkerID string `json:"claimed_by_worker_id,omitempty"`
+
+	// Assigned* is execution provenance: which provider actually ran this task.
+	// omitempty because absent provenance is meaningful -- the task has not run
+	// -- and emitting empty strings would invite readers to treat "" as a
+	// provider name rather than as "no turn has executed this yet".
+	//
+	// Per task rather than only in the team rollup, because fan-out makes the
+	// aggregate unable to answer it: one worker owning five tasks reports one
+	// provider count for all five, which is consistent with any assignment.
+	AssignedAlias              string `json:"assigned_alias,omitempty"`
+	AssignedProvider           string `json:"assigned_provider,omitempty"`
+	AssignedModel              string `json:"assigned_model,omitempty"`
+	AssignedEffort             string `json:"assigned_effort,omitempty"`
+	AssignedIndependenceDomain string `json:"assigned_independence_domain,omitempty"`
 
 	// Blocked classifies a fail-closed pre-dispatch block, nil when the task is
 	// not blocked.
@@ -983,10 +1015,17 @@ func taskFromStore(item store.OperatorTask) (Task, error) {
 		ReclaimCount:      item.ReclaimCount,
 		ParentTaskID:      item.ParentTaskID,
 		ClaimedByWorkerID: item.ClaimedByWorkerID,
-		Blocked:           blockedSummaryFor(item.Status),
-		CreatedAt:         item.CreatedAt,
-		UpdatedAt:         item.UpdatedAt,
-		A2ATask:           protocolTask,
+
+		AssignedAlias:              item.AssignedAlias,
+		AssignedProvider:           item.AssignedProvider,
+		AssignedModel:              item.AssignedModel,
+		AssignedEffort:             item.AssignedEffort,
+		AssignedIndependenceDomain: item.AssignedIndependenceDomain,
+
+		Blocked:   blockedSummaryFor(item.Status),
+		CreatedAt: item.CreatedAt,
+		UpdatedAt: item.UpdatedAt,
+		A2ATask:   protocolTask,
 	}, nil
 }
 

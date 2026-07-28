@@ -269,6 +269,14 @@ func (u *ui) buildMeso(s snapshot) {
 		open := u.button(taskLabel(t), func() { u.drillTo(planID, taskID) })
 		open.Alignment = widget.ButtonAlignLeading
 		row := container.NewHBox(statusChip(string(t.Status)), open)
+		// Provenance rides beside the button rather than inside taskLabel: that
+		// label is the task's identity (and the drill target's name), so folding
+		// a provider into it would make the same task read differently before
+		// and after it runs. Omitted entirely when unrecorded, so an
+		// undispatched task never displays a provider it did not use.
+		if name := t.ProvenanceLabel(); name != "" {
+			row.Add(widget.NewLabel("via " + name))
+		}
 		if t.Status == "ready_pending_approval" {
 			row.Add(widget.NewButton("Approve", func() {
 				u.drive("approve", func() error { return u.ctrl.ApproveTask(u.ctx, planID, taskID) })
