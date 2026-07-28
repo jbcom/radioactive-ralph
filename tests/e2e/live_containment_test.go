@@ -47,7 +47,25 @@ func TestE2E_LiveContainedTurnCompletes(t *testing.T) {
 	if len(suggested) == 0 {
 		t.Skip("no supported agent CLI (claude/codex/opencode) detected on PATH; skipping live contained dispatch")
 	}
-	providerName := suggested[0]
+
+	// EVERY detected provider, not suggested[0]. This is the whole point of the
+	// test and the lesson that closed #284: I ran this once, it picked claude,
+	// claude passed, and I flipped the containment default -- while a real codex
+	// turn could not even START under containment (#285). One provider's success
+	// says nothing about another's, because each CLI needs a different set of
+	// operations the sandbox may deny.
+	//
+	// Subtests so a failure NAMES the provider that cannot run confined, rather
+	// than reporting "containment is broken" for a fleet where most of it works.
+	for _, providerName := range suggested {
+		t.Run(providerName, func(t *testing.T) {
+			runLiveContainedTurn(t, providerName)
+		})
+	}
+}
+
+func runLiveContainedTurn(t *testing.T, providerName string) {
+	t.Helper()
 	t.Logf("live contained dispatch: using detected provider %q", providerName)
 
 	env := NewIsolatedEnv(t)
