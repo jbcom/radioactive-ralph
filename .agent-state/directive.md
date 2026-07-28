@@ -158,8 +158,13 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
                  vendor table in the dispatch path and disagree with whatever a
                  calibration later measures. Uncalibrated binding => empty
                  domain, turn still runs (a missing calibration is not an error).
-                 Model/effort come from the REQUEST, not binding config, which
-                 only holds the per-tier mapping. Best-effort with an emitted
+                 Model/effort come from provider.ResolveInvocation, NOT the
+                 request: review caught that neither dispatch path sets
+                 req.Model/req.Effort, so recording them wrote EMPTY values while
+                 looking like it captured them (40e73db). Same commit gates the
+                 domain on InvocationHash equality -- alias match alone reused a
+                 calibration measured for a different command line, and a stale
+                 domain is worse than none because it looks measured. Best-effort with an emitted
                  event on failure: provenance records a turn, it does not gate
                  one. Fan-out records EVERY task in the group -- proven by
                  negative test: recording only claimed[0] leaves peer "0.1" with
