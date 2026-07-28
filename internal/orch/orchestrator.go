@@ -1032,7 +1032,12 @@ func (o *Orchestrator) capabilityGateBlocks(ctx context.Context, planID, project
 		// operator has performed exactly the fix the block asked for, so release
 		// it — otherwise ClaimTask (pending/ready only) would never take it and
 		// the block would outlive its own remedy.
-		cleared, err := o.store.ClearTaskBlock(ctx, planID, taskID)
+		// Clears ONLY the capability block. A task blocked on an immutable-input
+		// mismatch stays blocked: this gate does not re-check inputs, so
+		// releasing it here would dispatch work whose input pin is still
+		// violated.
+		cleared, err := o.store.ClearTaskBlock(
+			ctx, planID, taskID, store.TaskStatusBlockedCapability)
 		if err != nil {
 			return false, fmt.Errorf("orch: clear capability block for %s: %w", taskID, err)
 		}

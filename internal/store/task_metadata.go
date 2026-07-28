@@ -359,18 +359,28 @@ func (s *Store) MarkBlockedInput(ctx context.Context, planID, taskID, reason str
 	return s.markMetadataBlocked(ctx, planID, taskID, TaskStatusBlockedInput, reason)
 }
 
-// ClearTaskBlock returns a pre-dispatch-blocked task to pending and drops its
-// recorded reason. Reports whether a row actually changed.
+// ClearTaskBlock returns a task blocked in exactly `blocked` to pending and
+// drops its recorded reason. Reports whether a row actually changed.
+//
+// The caller names WHICH block it is clearing, because a block may only be
+// released by the condition that caused it. Clearing both fail-closed states
+// meant a satisfied capability requirement also released a task blocked on an
+// immutable-input mismatch — a cause the capability gate never re-checks — so
+// the task dispatched with its input pin still violated.
 //
 // Without this a block is a TRAP rather than a gate: ClaimTask accepts only
 // pending or ready, so a task blocked on a capability stayed unclaimable even
 // after an operator performed the exact fix the block asked for, and the plan
 // never completed.
 //
-// Only the two fail-closed pre-dispatch states are cleared. A running, done, or
+// Only a fail-closed pre-dispatch state is clearable. A running, done, or
 // failed task is untouched — those are owned by the worker lifecycle, and
 // resetting one here would discard real execution state.
-func (s *Store) ClearTaskBlock(ctx context.Context, planID, taskID string) (bool, error) {
+func (s *Store) ClearTaskBlock(ctx context.Context, planID, taskID string, blocked TaskStatus) (bool, error) {
+	if blocked != TaskStatusBlockedCapability && blocked != TaskStatusBlockedInput {
+		return false, fmt.Errorf(
+			"store: %q is not a clearable pre-dispatch block", blocked)
+	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return false, fmt.Errorf("store: begin clear task block: %w", err)
@@ -379,8 +389,8 @@ func (s *Store) ClearTaskBlock(ctx context.Context, planID, taskID string) (bool
 
 	res, err := tx.ExecContext(ctx, `
 		UPDATE tasks SET status = 'pending'
-		WHERE plan_id = ? AND id = ? AND status IN ('blocked_capability','blocked_input')
-	`, planID, taskID)
+		WHERE plan_id = ? AND id = ? AND status = ?
+	`, planID, taskID, string(blocked))
 	if err != nil {
 		return false, fmt.Errorf("store: clear task block: %w", err)
 	}
