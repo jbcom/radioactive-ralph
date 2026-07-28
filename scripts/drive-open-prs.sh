@@ -57,24 +57,25 @@ for round in $(seq 1 400); do
   [ "$line" != "$prev" ] && { echo "$line"; prev="$line"; }
   { [ -n "$dirty" ] || [ -n "$failing" ]; } && { echo "STOP: needs a decision"; exit 2; }
 
-  # Queue hygiene is the ACTION when everything reads blocked with no failures,
-  # not a reason to wait. CI rebuilds the full matrix on every push, so each
-  # force-push leaves its predecessor queued, and those superseded runs hold the
-  # scarce macOS slots the near-complete PRs need. Measured 2026-07-28:
-  # cancelling 10 took the repo from queued=14/running=1 to queued=6/running=8,
-  # which proves the runs were holding slots rather than queueing behind a
-  # capacity limit. Keep only the newest CI run per branch.
-  if [ "$ready" = "0" ] && [ -z "$failing" ]; then
-    for br in $(gh pr list --state open --json headRefName --jq '.[].headRefName'); do
-      newest=$(gh run list --limit 20 --branch "$br" --json databaseId,name,createdAt \
-        --jq '[.[]|select(.name=="CI")]|sort_by(.createdAt)|reverse|.[0].databaseId' 2>/dev/null)
-      [ -z "$newest" ] && continue
-      for rid in $(gh run list --limit 20 --branch "$br" --json databaseId,name,status \
-        --jq '[.[]|select(.name=="CI" and .status=="queued")]|.[].databaseId' 2>/dev/null); do
-        [ "$rid" != "$newest" ] && gh run cancel "$rid" >/dev/null 2>&1
-      done
-    done
-  fi
+  # Do NOT cancel runs here. An earlier version cancelled every queued CI run
+  # except the newest per branch, on the theory that superseded runs hold the
+  # scarce macOS slots. Both halves of that theory were wrong, and the evidence
+  # is worth keeping because the reasoning is seductive:
+  #
+  #   * A run's top-level status stays "queued" until its LAST job finishes, so a
+  #     run reading "queued" routinely has 19-22 of its 23 jobs already SUCCESS.
+  #     Cancelling it discards completed macOS work and forces a full re-run --
+  #     the opposite of hygiene. #236 sat one job (Test (macos-latest)) from
+  #     complete inside a run whose status was "queued".
+  #   * The apparent queued=14/running=1 -> queued=6/running=8 improvement was
+  #     not caused by the cancels. Runs finish and start continuously; sampling
+  #     before and after any action shows movement. Measured later: queued=7 with
+  #     running=4 and 22 jobs executing, zero of them macOS, while ubuntu and
+  #     windows flowed freely.
+  #
+  # macOS is a genuinely constrained pool, but the constraint is upstream and
+  # waiting is what drains it. The only honest hygiene is leaving it alone.
+  # Cancel a run only when a HUMAN knows a specific push obsoleted it.
   sleep 90
 done
 echo "round cap reached; still open: $(gh pr list --state open --json number --jq 'length')"
