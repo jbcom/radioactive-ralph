@@ -158,7 +158,7 @@ func (s *Supervisor) HandleAttach(ctx context.Context, args ipc.AttachArgs, emit
 HandleAttach streams the project's events to the client as they are written, turning the observe half of the drive\+observe API from a stub into a live feed. It TAILS the append\-only events table: each tick it reads rows with id greater than the cursor \(scoped to args.ProjectID, including plan\-linked rows\), emits each, and advances the cursor. The cursor starts at args.AfterID — the client owns it \(it obtains an initial value from MaxEventID/backlog\), so there is no server\-side seed and no lost\-event race. The loop returns when ctx is cancelled \(client disconnect — \#165's watcher — or supervisor shutdown\) or when emit reports the client is gone.
 
 <a name="Supervisor.HandleCalibrationList"></a>
-### func \(\*Supervisor\) [HandleCalibrationList](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/supervisor/calibration.go#L80>)
+### func \(\*Supervisor\) [HandleCalibrationList](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/supervisor/calibration.go#L99>)
 
 ```go
 func (s *Supervisor) HandleCalibrationList(ctx context.Context) (ipc.CalibrationListReply, error)

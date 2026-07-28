@@ -45,6 +45,8 @@ For commands that stream \(attach\), the server sends N \>= 0 frames of \{"event
 - [type Client](<#Client>)
   - [func \(c \*Client\) Attach\(ctx context.Context, args AttachArgs, fn func\(json.RawMessage\) error\) error](<#Client.Attach>)
   - [func \(c \*Client\) AttachEvents\(ctx context.Context, args AttachArgs, fn func\(AttachEvent\) error\) error](<#Client.AttachEvents>)
+  - [func \(c \*Client\) CalibrationList\(ctx context.Context\) \(CalibrationListReply, error\)](<#Client.CalibrationList>)
+  - [func \(c \*Client\) CalibrationPut\(ctx context.Context, args CalibrationPutArgs\) \(CalibrationPutReply, error\)](<#Client.CalibrationPut>)
   - [func \(c \*Client\) Close\(\) error](<#Client.Close>)
   - [func \(c \*Client\) Enqueue\(ctx context.Context, args EnqueueArgs\) \(EnqueueReply, error\)](<#Client.Enqueue>)
   - [func \(c \*Client\) NegotiatedVersion\(ctx context.Context\) \(int, error\)](<#Client.NegotiatedVersion>)
@@ -386,6 +388,26 @@ func (c *Client) AttachEvents(ctx context.Context, args AttachArgs, fn func(Atta
 
 AttachEvents is the typed convenience over Attach: it opens the stream with the given args \(project scope \+ resume cursor\) and decodes each frame into an AttachEvent before handing it to fn. Prefer this to raw Attach for the event stream; Attach stays available for callers that want the raw frames.
 
+<a name="Client.CalibrationList"></a>
+### func \(\*Client\) [CalibrationList](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/client_drive.go#L165>)
+
+```go
+func (c *Client) CalibrationList(ctx context.Context) (CalibrationListReply, error)
+```
+
+CalibrationList enumerates the recorded calibrations, one per alias, so an operator can see which aliases have a measured independence domain — the difference between a differentFrom constraint that can be enforced and one that silently cannot.
+
+<a name="Client.CalibrationPut"></a>
+### func \(\*Client\) [CalibrationPut](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/client_drive.go#L153>)
+
+```go
+func (c *Client) CalibrationPut(ctx context.Context, args CalibrationPutArgs) (CalibrationPutReply, error)
+```
+
+CalibrationPut records one provider calibration and returns the content\-addressed id the store derived.
+
+On the DRIVE version rather than the query one: recording a measurement is a write, and the supervisor stays the single writer of record.
+
 <a name="Client.Close"></a>
 ### func \(\*Client\) [Close](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/client.go#L47>)
 
@@ -405,7 +427,7 @@ func (c *Client) Enqueue(ctx context.Context, args EnqueueArgs) (EnqueueReply, e
 Enqueue pushes a task. Returns the resulting task ID \(possibly a dedup hit from FTS\) and whether the task was freshly inserted.
 
 <a name="Client.NegotiatedVersion"></a>
-### func \(\*Client\) [NegotiatedVersion](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/client_drive.go#L150>)
+### func \(\*Client\) [NegotiatedVersion](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/client_drive.go#L175>)
 
 ```go
 func (c *Client) NegotiatedVersion(ctx context.Context) (int, error)

@@ -158,3 +158,39 @@ func TestCalibrationPutRejectsAnIncompleteRecord(t *testing.T) {
 		})
 	}
 }
+
+// TestCalibrationPutCodesOnlyItsOwnValidation is the fix for a review finding.
+//
+// A catch-all that coded every store error as invalid_args told the client its
+// payload was permanently malformed whenever SQLite was locked or full or the
+// context was cancelled — so a client would decline to retry a request that
+// would have succeeded, and would report the wrong diagnosis. Argument
+// validation is coded; storage failures stay uncoded internal errors, matching
+// the drive handlers.
+func TestCalibrationPutCodesOnlyItsOwnValidation(t *testing.T) {
+	ctx := context.Background()
+	s := newTestSupervisor(t, clockwork.NewFakeClock())
+
+	// A malformed record IS the handler's own rejection: coded.
+	rec := sampleCalibration()
+	rec.Alias = ""
+	_, err := s.HandleCalibrationPut(ctx, ipc.CalibrationPutArgs{Calibration: rec})
+	var coded *codedError
+	if !errors.As(err, &coded) || coded.Code() != ipc.CodeInvalidArgs {
+		t.Fatalf("err = %v, want CodeInvalidArgs for a record the handler itself rejects", err)
+	}
+
+	// A closed store is an OPERATIONAL failure. It must NOT be coded
+	// invalid_args: the payload is fine and a retry could succeed.
+	if err := s.store.Close(); err != nil {
+		t.Fatalf("close store: %v", err)
+	}
+	_, err = s.HandleCalibrationPut(ctx, ipc.CalibrationPutArgs{Calibration: sampleCalibration()})
+	if err == nil {
+		t.Fatal("a put against a closed store reported success")
+	}
+	if errors.As(err, &coded) && coded.Code() == ipc.CodeInvalidArgs {
+		t.Fatalf("storage failure coded as invalid_args (%v) — a client would treat a "+
+			"retryable operational error as a permanently malformed payload", err)
+	}
+}

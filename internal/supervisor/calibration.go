@@ -63,12 +63,31 @@ func (s *Supervisor) HandleCalibrationPut(
 	ctx context.Context,
 	args ipc.CalibrationPutArgs,
 ) (ipc.CalibrationPutReply, error) {
+	// Validate the record HERE rather than inferring "malformed" from whatever
+	// the store returned. A locked or full database, a cancelled context, or any
+	// other operational failure also comes back as a non-nil error, and labelling
+	// those invalid_args tells the client its payload is permanently malformed —
+	// so it declines to retry a request that would have succeeded, and reports
+	// the wrong diagnosis. Coding only what this handler itself rejected keeps
+	// storage failures as uncoded internal errors, matching the drive handlers.
+	if args.Calibration.Alias == "" {
+		return ipc.CalibrationPutReply{}, &codedError{ipc.CodeInvalidArgs, "calibration-put: alias required"}
+	}
+	if args.Calibration.Provider == "" {
+		return ipc.CalibrationPutReply{}, &codedError{ipc.CodeInvalidArgs, "calibration-put: provider required"}
+	}
+	if args.Calibration.InvocationHash == "" {
+		return ipc.CalibrationPutReply{}, &codedError{
+			ipc.CodeInvalidArgs, "calibration-put: invocation hash required",
+		}
+	}
+
 	recorded, err := s.store.RecordCalibration(ctx, calibrationFromWire(args.Calibration))
 	switch {
 	case errors.Is(err, store.ErrCalibrationConflict):
 		return ipc.CalibrationPutReply{}, &codedError{ipc.CodeConflict, err.Error()}
 	case err != nil:
-		return ipc.CalibrationPutReply{}, &codedError{ipc.CodeInvalidArgs, err.Error()}
+		return ipc.CalibrationPutReply{}, fmt.Errorf("supervisor: record calibration: %w", err)
 	}
 	return ipc.CalibrationPutReply{ID: recorded.ID}, nil
 }
