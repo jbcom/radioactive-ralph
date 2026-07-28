@@ -21,6 +21,7 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/jbcom/radioactive-ralph/internal/contain"
 	"github.com/jbcom/radioactive-ralph/internal/vconfig"
 	"github.com/spf13/cobra"
 )
@@ -41,6 +42,18 @@ func main() {
 // code. Extracted from main so signal-context cleanup always runs before
 // the process actually exits.
 func run() int {
+	// FIRST, before flags, config, or logging. A containment-helper
+	// re-invocation exists only to apply its sandbox and exec the provider;
+	// anything done before that either escapes the restriction or is thrown
+	// away by the exec. On success this never returns.
+	if handled, err := contain.MaybeRunHelper(os.Args); handled {
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "radioactive_ralph: %v\n", err)
+			return 1
+		}
+		return 0
+	}
+
 	if handled, exitCode := maybeRunWindowsService(); handled {
 		return exitCode
 	}

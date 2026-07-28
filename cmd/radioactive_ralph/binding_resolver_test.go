@@ -438,3 +438,64 @@ func TestStoreBindingResolverConcurrentRoundRobinIsBalanced(t *testing.T) {
 		}
 	}
 }
+
+// TestStoreContainmentResolverReadsTheProjectKey proves the wire that makes
+// contain_provider_writes mean anything.
+//
+// The key parsed and nothing consulted it: an operator who enabled containment
+// got none, with no signal the setting did nothing. A config that lies is worse
+// than one that is absent, because it is trusted.
+func TestStoreContainmentResolverReadsTheProjectKey(t *testing.T) {
+	ctx := context.Background()
+	st := openBindingTestStore(t)
+
+	on, err := st.CreateProject(ctx, "contained", []store.Fingerprint{
+		{Kind: store.FingerprintKindAbsPath, Value: t.TempDir()},
+	})
+	if err != nil {
+		t.Fatalf("CreateProject: %v", err)
+	}
+	off, err := st.CreateProject(ctx, "uncontained", []store.Fingerprint{
+		{Kind: store.FingerprintKindAbsPath, Value: t.TempDir()},
+	})
+	if err != nil {
+		t.Fatalf("CreateProject: %v", err)
+	}
+	// Stored values are JSON-encoded, and the key accepts the string form
+	// because a store layer round-trips booleans as quoted strings.
+	if err := st.SetProjectConfig(ctx, on, vconfig.ContainProviderWritesKey, `"true"`); err != nil {
+		t.Fatalf("SetProjectConfig: %v", err)
+	}
+
+	resolve := storeContainmentResolver(st)
+	if !resolve(ctx, on) {
+		t.Error("containment not resolved for a project that enabled it — the stored " +
+			"key never reaches dispatch, so setting it does nothing")
+	}
+	if resolve(ctx, off) {
+		t.Error("containment resolved ON for a project that never asked; enabling a " +
+			"write boundary by accident surfaces as unexplained provider failures")
+	}
+}
+
+// TestStoreContainmentResolverFailsClosedToOff pins the direction of failure. A
+// malformed value must behave like the absent key it resembles: a typo that
+// silently ENABLED the boundary would make provider writes fail far from any
+// visible cause.
+func TestStoreContainmentResolverFailsClosedToOff(t *testing.T) {
+	ctx := context.Background()
+	st := openBindingTestStore(t)
+
+	projectID, err := st.CreateProject(ctx, "typo", []store.Fingerprint{
+		{Kind: store.FingerprintKindAbsPath, Value: t.TempDir()},
+	})
+	if err != nil {
+		t.Fatalf("CreateProject: %v", err)
+	}
+	if err := st.SetProjectConfig(ctx, projectID, vconfig.ContainProviderWritesKey, `"yepp"`); err != nil {
+		t.Fatalf("SetProjectConfig: %v", err)
+	}
+	if storeContainmentResolver(st)(ctx, projectID) {
+		t.Fatal("a malformed value enabled containment; it must behave like the absent key")
+	}
+}

@@ -25,7 +25,25 @@ type Binding struct {
 
 // Request is the provider-neutral execution contract for one worker turn.
 type Request struct {
-	WorkingDir   string
+	WorkingDir string
+
+	// ContainmentRoot, when set, confines the provider process AND everything
+	// it spawns to writing beneath this absolute path, enforced by the kernel
+	// (see internal/contain).
+	//
+	// Explicit rather than derived from WorkingDir: where a turn runs is not the
+	// same claim as the only place it may write, and silently equating them
+	// would change behavior for every existing caller. Empty leaves the process
+	// unconfined, exactly as before.
+	//
+	// A RUNNER THAT DOES NOT PASS THIS TO applyContainment SILENTLY VOIDS THE
+	// GUARANTEE. That is not hypothetical: the stream-json declarative shape once
+	// dropped it while the other two shapes carried it, so the field was set, the
+	// config claimed containment, and the turn wrote wherever it liked. Every
+	// exec path must route through applyContainment — which also fails closed on
+	// an unsupported platform rather than running unwrapped.
+	ContainmentRoot string
+
 	SystemPrompt string
 	UserPrompt   string
 	OutputSchema string
