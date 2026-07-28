@@ -71,6 +71,12 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
 - [ ] Land the 11 open PRs: 222, 225, 236, 247, 251, 252, 255, 257, 258, 259,
       261. MERGED since this item was written: #246 (desktop launch), #256
       (reporting owner), #245 (init over supervisor).
+      QUEUE HYGIENE IS THE STANDING ACTION when all PRs read BLOCKED with zero
+      failures: cancel every queued CI run per branch except the newest. It
+      rebuilds on each push, and superseded runs hold slots the near-complete
+      PRs need. Measured 2026-07-28: clearing 10 took the repo from
+      queued=14/running=1 to queued=6/running=8.
+
       HYGIENE (2026-07-28): 13 merged worktrees + 13 stale local branches
       removed. `merge-tree --write-tree` reported 7 of them NOT-absorbed, which
       is the SQUASH-MERGE FALSE NEGATIVE — a squash rewrites patch ids and the
