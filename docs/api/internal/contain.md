@@ -68,7 +68,7 @@ var ErrRootNotDirectory = errors.New("contain: containment root is not a directo
 ```
 
 <a name="Available"></a>
-## func [Available](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/contain/contain.go#L171>)
+## func [Available](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/contain/contain.go#L194>)
 
 ```go
 func Available() bool
@@ -79,7 +79,7 @@ Available reports whether this platform can enforce a write boundary.
 Callers check it to decide policy — refuse to dispatch, or proceed with the weaker validation\-only guarantee — rather than discovering at Wrap time.
 
 <a name="MaybeRunHelper"></a>
-## func [MaybeRunHelper](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/contain/contain.go#L181>)
+## func [MaybeRunHelper](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/contain/contain.go#L204>)
 
 ```go
 func MaybeRunHelper(argv []string) (handled bool, err error)
@@ -131,7 +131,7 @@ func NewPolicy(root string, extra ...string) (Policy, error)
 NewPolicy resolves root and any declared extra writable paths into a policy.
 
 <a name="Policy.Wrap"></a>
-### func \(Policy\) [Wrap](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/contain/contain.go#L160>)
+### func \(Policy\) [Wrap](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/contain/contain.go#L183>)
 
 ```go
 func (p Policy) Wrap(name string, args []string) (string, []string, error)

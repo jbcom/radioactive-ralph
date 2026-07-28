@@ -36,7 +36,16 @@ func renderMeso(m Model) string {
 			if t.ClaimedByWorkerID != "" {
 				worker = styleMuted.Render(" worker=" + t.ClaimedByWorkerID)
 			}
-			fmt.Fprintf(&b, "%s%-12s %-24s %s%s\n", marker, t.ID, statusStr, m.snap.descriptions[t.ID], worker)
+			// Which provider actually ran this task. The worker ID alone cannot
+			// answer that: under native fan-out one worker owns several tasks in
+			// a partition, so "worker=w1" is shared by rows that may have been
+			// executed by different providers. Shown only once recorded, so a
+			// task that has not run stays visibly unassigned.
+			via := ""
+			if name := t.ProvenanceLabel(); name != "" {
+				via = styleMuted.Render(" via=" + name)
+			}
+			fmt.Fprintf(&b, "%s%-12s %-24s %s%s%s\n", marker, t.ID, statusStr, m.snap.descriptions[t.ID], worker, via)
 			row++
 		}
 	}

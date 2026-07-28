@@ -124,8 +124,24 @@ type OperatorTask struct {
 	ReclaimCount      int        `json:"reclaim_count"`
 	ParentTaskID      string     `json:"parent_task_id"`
 	ClaimedByWorkerID string     `json:"claimed_by_worker_id"`
-	CreatedAt         time.Time  `json:"created_at"`
-	UpdatedAt         time.Time  `json:"updated_at"`
+
+	// Assigned* is execution provenance: which provider actually ran this task,
+	// as recorded by RecordTaskExecution. Empty until the task runs, and
+	// deliberately not defaulted -- "never dispatched" must stay distinguishable
+	// from "ran on the pool default".
+	//
+	// Projected per task because aggregates cannot answer the question it exists
+	// for. Under native fan-out one worker owns several tasks in a partition, so
+	// a team rollup reading "3 codex, 2 claude" is consistent with every possible
+	// assignment of those five tasks.
+	AssignedAlias              string `json:"assigned_alias"`
+	AssignedProvider           string `json:"assigned_provider"`
+	AssignedModel              string `json:"assigned_model"`
+	AssignedEffort             string `json:"assigned_effort"`
+	AssignedIndependenceDomain string `json:"assigned_independence_domain"`
+
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 // OperatorTaskPage is one bounded, (plan_id, task_id)-ordered task page.
@@ -654,9 +670,18 @@ func readOperatorTasks(
 	rows, err := tx.QueryContext(ctx, `
 		SELECT t.plan_id, t.id, t.status, t.parallel_group, t.sequence_ordinal,
 		       t.retry_count, t.reclaim_count, COALESCE(t.parent_task_id, ''),
-		       COALESCE(t.claimed_by_worker_id, ''), t.created_at, t.updated_at
+		       COALESCE(t.claimed_by_worker_id, ''),
+		       COALESCE(m.assigned_alias, ''), COALESCE(m.assigned_provider, ''),
+		       COALESCE(m.assigned_model, ''), COALESCE(m.assigned_effort, ''),
+		       COALESCE(m.assigned_independence_domain, ''),
+		       t.created_at, t.updated_at
 		FROM tasks t
 		JOIN plans p ON p.id = t.plan_id
+		-- LEFT: metadata is written by a separate path, so an inner join would
+		-- make a task with no metadata row DISAPPEAR from the operator's task
+		-- list rather than show up with empty provenance. Silently dropping the
+		-- task is far worse than reporting it unassigned.
+		LEFT JOIN task_metadata m ON m.plan_id = t.plan_id AND m.task_id = t.id
 		WHERE p.project_id = ?
 		  AND (? = '' OR t.plan_id = ?)
 		  AND (? = '' OR t.id = ?)
@@ -699,6 +724,11 @@ func readOperatorTasks(
 			&task.ReclaimCount,
 			&task.ParentTaskID,
 			&task.ClaimedByWorkerID,
+			&task.AssignedAlias,
+			&task.AssignedProvider,
+			&task.AssignedModel,
+			&task.AssignedEffort,
+			&task.AssignedIndependenceDomain,
 			&createdRaw,
 			&updatedRaw,
 		); err != nil {

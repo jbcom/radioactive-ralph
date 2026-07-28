@@ -66,7 +66,7 @@ moment one appears.
 | Level | Shows | Drive actions |
 |---|---|---|
 | Macro | Status header + the project's plans (status chip + progress) + a "Recent activity" feed of recent project events | Import a plan |
-| Meso | One plan's tasks with per-task status | Pause / Resume / Abandon the plan; Approve a task awaiting approval |
+| Meso | One plan's tasks with per-task status and, once executed, a `via <alias>` provenance label | Pause / Resume / Abandon the plan; Approve a task awaiting approval |
 | Micro | One task's event timeline | Kill the worker running the task |
 
 Selecting a plan drills to meso; selecting a task drills to micro; the back

@@ -46,6 +46,7 @@ This package is not an A2A server. It uses the official A2A Task vocabulary for 
 - [type StatusCount](<#StatusCount>)
 - [type Summary](<#Summary>)
 - [type Task](<#Task>)
+  - [func \(t Task\) ProvenanceLabel\(\) string](<#Task.ProvenanceLabel>)
 - [type TaskCursor](<#TaskCursor>)
 - [type TaskDescriptions](<#TaskDescriptions>)
 - [type TaskDescriptionsQuery](<#TaskDescriptionsQuery>)
@@ -92,7 +93,7 @@ var (
 ```
 
 <a name="StateForTask"></a>
-## func [StateForTask](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/observe/snapshot.go#L1048>)
+## func [StateForTask](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/observe/snapshot.go#L1087>)
 
 ```go
 func StateForTask(status store.TaskStatus) (sdka2a.TaskState, error)
@@ -119,7 +120,7 @@ func ValidateSnapshotResponse(snapshot *Snapshot, q SnapshotQuery) error
 ValidateSnapshotResponse verifies the decoded wire response before an operator client renders or makes automation decisions from it.
 
 <a name="BlockedCategory"></a>
-## type [BlockedCategory](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/observe/snapshot.go#L524>)
+## type [BlockedCategory](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/observe/snapshot.go#L556>)
 
 BlockedCategory is the closed set of fail\-closed pre\-dispatch blocks.
 
@@ -143,7 +144,7 @@ const (
 ```
 
 <a name="BlockedSummary"></a>
-## type [BlockedSummary](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/observe/snapshot.go#L540-L543>)
+## type [BlockedSummary](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/observe/snapshot.go#L572-L575>)
 
 BlockedSummary explains a block using only static text, mirroring FailureSummary's contract: no stored reason strings, no payload fields.
 
@@ -155,7 +156,7 @@ type BlockedSummary struct {
 ```
 
 <a name="Event"></a>
-## type [Event](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/observe/snapshot.go#L580-L588>)
+## type [Event](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/observe/snapshot.go#L612-L620>)
 
 Event is bounded safe event metadata. Failure is present only for a closed set of recognized failure kinds and contains a static summary.
 
@@ -172,7 +173,7 @@ type Event struct {
 ```
 
 <a name="EventFromMetadata"></a>
-### func [EventFromMetadata](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/observe/snapshot.go#L1033>)
+### func [EventFromMetadata](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/observe/snapshot.go#L1072>)
 
 ```go
 func EventFromMetadata(item store.OperatorEvent) Event
@@ -181,7 +182,7 @@ func EventFromMetadata(item store.OperatorEvent) Event
 EventFromMetadata projects one already\-scoped safe store event into the public event shape. Live Attach uses this same function as snapshot backlog, so their privacy and failure\-taxonomy contracts cannot drift.
 
 <a name="EventPage"></a>
-## type [EventPage](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/observe/snapshot.go#L591-L595>)
+## type [EventPage](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/observe/snapshot.go#L623-L627>)
 
 EventPage is one newest\-first event metadata page.
 
@@ -194,7 +195,7 @@ type EventPage struct {
 ```
 
 <a name="FailureCategory"></a>
-## type [FailureCategory](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/observe/snapshot.go#L506>)
+## type [FailureCategory](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/observe/snapshot.go#L538>)
 
 FailureCategory is a fixed, non\-secret operator taxonomy derived only from durable event kinds. Raw payload text is never inspected by this package.
 
@@ -221,7 +222,7 @@ const (
 ```
 
 <a name="FailureSummary"></a>
-## type [FailureSummary](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/observe/snapshot.go#L572-L576>)
+## type [FailureSummary](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/observe/snapshot.go#L604-L608>)
 
 FailureSummary explains a recognized failure event using only static text. It never includes raw provider output, prompts, argv, stderr, or event payload fields.
 
@@ -234,7 +235,7 @@ type FailureSummary struct {
 ```
 
 <a name="MessageMetadata"></a>
-## type [MessageMetadata](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/observe/snapshot.go#L609-L618>)
+## type [MessageMetadata](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/observe/snapshot.go#L641-L650>)
 
 MessageMetadata is the safe A2A envelope index. It deliberately is not an a2a.Message: message Parts are content and remain behind the store boundary.
 
@@ -252,7 +253,7 @@ type MessageMetadata struct {
 ```
 
 <a name="MessagePage"></a>
-## type [MessagePage](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/observe/snapshot.go#L621-L626>)
+## type [MessagePage](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/observe/snapshot.go#L653-L658>)
 
 MessagePage is one versioned chronological metadata page.
 
@@ -266,7 +267,7 @@ type MessagePage struct {
 ```
 
 <a name="MessageQuery"></a>
-## type [MessageQuery](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/observe/snapshot.go#L599-L605>)
+## type [MessageQuery](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/observe/snapshot.go#L631-L637>)
 
 MessageQuery selects bounded, oldest\-first, content\-free A2A message metadata. TaskID requires PlanID; the store validates every scope and cursor.
 
@@ -374,7 +375,7 @@ func New(reader Reader) (*Service, error)
 New constructs a read\-only observation service.
 
 <a name="Service.Messages"></a>
-### func \(\*Service\) [Messages](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/observe/snapshot.go#L693-L696>)
+### func \(\*Service\) [Messages](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/observe/snapshot.go#L725-L728>)
 
 ```go
 func (s *Service) Messages(ctx context.Context, q MessageQuery) (*MessagePage, error)
@@ -383,7 +384,7 @@ func (s *Service) Messages(ctx context.Context, q MessageQuery) (*MessagePage, e
 Messages reads and projects one bounded chronological A2A message metadata page. Message content is never requested from the Reader.
 
 <a name="Service.Snapshot"></a>
-### func \(\*Service\) [Snapshot](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/observe/snapshot.go#L630-L633>)
+### func \(\*Service\) [Snapshot](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/observe/snapshot.go#L662-L665>)
 
 ```go
 func (s *Service) Snapshot(ctx context.Context, q SnapshotQuery) (*Snapshot, error)
@@ -467,7 +468,7 @@ type Summary struct {
 ```
 
 <a name="Task"></a>
-## type [Task](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/observe/snapshot.go#L441-L474>)
+## type [Task](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/observe/snapshot.go#L459-L506>)
 
 Task is Ralph's safe DAG state plus its official A2A Task lifecycle projection. Description, acceptance commands, raw messages, and artifacts are intentionally absent.
 
@@ -483,6 +484,20 @@ type Task struct {
     ReclaimCount      int    `json:"reclaim_count"`
     ParentTaskID      string `json:"parent_task_id,omitempty"`
     ClaimedByWorkerID string `json:"claimed_by_worker_id,omitempty"`
+
+    // Assigned* is execution provenance: which provider actually ran this task.
+    // omitempty because absent provenance is meaningful -- the task has not run
+    // -- and emitting empty strings would invite readers to treat "" as a
+    // provider name rather than as "no turn has executed this yet".
+    //
+    // Per task rather than only in the team rollup, because fan-out makes the
+    // aggregate unable to answer it: one worker owning five tasks reports one
+    // provider count for all five, which is consistent with any assignment.
+    AssignedAlias              string `json:"assigned_alias,omitempty"`
+    AssignedProvider           string `json:"assigned_provider,omitempty"`
+    AssignedModel              string `json:"assigned_model,omitempty"`
+    AssignedEffort             string `json:"assigned_effort,omitempty"`
+    AssignedIndependenceDomain string `json:"assigned_independence_domain,omitempty"`
 
     // Blocked classifies a fail-closed pre-dispatch block, nil when the task is
     // not blocked.
@@ -507,6 +522,19 @@ type Task struct {
     A2ATask   *sdka2a.Task `json:"a2a_task"`
 }
 ```
+
+<a name="Task.ProvenanceLabel"></a>
+### func \(Task\) [ProvenanceLabel](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/observe/snapshot.go#L449>)
+
+```go
+func (t Task) ProvenanceLabel() string
+```
+
+ProvenanceLabel names the provider that executed this task, preferring the operator\-facing alias over the raw provider type, and returning "" when the task has not run.
+
+Alias first because that is the name the operator configured and recognizes; two aliases can share a provider type, so showing the type would collapse distinct pool entries into one indistinguishable label.
+
+It lives here rather than in each UI because the TUI and GUI both render it and a divergent fallback rule would make the same task read differently depending on which surface an operator happened to open.
 
 <a name="TaskCursor"></a>
 ## type [TaskCursor](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/observe/snapshot.go#L372-L375>)
@@ -553,7 +581,7 @@ type TaskDescriptionsQuery struct {
 ```
 
 <a name="TaskPage"></a>
-## type [TaskPage](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/observe/snapshot.go#L477-L481>)
+## type [TaskPage](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/observe/snapshot.go#L509-L513>)
 
 TaskPage is one deterministic composite\-key task page.
 
@@ -566,7 +594,7 @@ type TaskPage struct {
 ```
 
 <a name="Worker"></a>
-## type [Worker](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/observe/snapshot.go#L486-L495>)
+## type [Worker](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/observe/snapshot.go#L518-L527>)
 
 Worker is one active Ralph worker and all of its project task claims. Ralph worker IDs are stable control identifiers; process and provider session IDs are never projected.
 
@@ -584,7 +612,7 @@ type Worker struct {
 ```
 
 <a name="WorkerClaim"></a>
-## type [WorkerClaim](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/observe/snapshot.go#L498-L502>)
+## type [WorkerClaim](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/observe/snapshot.go#L530-L534>)
 
 WorkerClaim is one project task held by a worker.
 

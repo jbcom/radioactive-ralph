@@ -745,7 +745,7 @@ const (
 ```
 
 <a name="File"></a>
-## type [File](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/binding.go#L163-L166>)
+## type [File](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/binding.go#L159-L162>)
 
 File is the provider package's own minimal config surface: enough for ResolveBinding to read DefaultProvider and look up a named provider's BindingConfig. A later phase may replace this with a direct internal/vconfig\-backed decode; the shape here matches what committed config.toml historically expressed for the equivalent keys.
 
@@ -788,7 +788,7 @@ By default it reproduces today's LOOSE resolution exactly — every existing pla
 With Request.StrictBinding it additionally REFUSES a request the binding cannot honor exactly. That matters because the loose path substitutes silently: resolveModel treats the sonnet override as a general fallback, so a codex binding configured only with SonnetModel="gpt\-5" answers a request for OPUS with "gpt\-5" and no error. A task pinned to a model then runs on a different one with nothing reporting it, which defeats the point of pinning.
 
 <a name="Local"></a>
-## type [Local](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/binding.go#L171-L174>)
+## type [Local](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/binding.go#L167-L170>)
 
 Local is the provider package's local\-override surface: just enough for ResolveBinding's local\-binary\-override lookup \(the gitignored local.toml escape hatch for pointing a provider at a non\-shipped binary\).
 
@@ -800,7 +800,7 @@ type Local struct {
 ```
 
 <a name="Local.BinaryFor"></a>
-### func \(Local\) [BinaryFor](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/binding.go#L179>)
+### func \(Local\) [BinaryFor](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/binding.go#L175>)
 
 ```go
 func (l Local) BinaryFor(providerName string) (string, bool)
@@ -975,7 +975,7 @@ type Usage struct {
 ```
 
 <a name="VariantFile"></a>
-## type [VariantFile](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/binding.go#L193-L195>)
+## type [VariantFile](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/binding.go#L189-L191>)
 
 VariantFile is the provider package's per\-binding\-request input — despite the name \(kept for config\-key compatibility with existing committed config.toml files\), it carries no persona: it is just the provider override for one binding request.
 
