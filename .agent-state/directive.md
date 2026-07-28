@@ -68,7 +68,8 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
 
 ## Remaining
 
-- [ ] Land the 11 open PRs: 222, 225, 236, 245, 246, 247, 251, 252, 255, 256, 257.
+- [ ] Land the 12 open PRs: 222, 225, 236, 245, 246, 247, 251, 252, 255, 256,
+      257, 258.
       There is ALWAYS an action here; this is not a wait.
       1. `bash scripts/verify-repo-claims.sh` first — never assert status from
          memory.
@@ -79,7 +80,11 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
       4. BEHIND -> `gh pr update-branch`.
       5. Unresolved thread -> verify against the code, then fix or counter it
          with evidence.
-      6. Nothing to do on any PR -> work an item below. Do not report status.
+      6. Every PR blocked on CI with no failures -> clear SUPERSEDED runs first
+         (`gh run cancel` every queued CI run per branch except the newest).
+         The queue rebuilds on every push, and superseded runs hold macOS slots
+         the near-complete PRs need; 14 were holding slots at one point.
+      7. Still nothing -> work an item below. Do not report status.
 
 - [x] docs/design/exact-provider-identity.md — DONE (PR #255). Documents
       Invocation/StrictBinding/InvocationConfigHash and the transferable rule:
