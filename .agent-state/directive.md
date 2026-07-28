@@ -68,12 +68,46 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
 
 ## Remaining
 
-- [ ] Land the 2 open PRs: 225 (queued), 272 (CI running on the review fixes).
-      #272's three Codex findings are fixed in 8d58fba and all threads resolved:
-      native fan-out bypassed differentFrom entirely (P1 -- coalesced groups
-      never reached the check, so the reviewer was the author), independence
-      rotation overrode `providers`, and a whitespace-padded peer ID passed
-      import then never resolved. Each has a negative proof.
+- [ ] Land the 3 open PRs: 275, 277, 278.
+      (225, 274 and 272 already landed this pass.)
+      All review threads resolved; each fix carries its own negative proof.
+        * #272 differentFrom enforcement -- MERGED. FIVE review findings, all real:
+          native fan-out bypassed the check entirely (coalesced groups return
+          before the per-step loop, so the reviewer WAS the author), rotation
+          overrode `providers`, a padded peer ID passed import then never
+          resolved, `providers` was unenforced on the fan-out path too, and a
+          differentFrom CYCLE deadlocked forever with no operator-visible
+          state. The fan-out rule is now stated ONCE -- a group is one binding
+          chosen before any member is examined, so NO per-step restriction can
+          be honoured by a coalesced turn -- because the field-by-field framing
+          is exactly what let the `providers` twin slip.
+        * #275 PTY cleanup budget (#273 family). Product bug: the budget was
+          attempts*interval, but each pass walks the whole process table, so
+          under load 100 attempts elapse well before 500ms and abort a
+          CONVERGING cleanup. Now a 2s wall-clock deadline. The debugger's
+          third fix was DROPPED -- it could not be independently proven.
+        * #277 live contained turn (containment groundwork).
+        * #278 claude API-failure categorization.
+
+- [ ] REOPENED by evidence: do NOT flip contain_provider_writes on yet.
+      Its criterion ("real turns have run with it enabled") is still unmet, and
+      #277 establishes WHY rather than guessing: the live E2E cannot pass at
+      all. The harness sets an isolated HOME, so the real CLI reads no
+      credentials and exits "Not logged in" (#276). Everything ELSE the flip
+      was gated on is done and verified on main -- #251 merged, and
+      ContainProviderWrites is read by PRODUCTION code at
+      binding_resolver.go:268, not only tests.
+      Order: land #276's harness fix -> run the #277 live test -> then flip.
+
+- [ ] Issue #276: the live E2E suite is structurally unable to pass.
+      Isolated HOME strips provider credentials. This matters beyond one test:
+      a guaranteed-red opt-in test is indistinguishable from no test, and it is
+      the ONLY thing that would catch real-provider regressions.
+      TWO false conclusions came from this in one session -- "containment
+      breaks real turns" (killed by running the uncontained control, which
+      failed identically) and, on Linux, the e2e binary not answering the
+      containment-helper re-exec (fixed in #277 via TestMain). Both would have
+      blamed the product for a harness gap.
 
 - [ ] Issue #273: the observed-output ceiling does not trip under -race on
       main. TestOpencodeRunnerBoundsEndlessNonJSONProgress and
@@ -298,8 +332,18 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
       by PRODUCTION code at cmd/radioactive_ralph/binding_resolver.go:268, not
       only by tests. That distinction is the whole point here: the key was
       previously parsed and never read, which is the inert-feature defect this
-      item exists to close. Step 2 (flip the default on) is now ACTIONABLE with
-      no remaining gate -- its audit and real-turn evidence are both complete.
+      item exists to close.
+
+      STEP 2 IS STILL GATED, and I had this wrong twice in one session. I first
+      wrote "audit and real-turn evidence are both complete" from the CI E2E
+      alone -- but that E2E drives a FAKE CLI, which attempts only what the test
+      scripts it to, so it cannot answer the question the flip turns on: does a
+      REAL CLI need something the project-root policy denies? Writing the live
+      test (#277) and running it produced the answer: not yet knowable, because
+      the harness strips provider credentials (#276) and the turn fails before
+      containment is ever exercised.
+      REAL GATE NOW: land #276 -> run the #277 live test -> then flip.
+      The claim below predates that and is what I corrected:
       "REAL TURNS USING IT" IS NOW SATISFIED (14f58f7): tests/e2e now runs a real
       orchestrator + real provider subprocess under its own pty, with the project
       config key set exactly as an operator sets it and a fake CLI that genuinely
