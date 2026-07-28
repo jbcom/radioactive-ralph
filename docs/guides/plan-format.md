@@ -113,7 +113,7 @@ than in pieces.
 | `binding` | parsed | pins provider identity: `mode`, `alias`, `provider`, `model`, `effort`, `calibration`, `repetitions`, `fixture`. |
 | `requires` | parsed | capability keys the bound provider must satisfy. |
 | `providers` | parsed | restricts the task to a subset of configured providers. |
-| `differentFrom` | parsed | task ids that must not share this task's independence domain. |
+| `differentFrom` | **validated** | task ids that must not share this task's independence domain. References are checked at import; the runtime constraint is not enforced yet. See below. |
 | `inputs` | parsed | files the task reads: `{"path": ..., "sha256": ...}`. |
 | `outputs` | parsed | files the task writes: `{"path": ..., "mode": "exclusive"}`. |
 
@@ -211,6 +211,12 @@ A step can name the providers allowed to run it:
 ```markdown
 # Cross-check
 
+- generate the migration
+
+   ```ralph-task
+   {"id": "generate-migration"}
+   ```
+
 - review the generated migration
 
    ```ralph-task
@@ -241,6 +247,48 @@ Unlike `requires`, there is no closed vocabulary here: provider names are
 operator-chosen configuration, so an unrecognized name is indistinguishable
 from a provider this project simply is not bound to right now. Either way the
 task blocks and names the list, which is the actionable report.
+
+## Independence constraints
+
+A step can declare that it must not run on the same provider as another task —
+for work whose value depends on *who* did it, like a review of generated code:
+
+```markdown
+# Cross-check
+
+- produce the migration
+
+   ```ralph-task
+   {"id": "produce"}
+   ```
+
+- review it
+
+   ```ralph-task
+   {"id": "review", "differentFrom": ["produce"]}
+   ```
+```
+
+**Import validates the references; dispatch does not yet enforce the
+constraint.** That split is deliberate and worth being precise about, because a
+half-implemented guarantee is easy to mistake for a whole one.
+
+What is checked now:
+
+- A reference to a task that does not exist is **rejected**. It could never be
+  satisfied or violated, so it would sit in the plan looking like an
+  independence guarantee while enforcing nothing — worse than an unenforced
+  field, because the plan reads as protected.
+- A self-reference is **rejected**. A task cannot run on a provider different
+  from its own, so dispatch could only ever block it forever; failing at import
+  turns a permanent stall into an authoring error.
+- An **empty** entry is rejected, for the same reason as an unknown one: it names
+  no task, so it can never be enforced. Skipping it silently would also give you
+  no signal that a list entry did nothing.
+
+What is not: nothing compares independence domains at dispatch time. That needs
+per-provider domain identity, which arrives with the calibration work. Until
+then, treat `differentFrom` as a declared intent whose *shape* is verified.
 
 ## Validation
 

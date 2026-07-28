@@ -11,6 +11,9 @@
 # surfaced a real #245 failure within two rounds.
 cd /Users/jbogaty/src/jbcom/radioactive-ralph || exit 1
 prev=""
+# inflight is the leader whose rebase is still working through CI. It survives
+# across rounds so a BLOCKED-while-checking leader is not mistaken for idle.
+inflight=""
 for round in $(seq 1 400); do
   # Do NOT swallow the query's exit status. An auth failure, rate limit, or
   # network blip makes `gh pr list` return nothing, which is indistinguishable
@@ -31,13 +34,34 @@ for round in $(seq 1 400); do
     exit 0
   fi
   blocked=0; behind=0; ready=0; dirty=""; failing=""; merged=""
+  # Rebase ONE behind PR per round — the one closest to green — instead of all
+  # of them.
+  #
+  # `strict` protection means every merge makes every other PR BEHIND, and
+  # `gh pr update-branch` restarts that PR's whole 23-job matrix. Rebasing all
+  # eight at once queued ~184 jobs against a macOS pool that runs a couple at a
+  # time (measured: queued=42 running=0 immediately after one such round), so
+  # nothing finished and the next merge invalidated the work anyway. The merge
+  # queue is serialized by protection, so only the leader's rebase can pay off;
+  # the rest are re-run again after the next merge regardless.
+  leader=""; leader_left=9999
   for pr in $prs; do
     st=$(gh pr view "$pr" --json mergeStateStatus --jq '.mergeStateStatus' 2>/dev/null)
     f=$(gh pr view "$pr" --json statusCheckRollup \
       --jq '[.statusCheckRollup[]?|select(.conclusion=="FAILURE")|.name]|join(",")' 2>/dev/null)
     [ -n "$f" ] && failing="$failing $pr($f)"
     case "$st" in
-      BEHIND) behind=$((behind+1)); gh pr update-branch "$pr" >/dev/null 2>&1 ;;
+      BEHIND)
+        behind=$((behind+1))
+        left=$(gh pr view "$pr" --json statusCheckRollup \
+          --jq '[.statusCheckRollup[]?|select((.name!=null) and (.conclusion//"")!="SUCCESS" and (.conclusion//"")!="SKIPPED")]|length' 2>/dev/null)
+        case "$left" in (''|*[!0-9]*) left=9999;; esac
+        # Prefer the PR with the FEWEST outstanding checks, and never a failing
+        # one: rebasing a PR that still has to fix a failure spends the pool on
+        # work that cannot merge yet.
+        if [ -z "$f" ] && [ "$left" -lt "$leader_left" ]; then
+          leader=$pr; leader_left=$left
+        fi ;;
       DIRTY)  dirty="$dirty $pr" ;;
       CLEAN|UNSTABLE)
         if [ -z "$f" ]; then
@@ -49,13 +73,90 @@ for round in $(seq 1 400); do
     armed=$(gh pr view "$pr" --json autoMergeRequest --jq 'if .autoMergeRequest then 1 else 0 end' 2>/dev/null)
     [ "$armed" = "0" ] && gh pr merge "$pr" --squash --auto --delete-branch >/dev/null 2>&1
   done
+  # Hold the in-flight leader across rounds.
+  #
+  # A just-rebased PR reports BLOCKED while its required checks run, so it stops
+  # being a BEHIND candidate and the next round would pick a DIFFERENT branch to
+  # rebase. Over the several rounds a 23-job matrix takes, that walks through
+  # every PR and recreates the exact queue flood this logic exists to prevent.
+  # So once a leader is chosen it stays the leader until it merges, goes DIRTY,
+  # starts failing, or disappears from the open list.
+  if [ -n "$inflight" ]; then
+    still_open=0
+    for pr in $prs; do
+      [ "$pr" = "$inflight" ] && still_open=1
+    done
+    inflight_state=$(gh pr view "$inflight" --json mergeStateStatus --jq '.mergeStateStatus' 2>/dev/null)
+    inflight_fail=$(gh pr view "$inflight" --json statusCheckRollup \
+      --jq '[.statusCheckRollup[]?|select(.conclusion=="FAILURE")]|length' 2>/dev/null)
+    case "$still_open:$inflight_state:${inflight_fail:-0}" in
+      0:*:*)        echo "round $round: leader #$inflight left the queue; releasing"; inflight="" ;;
+      *:DIRTY:*)    echo "round $round: leader #$inflight went DIRTY; releasing"; inflight="" ;;
+      *:*:0)        : ;;  # healthy and still working: keep holding
+      *)            echo "round $round: leader #$inflight has a failing check; releasing"; inflight="" ;;
+    esac
+  fi
+
+  # Only when nothing is already merging: a rebase during a merge is immediately
+  # invalidated by it. And only when no leader is already in flight.
+  if [ -z "$inflight" ] && [ -n "$leader" ] && [ "$ready" = "0" ]; then
+    # Do NOT claim success on a failed update. A discarded exit status turns an
+    # API, permission, or network failure into a cheerful "rebased" line every
+    # round until the run cap, with nothing surfacing the decision that needs
+    # making.
+    if update_err=$(gh pr update-branch "$leader" 2>&1); then
+      inflight=$leader
+      echo "round $round: rebased #$leader only ($leader_left checks out, $behind behind)"
+    else
+      echo "round $round: update-branch FAILED for #$leader: $update_err" >&2
+      exit 2
+    fi
+  fi
   n=$(echo "$prs"|wc -w|tr -d ' ')
   line="round $round: open=$n blocked=$blocked behind=$behind ready=$ready"
   [ -n "$merged" ]  && line="$line MERGED:$merged"
   [ -n "$dirty" ]   && line="$line DIRTY:$dirty"
   [ -n "$failing" ] && line="$line FAILING:$failing"
   [ "$line" != "$prev" ] && { echo "$line"; prev="$line"; }
-  { [ -n "$dirty" ] || [ -n "$failing" ]; } && { echo "STOP: needs a decision"; exit 2; }
+  # A DIRTY branch is a stable fact — stop immediately.
+  [ -n "$dirty" ] && { echo "STOP: needs a decision (conflict)"; exit 2; }
+
+  # A failing check is NOT stable. CI re-runs on every rebase, and a flake or an
+  # in-flight re-run produces a FAILURE that is gone moments later. The driver
+  # exited permanently on exactly that: it read "FAILING: 222 (Test
+  # (ubuntu-latest))" in the same round the re-run was completing, stopped, and
+  # the failure was absent when checked seconds afterwards.
+  #
+  # So re-check before stopping. A real failure survives the second look; a
+  # transient one does not, and the driver keeps working instead of needing a
+  # manual restart. This is not tolerance for failures — it is refusing to act
+  # on a single sample of a value that is known to change under us.
+  if [ -n "$failing" ]; then
+    sleep 30
+    recheck=""
+    for pr in $prs; do
+      # Do NOT swallow the re-query's exit status. An auth failure, rate limit,
+      # or network blip makes this substitution empty, which is indistinguishable
+      # from "no failures" — so the loop would announce the failure CLEARED and
+      # continue past a PR it never actually re-checked. That is strictly worse
+      # than the stale-sample bug this whole block exists to fix: it would
+      # manufacture a false all-clear rather than merely acting on an old one.
+      # A query that did not answer is INCONCLUSIVE, and the only safe reading of
+      # an unverified failure is that it stands.
+      if ! rf=$(gh pr view "$pr" --json statusCheckRollup \
+        --jq '[.statusCheckRollup[]?|select(.conclusion=="FAILURE")|.name]|join(",")' 2>&1); then
+        echo "STOP: re-check of #$pr FAILED to query ($rf) — the reported failure" \
+          "$failing is UNVERIFIED, treating it as real" >&2
+        exit 3
+      fi
+      [ -n "$rf" ] && recheck="$recheck $pr($rf)"
+    done
+    if [ -n "$recheck" ]; then
+      echo "STOP: needs a decision (failing after re-check):$recheck"
+      exit 2
+    fi
+    echo "round $round: FAILING:$failing cleared on re-check — continuing"
+  fi
 
   # Do NOT cancel runs here. An earlier version cancelled every queued CI run
   # except the newest per branch, on the theory that superseded runs hold the

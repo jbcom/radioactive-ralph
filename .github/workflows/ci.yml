@@ -1,10 +1,31 @@
 name: CI
 
 on:
-  push:
-    branches: [main]
+  # PRs and the merge queue ONLY. There is deliberately no push trigger.
+  #
+  # `push: branches: [main]` re-ran the entire 23-job matrix on every merge, and
+  # with a merge queue that verifies nothing: the queued commit IS main's future
+  # state, GitHub already ran these checks against it, and merging is what
+  # happens *because* they passed. It was a second full matrix per merge —
+  # including four macOS jobs on a two-wide pool — testing a tree that had just
+  # been tested.
+  #
+  # What ships from main is release.yml and cd.yml's job, and release.yml runs
+  # GoReleaser, which rebuilds and smoke-tests every platform target anyway.
   pull_request:
     types: [opened, synchronize, reopened]
+  # Required for a merge queue: GitHub runs the required checks against the
+  # queued merge commit (base + this PR + everything ahead of it) and merges
+  # only if they pass. Without this trigger the queue has nothing to wait for.
+  #
+  # This is what makes `strict` affordable. Strict protection means every merge
+  # invalidates every other PR, so each one must rebase and re-run the whole
+  # 23-job matrix — ~14 minutes, serialized, against a macOS pool that runs two
+  # jobs at a time. Ten PRs cost hours of pure waiting. The queue tests the
+  # SAME combined result once, in order, instead of making every author rebase
+  # into a moving target.
+  merge_group:
+    types: [checks_requested]
 
 permissions:
   contents: read
@@ -12,11 +33,12 @@ permissions:
 # One in-flight run per PR. Every push previously started a full run — four
 # macOS jobs among them — while every superseded run kept its queued slots, so
 # a branch pushed eight times held thirty-two macOS jobs for work already
-# obsolete. With four macOS-only checks in the required set, that starves every
-# other PR of the runners it needs to merge.
+# obsolete.
 #
-# main is deliberately EXCLUDED from cancellation: its runs gate releases, and
-# `github.run_id` gives each one a unique group so nothing can cancel it.
+# A merge_group run keys on github.run_id, which is unique, so a queued merge
+# is NEVER cancelled by this: cancelling one would drop a merge GitHub is
+# actively gating on. main is excluded for the same reason — its runs gate
+# releases.
 concurrency:
   group: ci-${{ github.event.pull_request.number || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
