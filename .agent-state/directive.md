@@ -68,7 +68,8 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
 
 ## Remaining
 
-- [ ] Land the 10 open PRs: 222, 225, 251, 252, 255, 257, 258, 259, 261, 262.
+- [ ] Land the 11 open PRs: 222, 225, 251, 252, 255, 257, 258, 259, 261, 262,
+      263.
       MERGED since this item was written: #246 (desktop launch), #256
       (reporting owner), #245 (init over supervisor), #247 (capability
       requirements, squashed as 82ff030), #236 (calibration records, 9c04550 --
@@ -164,8 +165,22 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
                  negative test: recording only claimed[0] leaves peer "0.1" with
                  an empty domain, which reads as INDEPENDENT and would satisfy
                  differentFrom for the tasks that most obviously violate it.
-              2. Port the CALIBRATION LANE so something actually produces a
-                 calibration. Scoped 2026-07-28: nothing in the tree records one
+              2. [x] DONE -- PR #263, but NOT by porting the v2 lane. Scoping it
+                 showed the v2 handler depends on APIs main does not have
+                 (PutProviderCalibration, ValidateProviderCalibration, an ipc
+                 calibration surface) while main has RecordCalibration instead,
+                 so a verbatim port would BE the "never port the diff" mistake
+                 the spec warns about. Built the producer against MAIN's API
+                 instead: calibration-put/calibration-list on the drive version,
+                 a separate optional CalibrationHandler so no existing handler
+                 breaks, no client-supplied id (the store content-addresses),
+                 and a conflicting re-record REFUSED with CodeConflict rather
+                 than overwritten -- silently replacing an alias's calibration
+                 would retroactively change what every already-dispatched task
+                 is believed to have run on. The full admission lane
+                 (calibration_admission.go, await-calibration tasks,
+                 repetitions) remains unported and is a separate increment.
+                 Original scoping note: nothing in the tree records one
                  (grep for RecordCalibration outside store/ + its tests returns
                  nothing), so #262's domain lookup finds none and correctly
                  records empty. The lane is already DESIGNED, not to be
