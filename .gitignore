@@ -68,3 +68,16 @@ fyne-cross/
 # Nested worktrees created inside the repo by mistake. Worktrees belong in
 # ../.worktrees/, and a stray one here would otherwise be committed as content.
 /.worktrees/
+
+# Agent-state CACHE. directive.md and decisions.ndjson are the durable, tracked
+# state; everything here is re-derivable and machine-local. The stop-hook
+# fingerprint records a local HEAD sha and open-item count, so tracking it made
+# every branch churn the same line (44 commits) and conflict with every other
+# branch for no shared information.
+.agent-state/.last-stop-fingerprint
+.agent-state/.last-stop-sha
+.agent-state/.last-compaction
+.agent-state/.indexed-sha
+.agent-state/digest.md
+.agent-state/cursor.md
+.agent-state/batch.json
