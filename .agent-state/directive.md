@@ -68,7 +68,10 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
 
 ## Remaining
 
-- [ ] [WAIT] Land the open PRs: 287, 288.
+- [ ] [WAIT] Land the open PRs: #292, #294, #295 (containment stack).
+      #290 and #293 LANDED. Hash-prefixed deliberately: guard 9 extracts
+      `#[0-9]{3}` tokens from THIS line, so bare numbers would be invisible to
+      it and a stale list would pass the check.
       (225, 274, 272, 275, 277 and 278 landed this pass.)
       All four are QUEUED or auto-merge ARMED with zero unresolved threads and
       zero failing checks; the only remaining work is CI on a serialized runner
@@ -100,62 +103,17 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
           retryable, when the generic sentinel was already correctly terminal.
           Naming a category is choosing a retry policy.
 
-- [ ] [WAIT] Containment arc, ONE item -- the detail below at "Provider write
-      containment" is the same work and is now marked SUPERSEDED so the queue
-      cannot contradict itself.
-      #285 RESOLVED in #290: a binding declares whether it can run confined,
-      dispatch REFUSES an unhonourable request rather than silently downgrading
-      it, and the flip itself is #292. All three shipped providers behave
-      correctly under a containment-on default -- claude completes confined,
+- [ ] [WAIT] Containment arc -- tracked ENTIRELY by "Land the open PRs" above.
+      #285 is RESOLVED, not blocked: #290 (LANDED) gives a binding a declared
+      containment capability and makes dispatch REFUSE an unhonourable request
+      instead of silently downgrading it; #292 flips the default; #293 (LANDED)
+      and #294 correct the docs; #295 this sync.
+      All three shipped providers behave correctly -- claude completes confined,
       codex and opencode refuse visibly with worker.admission_refused.
-      Remaining: land #290 then #292. Nothing to decide.
+      Nothing to decide, only landing. The detailed historical entry further
+      down is SUPERSEDED and must not be actioned.
 
-      --- HISTORY BELOW THIS LINE. Everything that follows describes how the
-      --- decision was REACHED and is kept for the evidence trail. It contains
-      --- questions that were open at the time and are now ANSWERED; do not
-      --- action anything below as if it were live work.
-
-      Opened and CLOSED #284 in one pass. The flip is right in principle and
-      breaks TWO of three shipped providers in practice: a real codex turn and
-      a real opencode turn both fail under containment, while claude passes.
-      Codex dies at STARTUP ("failed to initialize in-process app-server
-      client: Operation not permitted"), so it is NOT the last-message.txt path
-      -- I moved that under the root first and it failed identically at 0.30s.
-
-      HOW I GOT IT WRONG, since the criterion itself was fine: "real turns have
-      run with it enabled" means EVERY SHIPPED PROVIDER. I ran the live test
-      once, it picked suggested[0] = claude, claude passed, and I called the
-      gate met. TestE2E_LiveContainedTurnCompletes now runs every detected
-      provider as its own subtest, so this cannot recur -- and running it
-      immediately found opencode, which #285 did not know about.
-
-      (ANSWERED -- resolved in #290 as the capability option.) At the time,
-      this was not a wait on CI; it waited on a DECISION in #285: widen the policy for
-      what agent CLIs actually need at startup, or let a binding declare it
-      cannot be contained so the resolver refuses rather than failing opaquely.
-      A codex-specific carve-out is now insufficient -- opencode needs it too.
-
-- [x] Issue #280 CLOSED: ralph-task `binding` was INERT. BOTH halves LANDED --
-      storage #282, dispatch #283. STORAGE HALF --
-      ReadyPartitions now splits on the declared binding, so a coalesced turn
-      can no longer swallow a task's pin (the same hole `providers` had until
-      #272). The DISPATCH half is still open: nothing yet CONSUMES
-      ReadyPartition.BindingKey when resolving a partition's binding.
-      Original finding -- declared in plan/types.go,
-      parsed, validated, and read by ZERO production code. A plan pinning
-      {"binding":{"provider":"codex"}} imports clean and gets whatever the pool
-      resolves, silently. FOURTH instance of this class here (the contain key,
-      WithProviderWriteContainment, declarative stream-json, now this), with
-      differentFrom nearly the fifth. Either enforce it at dispatch -- in which
-      case it must ALSO be excluded from fan-out coalescing, exactly as
-      `providers` needed -- or reject the key at import. Parsed-and-ignored is
-      not an option: a field with no consumer reads as a guarantee.
-
-      (#276 was CLOSED as invalid: I blamed the harness for isolating HOME, but
-      Environ() applies only to driven subprocesses and the live tests dispatch
-      in-process. The real cause was #281.)
-
-- [ ] [WAIT] Issue #273 SOLVED, fix in #288. NOT a product bug: the ceiling
+- [x] Issue #273 CLOSED, fix landed in #288. NOT a product bug: the ceiling
       trips in ~370ms and the full runner path returns the right error in 2.06s
       -- but 39.73s under -race, a ~19x multiplier on a 1 MiB/line firehose.
       The 90s test budget left ~50s of headroom, which CPU contention consumed.

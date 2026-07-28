@@ -176,15 +176,22 @@ fi
 # 9. Directive PR references must match reality. A stale list reads as progress
 #    that has not happened.
 stale_refs=""
-for n in $(grep -oE '#[0-9]{3}' .agent-state/directive.md 2>/dev/null | tr -d '#' | sort -u); do
+# Numbers are read from the open-PR LINE ITSELF, hash-prefixed or not.
+#
+# The previous version scanned the whole file for `#NNN` tokens and then asked
+# whether each appeared on the open-PR line. That made the guard defeatable by
+# FORMATTING: a list written as "290, 292" has no `#` tokens, so nothing was
+# extracted, and the guard reported "no merged PRs listed as open" while the
+# line was stale. A check that passes because it found nothing to check is
+# worse than no check.
+open_line=$(grep -E '^- \[ \].*Land the .*open PRs' .agent-state/directive.md 2>/dev/null | head -1)
+for n in $(printf '%s' "$open_line" | grep -oE '[0-9]{3}' | sort -u); do
   # An OPEN item naming a MERGED PR reads as work still to do that is already
   # done — the exact drift that made this file claim seventeen open PRs when
   # eight were. Only the open-PR list line is checked; prose citing merged PRs
   # as history is correct and must not be flagged.
-  if grep -qE "^- \\[ \\].*Land the .* open PRs.*#?$n" .agent-state/directive.md; then
-    state=$(gh pr view "$n" --json state --jq '.state' 2>/dev/null || echo UNKNOWN)
-    [ "$state" = "MERGED" ] && stale_refs="$stale_refs $n"
-  fi
+  state=$(gh pr view "$n" --json state --jq '.state' 2>/dev/null || echo UNKNOWN)
+  [ "$state" = "MERGED" ] && stale_refs="$stale_refs $n"
 done
 if [ -n "$stale_refs" ]; then
   say "  open-PR list names MERGED PRs" "$stale_refs"
