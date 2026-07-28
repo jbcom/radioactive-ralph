@@ -71,6 +71,13 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
 - [ ] Land the 11 open PRs: 222, 225, 236, 247, 251, 252, 255, 257, 258, 259,
       261. MERGED since this item was written: #246 (desktop launch), #256
       (reporting owner), #245 (init over supervisor).
+      HYGIENE (2026-07-28): 13 merged worktrees + 13 stale local branches
+      removed. `merge-tree --write-tree` reported 7 of them NOT-absorbed, which
+      is the SQUASH-MERGE FALSE NEGATIVE — a squash rewrites patch ids and the
+      branch is behind main, so its tree differs even though every change
+      landed. The reliable check is whether the branch's PR merged; all 7 had.
+      Never delete on the merge-tree signal alone.
+
       ISSUE #204 IS NOW FULLY CLOSED on main — the client/store exemption list
       reads "REAL DEBT: NONE REMAINING". Every CLI client reaches the store
       through the supervisor; init_cmd.go was the last one.
