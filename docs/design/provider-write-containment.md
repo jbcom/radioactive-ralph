@@ -53,8 +53,8 @@ failure nobody notices until it matters. Both readings choose "behave like the
 absent key"; only the key's meaning changed.
 
 An explicit `false` always wins. On-by-default is only defensible while the
-escape hatch is real, and a provider that needs a wider root stays runnable
-without patching Ralph.
+opt-out is real, and a provider that needs a wider root stays runnable without
+patching Ralph.
 
 Containment is **opt-in per `agent.Start`** via `ContainmentRoot`, not derived
 from `Dir`. Where a process starts is not the same claim as the only place it
