@@ -18,6 +18,7 @@ Package provider adapts configured CLI backends into radioactive\_ralph's provid
 - [Constants](<#constants>)
 - [Variables](<#variables>)
 - [func BindingCapabilities\(cfg BindingConfig\) map\[string\]bool](<#BindingCapabilities>)
+- [func BindingSupportsContainment\(binding Binding\) bool](<#BindingSupportsContainment>)
 - [func CheckAllowedProviders\(binding Binding, providers \[\]string\) error](<#CheckAllowedProviders>)
 - [func CheckRequirements\(binding Binding, requires \[\]string\) error](<#CheckRequirements>)
 - [func DefaultWatchdogConfig\(\) agent.WatchdogConfig](<#DefaultWatchdogConfig>)
@@ -300,6 +301,15 @@ BindingCapabilities reports the capability keys a binding satisfies.
 
 Derived from the binding's own config rather than a per\-provider table: the config already declares these, and a second table would drift the first time a provider gained or lost one. Absent means NOT satisfied — callers must not read a missing key as "unknown, assume yes".
 
+<a name="BindingSupportsContainment"></a>
+## func [BindingSupportsContainment](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/binding.go#L99>)
+
+```go
+func BindingSupportsContainment(binding Binding) bool
+```
+
+BindingSupportsContainment is supportsContainment for callers outside this package \-\- the orchestrator asks before deciding to confine a turn.
+
 <a name="CheckAllowedProviders"></a>
 ## func [CheckAllowedProviders](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/capabilities.go#L134>)
 
@@ -432,7 +442,7 @@ func ResolveBinding(cfg File, local Local, fromConfig VariantFile) (Binding, err
 ResolveBinding picks the provider for one variant.
 
 <a name="BindingConfig"></a>
-## type [BindingConfig](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/binding.go#L37-L74>)
+## type [BindingConfig](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/binding.go#L37-L89>)
 
 BindingConfig is one provider's capability record: what binary to run, how to invoke it non\-interactively, how to read back its structured result and resume a session, and whether it can fan out work itself.
 
@@ -476,6 +486,21 @@ type BindingConfig struct {
     // or absent fan-out support default to false — the flag must never
     // be optimistically set.
     NativeFanout bool `toml:"native_fanout"`
+
+    // SupportsContainment reports whether the bound CLI can run under Ralph's
+    // kernel-enforced write containment (internal/contain) at all.
+    //
+    // A POINTER so absent is distinguishable from an explicit false, and absent
+    // means CAPABLE. That direction is deliberate: an unset flag meaning "cannot
+    // be contained" would let a new provider silently skip a security boundary,
+    // while unset meaning "capable" makes the incompatibility fail LOUDLY and
+    // get a flag set with evidence -- which is exactly how codex got its value.
+    //
+    // Set false ONLY with a reproduction, never defensively. A provider marked
+    // incapable runs unconfined, so a speculative false is a silently disabled
+    // boundary. Evidence per provider is documented at each default*Provider
+    // constructor below.
+    SupportsContainment *bool `toml:"supports_containment"`
 }
 ```
 
@@ -692,7 +717,7 @@ const (
 ```
 
 <a name="File"></a>
-## type [File](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/binding.go#L81-L84>)
+## type [File](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/binding.go#L112-L115>)
 
 File is the provider package's own minimal config surface: enough for ResolveBinding to read DefaultProvider and look up a named provider's BindingConfig. A later phase may replace this with a direct internal/vconfig\-backed decode; the shape here matches what committed config.toml historically expressed for the equivalent keys.
 
@@ -735,7 +760,7 @@ By default it reproduces today's LOOSE resolution exactly — every existing pla
 With Request.StrictBinding it additionally REFUSES a request the binding cannot honor exactly. That matters because the loose path substitutes silently: resolveModel treats the sonnet override as a general fallback, so a codex binding configured only with SonnetModel="gpt\-5" answers a request for OPUS with "gpt\-5" and no error. A task pinned to a model then runs on a different one with nothing reporting it, which defeats the point of pinning.
 
 <a name="Local"></a>
-## type [Local](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/binding.go#L89-L92>)
+## type [Local](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/binding.go#L120-L123>)
 
 Local is the provider package's local\-override surface: just enough for ResolveBinding's local\-binary\-override lookup \(the gitignored local.toml escape hatch for pointing a provider at a non\-shipped binary\).
 
@@ -747,7 +772,7 @@ type Local struct {
 ```
 
 <a name="Local.BinaryFor"></a>
-### func \(Local\) [BinaryFor](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/binding.go#L97>)
+### func \(Local\) [BinaryFor](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/binding.go#L128>)
 
 ```go
 func (l Local) BinaryFor(providerName string) (string, bool)
@@ -922,7 +947,7 @@ type Usage struct {
 ```
 
 <a name="VariantFile"></a>
-## type [VariantFile](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/binding.go#L111-L113>)
+## type [VariantFile](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/binding.go#L142-L144>)
 
 VariantFile is the provider package's per\-binding\-request input — despite the name \(kept for config\-key compatibility with existing committed config.toml files\), it carries no persona: it is just the provider override for one binding request.
 

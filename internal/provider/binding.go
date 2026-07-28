@@ -71,7 +71,38 @@ type BindingConfig struct {
 	// or absent fan-out support default to false — the flag must never
 	// be optimistically set.
 	NativeFanout bool `toml:"native_fanout"`
+
+	// SupportsContainment reports whether the bound CLI can run under Ralph's
+	// kernel-enforced write containment (internal/contain) at all.
+	//
+	// A POINTER so absent is distinguishable from an explicit false, and absent
+	// means CAPABLE. That direction is deliberate: an unset flag meaning "cannot
+	// be contained" would let a new provider silently skip a security boundary,
+	// while unset meaning "capable" makes the incompatibility fail LOUDLY and
+	// get a flag set with evidence -- which is exactly how codex got its value.
+	//
+	// Set false ONLY with a reproduction, never defensively. A provider marked
+	// incapable runs unconfined, so a speculative false is a silently disabled
+	// boundary. Evidence per provider is documented at each default*Provider
+	// constructor below.
+	SupportsContainment *bool `toml:"supports_containment"`
 }
+
+// supportsContainment reports whether a binding may be confined, treating an
+// unset flag as capable (see BindingConfig.SupportsContainment).
+func supportsContainment(cfg BindingConfig) bool {
+	return cfg.SupportsContainment == nil || *cfg.SupportsContainment
+}
+
+// BindingSupportsContainment is supportsContainment for callers outside this
+// package -- the orchestrator asks before deciding to confine a turn.
+func BindingSupportsContainment(binding Binding) bool {
+	return supportsContainment(binding.Config)
+}
+
+// containmentUnsupported is a fixed value for the flag, so the default
+// constructors read as declarations rather than as pointer plumbing.
+func containmentUnsupported() *bool { no := false; return &no }
 
 // File is the provider package's own minimal config surface: enough for
 // ResolveBinding to read DefaultProvider and look up a named provider's
@@ -134,8 +165,22 @@ func defaultClaudeProvider() BindingConfig {
 // model with no documented fan-out primitive. This is a "no evidence found"
 // result, not a verified negative; if a future codex release adds a
 // subagent/workflow surface, flip this and cite the new flag here.
+// SupportsContainment: FALSE, verified 2026-07-28 against the installed codex
+// with real turns. Uncontained it returns "CONFIRMED" in 12.6s; contained it
+// dies in 0.5s with
+//
+//	Error: failed to initialize in-process app-server client: Operation not permitted
+//
+// It is NOT a file-path problem, so widening the policy does not fix it. Under
+// `(allow default)` with no write-deny codex succeeds; adding `(deny
+// file-write*)` breaks it EVEN WITH TMPDIR re-allowed. The app-server needs a
+// write the profile cannot enumerate, so there is no narrow subpath to add.
+// Re-test and flip this if a future codex release changes that.
 func defaultCodexProvider() BindingConfig {
-	return BindingConfig{Type: "codex", Binary: "codex", NativeFanout: false}
+	return BindingConfig{
+		Type: "codex", Binary: "codex", NativeFanout: false,
+		SupportsContainment: containmentUnsupported(),
+	}
 }
 
 // defaultOpencodeProvider is opencode's capability record.
@@ -147,8 +192,18 @@ func defaultCodexProvider() BindingConfig {
 // natively fans out to its own agents, so the orchestrator may delegate a
 // parallel step-group to one opencode invocation instead of spawning N
 // Ralph-managed workers.
+// SupportsContainment: FALSE, verified 2026-07-28. A real contained opencode
+// turn does not complete (status=pending, retry_count=1) while the same turn
+// succeeds unconfined.
+//
+// Found only after the live contained E2E was changed to cover EVERY detected
+// provider rather than the first one -- the containment blocker was originally
+// filed from the codex reproduction alone, and opencode went unnoticed.
 func defaultOpencodeProvider() BindingConfig {
-	return BindingConfig{Type: "opencode", Binary: "opencode", NativeFanout: true}
+	return BindingConfig{
+		Type: "opencode", Binary: "opencode", NativeFanout: true,
+		SupportsContainment: containmentUnsupported(),
+	}
 }
 
 // defaultAgyProvider exists only for tests/documentation purposes: the agy
