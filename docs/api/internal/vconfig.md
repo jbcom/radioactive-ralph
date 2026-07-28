@@ -47,7 +47,9 @@ viper does the mechanical defaults\<file merge \(TOML\) per layer; this package 
   - [func \(m Mode\) String\(\) string](<#Mode.String>)
 - [type ProjectConfig](<#ProjectConfig>)
   - [func EffectiveProject\(ctx context.Context, st \*store.Store, projectsCfg ProjectConfig, projectID, projectConfigFile string, mode Mode\) \(ProjectConfig, error\)](<#EffectiveProject>)
+  - [func EffectiveProjectFrom\(ctx context.Context, src ConfigSource, projectsCfg ProjectConfig, projectID, projectConfigFile string, mode Mode\) \(ProjectConfig, error\)](<#EffectiveProjectFrom>)
   - [func EffectiveProjectFromValues\(ctx context.Context, st \*store.Store, projectsCfg ProjectConfig, projectID string, overlay map\[string\]any, mode Mode\) \(ProjectConfig, error\)](<#EffectiveProjectFromValues>)
+  - [func EffectiveProjectFromValuesFrom\(ctx context.Context, src ConfigSource, projectsCfg ProjectConfig, projectID string, overlay map\[string\]any, mode Mode\) \(ProjectConfig, error\)](<#EffectiveProjectFromValuesFrom>)
   - [func ResolveProjects\(ctx context.Context, st \*store.Store, userCfg UserConfig, projectID string\) \(ProjectConfig, error\)](<#ResolveProjects>)
   - [func ResolveProjectsFrom\(ctx context.Context, src ConfigSource, userCfg UserConfig, projectID string\) \(ProjectConfig, error\)](<#ResolveProjectsFrom>)
 - [type StoreConfigSource](<#StoreConfigSource>)
@@ -135,7 +137,7 @@ func FormatMissing(missing []MissingField) string
 FormatMissing renders missing as an actionable multi\-line exit message. Returns "" when missing is empty.
 
 <a name="LoadFileValues"></a>
-## func [LoadFileValues](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/vconfig/effective.go#L80>)
+## func [LoadFileValues](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/vconfig/effective.go#L100>)
 
 ```go
 func LoadFileValues(path string) (map[string]any, error)
@@ -285,14 +287,32 @@ projectConfigFile is optional; an empty string returns projectsCfg unchanged. Wh
 
 \-\-project\-config\-file is ignored in \-\-supervisor mode \(the supervisor path simply never calls EffectiveProject with a projectConfigFile\) — see spec §5a and the AddFlags doc comment.
 
+<a name="EffectiveProjectFrom"></a>
+### func [EffectiveProjectFrom](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/vconfig/effective.go#L37>)
+
+```go
+func EffectiveProjectFrom(ctx context.Context, src ConfigSource, projectsCfg ProjectConfig, projectID, projectConfigFile string, mode Mode) (ProjectConfig, error)
+```
+
+EffectiveProjectFrom is EffectiveProject against any ConfigSource, so a client resolving config over the supervisor socket runs the same code the supervisor does.
+
 <a name="EffectiveProjectFromValues"></a>
-### func [EffectiveProjectFromValues](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/vconfig/effective.go#L52>)
+### func [EffectiveProjectFromValues](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/vconfig/effective.go#L59>)
 
 ```go
 func EffectiveProjectFromValues(ctx context.Context, st *store.Store, projectsCfg ProjectConfig, projectID string, overlay map[string]any, mode Mode) (ProjectConfig, error)
 ```
 
 EffectiveProjectFromValues is EffectiveProject's core: merge \(and, under ModeChange, persist\) overlay directly, without going through a file on disk. Exported so a caller that has already computed the overlay it wants applied — e.g. the \-\-init path's conflict UX, which may want to apply an vconfig.AutoRemove\-filtered subset of an incoming \-\-project\-config\-file rather than the file's values verbatim — can reuse the exact same merge/persist semantics EffectiveProject uses, instead of round\-tripping the filtered map back through a TOML file just to satisfy EffectiveProject's file\-path signature.
+
+<a name="EffectiveProjectFromValuesFrom"></a>
+### func [EffectiveProjectFromValuesFrom](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/vconfig/effective.go#L65>)
+
+```go
+func EffectiveProjectFromValuesFrom(ctx context.Context, src ConfigSource, projectsCfg ProjectConfig, projectID string, overlay map[string]any, mode Mode) (ProjectConfig, error)
+```
+
+EffectiveProjectFromValuesFrom is EffectiveProjectFromValues against any ConfigSource.
 
 <a name="ResolveProjects"></a>
 ### func [ResolveProjects](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/vconfig/vconfig.go#L169>)
