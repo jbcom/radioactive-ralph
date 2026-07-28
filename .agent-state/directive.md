@@ -68,7 +68,7 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
 
 ## Remaining
 
-- [ ] [WAIT] Land the open PRs: #300, #301.
+- [ ] [WAIT] Land the open PRs: #300 (this one).
       (#299 landed: config write_paths is verified from an operator's toml.)
       The containment stack all LANDED: #292 #294 #295 #297 #298.
       #290 and #293 LANDED. Hash-prefixed deliberately: guard 9 extracts
@@ -150,7 +150,19 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
       the ceiling is unenforced on that path or the test never reaches it --
       product bug vs inert test. Same family as the PTY reaping item below.
 
-- [ ] [WAIT-AGENT] PTY process-group reaping: cleanup can leave a live child.
+- [x] CLOSED: PTY process-group reaping. FIXED by #275's wall-clock cleanup
+      budget, and the item's own hypothesis was right -- cleanup WAS silently
+      giving up under load, because the budget was attempts*interval while each
+      attempt also paid for a full process-table walk. Under contention the
+      attempts were consumed long before the intended wall-clock elapsed.
+      VERIFIED under the load that originally produced it (~12 spinners/core,
+      the same shape that reproduced the failure): both
+      TestAgentObservedOutputCeilingKillsReapsDiscardedEndlessLine and
+      TestGroupSignalConvergesBeforeReturning pass at -count=3. An idle pass
+      would have proven nothing here -- the failure was never reproducible
+      idle, which is what made it look CI-only for so long.
+      Original report follows.
+      PTY process-group reaping: cleanup can leave a live child.
       Surfaced in a merge_group run of #252 (a PR touching only two workflow
       YAML files, so the bug is on MAIN):
         TestAgentObservedOutputCeilingKillsReapsDiscardedEndlessLine
