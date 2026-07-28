@@ -5,11 +5,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 
-	"github.com/jbcom/radioactive-ralph/internal/store"
+	"github.com/jbcom/radioactive-ralph/internal/supervisor"
 	"github.com/jbcom/radioactive-ralph/internal/vconfig"
 	"github.com/jbcom/radioactive-ralph/internal/xdg"
 	"github.com/spf13/cobra"
@@ -45,38 +44,31 @@ func runInitMode(ctx context.Context, cmd *cobra.Command) error {
 		return fmt.Errorf("create state root: %w", err)
 	}
 
-	st, err := store.Open(ctx, store.Options{DSN: store.DSN(storeDBPath(stateRoot))})
+	// The supervisor is the SINGLE writer of record. init used to open the
+	// store directly, which made the client a second writer to a
+	// supervisor-owned database — the exact ownership split the
+	// one-binary/supervisor-owned-state architecture exists to prevent, and the
+	// last such caller in the CLI.
+	//
+	// Project resolution reuses ensureProjectKnown rather than repeating the
+	// fingerprint/ProjectEnsure dance: one implementation means init and every
+	// other command agree on what "this directory's project" is.
+	projectID, err := ensureProjectKnown(ctx, cmd, stateRoot, cwd)
 	if err != nil {
-		return fmt.Errorf("open store: %w", err)
-	}
-	defer func() { _ = st.Close() }()
-
-	fps, err := store.Fingerprints(ctx, cwd)
-	if err != nil {
-		return fmt.Errorf("compute project fingerprints: %w", err)
-	}
-
-	projectID, found, err := st.ResolveProject(ctx, fps)
-	if err != nil {
-		return fmt.Errorf("resolve project: %w", err)
-	}
-	if found {
-		if err := st.AddProjectIdentifiers(ctx, projectID, fps); err != nil {
-			return fmt.Errorf("accumulate project identifiers: %w", err)
-		}
-		if err := st.TouchProjectLastSeen(ctx, projectID); err != nil {
-			return fmt.Errorf("touch project: %w", err)
-		}
-		fmt.Printf("radioactive_ralph: re-initialized existing project %s (%s)\n", projectID, cwd)
-	} else {
-		projectID, err = st.CreateProject(ctx, filepath.Base(cwd), fps)
-		if err != nil {
-			return fmt.Errorf("create project: %w", err)
-		}
-		fmt.Printf("radioactive_ralph: initialized new project %s (%s)\n", projectID, cwd)
+		return err
 	}
 
-	return validateProjectConfig(ctx, cmd, st, projectID)
+	client, err := supervisor.Find(stateRoot)
+	if err != nil {
+		return fmt.Errorf(
+			"%w: init needs a running supervisor; start one with: %s",
+			errNoSupervisorListening, supervisorStartHint())
+	}
+	defer func() { _ = client.Close() }()
+
+	fmt.Printf("radioactive_ralph: initialized project %s (%s)\n", projectID, cwd)
+
+	return validateProjectConfig(ctx, cmd, newSupervisorConfigSource(stateRoot), projectID)
 }
 
 // validateProjectConfig resolves the virtual USER + PROJECTS config layers
@@ -106,14 +98,14 @@ func runInitMode(ctx context.Context, cmd *cobra.Command) error {
 //     VERBATIM (no auto-remove), logging exactly which keys were
 //     overridden and with what, so there is still a durable record even
 //     though the operator has opted into overriding.
-func validateProjectConfig(ctx context.Context, cmd *cobra.Command, st *store.Store, projectID string) error {
+func validateProjectConfig(ctx context.Context, cmd *cobra.Command, src vconfig.ConfigSource, projectID string) error {
 	configFile, userConfigFile, projectConfigFile := vconfig.FlagsFrom(cmd)
 
-	userCfg, err := vconfig.ResolveUser(ctx, st, configFile, userConfigFile)
+	userCfg, err := vconfig.ResolveUserFrom(ctx, src, configFile, userConfigFile)
 	if err != nil {
 		return fmt.Errorf("resolve user config: %w", err)
 	}
-	projectsCfg, err := vconfig.ResolveProjects(ctx, st, userCfg, projectID)
+	projectsCfg, err := vconfig.ResolveProjectsFrom(ctx, src, userCfg, projectID)
 	if err != nil {
 		return fmt.Errorf("resolve project config: %w", err)
 	}
@@ -123,7 +115,7 @@ func validateProjectConfig(ctx context.Context, cmd *cobra.Command, st *store.St
 	var pendingDeletes []string
 	incomingSelectionFound := false
 	if projectConfigFile == "" {
-		effective, err = vconfig.EffectiveProject(ctx, st, projectsCfg, projectID, "", vconfig.ModeChange)
+		effective, err = vconfig.EffectiveProjectFrom(ctx, src, projectsCfg, projectID, "", vconfig.ModeChange)
 		if err != nil {
 			return fmt.Errorf("resolve effective project config: %w", err)
 		}
@@ -165,7 +157,7 @@ func validateProjectConfig(ctx context.Context, cmd *cobra.Command, st *store.St
 			base.Values = copyConfigValues(projectsCfg.Values)
 			delete(base.Values, providerConfigKey)
 		}
-		effective, err = vconfig.EffectiveProjectFromValues(ctx, st, base, projectID, overlay, vconfig.ModeOverride)
+		effective, err = vconfig.EffectiveProjectFromValuesFrom(ctx, src, base, projectID, overlay, vconfig.ModeOverride)
 		if err != nil {
 			return fmt.Errorf("resolve effective project config: %w", err)
 		}
@@ -181,7 +173,7 @@ func validateProjectConfig(ctx context.Context, cmd *cobra.Command, st *store.St
 	}
 
 	if !incomingSelectionFound {
-		if _, _, err := resolveProviderNamesFromUserConfig(ctx, st, userCfg, projectID); err != nil {
+		if _, _, err := resolveProviderNamesFromUserConfigSource(ctx, src, userCfg, projectID); err != nil {
 			return fmt.Errorf("validate effective provider selection: %w", err)
 		}
 	}
@@ -191,7 +183,7 @@ func validateProjectConfig(ctx context.Context, cmd *cobra.Command, st *store.St
 		return fmt.Errorf("%s", vconfig.FormatMissing(missing))
 	}
 	if pendingUpserts != nil {
-		if err := st.ApplyProjectConfig(ctx, projectID, pendingUpserts, pendingDeletes); err != nil {
+		if err := src.ApplyProjectConfigValues(ctx, projectID, pendingUpserts, pendingDeletes); err != nil {
 			return fmt.Errorf("persist project config: %w", err)
 		}
 	}

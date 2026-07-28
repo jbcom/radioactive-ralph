@@ -162,6 +162,31 @@ func checkCommandExitsZero(ctx context.Context, dir, command string) (bool, stri
 // task failed (retryable, per the task's normal retry budget) and emits a
 // worker.verification_failed event carrying the rejection reason.
 func (o *Orchestrator) VerifyAndComplete(ctx context.Context, planID, taskID string, ev a2a.Evidence) (done bool, err error) {
+	// No reporting session named: fall back to whoever owns the task now. This
+	// is the ORCHESTRATOR-initiated path (verification it runs itself), where
+	// there is no separate reporter to attribute the result to.
+	return o.VerifyAndCompleteAs(ctx, planID, taskID, "", ev)
+}
+
+// VerifyAndCompleteAs verifies evidence submitted BY reportingSession and
+// completes the task only if that session still owns it.
+//
+// The session has to be passed in rather than read from the task. store.MarkDone
+// and MarkFailed are owner-guarded — they require claimed_by_session to match
+// the session they are GIVEN — and reading the current owner here satisfied that
+// guard with a session that did not produce the evidence. So when a worker
+// stalled, was reaped, and its replacement claimed the task, the stale worker's
+// late result was written under the REPLACEMENT's session: the guard passed, the
+// replacement's attempt was overwritten, and ErrTaskNotOwnedRunning never fired,
+// so nothing reported the loss (#248).
+//
+// An empty reportingSession keeps the old behavior for orchestrator-initiated
+// verification, which has no separate reporter.
+func (o *Orchestrator) VerifyAndCompleteAs(
+	ctx context.Context,
+	planID, taskID, reportingSession string,
+	ev a2a.Evidence,
+) (done bool, err error) {
 	task, err := o.store.GetTask(ctx, planID, taskID)
 	if err != nil {
 		return false, fmt.Errorf("orch: load task for verification: %w", err)
@@ -176,7 +201,13 @@ func (o *Orchestrator) VerifyAndComplete(ctx context.Context, planID, taskID str
 		return false, fmt.Errorf("orch: run acceptance check: %w", err)
 	}
 
-	sessionID := task.ClaimedBySession
+	// A named reporter is used VERBATIM, so the store's owner guard compares
+	// against the session that actually produced this evidence. A stale reporter
+	// then loses benignly, which is the designed behavior.
+	sessionID := reportingSession
+	if sessionID == "" {
+		sessionID = task.ClaimedBySession
+	}
 	if sessionID == "" {
 		sessionID, err = o.ensureOrchSession(ctx)
 		if err != nil {
@@ -191,8 +222,17 @@ func (o *Orchestrator) VerifyAndComplete(ctx context.Context, planID, taskID str
 		if _, err := o.store.MarkFailedWithPayload(ctx, planID, taskID, sessionID, store.EventPayload{
 			Reason:    reason,
 			Retryable: true,
-		}, 3); err != nil && !errors.Is(err, store.ErrTaskNotOwnedRunning) {
-			return false, fmt.Errorf("orch: mark failed on verification rejection: %w", err)
+		}, 3); err != nil {
+			if !errors.Is(err, store.ErrTaskNotOwnedRunning) {
+				return false, fmt.Errorf("orch: mark failed on verification rejection: %w", err)
+			}
+			// A stale reporter lost the task to a replacement. The mark is a
+			// benign no-op — and the event must be suppressed with it, or a
+			// reaped worker's late rejection announces a failure against a task
+			// whose CURRENT owner is still running. The store stays correct while
+			// the event stream lies, which is worse than either alone: an
+			// operator reads the event, not the row.
+			return false, nil
 		}
 		if err := o.store.Emit(ctx, store.EmitOpts{
 			PlanID: planID,
