@@ -90,9 +90,16 @@ func validateDifferentFrom(p *Plan) []PlanError {
 		if step.Metadata == nil {
 			return
 		}
-		for _, peer := range step.Metadata.DifferentFrom {
-			peer = strings.TrimSpace(peer)
+		for _, raw := range step.Metadata.DifferentFrom {
+			peer := strings.TrimSpace(raw)
 			if peer == "" {
+				// An entry naming no task is vacuous for exactly the reason an
+				// unknown reference is, so it is rejected rather than skipped.
+				// Skipping also denied the author any signal that a list entry did
+				// nothing, which is how a mistyped constraint survives review.
+				findings = append(findings, PlanError{Msg: fmt.Sprintf(
+					"task %q has an empty differentFrom entry; it names no task, so "+
+						"the constraint could never be enforced", id)})
 				continue
 			}
 			if peer == id {

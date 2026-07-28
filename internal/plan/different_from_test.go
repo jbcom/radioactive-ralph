@@ -70,3 +70,26 @@ func TestPlansWithoutDifferentFromAreUnaffected(t *testing.T) {
 		t.Fatalf("an unannotated plan failed import: %v", err)
 	}
 }
+
+// TestDifferentFromRejectsAnEmptyReference closes the inconsistency a review
+// caught: unknown references were rejected while EMPTY ones were skipped.
+//
+// An empty string names no task, so it is vacuous for exactly the reason an
+// unknown reference is — the plan reads as carrying an independence guarantee
+// that nothing can enforce. Skipping it also means the author gets no signal
+// that a list entry did nothing, which is how a mistyped constraint survives
+// review.
+func TestDifferentFromRejectsAnEmptyReference(t *testing.T) {
+	for _, entry := range []string{"", "   ", "\t"} {
+		md := []byte("# Cross-check\n\n" +
+			"- produce\n\n" +
+			"   ```ralph-task\n   {\"id\": \"produce\"}\n   ```\n\n" +
+			"- review\n\n" +
+			"   ```ralph-task\n   {\"id\": \"review\", \"differentFrom\": [\"" + entry + "\"]}\n   ```\n")
+		if err := ValidateForImport(md); err == nil {
+			t.Errorf("differentFrom [%q] was accepted; an entry naming no task is "+
+				"vacuous for the same reason an unknown reference is, and skipping it "+
+				"gives the author no signal that the entry did nothing", entry)
+		}
+	}
+}

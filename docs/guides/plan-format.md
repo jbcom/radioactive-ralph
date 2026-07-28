@@ -198,6 +198,9 @@ What is checked now:
 - A self-reference is **rejected**. A task cannot run on a provider different
   from its own, so dispatch could only ever block it forever; failing at import
   turns a permanent stall into an authoring error.
+- An **empty** entry is rejected, for the same reason as an unknown one: it names
+  no task, so it can never be enforced. Skipping it silently would also give you
+  no signal that a list entry did nothing.
 
 What is not: nothing compares independence domains at dispatch time. That needs
 per-provider domain identity, which arrives with the calibration work. Until
