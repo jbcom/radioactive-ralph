@@ -22,6 +22,22 @@ type driveFakeHandler struct {
 	gotSetStatus PlanSetStatusArgs
 	gotApprove   TaskApproveArgs
 	gotKill      WorkerKillArgs
+
+	configGetReply ProjectConfigGetReply
+	configGetErr   error
+	configApplyErr error
+	gotConfigGet   ProjectConfigGetArgs
+	gotConfigApply ProjectConfigApplyArgs
+}
+
+func (h *driveFakeHandler) HandleProjectConfigGet(_ context.Context, a ProjectConfigGetArgs) (ProjectConfigGetReply, error) {
+	h.gotConfigGet = a
+	return h.configGetReply, h.configGetErr
+}
+
+func (h *driveFakeHandler) HandleProjectConfigApply(_ context.Context, a ProjectConfigApplyArgs) error {
+	h.gotConfigApply = a
+	return h.configApplyErr
 }
 
 func (h *driveFakeHandler) HandlePlanImport(_ context.Context, a PlanImportArgs) (PlanImportReply, error) {
