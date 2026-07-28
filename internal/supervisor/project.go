@@ -39,6 +39,18 @@ func (s *Supervisor) HandleProjectEnsure(
 	if err != nil {
 		return nil, fmt.Errorf("supervisor: resolve project: %w", err)
 	}
+	if found && args.ResolveOnly {
+		// Read-only means read-only: skip the accumulate/touch writes below
+		// too, not just the create. A "resolve" that still mutates rows is not
+		// one, and the desktop path may run against a directory the operator
+		// never intended to register.
+		return &ipc.ProjectEnsureReply{ProjectID: projectID, Created: false}, nil
+	}
+	if !found && args.ResolveOnly {
+		// Unknown directory: report the miss rather than creating. The caller
+		// scopes its view to nothing and shows an actionable banner.
+		return &ipc.ProjectEnsureReply{}, nil
+	}
 	if found {
 		// Accumulate any fingerprint this directory has grown since it was
 		// first seen (a git remote added later, say), so a subsequent resolve

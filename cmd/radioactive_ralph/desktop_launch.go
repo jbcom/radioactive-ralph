@@ -8,7 +8,9 @@ import (
 	"os"
 
 	"github.com/jbcom/radioactive-ralph/internal/gui"
-	"github.com/jbcom/radioactive-ralph/internal/store"
+	"github.com/jbcom/radioactive-ralph/internal/ipc"
+	"github.com/jbcom/radioactive-ralph/internal/projectid"
+	"github.com/jbcom/radioactive-ralph/internal/supervisor"
 	"github.com/jbcom/radioactive-ralph/internal/xdg"
 	"github.com/mattn/go-isatty"
 	"github.com/spf13/cobra"
@@ -36,27 +38,41 @@ func maybeLaunchDesktopGUI(ctx context.Context, _ *cobra.Command) (handled bool,
 	if err != nil {
 		return true, fmt.Errorf("resolve state root: %w", err)
 	}
-	st, err := store.Open(ctx, store.Options{DSN: store.DSN(storeDBPath(stateRoot))})
-	if err != nil {
-		return true, fmt.Errorf("open store: %w", err)
-	}
-	defer func() { _ = st.Close() }()
-
 	// A desktop launch (Finder / Explorer / a file manager) has an arbitrary
-	// working directory — usually NOT a repo. So resolve the project
-	// NON-MUTATINGLY: if the launch dir happens to be a known project, scope the
-	// GUI to it; otherwise leave the scope empty and let the safe supervisor
-	// query fail closed with an actionable banner. We must NOT auto-init the
-	// launch directory the way the CLI path does — that would register "/"
-	// (or wherever Finder launched us) as a bogus project. A future
-	// supervisor-owned project-directory query will replace this temporary
-	// resolution seam.
+	// working directory — usually NOT a repo, sometimes "/". So resolve the
+	// project NON-MUTATINGLY via ResolveOnly: if the launch dir happens to be a
+	// known project, scope the GUI to it; otherwise leave the scope empty and
+	// let the safe supervisor query fail closed with an actionable banner.
+	//
+	// We must NOT auto-init the way the CLI path does — that would register
+	// wherever Finder launched us as a durable, operator-visible project just
+	// because someone double-clicked an icon.
+	//
+	// Resolution goes through the SUPERVISOR rather than the store: this was
+	// the last CLI file opening the database directly, which made the client a
+	// second writer to a supervisor-owned DB.
 	projectID := ""
-	if fps, ferr := store.Fingerprints(ctx, cwd); ferr == nil {
-		if id, found, rerr := st.ResolveProject(ctx, fps); rerr == nil && found {
-			projectID = id
+	if client, ferr := supervisor.Find(stateRoot); ferr == nil {
+		computed, cerr := projectid.Compute(ctx, cwd)
+		if cerr == nil {
+			fps := make([]ipc.ProjectFingerprint, 0, len(computed))
+			for _, fp := range computed {
+				fps = append(fps, ipc.ProjectFingerprint{Kind: fp.Kind, Value: fp.Value})
+			}
+			if reply, rerr := client.ProjectEnsure(ctx, ipc.ProjectEnsureArgs{
+				ResolveOnly:  true,
+				Fingerprints: fps,
+			}); rerr == nil {
+				projectID = reply.ProjectID
+			}
 		}
+		_ = client.Close()
 	}
+	// Every failure above is deliberately non-fatal: no supervisor, an
+	// unreadable cwd, or an unknown directory all mean "no project scope", and
+	// the GUI already renders that state with a banner telling the operator
+	// what to do. Refusing to launch would leave a double-clicked icon doing
+	// nothing at all.
 
 	ctrl := gui.NewLiveController(stateRoot, projectID)
 	return true, gui.Run(ctx, gui.Opts{Controller: ctrl, ProjectID: projectID})
