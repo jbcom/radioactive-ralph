@@ -68,7 +68,8 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
 
 ## Remaining
 
-- [ ] [WAIT] Land the open PRs: 277, 278, 279, 281.
+- [ ] [WAIT] Land the open PRs: 278, 279, 281, 282.
+      (225, 274, 272, 275 and 277 landed this pass.)
       All four are QUEUED or auto-merge ARMED with zero unresolved threads and
       zero failing checks; the only remaining work is CI on a serialized runner
       pool. Pushing more at that pool measurably slows it (verified earlier this
@@ -90,13 +91,15 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
           under load 100 attempts elapse well before 500ms and abort a
           CONVERGING cleanup. Now a 2s wall-clock deadline. The debugger's
           third fix was DROPPED -- it could not be independently proven.
-        * #277 live contained turn (containment groundwork).
+        * #277 live contained turn -- MERGED. Its TestMain also answers the
+          Linux containment-helper re-exec, without which the contained turn
+          could never start and would have read as a PRODUCT failure.
         * #278 claude API-failure categorization.
 
 - [ ] REOPENED by evidence: do NOT flip contain_provider_writes on yet.
-      ONE gate remains, stated in full at the containment item below. Short
-      form: land #281, then run TestE2E_LiveContainedTurnCompletes with
-      RALPH_E2E_LIVE=1. THAT result is the answer -- do not infer it from the
+      ONE gate remains, stated in full at the containment item below. #277 has
+      LANDED, so the test exists on main. Short form: land #281, then run
+      TestE2E_LiveContainedTurnCompletes with RALPH_E2E_LIVE=1. THAT result is the answer -- do not infer it from the
       CI E2E, which drives a fake CLI and cannot exercise what a real one does.
 
 - [ ] Land #281: NO real claude turn worked, at all. encoding/json emitted
@@ -112,7 +115,12 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
       never on the producing struct. And CI has never run a real provider turn
       (the live suite is opt-in), so green proved only self-consistency.
 
-- [ ] Issue #280: ralph-task `binding` is INERT -- declared in plan/types.go,
+- [ ] Issue #280: ralph-task `binding` is INERT. STORAGE HALF IN #282 --
+      ReadyPartitions now splits on the declared binding, so a coalesced turn
+      can no longer swallow a task's pin (the same hole `providers` had until
+      #272). The DISPATCH half is still open: nothing yet CONSUMES
+      ReadyPartition.BindingKey when resolving a partition's binding.
+      Original finding -- declared in plan/types.go,
       parsed, validated, and read by ZERO production code. A plan pinning
       {"binding":{"provider":"codex"}} imports clean and gets whatever the pool
       resolves, silently. FOURTH instance of this class here (the contain key,
