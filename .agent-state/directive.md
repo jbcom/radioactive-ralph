@@ -115,6 +115,24 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
       cannot tell those apart -- compare run ids, not totals. The monitor now
       reports queue=moving/same-runs on that basis.
 
+      I AM A LOAD SOURCE. Measured 2026-07-28: ALL 8 of the most recent CI runs
+      were on chore/directive-sync, and 8 of 8 sampled commits there touch ONLY
+      .agent-state. ci.yml has no paths-ignore, so each bookkeeping commit starts
+      the full 23-job matrix including FOUR macOS jobs -- roughly 32 macOS jobs
+      spent on state notes while nine code PRs wait for the same pool. The
+      starvation I kept attributing to upstream scarcity was substantially
+      self-inflicted.
+      DO NOT push .agent-state incrementally. Batch state edits and push once per
+      unit of real work.
+      The structural fix already EXISTS as #252 (concurrency group +
+      cancel-in-progress on pull_request), whose title names this exact problem.
+      It cancels at PUSH time, before jobs start, which is why it is correct
+      where cancelling by run status was destructive. It needs 5 checks, 4 of
+      them macOS. LANDING #252 FIRST unblocks every other PR, so the highest-value
+      action is to stop adding load and let it through. A paths-ignore of my own
+      would be WRONG here anyway: 25 checks are required, and paths-ignore makes
+      them report nothing at all, so every PR would block forever.
+
       HYGIENE (2026-07-28): 13 merged worktrees + 13 stale local branches
       removed. `merge-tree --write-tree` reported 7 of them NOT-absorbed, which
       is the SQUASH-MERGE FALSE NEGATIVE — a squash rewrites patch ids and the
