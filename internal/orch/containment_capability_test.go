@@ -225,3 +225,58 @@ func TestStaticFlagAlsoRefusesAnIncapableBinding(t *testing.T) {
 			"turn, so silently running one unprotected breaks that contract")
 	}
 }
+
+// TestFanoutRefusesAnIncapableBinding is the THIRD time one hole has appeared
+// on the native fan-out path, and the reason is always the same: fan-out
+// returns from DispatchNext BEFORE the per-step admission loop, so any check
+// added to that loop does not apply to it.
+//
+// `providers` had this (fixed #272), `differentFrom` had it (same PR), and now
+// containment admission. Here it is worse than a bypassed restriction: the
+// project asked for a security boundary, the fan-out turn runs UNCONFINED, and
+// every task in the group completes normally so nothing reports it.
+//
+// containmentRootOrEmpty converting the refusal into "" is what makes it
+// silent -- the same error-path-that-looks-like-success shape the refusal fix
+// was meant to eliminate.
+func TestFanoutRefusesAnIncapableBinding(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	projectID := mustCreateTestProject(t, s, "fanout-incapable")
+	planID := mustCreateTestPlan(t, s, projectID, "fanout-incapable", "Fan",
+		threeStepParallelPlan)
+
+	no := false
+	var seenRoot string
+	var ran bool
+	o := New(s,
+		WithBindingResolver(func(_ context.Context, _ string, _ bool, _ BindingResolutionPurpose) (provider.Binding, error) {
+			return provider.Binding{
+				Name: "opencode",
+				Config: provider.BindingConfig{
+					Type: "opencode", Binary: "true",
+					NativeFanout:        true,
+					SupportsContainment: &no,
+				},
+			}, nil
+		}),
+		WithRunnerFactory(func(provider.Binding) (provider.Runner, error) {
+			return recordingRunner{onRun: func(req provider.Request) {
+				ran = true
+				seenRoot = req.ContainmentRoot
+			}}, nil
+		}),
+		WithContainmentResolver(func(context.Context, string) bool { return true }),
+	)
+	if _, err := o.DispatchNext(ctx, projectID, planID); err != nil {
+		t.Fatalf("DispatchNext: %v", err)
+	}
+	o.Wait()
+
+	if ran {
+		t.Fatalf("a native fan-out turn RAN on a binding that cannot be confined "+
+			"(ContainmentRoot=%q) while the project requested containment; the whole "+
+			"GROUP completed unprotected and every task reads as done, so nothing "+
+			"reports that the boundary was never applied", seenRoot)
+	}
+}
