@@ -13,6 +13,21 @@ shipped. That means historical sections may still mention MCP, plugins,
 supervisors, or the archived Python implementation even though those are no
 longer part of the live contract.
 
+## [0.32.0](https://github.com/jbcom/radioactive-ralph/compare/v0.31.0...v0.32.0) (2026-07-28)
+
+
+### Features
+
+* **cli:** move init behind the supervisor (closes [#204](https://github.com/jbcom/radioactive-ralph/issues/204) criterion 1) ([#245](https://github.com/jbcom/radioactive-ralph/issues/245)) ([c3f8fa5](https://github.com/jbcom/radioactive-ralph/commit/c3f8fa53e6d9ba00d450017d6e4ce18f55ab4747))
+* **cli:** resolve the desktop launch through the supervisor ([#246](https://github.com/jbcom/radioactive-ralph/issues/246)) ([778778c](https://github.com/jbcom/radioactive-ralph/commit/778778c7ee91466902333752007fcd90211ad9d8))
+* **orch:** enforce a task's declared capability requirements ([#247](https://github.com/jbcom/radioactive-ralph/issues/247)) ([82ff030](https://github.com/jbcom/radioactive-ralph/commit/82ff03094b56c42a71faf5ff4ce89972d80cc8a3))
+* **store:** calibration records and attempts ([#236](https://github.com/jbcom/radioactive-ralph/issues/236)) ([9c04550](https://github.com/jbcom/radioactive-ralph/commit/9c04550dfc8f42a6ce7828f1c345e662153844d1))
+
+
+### Bug Fixes
+
+* **orch:** attribute evidence to the reporting session, not the current owner ([#256](https://github.com/jbcom/radioactive-ralph/issues/256)) ([0dec020](https://github.com/jbcom/radioactive-ralph/commit/0dec0205e911635a5b3ac9fd96e9da250dad9672))
+
 ## [0.31.0](https://github.com/jbcom/radioactive-ralph/compare/v0.30.0...v0.31.0) (2026-07-28)
 
 
