@@ -44,6 +44,7 @@ Plans are markdown documents parsed with goldmark into an AST and decomposed heu
 - [type TaskMetadata](<#TaskMetadata>)
   - [func \(m \*TaskMetadata\) AllowedProviders\(\) \[\]string](<#TaskMetadata.AllowedProviders>)
   - [func \(m \*TaskMetadata\) DependsOn\(\) \(ids \[\]string, stated bool\)](<#TaskMetadata.DependsOn>)
+  - [func \(m \*TaskMetadata\) IndependencePeers\(\) \[\]string](<#TaskMetadata.IndependencePeers>)
 - [type TaskOutput](<#TaskOutput>)
 - [type ValidationErrors](<#ValidationErrors>)
   - [func \(errs ValidationErrors\) Error\(\) string](<#ValidationErrors.Error>)
@@ -170,7 +171,7 @@ type PlanError struct {
 ```
 
 <a name="Validate"></a>
-### func [Validate](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plan/validate.go#L166>)
+### func [Validate](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plan/validate.go#L250>)
 
 ```go
 func Validate(md []byte) []PlanError
@@ -375,6 +376,15 @@ func (m *TaskMetadata) DependsOn() (ids []string, stated bool)
 ```
 
 DependsOn reports the explicit dependency ids and whether the author stated them at all. Callers deriving edges must branch on stated: when it is false, document order supplies the edges.
+
+<a name="TaskMetadata.IndependencePeers"></a>
+### func \(\*TaskMetadata\) [IndependencePeers](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plan/types.go#L170>)
+
+```go
+func (m *TaskMetadata) IndependencePeers() []string
+```
+
+IndependencePeers returns the tasks this one must not share an independence domain with, tolerating a nil receiver for the same reason AllowedProviders does.
 
 <a name="TaskOutput"></a>
 ## type [TaskOutput](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plan/types.go#L143-L146>)

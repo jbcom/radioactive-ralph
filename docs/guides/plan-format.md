@@ -269,8 +269,8 @@ for work whose value depends on *who* did it, like a review of generated code:
    ```
 ```
 
-**Import validates the references; dispatch does not yet enforce the
-constraint.** That split is deliberate and worth being precise about, because a
+**Import validates the references and dispatch enforces the constraint.** Both
+halves matter, and the split is worth being precise about, because a
 half-implemented guarantee is easy to mistake for a whole one.
 
 What is checked now:
@@ -286,9 +286,20 @@ What is checked now:
   no task, so it can never be enforced. Skipping it silently would also give you
   no signal that a list entry did nothing.
 
-What is not: nothing compares independence domains at dispatch time. That needs
-per-provider domain identity, which arrives with the calibration work. Until
-then, treat `differentFrom` as a declared intent whose *shape* is verified.
+What dispatch does with it: before a step runs, its peers' RECORDED domains --
+what they actually ran on, not what the plan hoped -- are compared against the
+domain of the binding this turn would use. A clash ROTATES through the provider
+pool rather than blocking, because a pool is a rotation and the next member may
+well differ; refusing on the head's identity would make the constraint a coin
+flip on cursor position. It is deliberately not a fail-closed `blocked_*` state
+either: no operator action is needed and the next dispatch may satisfy it.
+
+An UNCALIBRATED peer does not satisfy the constraint. An empty domain means the
+peer has not run yet, or ran on a binding nothing has calibrated -- either way
+the domains are not *known* to differ, and a constraint that passes on absence
+of evidence enforces nothing while reading as protection. The step defers until
+the peer has run on a calibrated binding. Record one with
+`radioactive_ralph calibration record`.
 
 ## Validation
 

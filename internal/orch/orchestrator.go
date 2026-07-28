@@ -627,62 +627,56 @@ func (o *Orchestrator) dispatchReadyGroup(ctx context.Context, a dispatchGroupAr
 			return dispatched, admitted, fmt.Errorf("orch: resolve binding: %w", err)
 		}
 		if binding.Config.NativeFanout {
-			// Native fan-out consumes one Ralph worker, so scan the complete
-			// ready group. maxParallel bounds admitted workers, not the number
-			// of independent tasks that one provider-native fan-out may own.
-			eligibleSteps := make([]plan.Step, 0, candidateLimit)
-			eligibleRefs := make([]plan.StepRef, 0, candidateLimit)
-			for i := 0; i < candidateLimit; i++ {
-				gated, err := o.stepGateBlocks(ctx, planID, projectID, parallel, refs[i], readySteps[i])
-				if err != nil {
-					return dispatched, admitted, err
-				}
-				if !gated {
-					eligibleSteps = append(eligibleSteps, readySteps[i])
-					eligibleRefs = append(eligibleRefs, refs[i])
-				}
-			}
-			if len(eligibleSteps) == 0 {
-				return dispatched, admitted, nil
-			}
-
-			// A fan-out group is one worker / one provider turn, so it takes ONE
-			// dispatch slot. If the pipeline is full there's no capacity now —
-			// return without dispatching; the next pass retries.
-			if !o.acquireDispatchSlot() {
-				// Report saturation (#257) with this branch's three-value
-				// signature: a full pipeline is a VISIBLE condition, not a
-				// silent no-op, and `admitted` still has to reach the caller.
-				o.reportSaturation(ctx, projectID, planID, len(eligibleSteps))
-				return dispatched, admitted, nil
-			}
-			slotReleased := false
-			releaseSlot := func() {
-				if !slotReleased {
-					o.releaseDispatchSlot()
-					slotReleased = true
-				}
-			}
-			binding, err = o.resolveBinding(ctx, projectID, parallel, BindingDispatch)
+			eligibleSteps, eligibleRefs, err := o.coalescableSteps(
+				ctx, planID, projectID, parallel, refs, readySteps, candidateLimit)
 			if err != nil {
-				releaseSlot()
-				return dispatched, admitted, fmt.Errorf("orch: resolve binding for dispatch: %w", err)
-			}
-			if !binding.Config.NativeFanout {
-				releaseSlot()
-				return dispatched, admitted, fmt.Errorf("orch: binding capability changed between probe and dispatch")
-			}
-			n, err := o.dispatchFanoutGroup(ctx, projectID, projectDir, planID, parsedPlan, storedTitle, groupHeading, binding, eligibleSteps, eligibleRefs, releaseSlot)
-			if err != nil {
-				// dispatchFanoutGroup only returns an error on a synchronous
-				// pre-launch failure (claim/spend); the async turn was never
-				// started, so release the slot here.
-				releaseSlot()
 				return dispatched, admitted, err
 			}
-			// N tasks, but exactly ONE worker: a single provider turn owns the
-			// whole group.
-			return n, 1, nil
+			// An empty set means nothing here can be coalesced, so this branch
+			// does not apply and control falls through to the per-step loop
+			// below. Returning instead would strand a group whose every ready
+			// step is independence-constrained: this branch would re-scan and
+			// dispatch none of it on every tick, with no operator-visible reason
+			// and no state for anyone to clear.
+			if len(eligibleSteps) > 0 {
+				// A fan-out group is one worker / one provider turn, so it takes
+				// ONE dispatch slot. If the pipeline is full there's no capacity
+				// now — return without dispatching; the next pass retries.
+				if !o.acquireDispatchSlot() {
+					// Report saturation (#257) with this branch's three-value
+					// signature: a full pipeline is a VISIBLE condition, not a
+					// silent no-op, and `admitted` still has to reach the caller.
+					o.reportSaturation(ctx, projectID, planID, len(eligibleSteps))
+					return dispatched, admitted, nil
+				}
+				slotReleased := false
+				releaseSlot := func() {
+					if !slotReleased {
+						o.releaseDispatchSlot()
+						slotReleased = true
+					}
+				}
+				binding, err = o.resolveBinding(ctx, projectID, parallel, BindingDispatch)
+				if err != nil {
+					releaseSlot()
+					return dispatched, admitted, fmt.Errorf("orch: resolve binding for dispatch: %w", err)
+				}
+				if !binding.Config.NativeFanout {
+					releaseSlot()
+					return dispatched, admitted, fmt.Errorf("orch: binding capability changed between probe and dispatch")
+				}
+				n, err := o.dispatchFanoutGroup(ctx, projectID, projectDir, planID, parsedPlan, storedTitle, groupHeading, binding, eligibleSteps, eligibleRefs, releaseSlot)
+				if err != nil {
+					// dispatchFanoutGroup only returns an error on a synchronous
+					// pre-launch failure (claim/spend); the async turn was never
+					// started, so release the slot here.
+					releaseSlot()
+					return dispatched, admitted, err
+				}
+				// N tasks, but exactly ONE worker: a single provider turn owns
+				// the whole group.
+				return n, 1, nil
+			}
 		}
 	}
 
@@ -804,6 +798,32 @@ func (o *Orchestrator) dispatchReadyStep(ctx context.Context, a dispatchStepArgs
 			release()
 			_ = o.store.Emit(ctx, store.EmitOpts{
 				ProjectID: a.projectID, PlanID: a.planID,
+				Kind:        "worker.admission_refused",
+				Stream:      "service",
+				PayloadJSON: mustPayloadJSON(store.EventPayload{Reason: rerr.Error()}),
+			})
+			return false, nil
+		}
+		binding = rotated
+	}
+
+	// Independence: a step declaring differentFrom must not run on a provider
+	// whose domain matches one a named peer already ran on.
+	//
+	// Resolved HERE, alongside `providers`, and ROTATED rather than blocked, for
+	// the same reason: a pool is a rotation, so the next member may well have a
+	// different domain, and refusing on the head's identity would make the
+	// constraint a coin flip on cursor position. It is also not a fail-closed
+	// block like `requires` -- no operator action is needed, the very next
+	// dispatch may satisfy it, so a durable blocked_* state would leave someone
+	// clearing a condition that resolves itself.
+	if peers := a.step.Metadata.IndependencePeers(); len(peers) > 0 {
+		rotated, rerr := o.resolveIndependentBinding(ctx, a, peers, binding)
+		if rerr != nil {
+			release()
+			_ = o.store.Emit(ctx, store.EmitOpts{
+				ProjectID: a.projectID, PlanID: a.planID,
+				TaskID:      stepTaskID(a.ref, a.step),
 				Kind:        "worker.admission_refused",
 				Stream:      "service",
 				PayloadJSON: mustPayloadJSON(store.EventPayload{Reason: rerr.Error()}),
@@ -1266,6 +1286,128 @@ func (o *Orchestrator) resolveAllowedBinding(
 	}
 	return provider.Binding{}, fmt.Errorf(
 		"orch: no configured provider satisfies the task restriction %v", allowed)
+}
+
+// resolveIndependentBinding returns a binding whose independence domain differs
+// from every peer named in a step's differentFrom, rotating through the pool.
+//
+// A peer's domain comes from what it ACTUALLY RAN ON (task_metadata's
+// assigned_independence_domain, written by recordExecutionProvenance), not from
+// what a plan hoped it would run on. The whole point of the constraint is
+// evidence about the real execution.
+//
+// A peer with an EMPTY domain does not satisfy the constraint by default, and
+// this is the load-bearing decision. Empty means one of: the peer has not run
+// yet, or it ran on a binding nothing has calibrated. In both cases we do not
+// KNOW the domains differ -- and a constraint that passes on absence of evidence
+// is the vacuous guarantee plan import already refuses to accept. So an
+// unresolvable peer defers the dispatch rather than permitting it; the step
+// runs once the peer has run and been calibrated.
+func (o *Orchestrator) resolveIndependentBinding(
+	ctx context.Context,
+	a dispatchStepArgs,
+	peers []string,
+	first provider.Binding,
+) (provider.Binding, error) {
+	// Collect the peers' recorded domains once; rotation does not change them.
+	peerDomains := map[string]struct{}{}
+	for _, peer := range peers {
+		meta, err := o.store.GetTaskExecutionMetadata(ctx, a.planID, peer)
+		if err != nil {
+			return provider.Binding{}, fmt.Errorf(
+				"orch: independence peer %q has no execution record yet: %w", peer, err)
+		}
+		if meta.AssignedIndependenceDomain == "" {
+			return provider.Binding{}, fmt.Errorf(
+				"orch: independence peer %q ran on an uncalibrated binding, so its "+
+					"domain is unknown and independence cannot be established", peer)
+		}
+		peerDomains[meta.AssignedIndependenceDomain] = struct{}{}
+	}
+
+	// allowedHere re-applies the step's `providers` restriction, if it has one,
+	// to every candidate this rotation considers. The earlier allowed-providers
+	// pass constrained only the binding it handed us; rotating away from that one
+	// leaves its restriction behind unless it is re-checked here.
+	allowed := a.step.Metadata.AllowedProviders()
+	allowedHere := func(b provider.Binding) bool {
+		if len(allowed) == 0 {
+			return true
+		}
+		return provider.CheckAllowedProviders(b, allowed) == nil
+	}
+
+	seen := map[string]struct{}{}
+	candidate := first
+	for i := 0; i <= maxProviderRotations; i++ {
+		domain, err := o.bindingDomain(ctx, candidate)
+		if err != nil {
+			return provider.Binding{}, err
+		}
+		// An UNCALIBRATED candidate is not usable here either: an unknown domain
+		// cannot be shown to differ from a peer's.
+		// Both predicates are evaluated TOGETHER. `providers` and `differentFrom`
+		// are resolved by two separate rotations and this one runs second, so
+		// returning on the domain alone would let it hand back a binding the
+		// allowed-providers pass had already refused -- a task pinned to codex
+		// quietly running on claude because claude happened to be independent.
+		//
+		// Both restrictions were written down, so both must hold: an operator who
+		// pins a reviewer AND demands independence gets a reviewer that is pinned
+		// and independent, or none at all.
+		if domain != "" && allowedHere(candidate) {
+			if _, clash := peerDomains[domain]; !clash {
+				return candidate, nil
+			}
+		}
+		if _, wrapped := seen[candidate.Name]; wrapped {
+			break
+		}
+		seen[candidate.Name] = struct{}{}
+		next, err := o.resolveBinding(ctx, a.projectID, a.parallel, BindingDispatch)
+		if err != nil {
+			return provider.Binding{}, fmt.Errorf("orch: resolve independent binding: %w", err)
+		}
+		candidate = next
+	}
+	if len(allowed) > 0 {
+		// Naming BOTH restrictions matters: with a `providers` list in play the
+		// exhausted pool may be the restriction's doing, and an error citing only
+		// independence sends an operator looking for a calibration problem that
+		// is not there.
+		return provider.Binding{}, fmt.Errorf(
+			"orch: no provider permitted by %v has an independence domain distinct "+
+				"from peers %v", allowed, peers)
+	}
+	return provider.Binding{}, fmt.Errorf(
+		"orch: no configured provider has an independence domain distinct from peers %v", peers)
+}
+
+// bindingDomain reports a binding's calibrated independence domain, or "" when
+// nothing has calibrated it.
+//
+// Gated on the invocation hash for the same reason recordExecutionProvenance is:
+// a calibration measures ONE command line, so a record whose hash does not match
+// what this turn resolves describes something else, and reusing its domain would
+// decide independence on evidence about a different invocation.
+func (o *Orchestrator) bindingDomain(ctx context.Context, binding provider.Binding) (string, error) {
+	cal, err := o.store.GetCalibrationByAlias(ctx, binding.Name)
+	if errors.Is(err, store.ErrCalibrationNotFound) {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("orch: read calibration for %q: %w", binding.Name, err)
+	}
+	invocation, err := provider.ResolveInvocation(binding, provider.Request{})
+	if err != nil {
+		return "", nil
+	}
+	hash, err := provider.InvocationConfigHash(
+		binding, provider.Model(invocation.Model), invocation.Effort)
+	if err != nil || cal.InvocationHash != hash {
+		return "", nil
+	}
+	return cal.IndependenceDomain, nil
 }
 
 // maxProviderRotations bounds how many extra resolutions one dispatch may ask
@@ -1776,6 +1918,61 @@ func (o *Orchestrator) dispatchWorker(ctx context.Context, projectID, projectDir
 // runFanoutGroup. releaseFanoutSlot returns the dispatch slot the caller
 // acquired; ownership transfers to the async goroutine on a successful launch,
 // and dispatchFanoutGroup releases it inline on any synchronous early exit.
+
+// coalescableSteps selects which of a ready parallel group may be handed to a
+// single native fan-out turn.
+//
+// The governing rule: a fan-out group is ONE binding for every member, chosen
+// before any of them is examined individually. So a step carrying any
+// per-step binding restriction cannot be coalesced — the group has no way to
+// honour it, and this branch returns BEFORE the per-step admission loop that
+// would. Three exclusions follow from that:
+//
+//   - A capability-gated step (stepGateBlocks): it cannot run on this binding.
+//   - A step declaring differentFrom: every coalesced member necessarily shares
+//     one independence domain, so no binding choice satisfies the constraint and
+//     rotation — the per-step remedy — is meaningless here.
+//   - A step declaring `providers`: the group's binding is resolved without
+//     consulting it, so a task pinned to codex would otherwise be swept into a
+//     claude turn and executed there.
+//
+// Both restriction exclusions exist because the failure is SILENT. The step runs,
+// provenance records it as having run, and the plan reads as satisfied — while
+// the restriction the operator wrote down was never applied. For independence
+// that means the reviewer IS the author; for `providers` it means the pin simply
+// did not happen. Adding a fourth per-step restriction later means adding it
+// here too, or it inherits the same hole.
+//
+// Excluded steps are not refused, only left out of the coalesced set; the
+// per-step loop dispatches them and enforces their restrictions properly. An
+// empty result therefore means "fan-out does not apply here", not "nothing runs".
+func (o *Orchestrator) coalescableSteps(
+	ctx context.Context,
+	planID, projectID string,
+	parallel bool,
+	refs []plan.StepRef,
+	readySteps []plan.Step,
+	candidateLimit int,
+) ([]plan.Step, []plan.StepRef, error) {
+	steps := make([]plan.Step, 0, candidateLimit)
+	stepRefs := make([]plan.StepRef, 0, candidateLimit)
+	for i := 0; i < candidateLimit; i++ {
+		if len(readySteps[i].Metadata.IndependencePeers()) > 0 ||
+			len(readySteps[i].Metadata.AllowedProviders()) > 0 {
+			continue
+		}
+		gated, err := o.stepGateBlocks(ctx, planID, projectID, parallel, refs[i], readySteps[i])
+		if err != nil {
+			return nil, nil, err
+		}
+		if !gated {
+			steps = append(steps, readySteps[i])
+			stepRefs = append(stepRefs, refs[i])
+		}
+	}
+	return steps, stepRefs, nil
+}
+
 func (o *Orchestrator) dispatchFanoutGroup(ctx context.Context, projectID, projectDir, planID string, parsedPlan *plan.Plan, storeTitle, groupHeading string, binding provider.Binding, steps []plan.Step, refs []plan.StepRef, releaseFanoutSlot func()) (dispatched int, err error) {
 	if err := o.checkSpendCap(ctx, projectID, binding.Name); err != nil {
 		releaseFanoutSlot()
