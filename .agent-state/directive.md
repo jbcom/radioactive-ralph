@@ -68,7 +68,7 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
 
 ## Remaining
 
-- [ ] Land the 9 open PRs: 222, 225, 236, 245, 246, 247, 251, 252, 255.
+- [ ] Land the 10 open PRs: 222, 225, 236, 245, 246, 247, 251, 252, 255, 256.
       There is ALWAYS an action here; this is not a wait.
       1. `bash scripts/verify-repo-claims.sh` first — never assert status from
          memory.
@@ -107,11 +107,20 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
       once enough real turns have run with `WithProviderWriteContainment(true)`
       to know nothing legitimate writes outside a checkout.
 
-- [ ] Close #248 (VerifyAndComplete attributes a stale worker's result to the
-      CURRENT owner, defeating the store's owner guard) and #249 (dispatch-slot
-      saturation is silent, indistinguishable from an empty ready set). Both
-      were filed from verified findings and both need the transition-only emit
-      treatment #247 established, or they flood the event stream.
+- [x] #248 CLOSED (PR #256). VerifyAndCompleteAs takes the REPORTING session so
+      the store's owner guard compares against the worker that produced the
+      evidence; a stale reporter now loses benignly instead of overwriting its
+      replacement. Both dispatch paths wired, with a source-level test asserting
+      that wiring — a correct guard nothing calls is the same defect shape as
+      containment shipping with zero callers.
+
+- [ ] Close #249: dispatch-slot saturation is silent, indistinguishable from an
+      empty ready set. Emit a distinguishable event when a pass stops because
+      the semaphore is full, including how many candidates went unexamined so
+      the event says "ready work is waiting for capacity" rather than "a slot
+      was unavailable". Needs the transition-only emit treatment #247
+      established (emit on ENTERING saturation, not per tick) or it floods the
+      stream on every saturated tick.
 
 
 ## Rolling improvement queue (directive 0 appends here)
