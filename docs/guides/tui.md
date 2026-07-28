@@ -37,11 +37,23 @@ markers that appear only once they are known:
   configured alias (falling back to the provider type when no alias was
   set).
 
-`via=` is per task rather than per worker because native fan-out lets one
-worker own several tasks in a partition: `worker=w1` can be shared by rows
-that different providers executed, so the worker id alone cannot answer
-"what ran this?". A task that has not been dispatched shows no `via=` at
-all — an unexecuted task must not read as though some provider owned it.
+`via=` is per task rather than per worker because it **outlives the
+worker**. `worker=` is a live claim: the reaper deletes worker rows once
+they stop heartbeating, and a finished task's claim is released. Provenance
+lives in the task's own metadata, so a `done`, `failed`, or reaped task
+still reports what ran it long after no worker row exists to ask.
+
+It also survives reassignment. A retry or reclaim overwrites the
+assignment, so `via=` names the provider on the task's *current* attempt
+rather than whatever ran an earlier one.
+
+(Within a single native fan-out group these values agree by construction —
+one turn, one binding, recorded onto every task in the group. The per-task
+projection is about durability across time, not disagreement within a
+group.)
+
+A task that has not been dispatched shows no `via=` at all — an unexecuted
+task must not read as though some provider owned it.
 
 ## What it reads
 

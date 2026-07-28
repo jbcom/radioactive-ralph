@@ -473,9 +473,10 @@ type Task struct {
 	// -- and emitting empty strings would invite readers to treat "" as a
 	// provider name rather than as "no turn has executed this yet".
 	//
-	// Per task rather than only in the team rollup, because fan-out makes the
-	// aggregate unable to answer it: one worker owning five tasks reports one
-	// provider count for all five, which is consistent with any assignment.
+	// Per task rather than only in the team rollup because it OUTLIVES the
+	// worker: ClaimedByWorkerID is a live claim that the reaper clears when a
+	// worker stops heartbeating, while this persists in the task's own metadata
+	// and still answers "what ran it?" for a done, failed, or reaped task.
 	AssignedAlias              string `json:"assigned_alias,omitempty"`
 	AssignedProvider           string `json:"assigned_provider,omitempty"`
 	AssignedModel              string `json:"assigned_model,omitempty"`

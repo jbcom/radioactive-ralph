@@ -542,7 +542,7 @@ type GraphTaskSpec struct {
 ```
 
 <a name="OperatorEvent"></a>
-## type [OperatorEvent](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/operator_snapshot.go#L178-L194>)
+## type [OperatorEvent](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/operator_snapshot.go#L185-L201>)
 
 OperatorEvent is safe event metadata. Raw payload, actor/provider output, and any IDs carried inside the payload are never selected.
 
@@ -567,7 +567,7 @@ type OperatorEvent struct {
 ```
 
 <a name="OperatorEventPage"></a>
-## type [OperatorEventPage](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/operator_snapshot.go#L198-L202>)
+## type [OperatorEventPage](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/operator_snapshot.go#L205-L209>)
 
 OperatorEventPage is one bounded newest\-first event page. NextBeforeID is a keyset cursor that continues toward older events.
 
@@ -721,7 +721,7 @@ type OperatorStatusCount struct {
 ```
 
 <a name="OperatorTask"></a>
-## type [OperatorTask](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/operator_snapshot.go#L117-L145>)
+## type [OperatorTask](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/operator_snapshot.go#L117-L152>)
 
 OperatorTask is safe task state. Description and AcceptanceJSON can contain source text, commands, or repository paths, so neither is projected.
 
@@ -742,10 +742,17 @@ type OperatorTask struct {
     // deliberately not defaulted -- "never dispatched" must stay distinguishable
     // from "ran on the pool default".
     //
-    // Projected per task because aggregates cannot answer the question it exists
-    // for. Under native fan-out one worker owns several tasks in a partition, so
-    // a team rollup reading "3 codex, 2 claude" is consistent with every possible
-    // assignment of those five tasks.
+    // Projected per task because it OUTLIVES the worker. claimed_by_worker_id is
+    // a live claim: the reaper deletes worker rows once they stop heartbeating,
+    // and a finished task releases its claim -- so a done, failed, or reaped task
+    // has no worker row left to ask. This lives in the task's own metadata and
+    // still answers "what ran it?" afterwards. It also survives reassignment: a
+    // retry or reclaim overwrites the assignment, so this names the provider of
+    // the CURRENT attempt.
+    //
+    // Within one native fan-out group these agree by construction (one turn, one
+    // binding, recorded onto every task in the group) -- the value here is
+    // durability across time, not disagreement within a group.
     AssignedAlias              string `json:"assigned_alias"`
     AssignedProvider           string `json:"assigned_provider"`
     AssignedModel              string `json:"assigned_model"`
@@ -785,7 +792,7 @@ type OperatorTaskDetail struct {
 ```
 
 <a name="OperatorTaskPage"></a>
-## type [OperatorTaskPage](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/operator_snapshot.go#L148-L152>)
+## type [OperatorTaskPage](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/operator_snapshot.go#L155-L159>)
 
 OperatorTaskPage is one bounded, \(plan\_id, task\_id\)\-ordered task page.
 
@@ -798,7 +805,7 @@ type OperatorTaskPage struct {
 ```
 
 <a name="OperatorWorker"></a>
-## type [OperatorWorker](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/operator_snapshot.go#L158-L167>)
+## type [OperatorWorker](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/operator_snapshot.go#L165-L174>)
 
 OperatorWorker is one active Ralph\-managed worker. Ralph worker IDs are operator controls \(for example worker kill\), not provider\-session IDs. Claims contains every task claimed by the worker in this project, including native fan\-out claims beyond workers.current\_task\_id.
 
@@ -816,7 +823,7 @@ type OperatorWorker struct {
 ```
 
 <a name="OperatorWorkerClaim"></a>
-## type [OperatorWorkerClaim](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/operator_snapshot.go#L170-L174>)
+## type [OperatorWorkerClaim](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/operator_snapshot.go#L177-L181>)
 
 OperatorWorkerClaim is one project task held by an active worker.
 
@@ -928,7 +935,7 @@ type ProviderCalibration struct {
 ```
 
 <a name="ReadyPartition"></a>
-## type [ReadyPartition](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/ready_partition.go#L17-L33>)
+## type [ReadyPartition](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/ready_partition.go#L43-L59>)
 
 ReadyPartition is one dispatchable wave slice: the tasks that are ready RIGHT NOW and share a leaf group.
 
@@ -1547,7 +1554,7 @@ func (s *Store) PutTaskMetadata(ctx context.Context, planID, taskID, groupPath, 
 PutTaskMetadata inserts the immutable half of a task's metadata row. Plan import owns this; provenance fields are filled in later by the dispatch path.
 
 <a name="Store.ReadOperatorSnapshot"></a>
-### func \(\*Store\) [ReadOperatorSnapshot](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/operator_snapshot.go#L212-L215>)
+### func \(\*Store\) [ReadOperatorSnapshot](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/operator_snapshot.go#L219-L222>)
 
 ```go
 func (s *Store) ReadOperatorSnapshot(ctx context.Context, q OperatorSnapshotQuery) (*OperatorSnapshot, error)
@@ -1576,7 +1583,7 @@ func (s *Store) Ready(ctx context.Context, planID string) ([]Task, error)
 Ready returns tasks that are ready to run — every dependency is in a terminal\-satisfied state \(\`done\`, \`skipped\`, or \`decomposed\`\) — and are in a claimable status: \`pending\` \(ungated\) or \`ready\` \(a task that WAS gated behind approval and has since been approved via ApproveTask\). A task still in \`ready\_pending\_approval\` is deliberately NOT returned: the approval gate holds it until an operator approves it. Result is ordered by created\_at for stable test output.
 
 <a name="Store.ReadyPartitions"></a>
-### func \(\*Store\) [ReadyPartitions](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/ready_partition.go#L63>)
+### func \(\*Store\) [ReadyPartitions](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/ready_partition.go#L89>)
 
 ```go
 func (s *Store) ReadyPartitions(ctx context.Context, planID string) ([]ReadyPartition, error)

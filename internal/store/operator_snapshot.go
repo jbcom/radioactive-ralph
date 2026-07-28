@@ -130,10 +130,17 @@ type OperatorTask struct {
 	// deliberately not defaulted -- "never dispatched" must stay distinguishable
 	// from "ran on the pool default".
 	//
-	// Projected per task because aggregates cannot answer the question it exists
-	// for. Under native fan-out one worker owns several tasks in a partition, so
-	// a team rollup reading "3 codex, 2 claude" is consistent with every possible
-	// assignment of those five tasks.
+	// Projected per task because it OUTLIVES the worker. claimed_by_worker_id is
+	// a live claim: the reaper deletes worker rows once they stop heartbeating,
+	// and a finished task releases its claim -- so a done, failed, or reaped task
+	// has no worker row left to ask. This lives in the task's own metadata and
+	// still answers "what ran it?" afterwards. It also survives reassignment: a
+	// retry or reclaim overwrites the assignment, so this names the provider of
+	// the CURRENT attempt.
+	//
+	// Within one native fan-out group these agree by construction (one turn, one
+	// binding, recorded onto every task in the group) -- the value here is
+	// durability across time, not disagreement within a group.
 	AssignedAlias              string `json:"assigned_alias"`
 	AssignedProvider           string `json:"assigned_provider"`
 	AssignedModel              string `json:"assigned_model"`

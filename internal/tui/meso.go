@@ -36,11 +36,11 @@ func renderMeso(m Model) string {
 			if t.ClaimedByWorkerID != "" {
 				worker = styleMuted.Render(" worker=" + t.ClaimedByWorkerID)
 			}
-			// Which provider actually ran this task. The worker ID alone cannot
-			// answer that: under native fan-out one worker owns several tasks in
-			// a partition, so "worker=w1" is shared by rows that may have been
-			// executed by different providers. Shown only once recorded, so a
-			// task that has not run stays visibly unassigned.
+			// Which provider actually ran this task. The worker id cannot answer
+			// that once the work is over: worker= is a live claim, and the reaper
+			// deletes worker rows while this survives in the task's own metadata,
+			// so a done/failed/reaped task still reports what ran it. Shown only
+			// once recorded, so a task that has not run stays visibly unassigned.
 			via := ""
 			if name := t.ProvenanceLabel(); name != "" {
 				via = styleMuted.Render(" via=" + name)
