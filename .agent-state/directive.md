@@ -68,6 +68,23 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
 
 ## Remaining
 
+- [ ] Issue #296: contain codex and opencode via per-provider write allowances.
+      I concluded in #285 that widening the policy was unavailable. WRONG, and
+      the error is worth keeping: I bisected ONE step (codex failed with TMPDIR
+      re-allowed) and declared a negative. Bisecting properly found narrow paths
+      that work --
+        codex    -> $HOME/.codex
+        opencode -> $HOME/.local/share/opencode
+      Neither needs a blanket $HOME grant. Opencode was naming its own answer in
+      the error text the whole time.
+      Also ruled out: it is NOT "any sandbox breaks codex" (a narrow deny runs
+      fine; only the blanket deny breaks it), and codex's own
+      --dangerously-bypass-approvals-and-sandbox does not help.
+      The capability work is NOT wasted -- SupportsContainment stays as the
+      honest answer for an unknown provider, and the refusal path is what stops
+      a silent downgrade. #296 only moves these two from permanently-spared to
+      properly-contained.
+
 - [ ] [WAIT] Land the open PRs: 287, 288.
       (225, 274, 272, 275, 277 and 278 landed this pass.)
       All four are QUEUED or auto-merge ARMED with zero unresolved threads and
