@@ -201,6 +201,22 @@ func (o *Orchestrator) VerifyAndCompleteAs(
 		return false, fmt.Errorf("orch: run acceptance check: %w", err)
 	}
 
+	// Completion-time containment. This is the guarantee Ralph actually makes:
+	// pre-dispatch validation cannot stop a provider — a separate process
+	// writing by pathname minutes later — from having its declared output
+	// redirected by a peer replacing a directory component. What Ralph CAN do
+	// is refuse to call such a task done.
+	//
+	// Only checked when acceptance PASSED: a task that already failed is not
+	// about to be marked done, so re-checking would only cost filesystem work.
+	// Ordering acceptance first also means the more specific rejection wins.
+	if ok {
+		if escaped := o.verifyTaskOutputContainment(ctx, task, dir); escaped != "" {
+			ok = false
+			reason = escaped
+		}
+	}
+
 	// A named reporter is used VERBATIM, so the store's owner guard compares
 	// against the session that actually produced this evidence. A stale reporter
 	// then loses benignly, which is the designed behavior.
@@ -299,4 +315,55 @@ func (o *Orchestrator) projectDirFor(ctx context.Context, planID string) (string
 		return ".", nil
 	}
 	return dir, nil
+}
+
+// verifyTaskOutputContainment re-checks every declared output against the
+// project root at completion, returning a rejection reason or "".
+//
+// A declared output that no longer resolves inside the project means the write
+// landed somewhere the plan never authorized — whether through a symlinked
+// ancestor planted after admission or a path that was never contained. Marking
+// such a task done would launder an escape into a success.
+//
+// A RESOLUTION FAULT is not treated as an escape here. Refusing completion for
+// a transient I/O error would fail honest work; the pre-dispatch gate makes the
+// same distinction for the same reason.
+func (o *Orchestrator) verifyTaskOutputContainment(ctx context.Context, task *store.Task, projectDir string) string {
+	step, ok := o.stepForTask(ctx, task)
+	if !ok {
+		return ""
+	}
+	decl := declFromMetadata(step)
+	for _, out := range decl.Outputs {
+		if _, err := secureProjectPath(projectDir, out); err != nil {
+			if errors.Is(err, ErrTaskPathEscapesProject) {
+				return fmt.Sprintf(
+					"declared output %q does not resolve inside the project", out)
+			}
+			// Unresolvable for a non-containment reason: do not fail honest
+			// work on a transient fault.
+			return ""
+		}
+	}
+	return ""
+}
+
+// stepForTask resolves the plan step a task was materialized from, so
+// completion can read its declared outputs. Returns false when the plan source
+// cannot be resolved — in which case there is nothing to check rather than
+// something to reject.
+func (o *Orchestrator) stepForTask(ctx context.Context, task *store.Task) (plan.Step, bool) {
+	storedPlan, err := o.store.GetPlan(ctx, task.PlanID)
+	if err != nil || storedPlan.SourceMarkdown == "" {
+		return plan.Step{}, false
+	}
+	parsed, err := plan.Parse([]byte(storedPlan.SourceMarkdown))
+	if err != nil {
+		return plan.Step{}, false
+	}
+	located, found := indexPlanSteps(parsed)[task.ID]
+	if !found {
+		return plan.Step{}, false
+	}
+	return located.step, true
 }

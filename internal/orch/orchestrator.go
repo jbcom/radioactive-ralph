@@ -1019,7 +1019,52 @@ func (o *Orchestrator) stepGateBlocks(ctx context.Context, planID string, ref pl
 	if err != nil {
 		return false, err
 	}
-	return task.Status == store.TaskStatusReadyPendingApproval, nil
+	if task.Status == store.TaskStatusReadyPendingApproval {
+		return true, nil
+	}
+	blocked, err := o.pathGateBlocks(ctx, planID, task.ID, step)
+	if err != nil {
+		return false, err
+	}
+	return blocked, nil
+}
+
+// pathGateBlocks re-checks a step's declared inputs and outputs immediately
+// before dispatch, and blocks the task if any of them escapes the project root.
+//
+// Re-checking here rather than trusting the import-time check is the point: the
+// filesystem can change between admission and dispatch, and a declaration that
+// was fine when the plan was imported may resolve outside the project by the
+// time a worker would act on it.
+//
+// This is best-effort VALIDATION, not a write-side guarantee — see
+// secureProjectPath. It constrains what Ralph will dispatch, not what a provider
+// process can later open by pathname. Blocking rather than skipping is what
+// makes the refusal visible: a silently skipped task looks identical to one
+// waiting on a dependency.
+func (o *Orchestrator) pathGateBlocks(ctx context.Context, planID, taskID string, step plan.Step) (bool, error) {
+	decl := declFromMetadata(step)
+	if len(decl.Inputs) == 0 && len(decl.Outputs) == 0 {
+		return false, nil
+	}
+	projectDir, err := o.projectDirFor(ctx, planID)
+	if err != nil {
+		return false, err
+	}
+	validationErr := validateTaskFilesystem(projectDir, decl)
+	if validationErr == nil {
+		return false, nil
+	}
+	if !errors.Is(validationErr, ErrTaskPathEscapesProject) {
+		// An I/O fault resolving the paths is not a containment refusal. Surface
+		// it rather than marking the task permanently blocked for what may be a
+		// transient condition.
+		return false, validationErr
+	}
+	if err := o.store.MarkBlockedInput(ctx, planID, taskID, validationErr.Error()); err != nil {
+		return false, fmt.Errorf("orch: block task %s on path containment: %w", taskID, err)
+	}
+	return true, nil
 }
 
 // claimStepTask claims the SPECIFIC task dispatch selected for ref.
@@ -1044,7 +1089,14 @@ func (o *Orchestrator) claimStepTask(ctx context.Context, planID string, _ *plan
 
 	claimed, err := o.store.ClaimTask(ctx, planID, task.ID, sessionID, workerID)
 	if err != nil {
-		if errors.Is(err, store.ErrNoReadyTask) {
+		// Both of these mean "not claimable RIGHT NOW", not "faulted". A lost
+		// claim race resolves when the other dispatcher finishes; an output
+		// reservation resolves when the holder finishes. Treating a reservation
+		// as fatal livelocked native fan-out: the group claims every eligible
+		// task under one worker, so two tasks sharing an output made
+		// dispatchFanoutGroup release every prior claim and error, and the next
+		// pass repeated the identical sequence forever.
+		if errors.Is(err, store.ErrNoReadyTask) || errors.Is(err, store.ErrOutputReserved) {
 			return nil, nil
 		}
 		return nil, fmt.Errorf("orch: claim %s: %w", task.ID, err)

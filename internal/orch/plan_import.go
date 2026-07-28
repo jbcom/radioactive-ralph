@@ -140,6 +140,7 @@ func graphSpecs(parsed *plan.Plan) ([]store.GraphTaskSpec, error) {
 		if err != nil {
 			return nil, fmt.Errorf("orch: build acceptance for %q: %w", ids[i], err)
 		}
+		inputs, outputs := declaredReservations(n.step)
 		specs = append(specs, store.GraphTaskSpec{
 			CreateTaskOpts: store.CreateTaskOpts{
 				ID:               ids[i],
@@ -151,6 +152,8 @@ func graphSpecs(parsed *plan.Plan) ([]store.GraphTaskSpec, error) {
 			GroupPath:    n.group,
 			TeamPath:     team,
 			MetadataJSON: metadataJSON,
+			Inputs:       inputs,
+			Outputs:      outputs,
 		})
 	}
 	return specs, nil
@@ -223,4 +226,27 @@ func documentOrderEdges(parsed *plan.Plan, ids []string) [][]string {
 	}
 	visit(parsed.Groups)
 	return edges
+}
+
+// declaredReservations turns a step's declared filesystem surface into the
+// reservation specs the store persists alongside the node.
+//
+// Outputs become the admission constraint: two tasks declaring the same
+// exclusive path must not run concurrently even when both are ready, because
+// readiness is about dependencies and this is not one — neither task consumes
+// the other's result, so an edge between them would be a lie AND would
+// serialize them permanently rather than only while one runs.
+func declaredReservations(step plan.Step) ([]store.TaskInputSpec, []store.TaskOutputSpec) {
+	if step.Metadata == nil {
+		return nil, nil
+	}
+	var inputs []store.TaskInputSpec
+	for _, in := range step.Metadata.Inputs {
+		inputs = append(inputs, store.TaskInputSpec{Path: in.Path, SHA256: in.SHA256})
+	}
+	var outputs []store.TaskOutputSpec
+	for _, out := range step.Metadata.Outputs {
+		outputs = append(outputs, store.TaskOutputSpec{Path: out.Path, Mode: out.Mode})
+	}
+	return inputs, outputs
 }
