@@ -68,7 +68,8 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
 
 ## Remaining
 
-- [ ] [WAIT] Land the open PR: #299 (config write_paths test).
+- [ ] [WAIT] Land the open PRs: #300, #301.
+      (#299 landed: config write_paths is verified from an operator's toml.)
       The containment stack all LANDED: #292 #294 #295 #297 #298.
       #290 and #293 LANDED. Hash-prefixed deliberately: guard 9 extracts
       `#[0-9]{3}` tokens from THIS line, so bare numbers would be invisible to
