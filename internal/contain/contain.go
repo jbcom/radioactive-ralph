@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // ErrRootNotAbsolute reports a containment root that is not an absolute path.
@@ -53,10 +54,38 @@ type Policy struct {
 	// rather than its target, so a provider writing through the resolved path
 	// would land outside a boundary that appears to contain it.
 	Root string
+
+	// ExtraWritable are additional absolute, symlink-resolved subpaths the
+	// provider may write under, declared by its binding because the CLI cannot
+	// start without them.
+	//
+	// Measured, never guessed: codex fails to initialize its app-server without
+	// $HOME/.codex, and opencode cannot open its own log without
+	// $HOME/.local/share/opencode. Each entry belongs to ONE provider's state
+	// directory.
+	//
+	// Kept narrow on purpose. A blanket $HOME grant also satisfies both and
+	// would make containment vacuous -- the same failure that got TMPDIR
+	// removed from the darwin allow-set, since on macOS it resolves under
+	// /private/tmp and re-opened the boundary wholesale.
+	ExtraWritable []string
 }
 
-// NewPolicy resolves root into a containment policy.
-func NewPolicy(root string) (Policy, error) {
+// ErrExtraPathNotAbsolute rejects a relative allowance: it would resolve
+// against whatever cwd the provider happens to have, so the granted boundary
+// would depend on where the turn runs.
+var ErrExtraPathNotAbsolute = errors.New("contain: extra writable path is not absolute")
+
+// ErrExtraPathTooBroad rejects an allowance that swallows the boundary.
+//
+// Granting "/" or the whole home directory satisfies every provider and
+// destroys the point of containment. The allowance exists for a CLI's own state
+// directory; anything wide enough to contain the home directory is an opt-out
+// wearing the shape of a grant.
+var ErrExtraPathTooBroad = errors.New("contain: extra writable path is too broad")
+
+// NewPolicy resolves root and any declared extra writable paths into a policy.
+func NewPolicy(root string, extra ...string) (Policy, error) {
 	if !filepath.IsAbs(root) {
 		return Policy{}, fmt.Errorf("%w: %q", ErrRootNotAbsolute, root)
 	}
@@ -71,7 +100,56 @@ func NewPolicy(root string) (Policy, error) {
 	if !info.IsDir() {
 		return Policy{}, fmt.Errorf("%w: %q", ErrRootNotDirectory, resolved)
 	}
-	return Policy{Root: resolved}, nil
+	policy := Policy{Root: resolved}
+	for _, raw := range extra {
+		grant, err := resolveExtraWritable(raw)
+		if err != nil {
+			return Policy{}, err
+		}
+		policy.ExtraWritable = append(policy.ExtraWritable, grant)
+	}
+	return policy, nil
+}
+
+// resolveExtraWritable validates and resolves one declared allowance.
+//
+// A path that does not exist yet is NOT an error: a provider's state directory
+// may be created on first run, and refusing would make containment depend on
+// whether the CLI had ever been used. It is resolved when possible and taken
+// as-is otherwise, having already been checked for absoluteness and breadth.
+func resolveExtraWritable(raw string) (string, error) {
+	if !filepath.IsAbs(raw) {
+		return "", fmt.Errorf("%w: %q", ErrExtraPathNotAbsolute, raw)
+	}
+	cleaned := filepath.Clean(raw)
+	if cleaned == string(filepath.Separator) {
+		return "", fmt.Errorf("%w: %q grants the entire filesystem", ErrExtraPathTooBroad, raw)
+	}
+	if home, err := os.UserHomeDir(); err == nil && home != "" {
+		resolvedHome, herr := filepath.EvalSymlinks(home)
+		if herr != nil {
+			resolvedHome = filepath.Clean(home)
+		}
+		// The home directory ITSELF (or any ancestor of it) is too broad. A
+		// SUBPATH of home is exactly what these allowances are for.
+		if cleaned == filepath.Clean(home) || cleaned == resolvedHome ||
+			isAncestor(cleaned, resolvedHome) {
+			return "", fmt.Errorf("%w: %q contains the home directory", ErrExtraPathTooBroad, raw)
+		}
+	}
+	if resolved, err := filepath.EvalSymlinks(cleaned); err == nil {
+		return resolved, nil
+	}
+	return cleaned, nil
+}
+
+// isAncestor reports whether dir contains target.
+func isAncestor(dir, target string) bool {
+	rel, err := filepath.Rel(dir, target)
+	if err != nil {
+		return false
+	}
+	return rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && rel != "."
 }
 
 // Wrap rewrites a command so it runs under the policy, returning the name and
