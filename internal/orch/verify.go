@@ -144,6 +144,22 @@ func checkFileExists(dir, path string) (bool, string, error) {
 // checks its exit status. This is the mechanical re-verification: the
 // orchestrator never trusts a worker's self-reported exit code, it
 // independently executes the acceptance command itself.
+//
+// NOT CONTAINED, deliberately, and the asymmetry with provider turns is the
+// point. Write containment confines the PROVIDER — untrusted output acting on
+// the checkout. This is the orchestrator running the plan author's own
+// acceptance criterion, and acceptance commands routinely and legitimately
+// write outside the project: `go build` populates GOCACHE under the user's home,
+// test runners write to TMPDIR. Wrapping this in the project-root policy would
+// fail those commands and report the task unverified for a reason that has
+// nothing to do with the task.
+//
+// The exposure is real but bounded and different in kind: plan markdown is
+// author-controlled config, the same trust level as the binding that chooses
+// which CLI to launch. If that ever stops holding — plans imported from an
+// untrusted source — this needs its own policy with a wider root (project plus
+// caches), not the provider one. Recorded during the 2026-07-28 exec-path audit
+// rather than changed silently.
 func checkCommandExitsZero(ctx context.Context, dir, command string) (bool, string, error) {
 	cmd := exec.CommandContext(ctx, "sh", "-c", command) //nolint:gosec // G204: command is the task's own acceptance criterion (author-controlled plan content), not untrusted external input
 	cmd.Dir = dir

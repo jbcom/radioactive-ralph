@@ -420,7 +420,7 @@ func (o *Orchestrator) SetBaseContext(ctx context.Context)
 SetBaseContext sets the long\-lived context async dispatch goroutines run under. The supervisor calls this once at the top of Run with its run context — the orchestrator is constructed before that context exists, so it can't be a construction option there. Must be called before the first DispatchNext. A nil ctx is ignored.
 
 <a name="Orchestrator.VerifyAndComplete"></a>
-### func \(\*Orchestrator\) [VerifyAndComplete](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/orch/verify.go#L164>)
+### func \(\*Orchestrator\) [VerifyAndComplete](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/orch/verify.go#L180>)
 
 ```go
 func (o *Orchestrator) VerifyAndComplete(ctx context.Context, planID, taskID string, ev a2a.Evidence) (done bool, err error)
@@ -429,7 +429,7 @@ func (o *Orchestrator) VerifyAndComplete(ctx context.Context, planID, taskID str
 VerifyAndComplete is THE BACKBONE: it never trusts a worker's termination or self\-report. It checks ev against task's acceptance criteria — re\-running mechanical checks in pure Go — and only marks the task done in the store if verification passes. Otherwise it marks the task failed \(retryable, per the task's normal retry budget\) and emits a worker.verification\_failed event carrying the rejection reason.
 
 <a name="Orchestrator.VerifyAndCompleteAs"></a>
-### func \(\*Orchestrator\) [VerifyAndCompleteAs](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/orch/verify.go#L185-L189>)
+### func \(\*Orchestrator\) [VerifyAndCompleteAs](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/orch/verify.go#L201-L205>)
 
 ```go
 func (o *Orchestrator) VerifyAndCompleteAs(ctx context.Context, planID, taskID, reportingSession string, ev a2a.Evidence) (done bool, err error)

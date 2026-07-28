@@ -11,6 +11,8 @@ import (
 	"sync"
 
 	"github.com/google/uuid"
+
+	"github.com/jbcom/radioactive-ralph/internal/contain"
 )
 
 // DefaultClaudeBin is the binary name the runtime invokes when no
@@ -82,6 +84,20 @@ type Options struct {
 	// WorkingDir is the cwd for the subprocess. Typically a worktree.
 	WorkingDir string
 
+	// ContainmentRoot, when set, confines the `claude -p` subprocess AND
+	// everything it spawns to writing beneath this absolute path, enforced by
+	// the kernel (see internal/contain). Empty leaves it unconfined.
+	//
+	// Present BEFORE this package has a production caller, deliberately. Its own
+	// doc comment says it exists "so the claude provider runner can drive it",
+	// and the sibling declarative runner shipped exactly this hole: two of its
+	// three shapes threaded containment and the third did not, so a binding ran
+	// unconfined while the config promised confinement. Wiring the field in at
+	// the same time as the subprocess means arming this package cannot silently
+	// void the guarantee — the containment decision is made here rather than
+	// deferred to whoever calls Spawn first.
+	ContainmentRoot string
+
 	// SystemPrompt is the content for --append-system-prompt. Variant
 	// directives plus runtime policy go here.
 	SystemPrompt string
@@ -135,8 +151,21 @@ func Spawn(ctx context.Context, opts Options) (*Session, error) {
 		opts.SessionID = uuid.NewString()
 	}
 
-	args := buildArgs(opts)
-	cmd := exec.CommandContext(ctx, opts.ClaudeBin, args...) //nolint:gosec // args are runtime-controlled
+	bin, args := opts.ClaudeBin, buildArgs(opts)
+	if opts.ContainmentRoot != "" {
+		// Fails CLOSED: an unsupported platform or an unusable root aborts the
+		// spawn rather than returning an unconfined session. A caller that asked
+		// for containment and silently got none holds a false guarantee, which is
+		// worse than no containment at all.
+		policy, err := contain.NewPolicy(opts.ContainmentRoot)
+		if err != nil {
+			return nil, err
+		}
+		if bin, args, err = policy.Wrap(bin, args); err != nil {
+			return nil, err
+		}
+	}
+	cmd := exec.CommandContext(ctx, bin, args...) //nolint:gosec // args are runtime-controlled
 	cmd.Dir = opts.WorkingDir
 
 	stdin, err := cmd.StdinPipe()
