@@ -209,8 +209,29 @@ stale_refs=""
 # check below now does.
 open_line=$(grep -E '^- \[ \].*Land the .*open PRs?\b' .agent-state/directive.md 2>/dev/null | head -1)
 if [ -z "$open_line" ]; then
-  say "  open-PR line NOT FOUND" "guard 9 cannot check it — fix the label or this pattern"
-  fail=1
+  # An ABSENT line is legitimate ONLY when no item could have been the list --
+  # the queue draining is a real state, not a broken pattern.
+  #
+  # "GitHub reports zero open PRs" is NOT that proof, and accepting it was this
+  # guard's fourth silent no-op. Renaming the item to `Ship the open PRs: #302`
+  # empties open_line; the zero-count branch then reports consistency and the
+  # loop below examines no numbers, while the directive still names #302 as
+  # outstanding work. That is the failure guard 9 exists to catch, relocated
+  # rather than fixed.
+  #
+  # So the acceptance is structural, not lexical: an open item citing a #NNN is
+  # a candidate list by SHAPE, whatever its label. Absence is provable only when
+  # no such candidate exists. Matching by shape is what makes the guard survive
+  # a rewording, which is how it broke all four times.
+  candidates=$(grep -nE '^- \[ \].*#[0-9]{3}' .agent-state/directive.md 2>/dev/null || true)
+  if [ -n "$candidates" ]; then
+    say "  open-PR line NOT FOUND" \
+      "but open item(s) cite PR numbers — guard 9 would check nothing; fix the label or this pattern:
+$candidates"
+    fail=1
+  else
+    say "directive open-PR list" "absent, and no open item cites a PR — consistent"
+  fi
 fi
 for n in $(printf '%s' "$open_line" | grep -oE '[0-9]{3}' | sort -u); do
   # An OPEN item naming a MERGED PR reads as work still to do that is already
