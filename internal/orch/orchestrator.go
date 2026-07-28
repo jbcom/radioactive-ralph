@@ -1922,25 +1922,29 @@ func (o *Orchestrator) dispatchWorker(ctx context.Context, projectID, projectDir
 // coalescableSteps selects which of a ready parallel group may be handed to a
 // single native fan-out turn.
 //
-// Two exclusions, for different reasons:
+// The governing rule: a fan-out group is ONE binding for every member, chosen
+// before any of them is examined individually. So a step carrying any
+// per-step binding restriction cannot be coalesced — the group has no way to
+// honour it, and this branch returns BEFORE the per-step admission loop that
+// would. Three exclusions follow from that:
 //
-//   - A capability-gated step (stepGateBlocks) is excluded because it cannot run
-//     on this binding at all.
-//   - A step declaring differentFrom is excluded because fan-out is ONE binding
-//     for the whole group by construction, so every coalesced member necessarily
-//     shares one independence domain. No binding choice can satisfy the
-//     constraint, which makes rotation — the per-step remedy — meaningless here.
+//   - A capability-gated step (stepGateBlocks): it cannot run on this binding.
+//   - A step declaring differentFrom: every coalesced member necessarily shares
+//     one independence domain, so no binding choice satisfies the constraint and
+//     rotation — the per-step remedy — is meaningless here.
+//   - A step declaring `providers`: the group's binding is resolved without
+//     consulting it, so a task pinned to codex would otherwise be swept into a
+//     claude turn and executed there.
 //
-// The independence exclusion is the load-bearing one. The fan-out branch returns
-// BEFORE the per-step admission loop, so a coalesced constrained step never
-// reaches the independence check: it runs alongside its own peer in a single
-// turn that sees both prompts, and runFanoutGroup then stamps that one shared
-// domain onto both. The plan reads as protected while the reviewer IS the
-// author, and provenance records it as having run independently — the vacuous
-// guarantee this constraint exists to prevent, in its worst form.
+// Both restriction exclusions exist because the failure is SILENT. The step runs,
+// provenance records it as having run, and the plan reads as satisfied — while
+// the restriction the operator wrote down was never applied. For independence
+// that means the reviewer IS the author; for `providers` it means the pin simply
+// did not happen. Adding a fourth per-step restriction later means adding it
+// here too, or it inherits the same hole.
 //
-// Excluded steps are not refused, only left out of the coalesced set; they are
-// dispatched by the per-step loop, which enforces independence properly. An
+// Excluded steps are not refused, only left out of the coalesced set; the
+// per-step loop dispatches them and enforces their restrictions properly. An
 // empty result therefore means "fan-out does not apply here", not "nothing runs".
 func (o *Orchestrator) coalescableSteps(
 	ctx context.Context,
@@ -1953,7 +1957,8 @@ func (o *Orchestrator) coalescableSteps(
 	steps := make([]plan.Step, 0, candidateLimit)
 	stepRefs := make([]plan.StepRef, 0, candidateLimit)
 	for i := 0; i < candidateLimit; i++ {
-		if len(readySteps[i].Metadata.IndependencePeers()) > 0 {
+		if len(readySteps[i].Metadata.IndependencePeers()) > 0 ||
+			len(readySteps[i].Metadata.AllowedProviders()) > 0 {
 			continue
 		}
 		gated, err := o.stepGateBlocks(ctx, planID, projectID, parallel, refs[i], readySteps[i])

@@ -115,6 +115,90 @@ func validateDifferentFrom(p *Plan) []PlanError {
 			}
 		}
 	})
+	return append(findings, validateDifferentFromAcyclic(p)...)
+}
+
+// validateDifferentFromAcyclic refuses a differentFrom cycle.
+//
+// Enforcement resolves a peer's independence domain from what it ACTUALLY RAN
+// ON, so a task cannot be admitted until every peer it names has already run.
+// Two tasks naming each other therefore deadlock by construction: admitting
+// either requires the other to have run first, and neither ever can. Longer
+// rings fail the same way.
+//
+// This is caught at import for the same reason a self-reference is, and the
+// runtime alternative is worse than merely late. A cycle does not produce a
+// fail-closed blocked_* state an operator can see and clear -- it produces
+// worker.admission_refused on every tick, forever, which is indistinguishable
+// from a plan that is simply waiting its turn. Nothing changes and nothing says
+// why, so the plan looks alive while being permanently stuck.
+func validateDifferentFromAcyclic(p *Plan) []PlanError {
+	peers := map[string][]string{}
+	var order []string
+	walkPlanSteps(p, func(id string, step Step) {
+		order = append(order, id)
+		if step.Metadata == nil {
+			return
+		}
+		for _, raw := range step.Metadata.DifferentFrom {
+			peer := strings.TrimSpace(raw)
+			// Self-references and unknown peers are reported by the caller; a
+			// self-edge would also register here as a trivial cycle and produce a
+			// second, less specific finding for one mistake.
+			if peer != "" && peer != id {
+				peers[id] = append(peers[id], peer)
+			}
+		}
+	})
+
+	const (
+		unvisited = 0
+		onStack   = 1
+		done      = 2
+	)
+	state := map[string]int{}
+	var findings []PlanError
+	var cycle []string
+
+	// Iterative DFS is not needed for plan-sized graphs, but the on-stack marking
+	// is: it distinguishes a genuine back edge from a node merely reachable by two
+	// different paths, which is not a cycle.
+	var visit func(id string) bool
+	visit = func(id string) bool {
+		state[id] = onStack
+		cycle = append(cycle, id)
+		for _, peer := range peers[id] {
+			switch state[peer] {
+			case onStack:
+				cycle = append(cycle, peer)
+				return true
+			case unvisited:
+				if visit(peer) {
+					return true
+				}
+			}
+		}
+		cycle = cycle[:len(cycle)-1]
+		state[id] = done
+		return false
+	}
+
+	for _, id := range order {
+		if state[id] != unvisited {
+			continue
+		}
+		cycle = cycle[:0]
+		if visit(id) {
+			findings = append(findings, PlanError{Msg: fmt.Sprintf(
+				"differentFrom forms a cycle (%s); each task in it needs another "+
+					"member to have run first, so none is ever admitted and the plan "+
+					"retries forever without a terminal state",
+				strings.Join(cycle, " -> "))})
+			// One finding per plan: the remaining members of this cycle would each
+			// report the same loop, and reporting a ring N times helps nobody.
+			break
+		}
+	}
 	return findings
 }
 

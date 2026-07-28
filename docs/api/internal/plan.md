@@ -171,7 +171,7 @@ type PlanError struct {
 ```
 
 <a name="Validate"></a>
-### func [Validate](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plan/validate.go#L166>)
+### func [Validate](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plan/validate.go#L250>)
 
 ```go
 func Validate(md []byte) []PlanError
