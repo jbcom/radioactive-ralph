@@ -24,6 +24,8 @@ Package supervisor implements the \`\-\-supervisor\` process: the single durable
 - [type Options](<#Options>)
 - [type Supervisor](<#Supervisor>)
   - [func \(s \*Supervisor\) HandleAttach\(ctx context.Context, args ipc.AttachArgs, emit func\(json.RawMessage\) error\) error](<#Supervisor.HandleAttach>)
+  - [func \(s \*Supervisor\) HandleCalibrationList\(ctx context.Context\) \(ipc.CalibrationListReply, error\)](<#Supervisor.HandleCalibrationList>)
+  - [func \(s \*Supervisor\) HandleCalibrationPut\(ctx context.Context, args ipc.CalibrationPutArgs\) \(ipc.CalibrationPutReply, error\)](<#Supervisor.HandleCalibrationPut>)
   - [func \(s \*Supervisor\) HandleEnqueue\(ctx context.Context, args ipc.EnqueueArgs\) \(ipc.EnqueueReply, error\)](<#Supervisor.HandleEnqueue>)
   - [func \(s \*Supervisor\) HandleObserveMessages\(ctx context.Context, args ipc.ObserveMessagesArgs\) \(\*ipc.ObserveMessagesReply, error\)](<#Supervisor.HandleObserveMessages>)
   - [func \(s \*Supervisor\) HandleObserveSnapshot\(ctx context.Context, args ipc.ObserveSnapshotArgs\) \(\*ipc.ObserveSnapshotReply, error\)](<#Supervisor.HandleObserveSnapshot>)
@@ -154,6 +156,28 @@ func (s *Supervisor) HandleAttach(ctx context.Context, args ipc.AttachArgs, emit
 ```
 
 HandleAttach streams the project's events to the client as they are written, turning the observe half of the drive\+observe API from a stub into a live feed. It TAILS the append\-only events table: each tick it reads rows with id greater than the cursor \(scoped to args.ProjectID, including plan\-linked rows\), emits each, and advances the cursor. The cursor starts at args.AfterID — the client owns it \(it obtains an initial value from MaxEventID/backlog\), so there is no server\-side seed and no lost\-event race. The loop returns when ctx is cancelled \(client disconnect — \#165's watcher — or supervisor shutdown\) or when emit reports the client is gone.
+
+<a name="Supervisor.HandleCalibrationList"></a>
+### func \(\*Supervisor\) [HandleCalibrationList](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/supervisor/calibration.go#L99>)
+
+```go
+func (s *Supervisor) HandleCalibrationList(ctx context.Context) (ipc.CalibrationListReply, error)
+```
+
+HandleCalibrationList enumerates the recorded calibrations so an operator can see which aliases have a measured independence domain and which do not — the difference between a differentFrom constraint that can be enforced and one that silently cannot.
+
+<a name="Supervisor.HandleCalibrationPut"></a>
+### func \(\*Supervisor\) [HandleCalibrationPut](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/supervisor/calibration.go#L62-L65>)
+
+```go
+func (s *Supervisor) HandleCalibrationPut(ctx context.Context, args ipc.CalibrationPutArgs) (ipc.CalibrationPutReply, error)
+```
+
+HandleCalibrationPut records one provider calibration.
+
+This is the PRODUCER the independence domain needs. Dispatch already records what each task ran on, reading the domain from the binding's calibration — but with nothing able to record a calibration, that lookup always missed and every task's domain was empty. An empty domain reads as "independent", so a differentFrom constraint compared "" against "" and permitted everything.
+
+A conflict is surfaced as CodeConflict rather than overwriting. Silently replacing an alias's calibration would retroactively change what every task already recorded against that alias is believed to have run on — the audit trail would say tasks were independent on evidence that no longer exists.
 
 <a name="Supervisor.HandleEnqueue"></a>
 ### func \(\*Supervisor\) [HandleEnqueue](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/supervisor/supervisor.go#L388>)
