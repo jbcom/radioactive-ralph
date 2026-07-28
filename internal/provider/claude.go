@@ -226,8 +226,11 @@ func streamJSONInput(userPrompt string) ([]byte, error) {
 		} `json:"content"`
 	}
 	msg := struct {
-		Type    string `json:"type"`
-		Message outboundInner
+		Type string `json:"type"`
+		// The tag is load-bearing: without it encoding/json emits "Message",
+		// the CLI finds no `message.role`, and every real turn dies instantly
+		// with "Expected message role 'user', got 'undefined'".
+		Message outboundInner `json:"message"`
 	}{Type: "user"}
 	msg.Message.Role = "user"
 	msg.Message.Content = append(msg.Message.Content, struct {
