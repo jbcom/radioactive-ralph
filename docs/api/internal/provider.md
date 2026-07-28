@@ -240,7 +240,7 @@ func StreamJSONWatchdogConfig() agent.WatchdogConfig
 StreamJSONWatchdogConfig is the watchdog config for providers driven in a structured stream\-json mode \(claude/opencode: \`\-\-output\-format stream\-json\`\). Their normal output is JSON frames whose text can innocently contain prompt\-like words \("permission", "continue?"\), which content\-blind matching would misread and KILL a valid turn. It keeps the prompt patterns but sets SkipPromptMatchOnJSONLines: patterns are matched ONLY on lines that are NOT valid JSON, so a legitimate JSON frame is never a false prompt while a GENUINE raw interactive prompt \(never valid JSON\) is still caught immediately — not merely by the slower stall timeout.
 
 <a name="ValidateBinding"></a>
-## func [ValidateBinding](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/declarative.go#L173>)
+## func [ValidateBinding](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/declarative.go#L176>)
 
 ```go
 func ValidateBinding(binding Binding) error
@@ -300,7 +300,7 @@ type Binding struct {
 ```
 
 <a name="ResolveBinding"></a>
-### func [ResolveBinding](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/provider.go#L73>)
+### func [ResolveBinding](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/provider.go#L84>)
 
 ```go
 func ResolveBinding(cfg File, local Local, fromConfig VariantFile) (Binding, error)
@@ -643,13 +643,24 @@ func (OpencodeRunner) Run(ctx context.Context, binding Binding, req Request) (Re
 Run spawns \`opencode run \<prompt\> \-\-format json\` and blocks until the CLI exits naturally. A step\_finish with reason=tool\-calls is an intermediate model step; OpenCode 1.18.3 closes the actual run only after session.status becomes idle, so Ralph must consume the complete stream.
 
 <a name="Request"></a>
-## type [Request](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/provider.go#L27-L42>)
+## type [Request](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/provider.go#L27-L53>)
 
 Request is the provider\-neutral execution contract for one worker turn.
 
 ```go
 type Request struct {
-    WorkingDir   string
+    WorkingDir string
+
+    // ContainmentRoot, when set, confines the provider process AND everything
+    // it spawns to writing beneath this absolute path, enforced by the kernel
+    // (see internal/contain).
+    //
+    // Explicit rather than derived from WorkingDir: where a turn runs is not the
+    // same claim as the only place it may write, and silently equating them
+    // would change behavior for every existing caller. Empty leaves the process
+    // unconfined, exactly as before.
+    ContainmentRoot string
+
     SystemPrompt string
     UserPrompt   string
     OutputSchema string
@@ -667,7 +678,7 @@ type Request struct {
 ```
 
 <a name="Result"></a>
-## type [Result](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/provider.go#L61-L65>)
+## type [Result](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/provider.go#L72-L76>)
 
 Result captures the observable output of one provider turn.
 
@@ -680,7 +691,7 @@ type Result struct {
 ```
 
 <a name="Runner"></a>
-## type [Runner](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/provider.go#L68-L70>)
+## type [Runner](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/provider.go#L79-L81>)
 
 Runner executes one provider turn.
 
@@ -691,7 +702,7 @@ type Runner interface {
 ```
 
 <a name="NewRunner"></a>
-### func [NewRunner](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/provider.go#L118>)
+### func [NewRunner](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/provider.go#L129>)
 
 ```go
 func NewRunner(binding Binding) (Runner, error)
@@ -721,7 +732,7 @@ func ResolveTurnLimits(binding Binding, req Request) (TurnLimits, error)
 ResolveTurnLimits resolves request overrides over binding configuration over safe defaults. Every result is positive and bounded.
 
 <a name="Usage"></a>
-## type [Usage](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/provider.go#L53-L58>)
+## type [Usage](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/provider.go#L64-L69>)
 
 Usage captures the token/cost accounting for one provider turn. Fields are zero when the provider does not report them. Coverage today: the claude and opencode runners populate Usage from their stream\-json frames; codex and declarative bindings report zero \(their CLIs surface usage differently and are not yet parsed\). CostUSD is authoritative when non\-zero; the runtime accumulates it for spend\-cap enforcement, so a capped variant on an unreported provider still requires a cap value but its cost is not yet metered. Extending codex parsing is the follow\-up to close that gap.
 

@@ -45,8 +45,16 @@ A relative root resolves against whatever working directory the provider inherit
 var ErrRootNotAbsolute = errors.New("contain: containment root must be an absolute path")
 ```
 
+<a name="ErrRootNotDirectory"></a>ErrRootNotDirectory reports a containment root that resolves to something other than a directory.
+
+EvalSymlinks resolves a regular file without complaint, and a single file cannot represent a writable subtree: macOS would build a subpath rule for a non\-directory, and Landlock would grant directory\-creation rights beneath a plain file. Neither is a boundary anyone reasoned about, so this fails closed.
+
+```go
+var ErrRootNotDirectory = errors.New("contain: containment root is not a directory")
+```
+
 <a name="Available"></a>
-## func [Available](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/contain/contain.go#L76>)
+## func [Available](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/contain/contain.go#L93>)
 
 ```go
 func Available() bool
@@ -57,7 +65,7 @@ Available reports whether this platform can enforce a write boundary.
 Callers check it to decide policy — refuse to dispatch, or proceed with the weaker validation\-only guarantee — rather than discovering at Wrap time.
 
 <a name="MaybeRunHelper"></a>
-## func [MaybeRunHelper](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/contain/contain.go#L86>)
+## func [MaybeRunHelper](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/contain/contain.go#L103>)
 
 ```go
 func MaybeRunHelper(argv []string) (handled bool, err error)
@@ -70,7 +78,7 @@ main\(\) must call this FIRST, before flags, config, or logging: the helper's en
 On success it never returns — the process is replaced by the provider.
 
 <a name="Policy"></a>
-## type [Policy](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/contain/contain.go#L40-L46>)
+## type [Policy](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/contain/contain.go#L50-L56>)
 
 Policy is a resolved write boundary: the provider may write beneath Root and nowhere else.
 
@@ -85,7 +93,7 @@ type Policy struct {
 ```
 
 <a name="NewPolicy"></a>
-### func [NewPolicy](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/contain/contain.go#L49>)
+### func [NewPolicy](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/contain/contain.go#L59>)
 
 ```go
 func NewPolicy(root string) (Policy, error)
@@ -94,7 +102,7 @@ func NewPolicy(root string) (Policy, error)
 NewPolicy resolves root into a containment policy.
 
 <a name="Policy.Wrap"></a>
-### func \(Policy\) [Wrap](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/contain/contain.go#L65>)
+### func \(Policy\) [Wrap](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/contain/contain.go#L82>)
 
 ```go
 func (p Policy) Wrap(name string, args []string) (string, []string, error)

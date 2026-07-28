@@ -34,6 +34,18 @@ policy written against a symlink names the link rather than its target, so a
 provider writing through the resolved path would land outside a boundary that
 appears to contain it.
 
+An operator enables it per project with:
+
+```toml
+[projects.my-project]
+contain_provider_writes = true
+```
+
+Absent means off, and so does a malformed value. A typo must not silently
+*enable* a boundary that makes provider writes fail — that surfaces as
+unexplained provider errors far from their cause, so a bad value behaves like
+the absent key it resembles.
+
 Containment is **opt-in per `agent.Start`** via `ContainmentRoot`, not derived
 from `Dir`. Where a process starts is not the same claim as the only place it
 may write, and quietly turning one into the other would change every existing
