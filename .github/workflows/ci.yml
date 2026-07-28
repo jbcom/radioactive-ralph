@@ -80,10 +80,13 @@ jobs:
             exit 1
           fi
 
-          # --init explicitly.
-          (cd "$project" && "$RALPH_BIN" --init >/dev/null)
-
-          # Start the durable supervisor in the background.
+          # Start the durable supervisor BEFORE --init.
+          #
+          # init now resolves the project THROUGH the supervisor rather than
+          # opening the store itself (the dumb-client boundary), so it needs
+          # one listening. This ordering used to be the other way around and
+          # only worked because init was a store writer — the very thing that
+          # boundary exists to stop.
           "$RALPH_BIN" --supervisor >"$log" 2>&1 &
           sup_pid=$!
           cleanup() {
@@ -107,6 +110,9 @@ jobs:
             echo "supervisor never became ready" >&2
             exit 1
           fi
+
+          # --init explicitly, now that a supervisor is listening to serve it.
+          (cd "$project" && "$RALPH_BIN" --init >/dev/null)
 
           kill "$sup_pid"
           wait "$sup_pid" || true
@@ -205,9 +211,12 @@ jobs:
           $env:HOME = $homeDir
           $env:RALPH_STATE_DIR = $state
 
+          # No --init here: init now resolves the project THROUGH the
+          # supervisor (the dumb-client boundary), so it needs one listening.
+          # This block exists to prove the plain client FAILS without a
+          # supervisor, which is exactly the state it is testing.
           Push-Location $project
           try {
-            & $env:RALPH_BIN --init | Out-Null
             $clientExit = Invoke-QuietNative -FilePath $env:RALPH_BIN -ArgumentList @()
             if ($clientExit -eq 0) { throw "expected the plain client to fail before any supervisor is running" }
           } finally {
@@ -238,6 +247,10 @@ jobs:
             if (Test-Path $supStderr) { Get-Content $supStderr }
             throw "supervisor never became ready"
           }
+
+          # --init explicitly, now that a supervisor is listening to serve it.
+          Push-Location $project
+          try { & $env:RALPH_BIN --init | Out-Null } finally { Pop-Location }
 
           Stop-Process -Id $proc.Id -Force
           $deadline = (Get-Date).AddSeconds(30)
