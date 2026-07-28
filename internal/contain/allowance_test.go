@@ -3,6 +3,7 @@
 package contain
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -97,5 +98,51 @@ func TestWrapPassesExtraPathsAsParameters(t *testing.T) {
 				"containing quotes or parens could rewrite the policy. Pass it with -D " +
 				"like ROOT.")
 		}
+	}
+}
+
+// TestIsAncestorExcludesEqualPaths pins the clause a review suggested removing.
+//
+// filepath.Rel(x, x) returns ".", so without the `rel != "."` guard isAncestor
+// would report a path as its own ancestor. That matters here because
+// resolveExtraWritable asks "does this grant CONTAIN the home directory" -- and
+// a self-match would make every path look like it contains itself, which is
+// both wrong and the opposite of the protection.
+//
+// The equality case is ALSO handled before isAncestor is reached (cleaned is
+// compared against home and resolvedHome directly), so $HOME is rejected by two
+// independent checks. Pinning both: a later refactor that removes one should
+// not silently rely on the other still being there.
+func TestIsAncestorExcludesEqualPaths(t *testing.T) {
+	dir := t.TempDir()
+	if isAncestor(dir, dir) {
+		t.Fatal("isAncestor(x, x) = true; a path is not its own ancestor, and " +
+			"treating it as one inverts the breadth check that uses it")
+	}
+	if !isAncestor(filepath.Dir(dir), dir) {
+		t.Fatalf("isAncestor(%q, %q) = false; a real parent must be recognised or "+
+			"the breadth check stops rejecting anything", filepath.Dir(dir), dir)
+	}
+	if isAncestor(dir, filepath.Dir(dir)) {
+		t.Fatal("isAncestor(child, parent) = true; the direction is reversed")
+	}
+}
+
+// TestHomeIsRejectedByBothChecks pins that $HOME cannot be granted, and does it
+// through the PUBLIC path rather than the helper, since that is what callers
+// actually reach.
+func TestHomeIsRejectedByBothChecks(t *testing.T) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Skipf("no home dir: %v", err)
+	}
+	_, err = NewPolicy(t.TempDir(), home)
+	if err == nil {
+		t.Fatal("$HOME was accepted as an extra writable path; granting it satisfies " +
+			"every provider and makes containment vacuous while the config still " +
+			"claims a boundary")
+	}
+	if !errors.Is(err, ErrExtraPathTooBroad) {
+		t.Fatalf("NewPolicy($HOME) = %v, want ErrExtraPathTooBroad", err)
 	}
 }
