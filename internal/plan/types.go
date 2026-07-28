@@ -5,6 +5,8 @@ package plan
 // traversal, and so the dependency-edge metadata sits next to the Step it
 // annotates.
 
+import "strings"
+
 // Plan is the parsed, nested representation of a plan document.
 type Plan struct {
 	// Groups holds the top-level (heading level 1) groups in document
@@ -160,6 +162,20 @@ func (m *TaskMetadata) DependsOn() (ids []string, stated bool) {
 func (m *TaskMetadata) AllowedProviders() []string {
 	if m == nil {
 		return nil
+	}
+	// A declared `binding.provider` makes the same claim `providers` does -- run
+	// THIS task on THIS provider -- so it resolves through the SAME enforcement
+	// rather than a parallel one. Folding it in here means every existing
+	// consumer (dispatch admission, the independence rotation, fan-out
+	// coalescing) honours the pin without each having to learn a second field,
+	// which is exactly how `providers` itself stayed unenforced on the fan-out
+	// path until #272.
+	//
+	// A `providers` list that excludes the pin is rejected at IMPORT
+	// (validateBindingPin), so by the time this runs the two cannot contradict
+	// each other and returning the pin alone is safe.
+	if pinned := strings.TrimSpace(m.Binding.Provider); pinned != "" {
+		return []string{pinned}
 	}
 	return m.Providers
 }
