@@ -71,6 +71,9 @@ func TestAcceptLoopSurvivesTransientError(t *testing.T) {
 	s := &Server{
 		listener: l,
 		stopCh:   make(chan struct{}),
+		// acceptLoop closes acceptDone on exit to tell Stop no Accept() is in
+		// flight; production sets it in NewServer.
+		acceptDone: make(chan struct{}),
 		// Production always sets a non-nil logger (see NewServer); acceptLoop
 		// logs the transient error, so a nil logger would panic.
 		logger: slog.New(slog.NewTextHandler(io.Discard, nil)),

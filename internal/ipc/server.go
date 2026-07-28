@@ -19,6 +19,12 @@ import (
 // off instead of busy-spinning the accept goroutine.
 const acceptRetryDelay = 50 * time.Millisecond
 
+// acceptRetireTimeout bounds each phase of retiring the accept loop during
+// Stop. Shutdown must stay prompt even if the self-dial wakeup cannot complete,
+// so both the dial and the wait for the loop to exit fall through rather than
+// block.
+const acceptRetireTimeout = 2 * time.Second
+
 // defaultHeartbeatInterval is the heartbeat-touch cadence when a caller
 // leaves ServerOptions.HeartbeatInterval unset.
 const defaultHeartbeatInterval = 10 * time.Second
@@ -92,6 +98,10 @@ type DriveHandler interface {
 		ctx context.Context,
 		args ProjectEnsureArgs,
 	) (*ProjectEnsureReply, error)
+	// HandleProjectConfigGet reads a project's stored config values.
+	HandleProjectConfigGet(ctx context.Context, args ProjectConfigGetArgs) (ProjectConfigGetReply, error)
+	// HandleProjectConfigApply upserts and deletes project config keys.
+	HandleProjectConfigApply(ctx context.Context, args ProjectConfigApplyArgs) error
 }
 
 // QueryHandler is the OPTIONAL v3 content-safe query surface. Keeping it
@@ -123,7 +133,18 @@ type Server struct {
 	heartbeatInterval time.Duration
 	wg                sync.WaitGroup
 	stopCh            chan struct{}
-	heartbeatCh       chan struct{}
+	// wrapListener, when set, decorates the bound listener before the accept
+	// loop is spawned. TEST HOOK: shutdown behavior depends on how Accept and
+	// Close respond when they cannot complete, and the only portable way to
+	// exercise that is to substitute a listener that reproduces it. Assigning
+	// s.listener from a test instead is a data race — acceptLoop reads it the
+	// moment it starts — and Start would overwrite the assignment anyway.
+	wrapListener func(net.Listener) net.Listener
+
+	// acceptDone closes when the accept loop has left Accept() for good, so
+	// Stop can close the listener with no accept request in flight.
+	acceptDone  chan struct{}
+	heartbeatCh chan struct{}
 
 	// conns tracks every accepted connection so Stop can close them all,
 	// unblocking any handler parked in a read/write immediately — so shutdown
@@ -190,6 +211,7 @@ func NewServer(opts ServerOptions) (*Server, error) {
 		logger:            logger,
 		heartbeatInterval: interval,
 		stopCh:            make(chan struct{}),
+		acceptDone:        make(chan struct{}),
 		heartbeatCh:       make(chan struct{}),
 		conns:             make(map[net.Conn]struct{}),
 	}, nil
@@ -239,6 +261,33 @@ func (s *Server) markStopConn(conn net.Conn) {
 	s.connsMu.Unlock()
 }
 
+// retireAcceptLoop unblocks the accept loop and waits for it to leave Accept(),
+// so the listener can be closed with no accept request in flight.
+//
+// stopCh is already closed by the time this runs, so the accept loop treats the
+// next connection as the shutdown signal and returns without serving it. The
+// wakeup is a real dial of our own endpoint: it is the one action guaranteed to
+// complete a parked Accept() on every transport, where closing the listener is
+// exactly the operation that deadlocks on Windows.
+//
+// Reports whether retirement actually completed. The caller MUST honor a false
+// return: an Accept() may still be in flight, which is exactly the state where
+// the Windows listener close can block forever, so the close cannot be done
+// synchronously on that path.
+func (s *Server) retireAcceptLoop() bool {
+	dialCtx, cancel := context.WithTimeout(context.Background(), acceptRetireTimeout)
+	defer cancel()
+	if conn, err := dialEndpoint(dialCtx, s.socketPath, acceptRetireTimeout); err == nil {
+		_ = conn.Close()
+	}
+	select {
+	case <-s.acceptDone:
+		return true
+	case <-time.After(acceptRetireTimeout):
+		return false
+	}
+}
+
 // Start binds the socket and begins accepting connections in a background
 // goroutine. Safe to call once. Returns the listener error if bind fails.
 // The heartbeat interval comes from ServerOptions.HeartbeatInterval (set at
@@ -247,6 +296,9 @@ func (s *Server) Start() error {
 	l, err := listenEndpoint(s.socketPath)
 	if err != nil {
 		return fmt.Errorf("ipc: listen %s: %w", s.socketPath, err)
+	}
+	if s.wrapListener != nil {
+		l = s.wrapListener(l)
 	}
 	s.listener = l
 
@@ -266,7 +318,34 @@ func (s *Server) Stop() error {
 		close(s.stopCh)
 	}
 	if s.listener != nil {
-		_ = s.listener.Close()
+		// Retire the accept loop BEFORE closing the listener. Closing a
+		// listener out from under a parked Accept() is safe on Unix, but the
+		// Windows named-pipe listener deadlocks: winio's Accept hands a
+		// response channel to an internal goroutine and then waits on it with
+		// no cancellation case, while that goroutine selects between "close
+		// requested" and "accept requested". With both ready the select picks
+		// at random — when close loses, the goroutine calls ConnectNamedPipe
+		// for a client that never arrives and Close's wait for it to exit never
+		// returns. Observed as a 10-minute CI timeout with Stop parked in
+		// win32PipeListener.Close.
+		if s.retireAcceptLoop() {
+			// Retired cleanly: no Accept() is in flight, so closing is safe and
+			// returns promptly.
+			_ = s.listener.Close()
+		} else {
+			// Retirement did NOT complete, so an Accept() may still be in
+			// flight — precisely the state where the Windows close can block
+			// forever. Bounding the WAIT is not the same as bounding Stop:
+			// falling through to a synchronous close here would let a failed
+			// wake-up dial or a slow scheduler wedge shutdown anyway, with the
+			// timeout providing only the APPEARANCE of a bound.
+			//
+			// Close on a detached goroutine instead. Leaking one blocked
+			// goroutine in a process that is shutting down regardless is
+			// strictly better than never shutting down.
+			s.logger.Warn("ipc accept loop did not retire; closing listener asynchronously")
+			go func() { _ = s.listener.Close() }()
+		}
 	}
 	// Close every live connection so any handler parked in a read/write returns
 	// at once — otherwise wg.Wait would block until each stuck conn hit its own
@@ -301,6 +380,9 @@ func (s *Server) heartbeatLoop(interval time.Duration) {
 
 func (s *Server) acceptLoop() {
 	defer s.wg.Done()
+	// Signals Stop that no Accept() is in flight, so the listener is safe to
+	// close (see retireAcceptLoop).
+	defer close(s.acceptDone)
 	for {
 		conn, err := s.listener.Accept()
 		if err != nil {
@@ -327,6 +409,17 @@ func (s *Server) acceptLoop() {
 			case <-time.After(acceptRetryDelay):
 			}
 			continue
+		}
+		// Shutdown already began, so this connection is either Stop's own
+		// wakeup dial or a client that raced it. Close it and leave rather than
+		// spawning a handler Stop would immediately have to tear down. Leaving
+		// HERE — with no Accept() in flight — is what makes closing the listener
+		// safe (see retireAcceptLoop).
+		select {
+		case <-s.stopCh:
+			_ = conn.Close()
+			return
+		default:
 		}
 		s.wg.Add(1)
 		go func() {
@@ -480,7 +573,8 @@ func (s *Server) handleConn(conn net.Conn) {
 		// Final frame: single Response signals end-of-stream.
 		s.writeResponse(conn, Response{Ok: attachErr == nil, Error: errString(attachErr)})
 
-	case CmdPlanImport, CmdPlanSetStatus, CmdTaskApprove, CmdWorkerKill, CmdProjectEnsure:
+	case CmdPlanImport, CmdPlanSetStatus, CmdTaskApprove, CmdWorkerKill, CmdProjectEnsure,
+		CmdProjectConfigGet, CmdProjectConfigApply:
 		s.dispatchDrive(ctx, conn, req)
 
 	case CmdObserveSnapshot, CmdObserveMessages, CmdObserveTaskDescriptions:
@@ -604,6 +698,20 @@ func (s *Server) dispatchDrive(ctx context.Context, conn net.Conn, req Request) 
 			return
 		}
 		err := dh.HandleTaskApprove(ctx, args)
+		s.writeResult(conn, OKReply{OK: err == nil}, err)
+	case CmdProjectConfigGet:
+		var args ProjectConfigGetArgs
+		if !s.decodeArgs(conn, req.Args, &args) {
+			return
+		}
+		reply, err := dh.HandleProjectConfigGet(ctx, args)
+		s.writeResult(conn, reply, err)
+	case CmdProjectConfigApply:
+		var args ProjectConfigApplyArgs
+		if !s.decodeArgs(conn, req.Args, &args) {
+			return
+		}
+		err := dh.HandleProjectConfigApply(ctx, args)
 		s.writeResult(conn, OKReply{OK: err == nil}, err)
 	case CmdWorkerKill:
 		var args WorkerKillArgs

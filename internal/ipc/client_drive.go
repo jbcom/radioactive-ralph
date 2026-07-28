@@ -42,6 +42,17 @@ func (c *Client) driveCall(ctx context.Context, cmd string, args any, out any) e
 	return c.versionedCall(ctx, DriveProtoVersion, cmd, args, out)
 }
 
+// projectEnsureProtoVersion picks the floor for one ProjectEnsure request:
+// ResolveOnly changes the command's semantics and needs a supervisor that
+// understands it, while a plain request stays on the drive version so rolling
+// upgrades keep working. See ResolveOnlyProtoVersion.
+func projectEnsureProtoVersion(args ProjectEnsureArgs) int {
+	if args.ResolveOnly {
+		return ResolveOnlyProtoVersion
+	}
+	return DriveProtoVersion
+}
+
 // versionedCall sends a command-scoped protocol version with JSON-encoded args
 // and decodes the reply into out (out may be nil for OK-only commands). A !Ok
 // response becomes a *CodedError carrying the response Code.
@@ -111,10 +122,27 @@ func (c *Client) ProjectEnsure(
 	args ProjectEnsureArgs,
 ) (*ProjectEnsureReply, error) {
 	var reply ProjectEnsureReply
-	if err := c.driveCall(ctx, CmdProjectEnsure, args, &reply); err != nil {
+	if err := c.versionedCall(
+		ctx, projectEnsureProtoVersion(args), CmdProjectEnsure, args, &reply,
+	); err != nil {
 		return nil, err
 	}
 	return &reply, nil
+}
+
+// ProjectConfigGet reads a project's stored config values through the
+// supervisor, so a client never opens the store to resolve its config layers.
+func (c *Client) ProjectConfigGet(ctx context.Context, args ProjectConfigGetArgs) (ProjectConfigGetReply, error) {
+	var reply ProjectConfigGetReply
+	if err := c.driveCall(ctx, CmdProjectConfigGet, args, &reply); err != nil {
+		return ProjectConfigGetReply{}, err
+	}
+	return reply, nil
+}
+
+// ProjectConfigApply upserts and deletes project config keys in one call.
+func (c *Client) ProjectConfigApply(ctx context.Context, args ProjectConfigApplyArgs) error {
+	return c.driveCall(ctx, CmdProjectConfigApply, args, nil)
 }
 
 // NegotiatedVersion returns the supervisor's supported wire protocol version
