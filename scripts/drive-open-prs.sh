@@ -135,8 +135,20 @@ for round in $(seq 1 400); do
     sleep 30
     recheck=""
     for pr in $prs; do
-      rf=$(gh pr view "$pr" --json statusCheckRollup \
-        --jq '[.statusCheckRollup[]?|select(.conclusion=="FAILURE")|.name]|join(",")' 2>/dev/null)
+      # Do NOT swallow the re-query's exit status. An auth failure, rate limit,
+      # or network blip makes this substitution empty, which is indistinguishable
+      # from "no failures" — so the loop would announce the failure CLEARED and
+      # continue past a PR it never actually re-checked. That is strictly worse
+      # than the stale-sample bug this whole block exists to fix: it would
+      # manufacture a false all-clear rather than merely acting on an old one.
+      # A query that did not answer is INCONCLUSIVE, and the only safe reading of
+      # an unverified failure is that it stands.
+      if ! rf=$(gh pr view "$pr" --json statusCheckRollup \
+        --jq '[.statusCheckRollup[]?|select(.conclusion=="FAILURE")|.name]|join(",")' 2>&1); then
+        echo "STOP: re-check of #$pr FAILED to query ($rf) — the reported failure" \
+          "$failing is UNVERIFIED, treating it as real" >&2
+        exit 3
+      fi
       [ -n "$rf" ] && recheck="$recheck $pr($rf)"
     done
     if [ -n "$recheck" ]; then
