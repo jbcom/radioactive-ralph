@@ -143,7 +143,8 @@ func runDeclarativeAttempt(ctx context.Context, binding Binding, req Request, st
 	switch binding.Config.Type {
 	case declarativePlainStdout:
 		out, err := runCommandWithStallContained(
-			ctx, stallTimeout, req.WorkingDir, req.ContainmentRoot, binding.Config.Binary, args)
+			ctx, stallTimeout, req.WorkingDir, req.ContainmentRoot,
+			BindingWritePaths(binding), binding.Config.Binary, args)
 		if err != nil {
 			return Result{}, err
 		}
@@ -154,7 +155,8 @@ func runDeclarativeAttempt(ctx context.Context, binding Binding, req Request, st
 		}, nil
 	case declarativeLastMessageFile:
 		if _, err := runCommandWithStallContained(
-			ctx, stallTimeout, req.WorkingDir, req.ContainmentRoot, binding.Config.Binary, args,
+			ctx, stallTimeout, req.WorkingDir, req.ContainmentRoot,
+			BindingWritePaths(binding), binding.Config.Binary, args,
 		); err != nil {
 			return Result{}, err
 		}
@@ -170,7 +172,8 @@ func runDeclarativeAttempt(ctx context.Context, binding Binding, req Request, st
 		}, nil
 	case declarativeStreamJSON:
 		out, raw, err := runStreamJSONCommand(
-			ctx, stallTimeout, req.WorkingDir, req.ContainmentRoot, binding.Config.Binary, args)
+			ctx, stallTimeout, req.WorkingDir, req.ContainmentRoot,
+			BindingWritePaths(binding), binding.Config.Binary, args)
 		if err != nil {
 			// raw is empty on error by runStreamJSONCommand's contract (diagnostic
 			// context is folded into err), so there is nothing to extract here.
@@ -349,8 +352,8 @@ func validateArgTemplate(input string) error {
 // bindings running unconfined while the config said otherwise. applyContainment
 // FAILS CLOSED — an unsupported platform or an unusable root returns an error
 // here rather than launching the turn unwrapped.
-func runStreamJSONCommand(ctx context.Context, stallTimeout time.Duration, dir, containmentRoot, bin string, args []string) (assistantText, rawOutput string, err error) {
-	bin, args, wrapErr := applyContainment(containmentRoot, bin, args)
+func runStreamJSONCommand(ctx context.Context, stallTimeout time.Duration, dir, containmentRoot string, extraWritable []string, bin string, args []string) (assistantText, rawOutput string, err error) {
+	bin, args, wrapErr := applyContainment(containmentRoot, extraWritable, bin, args)
 	if wrapErr != nil {
 		return "", "", wrapErr
 	}

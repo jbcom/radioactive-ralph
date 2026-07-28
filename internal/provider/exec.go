@@ -30,7 +30,7 @@ func runCommand(ctx context.Context, dir, bin string, args []string) (string, er
 }
 
 func runCommandWithStall(ctx context.Context, stallTimeout time.Duration, dir, bin string, args []string) (string, error) {
-	return runCommandWithStallContained(ctx, stallTimeout, dir, "", bin, args)
+	return runCommandWithStallContained(ctx, stallTimeout, dir, "", nil, bin, args)
 }
 
 // runCommandWithStallContained is runCommandWithStall with an optional
@@ -39,10 +39,12 @@ func runCommandWithStall(ctx context.Context, stallTimeout time.Duration, dir, b
 func runCommandWithStallContained(
 	ctx context.Context,
 	stallTimeout time.Duration,
-	dir, containmentRoot, bin string,
+	dir, containmentRoot string,
+	extraWritable []string,
+	bin string,
 	args []string,
 ) (string, error) {
-	bin, args, wrapErr := applyContainment(containmentRoot, bin, args)
+	bin, args, wrapErr := applyContainment(containmentRoot, extraWritable, bin, args)
 	if wrapErr != nil {
 		return "", wrapErr
 	}

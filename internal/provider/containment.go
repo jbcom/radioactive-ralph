@@ -14,11 +14,15 @@ import (
 // pass-through. A caller that asked for containment and got an unconfined
 // process would hold precisely the false guarantee this exists to replace, and
 // the provider would look contained while writing anywhere.
-func applyContainment(containmentRoot, bin string, args []string) (string, []string, error) {
+// extraWritable are directories outside the root the bound CLI must be able to
+// write for a contained turn to START -- codex's app-server directory, for
+// example. They come from the binding's own capability record and are measured,
+// never guessed. An empty slice leaves the boundary exactly as it was.
+func applyContainment(containmentRoot string, extraWritable []string, bin string, args []string) (string, []string, error) {
 	if containmentRoot == "" {
 		return bin, args, nil
 	}
-	policy, err := contain.NewPolicy(containmentRoot)
+	policy, err := contain.NewPolicy(containmentRoot, extraWritable...)
 	if err != nil {
 		return "", nil, err
 	}
