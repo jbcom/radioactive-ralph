@@ -526,8 +526,17 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
 
 ## Rolling improvement queue (directive 0 appends here)
 
-- [ ] GENERATED 2026-07-28 by forward-exploring the observe surface just
-      shipped (#304). Verified against the code before writing down, not
+- [ ] GENERATED 2026-07-28: UI/UX pass on the meso views now that task rows
+      carry three markers (worker=, via=, pN). Run the TUI and GUI against a
+      real fan-out plan, SCREENSHOT both, and read the screenshots -- the
+      trailing-whitespace defect in the CLI table was invisible to a passing
+      test suite and showed up only in the actual bytes, so assume the same
+      class of flaw exists in the rendered views. Specifically check: does a row
+      with all three markers still fit a normal terminal width, and does the GUI
+      HBox wrap or clip when it does not?
+
+- [x] GENERATED 2026-07-28 by forward-exploring the observe surface just
+      shipped (#304); both findings resolved in that PR. Verified against the code before writing down, not
       inferred:
       * The full consumer chain WAS checked and is sound: IPC uses type
         ALIASES (`type ObserveSnapshotReply = observe.Snapshot`,
@@ -541,6 +550,17 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
         read what the snapshot now carries. Decide whether the CLI should grow a
         task table; if yes it must honour the same rules the UIs do (omit absent
         provenance, label only partitions of 2+, never print the raw ordinal).
+      DECIDED + DONE 2026-07-28 (same PR): yes, the CLI grows a task table.
+      `status` now prints one line per task under the summary, reusing
+      observe.PartitionLabels and Task.ProvenanceLabel rather than
+      re-implementing the rules -- a CLI with its own copy would be a third
+      dialect drifting from the TUI and GUI. A truncated page says so, since a
+      bounded list that looks complete reads as "the rest finished".
+      LESSON, and the reason to always read the actual output: the tests passed
+      while every unrun task carried TRAILING WHITESPACE, because the status
+      column is padded for marker alignment and unrun tasks have no markers.
+      No assertion covered it -- reading the real bytes did. Trimmed, and pinned
+      by TestRunStatusQueryTaskLinesHaveNoTrailingSpace.
 
 - [x] DONE 2026-07-28 (same PR): folded the duplicated partition-labelling loop
       into observe.PartitionLabels. I had written the SAME display policy twice

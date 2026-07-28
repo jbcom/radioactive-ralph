@@ -76,6 +76,24 @@ this surface withholds.
 - `Attach` — the live event stream, so the view updates as work
   progresses
 
+## The same data from the CLI
+
+`radioactive_ralph status` prints the summary line followed by one line per
+task, using the same markers and the same rules as the meso view:
+
+```
+project=demo plans=2 tasks=3 active_workers=1 captured_at=2026-07-28T19:00:00Z
+  task-a           running                  via=primary p1
+  task-b           running                  via=codex p1
+  task-c           ready
+```
+
+A truncated page says so rather than ending silently — a bounded list that
+looks complete would read as "the rest finished".
+
+`--json` emits the entire versioned snapshot, which carries every field the
+views use plus the raw `partition_ordinal`.
+
 ## Relationship to the CLI
 
 There is no separate `tui` subcommand and no separate cockpit runtime.

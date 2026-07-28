@@ -329,3 +329,108 @@ func TestQueryCommandsRegisteredWithAutomationFlags(t *testing.T) {
 		}
 	}
 }
+
+// TestRunStatusQueryListsTasks closes the gap that made the human-readable
+// output strictly less useful than the JSON it wraps: the summary line reports
+// COUNTS, so an operator without --json could not see which task was running,
+// what ran it, or which tasks share a fan-out turn -- all of which the snapshot
+// already carries. That forced them to either pipe through jq or open a UI.
+func TestRunStatusQueryListsTasks(t *testing.T) {
+	reply := querySnapshotFixture(1)
+	reply.Tasks = observe.TaskPage{Items: []observe.Task{
+		{
+			PlanID: "plan-1", ID: "task-a", Status: "running",
+			AssignedAlias: "primary", PartitionOrdinal: "aaaa",
+		},
+		{
+			PlanID: "plan-1", ID: "task-b", Status: "running",
+			AssignedProvider: "codex", PartitionOrdinal: "aaaa",
+		},
+		{PlanID: "plan-1", ID: "task-c", Status: "ready"},
+	}}
+
+	var out bytes.Buffer
+	if err := runStatusQueryWith(
+		context.Background(), &out, &fakeObserveClient{snapshot: reply},
+		ipc.ObserveSnapshotArgs{ProjectID: "project-1"}, false, false,
+	); err != nil {
+		t.Fatalf("runStatusQueryWith: %v", err)
+	}
+	got := out.String()
+
+	for _, want := range []string{
+		"task-a", "task-b", "task-c", // every task listed
+		"running", "ready", // its status
+		"via=primary", // alias preferred over provider
+		"via=codex",   // provider used when no alias
+		"p1",          // the shared fan-out partition
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("human-readable status output is missing %q:\n%s", want, got)
+		}
+	}
+	// The same rules the UIs follow, not a second dialect of them.
+	if strings.Contains(got, "p2") {
+		t.Errorf("a partition of one was labelled; singletons are the ordinary "+
+			"case and marking them buries the real fan-out groups:\n%s", got)
+	}
+	if strings.Contains(got, "aaaa") {
+		t.Errorf("the raw partition ordinal leaked into output; it is a hash an "+
+			"operator cannot read, and its inputs embed author text:\n%s", got)
+	}
+	if strings.Contains(got, "via=\n") || strings.Contains(got, "via= ") {
+		t.Errorf("a task that never ran shows an empty provenance marker:\n%s", got)
+	}
+}
+
+// TestRunStatusQueryFlagsTruncatedTaskPage guards the failure mode a bounded
+// page creates: a list that LOOKS complete. An operator reading three task
+// lines when the plan has thirty could reasonably conclude the rest finished,
+// so a truncated page must say so.
+func TestRunStatusQueryFlagsTruncatedTaskPage(t *testing.T) {
+	reply := querySnapshotFixture(1)
+	reply.Tasks = observe.TaskPage{
+		Items:     []observe.Task{{PlanID: "plan-1", ID: "task-a", Status: "ready"}},
+		HasMore:   true,
+		NextAfter: &observe.TaskCursor{PlanID: "plan-1", TaskID: "task-a"},
+	}
+
+	var out bytes.Buffer
+	if err := runStatusQueryWith(
+		context.Background(), &out, &fakeObserveClient{snapshot: reply},
+		ipc.ObserveSnapshotArgs{ProjectID: "project-1"}, false, false,
+	); err != nil {
+		t.Fatalf("runStatusQueryWith: %v", err)
+	}
+	if !strings.Contains(out.String(), "more tasks available") {
+		t.Errorf("a truncated task page rendered as though it were complete:\n%s",
+			out.String())
+	}
+}
+
+// TestRunStatusQueryTaskLinesHaveNoTrailingSpace pins a defect found by reading
+// the command's ACTUAL output rather than its tests: the status column is
+// padded so the marker columns align, which left trailing blanks on every row
+// whose markers were absent -- an unrun task, the common case. Trailing
+// whitespace is invisible until it surfaces as a spurious diff or trips a
+// linter.
+func TestRunStatusQueryTaskLinesHaveNoTrailingSpace(t *testing.T) {
+	reply := querySnapshotFixture(1)
+	reply.Tasks = observe.TaskPage{Items: []observe.Task{
+		{PlanID: "plan-1", ID: "task-a", Status: "ready"},
+		{PlanID: "plan-1", ID: "task-b", Status: "running", AssignedAlias: "primary"},
+	}}
+
+	var out bytes.Buffer
+	if err := runStatusQueryWith(
+		context.Background(), &out, &fakeObserveClient{snapshot: reply},
+		ipc.ObserveSnapshotArgs{ProjectID: "project-1"}, false, false,
+	); err != nil {
+		t.Fatalf("runStatusQueryWith: %v", err)
+	}
+	for _, line := range strings.Split(strings.TrimRight(out.String(), "\n"), "\n") {
+		if line != strings.TrimRight(line, " ") {
+			t.Errorf("line has trailing whitespace: %q", line)
+		}
+	}
+}

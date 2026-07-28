@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 
 	"github.com/jbcom/radioactive-ralph/internal/ipc"
 	"github.com/jbcom/radioactive-ralph/internal/observe"
@@ -153,6 +154,9 @@ func runStatusQueryWith(
 		if err != nil {
 			return fmt.Errorf("status: write output: %w", err)
 		}
+		if err := writeTaskLines(out, snapshot.Tasks); err != nil {
+			return err
+		}
 	}
 	if requireZeroWorkers && snapshot.Summary.ActiveWorkerCount != 0 {
 		return fmt.Errorf(
@@ -253,4 +257,48 @@ func writeJSON(out io.Writer, value any) error {
 	encoder := json.NewEncoder(out)
 	encoder.SetEscapeHTML(false)
 	return encoder.Encode(value)
+}
+
+// writeTaskLines renders the task page under the summary line, so the
+// human-readable output is not strictly less informative than the JSON it
+// wraps. The summary reports COUNTS; without this an operator had to pipe
+// through jq or open a UI to learn which task was running and what ran it.
+//
+// It reuses observe.PartitionLabels and Task.ProvenanceLabel rather than
+// re-deriving either. Those encode display POLICY (label only multi-task
+// partitions, never print the raw ordinal, prefer alias over provider type),
+// and a CLI that re-implemented them would become a third dialect that drifts
+// from the TUI and GUI.
+func writeTaskLines(out io.Writer, page observe.TaskPage) error {
+	if len(page.Items) == 0 {
+		return nil
+	}
+	labels := observe.PartitionLabels(page.Items)
+	for _, task := range page.Items {
+		line := fmt.Sprintf("  %-16s %-24s", task.ID, task.Status)
+		if name := task.ProvenanceLabel(); name != "" {
+			line += " via=" + name
+		}
+		if label := labels[task.PartitionOrdinal]; label != "" {
+			line += " " + label
+		}
+		// The status column is padded so the marker columns align, which leaves
+		// trailing spaces on any row whose markers are all absent -- an unrun
+		// task, the common case. Trailing whitespace is invisible until it shows
+		// up as a diff or trips a linter, so trim it here rather than shipping
+		// rows that differ only in blanks.
+		if _, err := fmt.Fprintln(out, strings.TrimRight(line, " ")); err != nil {
+			return fmt.Errorf("status: write task line: %w", err)
+		}
+	}
+	// A truncated list that looks complete is the failure mode worth guarding:
+	// an operator reading "3 tasks" from a bounded page could conclude the rest
+	// finished.
+	if page.HasMore {
+		if _, err := fmt.Fprintln(out,
+			"  … more tasks available; showing the first bounded page"); err != nil {
+			return fmt.Errorf("status: write task pagination notice: %w", err)
+		}
+	}
+	return nil
 }
