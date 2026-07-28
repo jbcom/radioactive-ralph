@@ -145,6 +145,31 @@ func (c *Client) ProjectConfigApply(ctx context.Context, args ProjectConfigApply
 	return c.driveCall(ctx, CmdProjectConfigApply, args, nil)
 }
 
+// CalibrationPut records one provider calibration and returns the
+// content-addressed id the store derived.
+//
+// On the DRIVE version rather than the query one: recording a measurement is a
+// write, and the supervisor stays the single writer of record.
+func (c *Client) CalibrationPut(ctx context.Context, args CalibrationPutArgs) (CalibrationPutReply, error) {
+	var reply CalibrationPutReply
+	if err := c.driveCall(ctx, CmdCalibrationPut, args, &reply); err != nil {
+		return CalibrationPutReply{}, err
+	}
+	return reply, nil
+}
+
+// CalibrationList enumerates the recorded calibrations, one per alias, so an
+// operator can see which aliases have a measured independence domain — the
+// difference between a differentFrom constraint that can be enforced and one
+// that silently cannot.
+func (c *Client) CalibrationList(ctx context.Context) (CalibrationListReply, error) {
+	var reply CalibrationListReply
+	if err := c.driveCall(ctx, CmdCalibrationList, struct{}{}, &reply); err != nil {
+		return CalibrationListReply{}, err
+	}
+	return reply, nil
+}
+
 // NegotiatedVersion returns the supervisor's supported wire protocol version
 // (from StatusReply). 0 means a pre-versioned v1 supervisor.
 func (c *Client) NegotiatedVersion(ctx context.Context) (int, error) {

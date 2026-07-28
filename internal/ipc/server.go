@@ -104,6 +104,21 @@ type DriveHandler interface {
 	HandleProjectConfigApply(ctx context.Context, args ProjectConfigApplyArgs) error
 }
 
+// CalibrationHandler is the OPTIONAL calibration surface.
+//
+// A SEPARATE interface rather than two more DriveHandler methods, for the same
+// reason DriveHandler is separate from Handler: adding to DriveHandler would
+// break every existing implementation and test double at compile time, and a
+// supervisor that does not implement this still answers the command with
+// unsupported_command instead of failing to build.
+type CalibrationHandler interface {
+	// HandleCalibrationPut records one measurement. The reply carries the
+	// content-addressed id the store derived.
+	HandleCalibrationPut(ctx context.Context, args CalibrationPutArgs) (CalibrationPutReply, error)
+	// HandleCalibrationList enumerates recorded calibrations, one per alias.
+	HandleCalibrationList(ctx context.Context) (CalibrationListReply, error)
+}
+
 // QueryHandler is the OPTIONAL v3 content-safe query surface. Keeping it
 // separate preserves source and wire compatibility with v1/v2 handlers: a
 // rolling old supervisor answers query commands with unsupported_command
@@ -580,6 +595,9 @@ func (s *Server) handleConn(conn net.Conn) {
 	case CmdObserveSnapshot, CmdObserveMessages, CmdObserveTaskDescriptions:
 		s.dispatchQuery(ctx, conn, req)
 
+	case CmdCalibrationPut, CmdCalibrationList:
+		s.dispatchCalibration(ctx, conn, req)
+
 	default:
 		s.writeResponse(conn, Response{
 			Ok:    false,
@@ -643,6 +661,45 @@ func (s *Server) dispatchQuery(
 			return
 		}
 		reply, err := qh.HandleObserveTaskDescriptions(ctx, args)
+		s.writeResult(conn, reply, err)
+	}
+}
+
+// dispatchCalibration routes a calibration command. It mirrors dispatchDrive's
+// version and capability checks rather than sharing them: recording a
+// measurement is a WRITE, so it must not become reachable from the read-only
+// query path, and a supervisor without the surface must answer
+// unsupported_command instead of appearing to accept the record.
+func (s *Server) dispatchCalibration(ctx context.Context, conn net.Conn, req Request) {
+	if req.ProtoVersion > ProtoVersion {
+		s.writeResponse(conn, Response{
+			Ok:    false,
+			Error: fmt.Sprintf("protocol version %d not supported (this supervisor speaks v%d)", req.ProtoVersion, ProtoVersion),
+			Code:  CodeUnsupportedCommand,
+		})
+		return
+	}
+
+	ch, ok := s.handler.(CalibrationHandler)
+	if !ok {
+		s.writeResponse(conn, Response{
+			Ok:    false,
+			Error: fmt.Sprintf("calibration command %q not supported by this supervisor", req.Cmd),
+			Code:  CodeUnsupportedCommand,
+		})
+		return
+	}
+
+	switch req.Cmd {
+	case CmdCalibrationPut:
+		var args CalibrationPutArgs
+		if !s.decodeArgs(conn, req.Args, &args) {
+			return
+		}
+		reply, err := ch.HandleCalibrationPut(ctx, args)
+		s.writeResult(conn, reply, err)
+	case CmdCalibrationList:
+		reply, err := ch.HandleCalibrationList(ctx)
 		s.writeResult(conn, reply, err)
 	}
 }
