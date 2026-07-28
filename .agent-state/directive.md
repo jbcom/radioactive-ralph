@@ -68,7 +68,7 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
 
 ## Remaining
 
-- [ ] Land the 10 open PRs: 222, 225, 251, 252, 255, 257, 258, 259, 262, 263.
+- [ ] Land the 9 open PRs: 222, 225, 251, 252, 255, 257, 259, 262, 263.
       NOT wait-labelled, deliberately, and I tried it the other way: labelling
       this [WAIT-AGENT] because the background driver owns it made EVERY open
       item a wait, and verify-repo-claims.sh guard 8 caught it --
@@ -90,7 +90,9 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
       (reporting owner), #245 (init over supervisor), #247 (capability
       requirements, squashed as 82ff030), #236 (calibration records, 9c04550 --
       merged by the driver with no manual step once its checks went green),
-      #261 (shellcheck coverage + the non-cancelling driver).
+      #261 (shellcheck coverage + the non-cancelling driver), #258 (observe
+      blocked-reason, c94ca79 -- merged by the driver, and it conflicted NOTHING:
+      all eight others went BEHIND, none DIRTY).
       DIRTY CLEARED 2026-07-28: #259, #251, #225 all conflicted on #247 merging
       and are now BLOCKED/MERGEABLE again. Nearly every conflict was in
       GENERATED docs (docs/api/internal/*.md) -> `make docs-api`, then
@@ -290,7 +292,9 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
               * per-task provenance: UNBLOCKED. internal/store/calibrations.go
                 is on main, so the types exist to project.
               * ready partitions: still gated. `func (s *Store) ReadyPartitions`
-                is NOT on main; it ships with #225, which is open.
+                is NOT on main; it ships with #225, which is open. RE-CHECKED
+                after #258 merged (c94ca79): the observe blocked surface IS on
+                main now, but that is the operator half, not this one.
             Do the provenance half first rather than waiting on both — checked
             by grepping origin/main for each symbol, not by assuming the pair
             moves together.
