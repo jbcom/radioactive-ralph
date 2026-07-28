@@ -137,3 +137,89 @@ func TestMesoExplainsBlockedTasks(t *testing.T) {
 		}
 	}
 }
+
+// visibleWidth is the rune count with ANSI styling removed -- what the terminal
+// actually has to fit.
+func visibleWidth(line string) int {
+	var b strings.Builder
+	inEscape := false
+	for _, r := range line {
+		switch {
+		case r == 0x1b:
+			inEscape = true
+		case inEscape:
+			if r == 'm' {
+				inEscape = false
+			}
+		default:
+			b.WriteRune(r)
+		}
+	}
+	return len([]rune(b.String()))
+}
+
+// TestMesoRowsFitAConventionalTerminal pins a defect found by MEASURING the
+// rendered output rather than trusting the tests: with every marker present and
+// a blocked reason inline, the worst-case row was 215 columns. It wrapped on any
+// normal terminal, and because the wrap landed mid-sentence the partition marker
+// and the remediation scattered across lines -- unreadable exactly when the
+// operator most needs to read it.
+//
+// The reason now renders on its own continuation line. 120 columns is the bound:
+// comfortably past the 80-column default, well inside a maximized modern
+// terminal, and tight enough to catch a marker that grows without anyone noticing.
+func TestMesoRowsFitAConventionalTerminal(t *testing.T) {
+	f := testFake()
+	m := newTestModel(t, f)
+	m.lvl = levelMeso
+	m.selectedPlan = f.plans[0]
+	m.snap.tasks = []observe.Task{{
+		ID: "implement-provider-x", PlanID: "plan-1", Status: "blocked_capability",
+		ClaimedByWorkerID: "worker-7f3a2b1c", PartitionOrdinal: "aaaa",
+		AssignedAlias: "primary-opus",
+		Blocked: &observe.BlockedSummary{
+			Category: observe.BlockedCapability,
+			Summary:  "the bound provider does not satisfy this task's requirements; bind a provider that does",
+		},
+	}, {
+		ID: "peer", PlanID: "plan-1", Status: "running",
+		PartitionOrdinal: "aaaa", AssignedAlias: "primary-opus",
+	}}
+	m.snap.descriptions = map[string]string{
+		"implement-provider-x": "wire up the frobnicator end to end",
+	}
+
+	for _, line := range strings.Split(m.View(), "\n") {
+		if w := visibleWidth(line); w > 120 {
+			t.Errorf("row is %d columns and will wrap mid-content:\n%s", w, line)
+		}
+	}
+	// Fitting must not have been achieved by dropping the reason.
+	if !strings.Contains(m.View(), "bind a provider that does") {
+		t.Error("the remediation vanished; fitting the width must not cost the " +
+			"information the line exists to carry")
+	}
+}
+
+// TestWorkerSuffixKeepsIdsDistinguishable pins the property the abbreviation
+// exists for, and that a first attempt destroyed.
+//
+// Worker ids share a constant head, so truncating from the FRONT rendered every
+// row as "worker-…" -- correlating nothing, which is the marker's only job.
+// Caught by reading the rendered output; no width assertion would have noticed,
+// since the broken version was exactly as narrow as the working one.
+func TestWorkerSuffixKeepsIdsDistinguishable(t *testing.T) {
+	// Real ids from store.CreateWorker are uuid-like with a longer shared
+	// prefix than "worker-". A first version of this test used ids that
+	// diverged at rune 8 and PASSED against front-truncation -- weaker than the
+	// defect it claimed to guard.
+	a := workerSuffix("worker-session-01-7f3a2b1c", 8)
+	b := workerSuffix("worker-session-01-9e8d7c6b", 8)
+	if a == b {
+		t.Fatalf("two different workers both render as %q; the marker cannot "+
+			"correlate rows if every id abbreviates identically", a)
+	}
+	if short := workerSuffix("w-1", 8); short != "w-1" {
+		t.Errorf("an id shorter than the limit was altered: %q", short)
+	}
+}

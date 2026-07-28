@@ -7,6 +7,21 @@ import (
 	"github.com/jbcom/radioactive-ralph/internal/observe"
 )
 
+// workerSuffix abbreviates a worker id to its LAST limit runes, marking the cut
+// so it never reads as a whole id.
+//
+// The tail, because that is where ids differ: generated worker ids share a
+// constant head, so a leading truncation renders every row identically and
+// destroys the only thing this marker is for -- telling at a glance that two
+// tasks are held by the same worker.
+func workerSuffix(id string, limit int) string {
+	r := []rune(id)
+	if len(r) <= limit {
+		return id
+	}
+	return "…" + string(r[len(r)-limit:])
+}
+
 // renderMeso renders the drill-into-a-plan view (spec §7 "meso"): the
 // selected plan's tasks grouped by their parallel_group/sequence_ordinal
 // structure, their statuses, and the worker hierarchy implied by which
@@ -38,7 +53,15 @@ func renderMeso(m Model) string {
 			statusStr := statusStyle(t.Status).Render(t.Status)
 			worker := ""
 			if t.ClaimedByWorkerID != "" {
-				worker = styleMuted.Render(" worker=" + t.ClaimedByWorkerID)
+				// Abbreviated because the worker id is a CONTROL handle -- kill
+				// takes it from micro -- not something an operator reads off a scan
+				// line, and at full length it was the widest marker on the row.
+				//
+				// The SUFFIX, not the prefix. Reading the rendered output caught
+				// this: ids share a constant "worker-" head, so a leading
+				// truncation printed "worker-…" on every row and correlated
+				// nothing, which is the one job this marker has.
+				worker = styleMuted.Render(" w:" + workerSuffix(t.ClaimedByWorkerID, 8))
 			}
 			// Which provider actually ran this task. The worker id cannot answer
 			// that once the work is over: worker= is a live claim, and the reaper
@@ -53,17 +76,28 @@ func renderMeso(m Model) string {
 			if label := partitionLabels[t.PartitionOrdinal]; label != "" {
 				part = styleMuted.Render(" " + label)
 			}
-			// Why a blocked task is stalled. It is the one status an operator
-			// cannot act on from the status string alone: a blocked task and one
-			// waiting on a dependency both sit at zero progress, but only one
+			// The description prints in FULL. Truncating it was the first attempt
+			// at fitting the width and it was wrong: a live E2E test drives the
+			// real TUI and asserts an ordinary 40-character task description is
+			// visible at meso, which a 24-rune cap silently clipped. That test was
+			// right -- the description is what an operator reads to identify a
+			// task, so the markers around it are what must give way, not it.
+			fmt.Fprintf(&b, "%s%-12s %-24s %s%s%s%s\n",
+				marker, t.ID, statusStr, m.snap.descriptions[t.ID], worker, via, part)
+			// Why a blocked task is stalled -- the one status an operator cannot
+			// act on from the status string alone, since a blocked task and one
+			// waiting on a dependency both sit at zero progress and only one
 			// clears itself. Blocked carries a fixed classification and static
 			// remediation, never the stored error string.
-			blocked := ""
+			//
+			// On its OWN line, because inline it pushed the worst-case row past
+			// 200 columns: it wrapped on any normal terminal, and the wrap landed
+			// mid-sentence so the partition marker and the reason scattered across
+			// lines. Measured, not guessed -- the row is ~60 columns without it.
 			if t.Blocked != nil && t.Blocked.Summary != "" {
-				blocked = styleMuted.Render(" — " + t.Blocked.Summary)
+				b.WriteString(styleMuted.Render("               ↳ " + t.Blocked.Summary))
+				b.WriteString("\n")
 			}
-			fmt.Fprintf(&b, "%s%-12s %-24s %s%s%s%s%s\n",
-				marker, t.ID, statusStr, m.snap.descriptions[t.ID], worker, via, part, blocked)
 			row++
 		}
 	}

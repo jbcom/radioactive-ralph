@@ -32,7 +32,10 @@ there is no separate client-side state to get out of sync.
 A meso task row reads `<id> <status> <description>`, followed by two
 markers that appear only once they are known:
 
-- `worker=<id>` — the Ralph worker currently holding the task's claim.
+- `w:…<suffix>` — the Ralph worker currently holding the task's claim,
+  abbreviated to its distinguishing tail. The worker id is a control
+  handle (kill takes it from micro), not something to read off a scan
+  line; the tail is shown because ids share a constant head.
 - `via=<alias>` — the provider that actually executed the task, by its
   configured alias (falling back to the provider type when no alias was
   set).
@@ -54,6 +57,13 @@ group.)
 
 A task that has not been dispatched shows no `via=` at all — an unexecuted
 task must not read as though some provider owned it.
+
+A blocked task adds a `↳` continuation line carrying its remediation —
+the one status an operator cannot act on from the status string alone,
+since a blocked task and one waiting on a dependency both sit at zero
+progress and only one clears itself. It renders on its own line because
+inline it pushed the widest row past 200 columns, where the wrap landed
+mid-sentence and scattered the markers.
 
 - `p1`, `p2`, … — the **ready partition** the task belongs to. Rows sharing
   a marker are the ones native fan-out may hand to a single provider turn.
