@@ -155,6 +155,18 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
 - [ ] [WAIT] Make provider write containment reachable from config, then default
       it on. Step 1 (the config key) is DONE on #251; step 2 is gated on that PR
       merging and on real turns using it.
+      EVIDENCE ACQUIRED 2026-07-28 (cdc28d8), and it MOVED the bar for step 2.
+      A CodeRabbit finding on #251 was verified true: declarativeStreamJSON
+      called runStreamJSONCommand, which took no containment argument at all, so
+      a stream-json binding ran UNCONFINED while the config claimed
+      "confines the provider process AND everything it spawns". Fail-open on a
+      security boundary, and worse than no containment because an operator
+      trusts the claim. Before flipping the default, audit every exec path for
+      the SAME class of miss: enforcement now lives at one choke point
+      (applyContainment) and TestEveryDeclarativeShapeConfinesItsTurn measures
+      whether a write ESCAPES rather than whether an argument was passed --
+      a signature check would not have caught this one. Any new runner shape
+      added before the flip needs a subtest there.
       macOS and Linux both enforce in #251; native Windows is closed as
       not-needed (no provider runs there). Two steps, in order:
       1. [x] DONE on #251: contain_provider_writes project config key. Absent
