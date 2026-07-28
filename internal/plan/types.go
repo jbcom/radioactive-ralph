@@ -163,21 +163,27 @@ func (m *TaskMetadata) AllowedProviders() []string {
 	if m == nil {
 		return nil
 	}
-	// A declared `binding.provider` makes the same claim `providers` does -- run
-	// THIS task on THIS provider -- so it resolves through the SAME enforcement
-	// rather than a parallel one. Folding it in here means every existing
-	// consumer (dispatch admission, the independence rotation, fan-out
-	// coalescing) honours the pin without each having to learn a second field,
-	// which is exactly how `providers` itself stayed unenforced on the fan-out
-	// path until #272.
-	//
-	// A `providers` list that excludes the pin is rejected at IMPORT
-	// (validateBindingPin), so by the time this runs the two cannot contradict
-	// each other and returning the pin alone is safe.
-	if pinned := strings.TrimSpace(m.Binding.Provider); pinned != "" {
-		return []string{pinned}
-	}
 	return m.Providers
+}
+
+// PinnedProviderType returns the provider TYPE a task's binding pins, or "".
+//
+// Deliberately separate from AllowedProviders, which was the first attempt and
+// was wrong. CheckAllowedProviders matches an entry against either the binding
+// ALIAS or its type, which is right for `providers` -- an operator naming
+// "reviewer" means that configured binding. It is wrong for a pin: an alias
+// merely NAMED "codex" that is backed by type "claude" would satisfy
+// binding.provider="codex" and run the task on Claude, honouring the
+// declaration's spelling rather than its meaning.
+//
+// So the pin is checked against Config.Type ALONE, at dispatch, where the
+// resolved binding is known. Import cannot decide this: alias-to-type mapping
+// lives in operator config that ValidateForImport never sees.
+func (m *TaskMetadata) PinnedProviderType() string {
+	if m == nil {
+		return ""
+	}
+	return strings.TrimSpace(m.Binding.Provider)
 }
 
 // IndependencePeers returns the tasks this one must not share an independence

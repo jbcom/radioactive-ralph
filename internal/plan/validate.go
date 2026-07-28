@@ -66,9 +66,6 @@ func ValidateForImport(md []byte) error {
 	if findings := validateDifferentFrom(parsed); len(findings) > 0 {
 		return ValidationErrors(findings)
 	}
-	if findings := validateBindingPin(parsed); len(findings) > 0 {
-		return ValidationErrors(findings)
-	}
 	return nil
 }
 
@@ -371,39 +368,4 @@ func lineOf(n ast.Node, source []byte) int {
 		}
 	}
 	return line
-}
-
-// validateBindingPin refuses a task whose `binding.provider` contradicts its own
-// `providers` list.
-//
-// Both fields state the same kind of restriction, and AllowedProviders resolves
-// a pin by returning it alone -- correct only because the two cannot disagree.
-// A plan declaring providers:["codex"] with binding.provider:"claude" states two
-// incompatible requirements at once, and ANY runtime resolution silently honours
-// one while violating the other.
-//
-// Caught at import for the same reason a self-referencing differentFrom is: the
-// author is present, the contradiction is statically visible, and the runtime
-// alternative is a task that runs somewhere the plan explicitly excluded.
-func validateBindingPin(p *Plan) []PlanError {
-	var findings []PlanError
-	walkPlanSteps(p, func(id string, step Step) {
-		if step.Metadata == nil {
-			return
-		}
-		pinned := strings.TrimSpace(step.Metadata.Binding.Provider)
-		if pinned == "" || len(step.Metadata.Providers) == 0 {
-			return
-		}
-		for _, allowed := range step.Metadata.Providers {
-			if strings.TrimSpace(allowed) == pinned {
-				return
-			}
-		}
-		findings = append(findings, PlanError{Msg: fmt.Sprintf(
-			"task %q pins binding.provider %q but its providers list %v excludes it; "+
-				"the two state incompatible requirements, so any resolution would "+
-				"violate one of them", id, pinned, step.Metadata.Providers)})
-	})
-	return findings
 }

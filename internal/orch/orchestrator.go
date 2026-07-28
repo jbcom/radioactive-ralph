@@ -807,6 +807,34 @@ func (o *Orchestrator) dispatchReadyStep(ctx context.Context, a dispatchStepArgs
 		binding = rotated
 	}
 
+	// A declared `binding.provider` pins the provider TYPE, checked separately
+	// from `providers` because the matching rule differs. CheckAllowedProviders
+	// accepts an entry matching either the binding ALIAS or its type -- correct
+	// for `providers`, where naming "reviewer" means that configured binding.
+	// A pin is a claim about WHAT RUNS, so an alias merely named "codex" backed
+	// by type "claude" must not satisfy binding.provider="codex"; that would
+	// honour the declaration's spelling over its meaning.
+	//
+	// Resolved here rather than at import because the alias-to-type mapping
+	// lives in operator config, which plan validation never sees. A plan
+	// declaring both `providers` and a pin is therefore NOT a contradiction to
+	// reject up front -- providers:["reviewer"] with binding.provider:"codex"
+	// is perfectly consistent when `reviewer` is a codex binding.
+	if pinned := a.step.Metadata.PinnedProviderType(); pinned != "" {
+		rotated, rerr := o.resolvePinnedBinding(ctx, a, pinned, binding)
+		if rerr != nil {
+			release()
+			_ = o.store.Emit(ctx, store.EmitOpts{
+				ProjectID: a.projectID, PlanID: a.planID,
+				Kind:        "worker.admission_refused",
+				Stream:      "service",
+				PayloadJSON: mustPayloadJSON(store.EventPayload{Reason: rerr.Error()}),
+			})
+			return false, nil
+		}
+		binding = rotated
+	}
+
 	// Independence: a step declaring differentFrom must not run on a provider
 	// whose domain matches one a named peer already ran on.
 	//
@@ -1286,6 +1314,43 @@ func (o *Orchestrator) resolveAllowedBinding(
 	}
 	return provider.Binding{}, fmt.Errorf(
 		"orch: no configured provider satisfies the task restriction %v", allowed)
+}
+
+// resolvePinnedBinding rotates the pool until it finds a binding whose
+// Config.Type equals the task's pinned provider.
+//
+// Rotated rather than refused on the head, for the same reason the `providers`
+// pass rotates: a pool IS a rotation, so whether the cursor happens to sit on
+// the pinned type is a coin flip, and refusing on that would make a satisfiable
+// pin fail at random.
+//
+// Type-only by construction: binding.Name is deliberately NOT consulted, since
+// an alias named after a provider it is not backed by would otherwise satisfy
+// the pin.
+func (o *Orchestrator) resolvePinnedBinding(
+	ctx context.Context,
+	a dispatchStepArgs,
+	pinned string,
+	first provider.Binding,
+) (provider.Binding, error) {
+	seen := map[string]struct{}{}
+	candidate := first
+	for i := 0; i <= maxProviderRotations; i++ {
+		if candidate.Config.Type == pinned {
+			return candidate, nil
+		}
+		if _, wrapped := seen[candidate.Name]; wrapped {
+			break
+		}
+		seen[candidate.Name] = struct{}{}
+		next, err := o.resolveBinding(ctx, a.projectID, a.parallel, BindingDispatch)
+		if err != nil {
+			return provider.Binding{}, fmt.Errorf("orch: resolve pinned binding: %w", err)
+		}
+		candidate = next
+	}
+	return provider.Binding{}, fmt.Errorf(
+		"orch: no configured binding has provider type %q, which this task pins", pinned)
 }
 
 // resolveIndependentBinding returns a binding whose independence domain differs

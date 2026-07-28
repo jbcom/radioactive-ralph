@@ -98,3 +98,50 @@ func TestUnpinnedTaskStillUsesThePool(t *testing.T) {
 			"turn an absent declaration into a restriction that blocks ordinary work")
 	}
 }
+
+// TestBindingPinMatchesTypeNotAlias pins that a pin names WHAT RUNS, not what a
+// binding is called.
+//
+// The first implementation folded binding.provider into AllowedProviders, and
+// CheckAllowedProviders matches an entry against the binding ALIAS or its type.
+// So an alias merely NAMED "codex" -- backed by type "claude" -- satisfied
+// binding.provider="codex" and ran the task on Claude. That honours the
+// declaration's spelling over its meaning, which is the same vacuous-guarantee
+// shape as an unenforced restriction: the plan reads as pinned, provenance
+// records a turn, and the provider is not the one named.
+//
+// Alias matching is correct for `providers`, where an operator naming
+// "reviewer" means that configured binding. It is wrong for a pin, so the two
+// are now separate checks.
+func TestBindingPinMatchesTypeNotAlias(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	projectID := mustCreateTestProject(t, s, "pin-alias")
+	planID := mustCreateTestPlan(t, s, projectID, "pin-alias", "Pinned", pinnedBindingPlan)
+
+	runner := &fakeRunner{results: []provider.Result{{AssistantOutput: "a"}, {AssistantOutput: "b"}}}
+	o := New(s,
+		WithRunnerFactory(func(provider.Binding) (provider.Runner, error) { return runner, nil }),
+		WithBindingResolver(func(_ context.Context, _ string, _ bool, _ BindingResolutionPurpose) (provider.Binding, error) {
+			// Alias is "codex"; the binding actually runs CLAUDE.
+			return provider.Binding{
+				Name:   "codex",
+				Config: provider.BindingConfig{Type: "claude", Binary: "true"},
+			}, nil
+		}),
+	)
+	if _, err := o.DispatchNext(ctx, projectID, planID); err != nil {
+		t.Fatalf("DispatchNext: %v", err)
+	}
+	o.Wait()
+
+	meta, err := s.GetTaskExecutionMetadata(ctx, planID, "pinned")
+	if err != nil || meta.AssignedAlias == "" {
+		return // correctly refused: no binding has provider type codex
+	}
+	if meta.AssignedProvider != "codex" {
+		t.Fatalf("task pins binding.provider=codex but ran on provider TYPE %q "+
+			"(alias %q); an alias merely NAMED codex is not codex, so the pin was "+
+			"satisfied by a lookalike", meta.AssignedProvider, meta.AssignedAlias)
+	}
+}

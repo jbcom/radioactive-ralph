@@ -45,6 +45,7 @@ Plans are markdown documents parsed with goldmark into an AST and decomposed heu
   - [func \(m \*TaskMetadata\) AllowedProviders\(\) \[\]string](<#TaskMetadata.AllowedProviders>)
   - [func \(m \*TaskMetadata\) DependsOn\(\) \(ids \[\]string, stated bool\)](<#TaskMetadata.DependsOn>)
   - [func \(m \*TaskMetadata\) IndependencePeers\(\) \[\]string](<#TaskMetadata.IndependencePeers>)
+  - [func \(m \*TaskMetadata\) PinnedProviderType\(\) string](<#TaskMetadata.PinnedProviderType>)
 - [type TaskOutput](<#TaskOutput>)
 - [type ValidationErrors](<#ValidationErrors>)
   - [func \(errs ValidationErrors\) Error\(\) string](<#ValidationErrors.Error>)
@@ -171,7 +172,7 @@ type PlanError struct {
 ```
 
 <a name="Validate"></a>
-### func [Validate](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plan/validate.go#L253>)
+### func [Validate](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plan/validate.go#L250>)
 
 ```go
 func Validate(md []byte) []PlanError
@@ -378,13 +379,26 @@ func (m *TaskMetadata) DependsOn() (ids []string, stated bool)
 DependsOn reports the explicit dependency ids and whether the author stated them at all. Callers deriving edges must branch on stated: when it is false, document order supplies the edges.
 
 <a name="TaskMetadata.IndependencePeers"></a>
-### func \(\*TaskMetadata\) [IndependencePeers](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plan/types.go#L186>)
+### func \(\*TaskMetadata\) [IndependencePeers](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plan/types.go#L192>)
 
 ```go
 func (m *TaskMetadata) IndependencePeers() []string
 ```
 
 IndependencePeers returns the tasks this one must not share an independence domain with, tolerating a nil receiver for the same reason AllowedProviders does.
+
+<a name="TaskMetadata.PinnedProviderType"></a>
+### func \(\*TaskMetadata\) [PinnedProviderType](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plan/types.go#L182>)
+
+```go
+func (m *TaskMetadata) PinnedProviderType() string
+```
+
+PinnedProviderType returns the provider TYPE a task's binding pins, or "".
+
+Deliberately separate from AllowedProviders, which was the first attempt and was wrong. CheckAllowedProviders matches an entry against either the binding ALIAS or its type, which is right for \`providers\` \-\- an operator naming "reviewer" means that configured binding. It is wrong for a pin: an alias merely NAMED "codex" that is backed by type "claude" would satisfy binding.provider="codex" and run the task on Claude, honouring the declaration's spelling rather than its meaning.
+
+So the pin is checked against Config.Type ALONE, at dispatch, where the resolved binding is known. Import cannot decide this: alias\-to\-type mapping lives in operator config that ValidateForImport never sees.
 
 <a name="TaskOutput"></a>
 ## type [TaskOutput](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plan/types.go#L145-L148>)
