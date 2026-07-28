@@ -7,7 +7,12 @@ import (
 
 func opencodeTestArgs() []string {
 	binding := Binding{Name: "opencode", Config: BindingConfig{Type: "opencode", Binary: "opencode"}}
-	return opencodeArgs(binding, Request{UserPrompt: "do the thing"})
+	req := Request{UserPrompt: "do the thing"}
+	inv, err := ResolveInvocation(binding, req)
+	if err != nil {
+		panic(err)
+	}
+	return opencodeArgs(binding, req, inv)
 }
 
 // TestOpencodeRunsPure pins --pure, verified present on the installed opencode:
@@ -50,7 +55,12 @@ func TestOpencodeBindingArgsStillAppendLast(t *testing.T) {
 	binding := Binding{Name: "opencode", Config: BindingConfig{
 		Type: "opencode", Binary: "opencode", Args: []string{"--auto"},
 	}}
-	args := opencodeArgs(binding, Request{UserPrompt: "x"})
+	req := Request{UserPrompt: "x"}
+	inv, err := ResolveInvocation(binding, req)
+	if err != nil {
+		t.Fatalf("ResolveInvocation: %v", err)
+	}
+	args := opencodeArgs(binding, req, inv)
 	if len(args) == 0 || args[len(args)-1] != "--auto" {
 		t.Fatalf("binding args must append LAST so an operator can opt in: %v", args)
 	}
