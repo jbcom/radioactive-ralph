@@ -111,7 +111,18 @@ func runDeclarativeAttempt(ctx context.Context, binding Binding, req Request, st
 		}
 	}
 
-	tokens := declarativeTokenValues(binding, req, promptPath, schemaPath, outputPath)
+	// One resolution, shared by the token map and the Result, so a declarative
+	// binding enforces StrictBinding and reports what actually ran. Calling the
+	// raw resolvers from declarativeTokenValues bypassed both: a strict request
+	// executed fallback tokens and returned a zero Invocation, so a caller
+	// asking for a pinned model got a successful result with no way to learn a
+	// different one had run.
+	invocation, err := ResolveInvocation(binding, req)
+	if err != nil {
+		return Result{}, err
+	}
+
+	tokens := declarativeTokenValues(req, invocation, promptPath, schemaPath, outputPath)
 	if outputPath != "" {
 		rendered, err := renderArgTemplate(outputPath, tokens)
 		if err != nil {
@@ -138,6 +149,7 @@ func runDeclarativeAttempt(ctx context.Context, binding Binding, req Request, st
 		return Result{
 			SessionID:       extractDeclarativeSessionID(binding, out),
 			AssistantOutput: normalizeStructuredOutput(out, req),
+			Invocation:      invocation,
 		}, nil
 	case declarativeLastMessageFile:
 		if _, err := runCommandWithStall(ctx, stallTimeout, req.WorkingDir, binding.Config.Binary, args); err != nil {
@@ -151,6 +163,7 @@ func runDeclarativeAttempt(ctx context.Context, binding Binding, req Request, st
 		return Result{
 			SessionID:       extractDeclarativeSessionID(binding, out),
 			AssistantOutput: normalizeStructuredOutput(out, req),
+			Invocation:      invocation,
 		}, nil
 	case declarativeStreamJSON:
 		out, raw, err := runStreamJSONCommand(ctx, stallTimeout, req.WorkingDir, binding.Config.Binary, args)
@@ -162,6 +175,7 @@ func runDeclarativeAttempt(ctx context.Context, binding Binding, req Request, st
 		return Result{
 			SessionID:       extractDeclarativeSessionID(binding, raw),
 			AssistantOutput: normalizeStructuredOutput(out, req),
+			Invocation:      invocation,
 		}, nil
 	default:
 		return Result{}, fmt.Errorf("provider %q: unsupported declarative type %q", binding.Name, binding.Config.Type)
@@ -254,11 +268,11 @@ func shippedProviderList() string {
 	return strings.Join(names, ", ")
 }
 
-func declarativeTokenValues(binding Binding, req Request, promptPath, schemaPath, outputPath string) map[string]string {
+func declarativeTokenValues(req Request, invocation Invocation, promptPath, schemaPath, outputPath string) map[string]string {
 	return map[string]string{
 		"allowed_tools": strings.Join(req.AllowedTools, ","),
-		"effort":        resolveEffort(binding.Config, req.Effort),
-		"model":         resolveModel(binding.Config, req.Model),
+		"effort":        invocation.Effort,
+		"model":         invocation.Model,
 		"output_file":   outputPath,
 		"prompt":        combinePrompt(req),
 		"prompt_file":   promptPath,
