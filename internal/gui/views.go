@@ -264,11 +264,26 @@ func (u *ui) buildMeso(s snapshot) {
 		u.body.Add(widget.NewLabel("No tasks in this plan."))
 		return
 	}
+	// Display policy lives in observe (see PartitionLabels) so this view and the
+	// TUI cannot disagree about which partitions are worth marking.
+	partitionLabels := observe.PartitionLabels(s.tasks)
+
 	for _, t := range s.tasks {
 		taskID := t.ID
 		open := u.button(taskLabel(t), func() { u.drillTo(planID, taskID) })
 		open.Alignment = widget.ButtonAlignLeading
 		row := container.NewHBox(statusChip(string(t.Status)), open)
+		// Provenance rides beside the button rather than inside taskLabel: that
+		// label is the task's identity (and the drill target's name), so folding
+		// a provider into it would make the same task read differently before
+		// and after it runs. Omitted entirely when unrecorded, so an
+		// undispatched task never displays a provider it did not use.
+		if name := t.ProvenanceLabel(); name != "" {
+			row.Add(widget.NewLabel("via " + name))
+		}
+		if label := partitionLabels[t.PartitionOrdinal]; label != "" {
+			row.Add(widget.NewLabel(label))
+		}
 		if t.Status == "ready_pending_approval" {
 			row.Add(widget.NewButton("Approve", func() {
 				u.drive("approve", func() error { return u.ctrl.ApproveTask(u.ctx, planID, taskID) })

@@ -362,17 +362,51 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
       blocked_input and its default fails the WHOLE projection — one blocked
       task returned "unknown Ralph task status" for the entire snapshot, so the
       status meant to make a stall visible hid everything instead.
-      - [ ] UNBLOCKED 2026-07-28: ready partitions + per-task provenance over
-            the observe surface. BOTH gates are now on main -- verified by
+      - [x] DONE 2026-07-28 (#304): per-task provenance over the observe
+            surface. assigned_alias/provider/model/effort and
+            assigned_independence_domain now project store -> observe ->
+            TUI (`via=`) + GUI (`via `). LEFT JOIN so a task with no metadata
+            row still appears; absent provenance stays empty/omitted rather
+            than defaulted, so "never dispatched" cannot read as "ran on the
+            pool default". ProvenanceLabel lives on observe.Task because both
+            UIs render it and a divergent fallback would make one task read
+            differently per surface.
+            Each hop negative-proofed SEPARATELY, which is the part worth
+            keeping: dropping the observe copy fails the observe test while
+            the STORE tests stay green -- proof the second test covers a real
+            gap instead of duplicating the first. A single end-to-end test
+            could not have distinguished those hops.
+      - [x] DONE 2026-07-28 (#304): ready partitions over the observe surface.
+            Each task carries PartitionOrdinal through store -> observe ->
+            TUI/GUI, so an operator can see that several running tasks are ONE
+            fan-out turn rather than that many independent dispatches.
+            Two decisions worth keeping:
+              * OPAQUE, not the real identity. A partition is (group path,
+                declared binding key) and the binding key re-encodes the
+                AUTHOR's binding fields, so projecting it would carry
+                plan-written text across the boundary that withholds
+                descriptions. The ordinal answers "same partition?" and
+                deliberately not "pinned to what?".
+              * DERIVED THROUGH THE SAME FUNCTION dispatch groups by, never
+                recomputed in the snapshot SQL. A second implementation is a
+                second DEFINITION of a partition; they diverge the first time
+                either changes, and the operator reads a grouping that no
+                longer happens. Pinned by TestOperatorTasksAgreeWithReadyPartitions.
+            UIs number partitions per view (p1/p2) and label ONLY partitions of
+            2+, since a partition of one is the ordinary case and marking every
+            row buries the fan-out groups.
+            Original gating record for BOTH halves follows -- verified by
             grepping, as this item insists:
               * `func (s *Store) ReadyPartitions` IS on main (#225, refined by
                 #282 to split on the declared binding).
               * `recordExecutionProvenance` IS on main (#262), 6 call sites.
-            NEITHER is projected over the observe surface yet: grepping
-            internal/observe/snapshot.go for ReadyPartition,
-            AssignedIndependenceDomain, and assigned_alias returns ZERO. So
-            this is real work, not a wait -- the gate opened and nobody walked
-            through it.
+            As of 2026-07-28 NEITHER was projected over the observe surface:
+            grepping internal/observe/snapshot.go for ReadyPartition,
+            AssignedIndependenceDomain, and assigned_alias returned ZERO. So
+            this was real work, not a wait -- the gate opened and nobody walked
+            through it. BOTH halves are now closed by #304 -- provenance
+            (assigned_*) and ready partitions (PartitionOrdinal) each project
+            store -> observe -> TUI/GUI.
             Prior gating notes follow. RE-VERIFIED 2026-07-28 after #236 merged
             (9c04550) — the gate was then HALF open:
               * per-task provenance: UNBLOCKED. internal/store/calibrations.go
@@ -491,6 +525,31 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
 
 
 ## Rolling improvement queue (directive 0 appends here)
+
+- [ ] GENERATED 2026-07-28 by forward-exploring the observe surface just
+      shipped (#304). Verified against the code before writing down, not
+      inferred:
+      * The full consumer chain WAS checked and is sound: IPC uses type
+        ALIASES (`type ObserveSnapshotReply = observe.Snapshot`,
+        internal/ipc/protocol.go:315), so no field can be dropped there, and
+        `query --json` serializes the whole snapshot. No work needed -- recorded
+        so the next pass does not re-derive it.
+      * REAL GAP: the human-readable `query` output is a single summary line
+        (project/plans/tasks/active_workers/captured_at, query_cmd.go:146). It
+        never lists tasks at all, so an operator without `--json` cannot see
+        status, provenance, or partitions -- the TUI and GUI are the only way to
+        read what the snapshot now carries. Decide whether the CLI should grow a
+        task table; if yes it must honour the same rules the UIs do (omit absent
+        provenance, label only partitions of 2+, never print the raw ordinal).
+
+- [x] DONE 2026-07-28 (same PR): folded the duplicated partition-labelling loop
+      into observe.PartitionLabels. I had written the SAME display policy twice
+      (internal/tui/meso.go and internal/gui/views.go) in this session -- the
+      2+ threshold and the never-show-the-hash rule -- which is the drift
+      ProvenanceLabel was already centralized to avoid. Fixed on the spot rather
+      than queued, since a duplication is cheapest to remove before a third
+      copy exists. Numbering is first-seen order, pinned by a repeat-run test so
+      map iteration cannot reshuffle labels between identical renders.
 
 - [x] LEFTOVERS AUDIT (2026-07-28 UTC) — DONE, this was the investigation itself. Prompted by the right question — I had
       verified the merged branches were ABSORBED, which is not the same as

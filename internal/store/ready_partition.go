@@ -2,9 +2,35 @@ package store
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 )
+
+// readyPartitionOrdinal is a partition's operator-facing identity: stable for
+// the same partition, distinct across partitions, and free of author content.
+//
+// It hashes rather than exposes (GroupPath, BindingKey) because BindingKey is
+// NOT content-free -- it re-encodes the author's own binding fields, so a
+// provider/model/alias/fixture string written in the plan would appear in it
+// verbatim. The observe boundary withholds author-written text (descriptions,
+// acceptance commands, artifacts), and a partition label must not be the hole
+// in it.
+//
+// A hash is the right shape here because the operator needs only to tell
+// partitions APART ("these three tasks go to one turn, that one doesn't") --
+// never to read what pinned them. The full binding stays available to anyone
+// who legitimately holds the plan.
+func readyPartitionOrdinal(p ReadyPartition) string {
+	// Length-prefixed, not delimiter-joined: either field can contain any byte,
+	// so a separator would let ("a|b", "c") and ("a", "b|c") hash identically
+	// and merge two distinct partitions into one ordinal. This is the same
+	// ambiguity that made declaredBindingKey abandon "|" joining.
+	sum := sha256.Sum256(fmt.Appendf(nil, "%d:%s%d:%s",
+		len(p.GroupPath), p.GroupPath, len(p.BindingKey), p.BindingKey))
+	return hex.EncodeToString(sum[:8])
+}
 
 // ReadyPartition is one dispatchable wave slice: the tasks that are ready RIGHT
 // NOW and share a leaf group.

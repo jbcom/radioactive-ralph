@@ -21,6 +21,10 @@ func renderMeso(m Model) string {
 	b.WriteString("\n\n")
 
 	groups := groupTasks(m.snap.tasks)
+	// Display policy (which partitions get a marker, and that the raw ordinal is
+	// never shown) lives in observe so the TUI, GUI, and any future renderer
+	// cannot drift apart on it.
+	partitionLabels := observe.PartitionLabels(m.snap.tasks)
 	row := 0
 	for _, g := range groups {
 		if g.label != "" {
@@ -36,7 +40,21 @@ func renderMeso(m Model) string {
 			if t.ClaimedByWorkerID != "" {
 				worker = styleMuted.Render(" worker=" + t.ClaimedByWorkerID)
 			}
-			fmt.Fprintf(&b, "%s%-12s %-24s %s%s\n", marker, t.ID, statusStr, m.snap.descriptions[t.ID], worker)
+			// Which provider actually ran this task. The worker id cannot answer
+			// that once the work is over: worker= is a live claim, and the reaper
+			// deletes worker rows while this survives in the task's own metadata,
+			// so a done/failed/reaped task still reports what ran it. Shown only
+			// once recorded, so a task that has not run stays visibly unassigned.
+			via := ""
+			if name := t.ProvenanceLabel(); name != "" {
+				via = styleMuted.Render(" via=" + name)
+			}
+			part := ""
+			if label := partitionLabels[t.PartitionOrdinal]; label != "" {
+				part = styleMuted.Render(" " + label)
+			}
+			fmt.Fprintf(&b, "%s%-12s %-24s %s%s%s%s\n",
+				marker, t.ID, statusStr, m.snap.descriptions[t.ID], worker, via, part)
 			row++
 		}
 	}

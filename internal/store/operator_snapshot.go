@@ -124,8 +124,44 @@ type OperatorTask struct {
 	ReclaimCount      int        `json:"reclaim_count"`
 	ParentTaskID      string     `json:"parent_task_id"`
 	ClaimedByWorkerID string     `json:"claimed_by_worker_id"`
-	CreatedAt         time.Time  `json:"created_at"`
-	UpdatedAt         time.Time  `json:"updated_at"`
+
+	// Assigned* is execution provenance: which provider actually ran this task,
+	// as recorded by RecordTaskExecution. Empty until the task runs, and
+	// deliberately not defaulted -- "never dispatched" must stay distinguishable
+	// from "ran on the pool default".
+	//
+	// Projected per task because it OUTLIVES the worker. claimed_by_worker_id is
+	// a live claim: the reaper deletes worker rows once they stop heartbeating,
+	// and a finished task releases its claim -- so a done, failed, or reaped task
+	// has no worker row left to ask. This lives in the task's own metadata and
+	// still answers "what ran it?" afterwards. It also survives reassignment: a
+	// retry or reclaim overwrites the assignment, so this names the provider of
+	// the CURRENT attempt.
+	//
+	// Within one native fan-out group these agree by construction (one turn, one
+	// binding, recorded onto every task in the group) -- the value here is
+	// durability across time, not disagreement within a group.
+	AssignedAlias              string `json:"assigned_alias"`
+	AssignedProvider           string `json:"assigned_provider"`
+	AssignedModel              string `json:"assigned_model"`
+	AssignedEffort             string `json:"assigned_effort"`
+	AssignedIndependenceDomain string `json:"assigned_independence_domain"`
+
+	// PartitionOrdinal is the opaque identity of the ready-partition this task
+	// belongs to: tasks sharing it are the ones native fan-out may delegate to a
+	// single provider turn. It exists so an operator can SEE that grouping --
+	// otherwise five simultaneously-running tasks look alike whether they are
+	// one fan-out turn or five independent dispatches.
+	//
+	// Opaque on purpose. A partition's real identity is (group path, declared
+	// binding key), and the binding key re-encodes the author's own binding
+	// fields, so exposing it would carry plan-authored text across a boundary
+	// that withholds descriptions and acceptance commands. The ordinal answers
+	// "same partition or not?" without answering "pinned to what?".
+	PartitionOrdinal string `json:"partition_ordinal"`
+
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 // OperatorTaskPage is one bounded, (plan_id, task_id)-ordered task page.
@@ -654,9 +690,19 @@ func readOperatorTasks(
 	rows, err := tx.QueryContext(ctx, `
 		SELECT t.plan_id, t.id, t.status, t.parallel_group, t.sequence_ordinal,
 		       t.retry_count, t.reclaim_count, COALESCE(t.parent_task_id, ''),
-		       COALESCE(t.claimed_by_worker_id, ''), t.created_at, t.updated_at
+		       COALESCE(t.claimed_by_worker_id, ''),
+		       COALESCE(m.assigned_alias, ''), COALESCE(m.assigned_provider, ''),
+		       COALESCE(m.assigned_model, ''), COALESCE(m.assigned_effort, ''),
+		       COALESCE(m.assigned_independence_domain, ''),
+		       COALESCE(m.group_path, ''), COALESCE(m.metadata_json, ''),
+		       t.created_at, t.updated_at
 		FROM tasks t
 		JOIN plans p ON p.id = t.plan_id
+		-- LEFT: metadata is written by a separate path, so an inner join would
+		-- make a task with no metadata row DISAPPEAR from the operator's task
+		-- list rather than show up with empty provenance. Silently dropping the
+		-- task is far worse than reporting it unassigned.
+		LEFT JOIN task_metadata m ON m.plan_id = t.plan_id AND m.task_id = t.id
 		WHERE p.project_id = ?
 		  AND (? = '' OR t.plan_id = ?)
 		  AND (? = '' OR t.id = ?)
@@ -689,6 +735,7 @@ func readOperatorTasks(
 		var task OperatorTask
 		var parallel, sequence sql.NullInt64
 		var createdRaw, updatedRaw string
+		var groupPath, metadataJSON string
 		if err := rows.Scan(
 			&task.PlanID,
 			&task.ID,
@@ -699,6 +746,13 @@ func readOperatorTasks(
 			&task.ReclaimCount,
 			&task.ParentTaskID,
 			&task.ClaimedByWorkerID,
+			&task.AssignedAlias,
+			&task.AssignedProvider,
+			&task.AssignedModel,
+			&task.AssignedEffort,
+			&task.AssignedIndependenceDomain,
+			&groupPath,
+			&metadataJSON,
 			&createdRaw,
 			&updatedRaw,
 		); err != nil {
@@ -706,6 +760,15 @@ func readOperatorTasks(
 		}
 		task.ParallelGroup = operatorNullableInt64(parallel)
 		task.SequenceOrdinal = operatorNullableInt64(sequence)
+		// Derived through the SAME function ReadyPartitions groups by, so the
+		// operator's view of "these run together" cannot drift from the rule
+		// dispatch actually applies. Recomputing the grouping here in SQL would
+		// be a second definition of a partition, and the two would diverge the
+		// first time either changed.
+		task.PartitionOrdinal = readyPartitionOrdinal(ReadyPartition{
+			GroupPath:  groupPath,
+			BindingKey: declaredBindingKey(metadataJSON),
+		})
 		task.CreatedAt, err = parseOperatorTimestamp("task.created_at", createdRaw)
 		if err != nil {
 			return OperatorTaskPage{}, err

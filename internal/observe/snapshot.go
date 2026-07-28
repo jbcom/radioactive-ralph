@@ -435,6 +435,61 @@ type PlanPage struct {
 	NextAfterID string `json:"next_after_id,omitempty"`
 }
 
+// PartitionLabels assigns each MULTI-TASK ready partition a short display label
+// ("p1", "p2", ...) keyed by partition ordinal, in the order the tasks are
+// given. Tasks whose partition holds only one task get no entry, so a caller
+// can render `labels[t.PartitionOrdinal]` and get "" for them.
+//
+// Two rules live here rather than in each renderer, because they are display
+// POLICY and every surface must apply them identically:
+//
+//   - Partitions of ONE are unlabelled. A partition of one is the ordinary
+//     case and says nothing an operator can act on, so labelling every row
+//     buries the fan-out groups the marker exists to reveal.
+//   - The ordinal itself is never shown. It is a hash: comparable, not
+//     readable, and a row of digests is noise. The label answers "same
+//     partition?" -- the only question the ordinal is meant to answer.
+//
+// It returns labels rather than mutating tasks so the projection stays a pure
+// read model, and it is here rather than duplicated in the TUI and GUI because
+// two copies of a display rule diverge the first time either is touched.
+func PartitionLabels(tasks []Task) map[string]string {
+	size := map[string]int{}
+	for _, t := range tasks {
+		if t.PartitionOrdinal != "" {
+			size[t.PartitionOrdinal]++
+		}
+	}
+	labels := map[string]string{}
+	for _, t := range tasks {
+		if size[t.PartitionOrdinal] < 2 {
+			continue
+		}
+		if _, seen := labels[t.PartitionOrdinal]; !seen {
+			labels[t.PartitionOrdinal] = fmt.Sprintf("p%d", len(labels)+1)
+		}
+	}
+	return labels
+}
+
+// ProvenanceLabel names the provider that executed this task, preferring the
+// operator-facing alias over the raw provider type, and returning "" when the
+// task has not run.
+//
+// Alias first because that is the name the operator configured and recognizes;
+// two aliases can share a provider type, so showing the type would collapse
+// distinct pool entries into one indistinguishable label.
+//
+// It lives here rather than in each UI because the TUI and GUI both render it
+// and a divergent fallback rule would make the same task read differently
+// depending on which surface an operator happened to open.
+func (t Task) ProvenanceLabel() string {
+	if t.AssignedAlias != "" {
+		return t.AssignedAlias
+	}
+	return t.AssignedProvider
+}
+
 // Task is Ralph's safe DAG state plus its official A2A Task lifecycle
 // projection. Description, acceptance commands, raw messages, and artifacts
 // are intentionally absent.
@@ -449,6 +504,32 @@ type Task struct {
 	ReclaimCount      int    `json:"reclaim_count"`
 	ParentTaskID      string `json:"parent_task_id,omitempty"`
 	ClaimedByWorkerID string `json:"claimed_by_worker_id,omitempty"`
+
+	// Assigned* is execution provenance: which provider actually ran this task.
+	// omitempty because absent provenance is meaningful -- the task has not run
+	// -- and emitting empty strings would invite readers to treat "" as a
+	// provider name rather than as "no turn has executed this yet".
+	//
+	// Per task rather than only in the team rollup because it OUTLIVES the
+	// worker: ClaimedByWorkerID is a live claim that the reaper clears when a
+	// worker stops heartbeating, while this persists in the task's own metadata
+	// and still answers "what ran it?" for a done, failed, or reaped task.
+	AssignedAlias              string `json:"assigned_alias,omitempty"`
+	AssignedProvider           string `json:"assigned_provider,omitempty"`
+	AssignedModel              string `json:"assigned_model,omitempty"`
+	AssignedEffort             string `json:"assigned_effort,omitempty"`
+	AssignedIndependenceDomain string `json:"assigned_independence_domain,omitempty"`
+
+	// PartitionOrdinal identifies the ready-partition this task belongs to:
+	// tasks sharing it are the ones native fan-out may hand to a single provider
+	// turn. Without it, several running tasks look identical whether they are one
+	// fan-out turn or that many independent dispatches.
+	//
+	// Opaque by construction -- it is a hash, not the partition's real
+	// (group path, binding) identity, because the binding key re-encodes the
+	// plan author's own text. It answers "same partition?" and deliberately not
+	// "pinned to what?".
+	PartitionOrdinal string `json:"partition_ordinal,omitempty"`
 
 	// Blocked classifies a fail-closed pre-dispatch block, nil when the task is
 	// not blocked.
@@ -983,10 +1064,18 @@ func taskFromStore(item store.OperatorTask) (Task, error) {
 		ReclaimCount:      item.ReclaimCount,
 		ParentTaskID:      item.ParentTaskID,
 		ClaimedByWorkerID: item.ClaimedByWorkerID,
-		Blocked:           blockedSummaryFor(item.Status),
-		CreatedAt:         item.CreatedAt,
-		UpdatedAt:         item.UpdatedAt,
-		A2ATask:           protocolTask,
+
+		AssignedAlias:              item.AssignedAlias,
+		AssignedProvider:           item.AssignedProvider,
+		AssignedModel:              item.AssignedModel,
+		AssignedEffort:             item.AssignedEffort,
+		AssignedIndependenceDomain: item.AssignedIndependenceDomain,
+		PartitionOrdinal:           item.PartitionOrdinal,
+
+		Blocked:   blockedSummaryFor(item.Status),
+		CreatedAt: item.CreatedAt,
+		UpdatedAt: item.UpdatedAt,
+		A2ATask:   protocolTask,
 	}, nil
 }
 
