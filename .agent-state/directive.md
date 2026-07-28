@@ -100,7 +100,18 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
           retryable, when the generic sentinel was already correctly terminal.
           Naming a category is choosing a retry policy.
 
-- [ ] [WAIT-BLOCKED-BY-#285] contain_provider_writes stays OFF by default.
+- [ ] [WAIT] #285 RESOLVED in #290; the flip is unblocked once it lands.
+      A binding now declares whether it can run confined, and dispatch spares
+      the ones that cannot. All three shipped providers complete a real turn
+      with containment enabled -- claude confined, codex and opencode spared.
+      Widening the policy was NOT available: codex fails under any write-deny
+      profile even with TMPDIR re-allowed, so there is no path to add.
+      NEXT after #290: re-run TestE2E_LiveContainedTurnCompletes (it covers
+      every detected provider now), then flip the default. The three findings
+      from the withdrawn #284 come with it -- the resolver tests still encode
+      the old off-default, and the exported comment plus generated vconfig.md
+      still state the obsolete contract.
+      Superseded note: contain_provider_writes stays OFF by default.
       Opened and CLOSED #284 in one pass. The flip is right in principle and
       breaks TWO of three shipped providers in practice: a real codex turn and
       a real opencode turn both fail under containment, while claude passes.
@@ -265,7 +276,10 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
       self-reference is unsatisfiable, so dispatch could only block it forever.
       walkPlanSteps derives ids the way import does, so validation and dispatch
       share one notion of identity. Guide says validated-not-enforced.
-      - [ ] Populate the independence domains, THEN enforce differentFrom.
+      - [x] CLOSED (#272 bf77756, finished by #283; verified on origin/main --
+            resolveIndependentBinding and validateDifferentFromAcyclic both
+            present): populate the independence domains, THEN enforce
+            differentFrom.
             UNGATED 2026-07-28: #262 and #263 are both MERGED, and re-verified
             on origin/main rather than trusted -- recordExecutionProvenance
             present in internal/orch/orchestrator.go, HandleCalibrationPut
