@@ -68,9 +68,20 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
 
 ## Remaining
 
-- [ ] Land the 4 open PRs: 225, 251, 252, 257.
-      NOT wait-labelled: #252 carries a non-required Package GUI failure and the
-      two BEHIND PRs need rebases -- both agent-doable.
+- [ ] [WAIT] Land the 4 open PRs: 225, 251, 252, 257.
+      WAIT-labelled 2026-07-28 after verifying NOTHING is actionable: zero DIRTY,
+      zero unresolved threads, and #252's only "failure" is STALE -- Package GUI
+      reads FAILURE on its PR branch but completed/SUCCESS on its queue branch
+      2f9f2549, which carries #270's appimagetool fix. A queued PR also CANNOT
+      be rebased, so there is no way to refresh the PR branch even if I wanted
+      to.
+      #257 and #252 are in the queue (19/23 checks done on #257's branch);
+      #225 and #251 are running checks after their rebases, down from 22
+      outstanding to 9.
+      RE-LABEL TO `[ ]` the moment any PR goes DIRTY, gains an unresolved
+      thread, or shows a failure that is ALSO failing on its queue branch --
+      verify-repo-claims.sh guard 8 fails the verifier if this label outlives
+      its justification.
       MERGED via the queue this session: #262, #222, #270, #255, #268, #267, #263,
       #259, #265, #261, #258, #236, #247, #256, #245, #246.
 
