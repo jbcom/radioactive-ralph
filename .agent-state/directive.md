@@ -106,12 +106,18 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
             observe surface. Gated on #225 (ReadyPartitions) and #236
             (calibration provenance), neither on main yet.
 
-- [ ] Provider write containment beyond macOS+Linux. Both ship in #251
-      (sandbox-exec; Landlock via a re-exec helper). Native Windows is CLOSED
-      as not-needed — no provider runs there (creack/pty returns
-      ErrPTYUnsupported). What remains is turning containment ON by default
-      once enough real turns have run with `WithProviderWriteContainment(true)`
-      to know nothing legitimate writes outside a checkout.
+- [ ] Make provider write containment reachable from config, then default it on.
+      macOS and Linux both enforce in #251; native Windows is closed as
+      not-needed (no provider runs there). Two steps, in order:
+      1. Expose it through vconfig so an operator enables it without a rebuild.
+         Verified today: nothing in vconfig mentions containment, so it is
+         code-only via WithProviderWriteContainment. This belongs ON #251's
+         branch rather than a parallel one — a separate PR touching the same
+         orchestrator option would conflict for no reason.
+      2. Flip the default only after real turns have run with it enabled. A
+         provider that legitimately writes to a shared cache outside the
+         checkout would start failing on upgrade, and that is not a guess worth
+         making from the test suite alone.
 
 - [x] #248 CLOSED (PR #256). VerifyAndCompleteAs takes the REPORTING session so
       the store's owner guard compares against the worker that produced the
