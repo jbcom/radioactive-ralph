@@ -90,7 +90,7 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
       side of any action shows movement. Measured properly: queued=7/running=4,
       22 jobs executing, ZERO macOS among them, ubuntu+windows flowing. macOS is
       constrained UPSTREAM; waiting is what drains it.
-      Real blocker across all 11 PRs is the single job Test (macos-latest).
+      Remaining checks on every open PR are macOS jobs draining upstream.
 
       HYGIENE (2026-07-28): 13 merged worktrees + 13 stale local branches
       removed. `merge-tree --write-tree` reported 7 of them NOT-absorbed, which
@@ -117,10 +117,9 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
       4. BEHIND -> `gh pr update-branch`.
       5. Unresolved thread -> verify against the code, then fix or counter it
          with evidence.
-      6. Every PR blocked on CI with no failures -> clear SUPERSEDED runs first
-         (`gh run cancel` every queued CI run per branch except the newest).
-         The queue rebuilds on every push, and superseded runs hold macOS slots
-         the near-complete PRs need; 14 were holding slots at one point.
+      6. Every PR blocked on CI with no failures -> WAIT. Do NOT cancel runs;
+         see the DO NOT CANCEL note above. Proven 2026-07-28: #236 went green
+         and the driver merged it with no manual step at all.
       7. Still nothing -> work an item below. Do not report status.
 
 - [x] docs/design/exact-provider-identity.md — DONE (PR #255). Documents
