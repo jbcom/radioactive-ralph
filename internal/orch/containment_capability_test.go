@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/jbcom/radioactive-ralph/internal/provider"
+	"github.com/jbcom/radioactive-ralph/internal/store"
 )
 
 // TestIncapableBindingIsNotConfined pins that a provider declaring it cannot
@@ -278,5 +279,64 @@ func TestFanoutRefusesAnIncapableBinding(t *testing.T) {
 			"(ContainmentRoot=%q) while the project requested containment; the whole "+
 			"GROUP completed unprotected and every task reads as done, so nothing "+
 			"reports that the boundary was never applied", seenRoot)
+	}
+}
+
+// TestFanoutContainmentRefusalReleasesClaims pins that a launch-time refusal
+// does not strand the tasks it already claimed.
+//
+// runFanoutGroup claims every task in the group and assigns a workerID BEFORE
+// resolving containment. Returning the refusal alone left all of them `running`
+// until the reaper noticed -- a stall with no operator-visible cause, on a
+// refusal that is immediate and knowable.
+//
+// Reaching this path requires the answer to CHANGE between admission and
+// launch, which is exactly what the launch-time re-resolution exists to catch:
+// a config edit mid-dispatch, or a store read that now fails and correctly
+// fails closed to on.
+func TestFanoutContainmentRefusalReleasesClaims(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	projectID := mustCreateTestProject(t, s, "fanout-refusal-release")
+	planID := mustCreateTestPlan(t, s, projectID, "fanout-refusal-release", "Fan",
+		threeStepParallelPlan)
+
+	no := false
+	// Containment is OFF at admission and ON by launch: the second resolution
+	// disagrees with the first, which is the only way to reach this path.
+	var calls int
+	o := New(s,
+		WithBindingResolver(func(_ context.Context, _ string, _ bool, _ BindingResolutionPurpose) (provider.Binding, error) {
+			return provider.Binding{
+				Name: "opencode",
+				Config: provider.BindingConfig{
+					Type: "opencode", Binary: "true",
+					NativeFanout: true, SupportsContainment: &no,
+				},
+			}, nil
+		}),
+		WithRunnerFactory(func(provider.Binding) (provider.Runner, error) {
+			return recordingRunner{onRun: func(provider.Request) {}}, nil
+		}),
+		WithContainmentResolver(func(context.Context, string) bool {
+			calls++
+			return calls > 1 // off at admission, on at launch
+		}),
+	)
+	if _, err := o.DispatchNext(ctx, projectID, planID); err != nil {
+		t.Fatalf("DispatchNext: %v", err)
+	}
+	o.Wait()
+
+	tasks, err := s.ListTasks(ctx, planID, nil)
+	if err != nil {
+		t.Fatalf("ListTasks: %v", err)
+	}
+	for _, task := range tasks {
+		if task.Status == store.TaskStatusRunning {
+			t.Fatalf("task %q left RUNNING after a containment refusal; its claim was "+
+				"never released, so the plan stalls until the reaper intervenes with "+
+				"nothing explaining why", task.ID)
+		}
 	}
 }

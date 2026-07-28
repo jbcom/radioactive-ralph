@@ -2283,6 +2283,25 @@ func (o *Orchestrator) runFanoutGroup(ctx context.Context, projectID, projectDir
 	// the operator the opposite of the config with no signal at all.
 	containmentRoot, cerr := o.resolveContainment(ctx, projectID, projectDir, binding)
 	if cerr != nil {
+		// Tasks are ALREADY CLAIMED here and workerID is assigned, so returning
+		// the error alone would leave every one of them `running` until the
+		// reaper noticed -- a stall with no operator-visible cause, on a refusal
+		// that is immediate and knowable.
+		//
+		// Released through the same path a run error uses, including its owner
+		// guard: if the reaper already reclaimed a task, MarkFailed must not
+		// stomp the new owner.
+		releaseCtx, releaseCancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+		defer releaseCancel()
+		failure := provider.ClassifyFailure(cerr)
+		for _, ds := range claimed {
+			if _, err := o.store.MarkFailedWithPayload(releaseCtx, planID, ds.task.ID, sessionID, store.EventPayload{
+				Reason: failure.Summary, FailureCategory: string(failure.Category),
+			}, failure.RetryBudget(defaultTurnRetries)); err != nil && !errors.Is(err, store.ErrTaskNotOwnedRunning) {
+				return fmt.Errorf("orch: release claims after containment refusal: %w", err)
+			}
+		}
+		_ = o.store.ClearWorkerTask(releaseCtx, workerID, "idle")
 		return cerr
 	}
 
