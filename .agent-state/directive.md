@@ -329,7 +329,19 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
       So step 2 is now gated ONLY on #251 merging.
       macOS and Linux both enforce in #251; native Windows is closed as
       not-needed (no provider runs there). Two steps, in order:
-      1. [x] DONE on #251: contain_provider_writes project config key. Absent
+      1. [x] DONE on #251, and the WIRE now exists too (998681d). The key was
+         INERT when first shipped: vconfig parsed it, exposed
+         ContainProviderWrites, and NOTHING called that -- and
+         WithProviderWriteContainment had zero production callers. An operator
+         setting the key got no containment and no signal it did nothing.
+         THIRD instance of this class on this one feature: the field set nowhere
+         in production, the stream-json shape that skipped applyContainment, and
+         the key nothing consulted. Each looked complete from its own side, which
+         is why "is it wired?" is now a standing question, not an afterthought.
+         Resolved PER PROJECT (ContainmentResolver function, not a process bool):
+         one orchestrator serves every project, so a static flag applies one
+         project's answer to all of them. Fails CLOSED-TO-OFF on config error,
+         matching the key's contract. Original note: absent
          OR malformed means off — a typo must not silently enable a boundary
          that makes provider writes fail, since that surfaces as unexplained
          provider errors far from the cause. Accepts bool and string because a
