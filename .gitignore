@@ -64,3 +64,7 @@ site/pnpm-debug.log*
 *.dmg
 *.exe
 fyne-cross/
+
+# Nested worktrees created inside the repo by mistake. Worktrees belong in
+# ../.worktrees/, and a stray one here would otherwise be committed as content.
+/.worktrees/

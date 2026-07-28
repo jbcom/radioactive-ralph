@@ -5,7 +5,6 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 # shellcheck source=scripts/ci/package_guidance_contract.sh
-# shellcheck source=scripts/ci/package_guidance_contract.sh
 source "$ROOT/scripts/ci/package_guidance_contract.sh"
 
 LIVE_DOCS=(
