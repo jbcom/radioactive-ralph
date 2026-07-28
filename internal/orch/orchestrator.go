@@ -705,6 +705,32 @@ func (o *Orchestrator) dispatchReadyGroup(ctx context.Context, a dispatchGroupAr
 					releaseSlot()
 					return dispatched, admitted, fmt.Errorf("orch: binding capability changed between probe and dispatch")
 				}
+				// Containment admission for the fan-out path. This branch returns
+				// BEFORE the per-step loop, so a check added there does not apply
+				// here -- the third time that structural gap has swallowed a
+				// per-step rule (`providers` and `differentFrom` were the first
+				// two, both fixed in #272).
+				//
+				// Worse here than a bypassed restriction: the project asked for a
+				// security boundary and the whole GROUP would run unconfined, with
+				// every task completing normally so nothing reports it.
+				//
+				// REDUNDANT with the launch-time propagation in runFanoutGroup, and
+				// deliberately kept. Verified by removing each in turn: either alone
+				// still refuses, and only removing BOTH restores the defect. Refusing
+				// here is the better failure -- it happens before any task is claimed,
+				// so the group is not left mid-flight -- while the launch-time check
+				// catches a config that changes between admission and launch.
+				if _, cerr := o.resolveContainment(ctx, projectID, projectDir, binding); cerr != nil {
+					releaseSlot()
+					_ = o.store.Emit(ctx, store.EmitOpts{
+						ProjectID: projectID, PlanID: planID,
+						Kind:        "worker.admission_refused",
+						Stream:      "service",
+						PayloadJSON: mustPayloadJSON(store.EventPayload{Reason: cerr.Error()}),
+					})
+					return dispatched, admitted, nil
+				}
 				n, err := o.dispatchFanoutGroup(ctx, projectID, projectDir, planID, parsedPlan, storedTitle, groupHeading, binding, eligibleSteps, eligibleRefs, releaseSlot)
 				if err != nil {
 					// dispatchFanoutGroup only returns an error on a synchronous
@@ -1906,9 +1932,21 @@ func (o *Orchestrator) dispatchWorker(ctx context.Context, projectID, projectDir
 	// timeout ctx into VerifyAndComplete made a near-timeout run's acceptance
 	// re-check (which re-runs real shell commands) fail spuriously against an
 	// already-expired deadline. Use runCtx for Run; keep the parent ctx after.
+	// Re-resolved here rather than carried from admission, and the error is
+	// PROPAGATED rather than degraded to "". Admission already refused an
+	// unhonourable request, so an error here means the answer CHANGED between
+	// admission and launch -- a config edit mid-dispatch, or a store read that
+	// now fails and correctly fails closed to on. Either way the boundary the
+	// project asked for cannot be applied, and launching unconfined would hand
+	// the operator the opposite of the config with no signal at all.
+	containmentRoot, cerr := o.resolveContainment(ctx, projectID, projectDir, binding)
+	if cerr != nil {
+		return cerr
+	}
+
 	req := provider.Request{
 		WorkingDir:      projectDir,
-		ContainmentRoot: containmentRootOrEmpty(o.resolveContainment(ctx, projectID, projectDir, binding)),
+		ContainmentRoot: containmentRoot,
 		UserPrompt:      scoped.prompt(),
 		TurnTimeout:     o.turnTimeout,
 		StallTimeout:    o.stallTimeout,
@@ -2236,9 +2274,40 @@ func (o *Orchestrator) runFanoutGroup(ctx context.Context, projectID, projectDir
 		return fmt.Errorf("orch: resolve runner for %q: %w", binding.Name, err)
 	}
 
+	// Re-resolved here rather than carried from admission, and the error is
+	// PROPAGATED rather than degraded to "". Admission already refused an
+	// unhonourable request, so an error here means the answer CHANGED between
+	// admission and launch -- a config edit mid-dispatch, or a store read that
+	// now fails and correctly fails closed to on. Either way the boundary the
+	// project asked for cannot be applied, and launching unconfined would hand
+	// the operator the opposite of the config with no signal at all.
+	containmentRoot, cerr := o.resolveContainment(ctx, projectID, projectDir, binding)
+	if cerr != nil {
+		// Tasks are ALREADY CLAIMED here and workerID is assigned, so returning
+		// the error alone would leave every one of them `running` until the
+		// reaper noticed -- a stall with no operator-visible cause, on a refusal
+		// that is immediate and knowable.
+		//
+		// Released through the same path a run error uses, including its owner
+		// guard: if the reaper already reclaimed a task, MarkFailed must not
+		// stomp the new owner.
+		releaseCtx, releaseCancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+		defer releaseCancel()
+		failure := provider.ClassifyFailure(cerr)
+		for _, ds := range claimed {
+			if _, err := o.store.MarkFailedWithPayload(releaseCtx, planID, ds.task.ID, sessionID, store.EventPayload{
+				Reason: failure.Summary, FailureCategory: string(failure.Category),
+			}, failure.RetryBudget(defaultTurnRetries)); err != nil && !errors.Is(err, store.ErrTaskNotOwnedRunning) {
+				return fmt.Errorf("orch: release claims after containment refusal: %w", err)
+			}
+		}
+		_ = o.store.ClearWorkerTask(releaseCtx, workerID, "idle")
+		return cerr
+	}
+
 	req := provider.Request{
 		WorkingDir:      projectDir,
-		ContainmentRoot: containmentRootOrEmpty(o.resolveContainment(ctx, projectID, projectDir, binding)),
+		ContainmentRoot: containmentRoot,
 		UserPrompt:      scoped.prompt(),
 		TurnTimeout:     o.turnTimeout,
 		StallTimeout:    o.stallTimeout,
@@ -2383,19 +2452,4 @@ func derefSteps(claimed []*dispatchedStep) []dispatchedStep {
 		out[i] = *ds
 	}
 	return out
-}
-
-// containmentRootOrEmpty adapts resolveContainment for the two request-building
-// sites, which run AFTER admission has already refused an unhonourable request.
-//
-// The error is deliberately dropped here and nowhere else: reaching these lines
-// means admission passed, so a non-nil error would be a contradiction rather
-// than a condition to handle. Returning "" keeps the fallback safe if that
-// invariant is ever broken -- an unconfined turn is what the incapable provider
-// needs, and the admission gate is what prevents it from being a downgrade.
-func containmentRootOrEmpty(root string, err error) string {
-	if err != nil {
-		return ""
-	}
-	return root
 }
