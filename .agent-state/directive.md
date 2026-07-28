@@ -311,7 +311,18 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
 
 - [ ] [WAIT] Make provider write containment reachable from config, then default
       it on. Step 1 (the config key) is DONE on #251; step 2 is gated on that PR
-      merging and on real turns using it.
+      merging.
+      "REAL TURNS USING IT" IS NOW SATISFIED (14f58f7): tests/e2e now runs a real
+      orchestrator + real provider subprocess under its own pty, with the project
+      config key set exactly as an operator sets it and a fake CLI that genuinely
+      attempts to write outside the project. It runs in the REQUIRED check
+      "E2E (CI-feasible)", so it gates every merge rather than being a local
+      demo. Paired with an UNCONTAINED CONTROL that must escape -- without it, a
+      write that failed for an unrelated reason would make the contained case
+      pass while measuring nothing. Negative proof: dropping the resolver reds
+      the contained case with "a REAL provider turn wrote outside the project
+      while contain_provider_writes was set".
+      So the ONLY remaining gate on the flip is #251 merging.
       EVIDENCE ACQUIRED 2026-07-28 (cdc28d8), and it MOVED the bar for step 2.
       A CodeRabbit finding on #251 was verified true: declarativeStreamJSON
       called runStreamJSONCommand, which took no containment argument at all, so
