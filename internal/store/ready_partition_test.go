@@ -164,6 +164,65 @@ func TestReadyPartitionsExcludesApprovalGated(t *testing.T) {
 	}
 }
 
+// TestReadyPartitionsSurfacesFailClosedBlockedTasks pins the asymmetry between
+// the two kinds of block, which is easy to "tidy" into a bug in either
+// direction.
+//
+// A fail-closed block (blocked_capability, blocked_input) is released by the
+// DISPATCH-TIME GATE that imposed it: the gate re-checks, finds the operator has
+// fixed the binding or the declaration, and clears the block. A task this walk
+// never returns never reaches its gate, so excluding these states makes a block
+// outlive its own remedy — a permanent stall dressed as a gate.
+//
+// An approval gate is the opposite: only a human decision recorded out of band
+// releases it, so returning it would hand dispatch a task it must re-block every
+// tick, forever, with nothing gained.
+func TestReadyPartitionsSurfacesFailClosedBlockedTasks(t *testing.T) {
+	ctx := context.Background()
+	for _, tc := range []struct {
+		name   string
+		status TaskStatus
+		want   bool
+		why    string
+	}{
+		{"capability", TaskStatusBlockedCapability, true,
+			"the capability gate clears this block when the binding is fixed, and it only runs on tasks the walk returns"},
+		{"input", TaskStatusBlockedInput, true,
+			"the path gate clears this block when the declaration is fixed, and it only runs on tasks the walk returns"},
+		{"approval", TaskStatusReadyPendingApproval, false,
+			"only an out-of-band human decision releases an approval gate, so re-running dispatch on it can never help"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := openTestStore(t)
+			projectID := mustCreateProject(t, s, "ready-blocked-"+tc.name)
+			planID := seedReadyGraph(t, s, projectID, "blocked-"+tc.name, []GraphTaskSpec{
+				readySpec("subject", "0"),
+			})
+			if _, err := s.db.ExecContext(ctx,
+				`UPDATE tasks SET status = ? WHERE plan_id = ? AND id = 'subject'`,
+				string(tc.status), planID); err != nil {
+				t.Fatalf("set status %s: %v", tc.status, err)
+			}
+
+			parts, err := s.ReadyPartitions(ctx, planID)
+			if err != nil {
+				t.Fatalf("ReadyPartitions: %v", err)
+			}
+			var found bool
+			for _, p := range parts {
+				for _, task := range p.Tasks {
+					if task.ID == "subject" {
+						found = true
+					}
+				}
+			}
+			if found != tc.want {
+				t.Fatalf("surfaced %s = %v, want %v — %s", tc.status, found, tc.want, tc.why)
+			}
+		})
+	}
+}
+
 // TestReadyPartitionsTasksWithoutMetadata covers tasks created by the plain
 // CreateTask path (no task_metadata row): they must still be returned, under
 // the empty group path, rather than vanishing from dispatch on a JOIN miss. A

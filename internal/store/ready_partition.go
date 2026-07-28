@@ -33,6 +33,22 @@ type ReadyPartition struct {
 // Partitions come back in group-path order, tasks within a partition in the
 // same sequence_ordinal/created_at order ClaimNextReady picks them, so a caller
 // that dispatches partition-by-partition reproduces author order.
+//
+// The two FAIL-CLOSED blocked states are included deliberately, which reads
+// backwards until you follow what releases them. `blocked_capability` and
+// `blocked_input` are cleared by the dispatch-time gates themselves
+// (capabilityGateBlocks, pathGateBlocks) when the operator has fixed the
+// binding or the declaration: the gate re-checks, sees the requirement met, and
+// clears the block. A task the walk never surfaces never reaches its gate, so
+// excluding these states made the block outlive its own remedy — the exact
+// permanent stall the gates exist to prevent. Surfacing them costs one gate
+// evaluation per tick and nothing else: a still-blocked task is re-blocked by
+// the same gate before any worker, session, or dispatch slot is allocated.
+//
+// ready_pending_approval is NOT included, and the asymmetry is the point. An
+// approval gate is released by a HUMAN decision recorded out of band, never by
+// re-running the gate, so surfacing it would return a task that dispatch must
+// unconditionally re-block on every tick with nothing gained.
 func (s *Store) ReadyPartitions(ctx context.Context, planID string) ([]ReadyPartition, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT t.id, t.plan_id, t.description, t.status, t.parallel_group,
@@ -45,7 +61,8 @@ func (s *Store) ReadyPartitions(ctx context.Context, planID string) ([]ReadyPart
 		LEFT JOIN task_metadata m
 		       ON m.plan_id = t.plan_id AND m.task_id = t.id
 		WHERE t.plan_id = ?
-		  AND t.status IN ('pending', 'ready')
+		  AND t.status IN ('pending', 'ready',
+		                   'blocked_capability', 'blocked_input')
 		  AND NOT EXISTS (
 		    SELECT 1 FROM task_deps d
 		     JOIN tasks tdep ON tdep.plan_id = d.plan_id AND tdep.id = d.depends_on

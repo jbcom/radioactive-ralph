@@ -17,8 +17,12 @@ Package provider adapts configured CLI backends into radioactive\_ralph's provid
 
 - [Constants](<#constants>)
 - [Variables](<#variables>)
+- [func BindingCapabilities\(cfg BindingConfig\) map\[string\]bool](<#BindingCapabilities>)
+- [func CheckAllowedProviders\(binding Binding, providers \[\]string\) error](<#CheckAllowedProviders>)
+- [func CheckRequirements\(binding Binding, requires \[\]string\) error](<#CheckRequirements>)
 - [func DefaultWatchdogConfig\(\) agent.WatchdogConfig](<#DefaultWatchdogConfig>)
 - [func InvocationConfigHash\(binding Binding, model Model, effort string\) \(string, error\)](<#InvocationConfigHash>)
+- [func KnownCapability\(key string\) bool](<#KnownCapability>)
 - [func StreamJSONWatchdogConfig\(\) agent.WatchdogConfig](<#StreamJSONWatchdogConfig>)
 - [func ValidateBinding\(binding Binding\) error](<#ValidateBinding>)
 - [func ValidateConfiguredTimeout\(field, raw string\) error](<#ValidateConfiguredTimeout>)
@@ -63,6 +67,29 @@ Package provider adapts configured CLI backends into radioactive\_ralph's provid
 
 
 ## Constants
+
+<a name="CapabilityNativeFanout"></a>Capability keys a plan task may name in its \`requires\` list.
+
+The vocabulary is CLOSED and every key maps to something BindingConfig actually declares. An open vocabulary would make \`requires\` unfalsifiable: a key no binding could ever satisfy would block every task forever, and a key no binding could ever fail would be decoration.
+
+```go
+const (
+    // CapabilityNativeFanout — the provider can run a whole ready group in one
+    // turn. Dispatch charges such a group a single worker, so a task that needs
+    // it must not land on a binding without it.
+    CapabilityNativeFanout = "native_fanout"
+
+    // CapabilityResume — the provider can continue a prior session. A task
+    // written to pick up where an earlier attempt stopped is wrong on a binding
+    // that always starts cold.
+    CapabilityResume = "resume"
+
+    // CapabilityAppendSystemPrompt — the provider accepts an appended system
+    // prompt rather than replacing it. A task relying on the base prompt
+    // surviving cannot run where it is overwritten.
+    CapabilityAppendSystemPrompt = "append_system_prompt"
+)
+```
 
 <a name="DefaultTurnTimeout"></a>
 
@@ -164,6 +191,20 @@ var ErrAgentBlocked = errors.New("provider: agent blocked (killed by watchdog)")
 var ErrBindingCannotHonorRequest = errors.New("provider: binding cannot honor the request exactly")
 ```
 
+<a name="ErrCapabilityUnknown"></a>ErrCapabilityUnknown reports a requirement naming a key outside the closed vocabulary above.
+
+Distinct from ErrCapabilityUnmet on purpose: an unmet requirement is a scheduling fact the operator resolves by choosing another binding, while an unknown one is a typo in the plan that no binding will ever satisfy.
+
+```go
+var ErrCapabilityUnknown = errors.New("provider: unrecognized capability key")
+```
+
+<a name="ErrCapabilityUnmet"></a>ErrCapabilityUnmet reports a requirement the bound provider cannot satisfy.
+
+```go
+var ErrCapabilityUnmet = errors.New("provider: binding does not satisfy required capabilities")
+```
+
 <a name="ErrClaudeMaximumTurns"></a>ErrClaudeMaximumTurns is the static category for error\_max\_turns.
 
 ```go
@@ -218,6 +259,12 @@ var ErrOpencodeMissingFinish = errors.New("provider: opencode exited without a s
 var ErrOpencodeReportedError = errors.New("provider: opencode reported a session error")
 ```
 
+<a name="ErrProviderNotAllowed"></a>ErrProviderNotAllowed reports a binding outside a task's declared \`providers\` restriction.
+
+```go
+var ErrProviderNotAllowed = errors.New("provider: binding is not among the task's allowed providers")
+```
+
 <a name="ErrProviderStalled"></a>ErrProviderStalled is returned when a provider produces no observable progress before its renewable stall lease expires.
 
 ```go
@@ -229,6 +276,41 @@ var ErrProviderStalled = errors.New("provider: progress stalled")
 ```go
 var ErrStreamJSONLineTooLong = errors.New("provider: stream-json line exceeded 16MiB limit")
 ```
+
+<a name="BindingCapabilities"></a>
+## func [BindingCapabilities](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/capabilities.go#L50>)
+
+```go
+func BindingCapabilities(cfg BindingConfig) map[string]bool
+```
+
+BindingCapabilities reports the capability keys a binding satisfies.
+
+Derived from the binding's own config rather than a per\-provider table: the config already declares these, and a second table would drift the first time a provider gained or lost one. Absent means NOT satisfied — callers must not read a missing key as "unknown, assume yes".
+
+<a name="CheckAllowedProviders"></a>
+## func [CheckAllowedProviders](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/capabilities.go#L134>)
+
+```go
+func CheckAllowedProviders(binding Binding, providers []string) error
+```
+
+CheckAllowedProviders verifies a binding is permitted to run a task that restricts which providers may do so.
+
+A name matches the binding's ALIAS or its provider TYPE, and both are meaningful: several aliases can share a type \(a round\-robin pool of claude bindings\), so "any claude" and "this specific pool member" are different restrictions an operator may legitimately want. Accepting only one of the two would silently block plans written against the other.
+
+Unlike CheckRequirements there is no closed vocabulary to validate against: provider names are operator\-chosen configuration, so an unrecognized one is indistinguishable from a provider this project simply is not bound to right now. It blocks with the allowed list named, which is the actionable report either way.
+
+<a name="CheckRequirements"></a>
+## func [CheckRequirements](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/capabilities.go#L78>)
+
+```go
+func CheckRequirements(binding Binding, requires []string) error
+```
+
+CheckRequirements verifies a binding satisfies every requirement.
+
+Every failing key is named at once. Reporting the first miss alone would turn one plan fix into N dispatch cycles, since the operator cannot see the rest until the one they fixed stops failing.
 
 <a name="DefaultWatchdogConfig"></a>
 ## func [DefaultWatchdogConfig](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/watchdog.go#L83>)
@@ -249,6 +331,15 @@ func InvocationConfigHash(binding Binding, model Model, effort string) (string, 
 InvocationConfigHash fingerprints every binding value that can alter the command line, plus the exact requested model and effort.
 
 A calibration is a measurement of ONE command line. Reusing it across a different binary, different args, or a different model would report a capability the running configuration was never observed to have — so the hash covers the whole config, not just the parts that look interesting.
+
+<a name="KnownCapability"></a>
+## func [KnownCapability](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/capabilities.go#L65>)
+
+```go
+func KnownCapability(key string) bool
+```
+
+KnownCapability reports whether key is in the closed vocabulary.
 
 <a name="StreamJSONWatchdogConfig"></a>
 ## func [StreamJSONWatchdogConfig](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/watchdog.go#L99>)
