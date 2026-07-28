@@ -100,7 +100,15 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
           retryable, when the generic sentinel was already correctly terminal.
           Naming a category is choosing a retry policy.
 
-- [ ] [WAIT-BLOCKED-BY-#285] contain_provider_writes stays OFF by default.
+- [ ] [WAIT] Containment arc, ONE item -- the detail below at "Provider write
+      containment" is the same work and is now marked SUPERSEDED so the queue
+      cannot contradict itself.
+      #285 RESOLVED in #290: a binding declares whether it can run confined,
+      dispatch REFUSES an unhonourable request rather than silently downgrading
+      it, and the flip itself is #292. All three shipped providers behave
+      correctly under a containment-on default -- claude completes confined,
+      codex and opencode refuse visibly with worker.admission_refused.
+      Remaining: land #290 then #292. Nothing to decide.
       Opened and CLOSED #284 in one pass. The flip is right in principle and
       breaks TWO of three shipped providers in practice: a real codex turn and
       a real opencode turn both fail under containment, while claude passes.
@@ -377,8 +385,11 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
             by grepping origin/main for each symbol, not by assuming the pair
             moves together.
 
-- [ ] [WAIT-BLOCKED-BY-#285] Provider write containment: reachable from config
-      (DONE), default on (BLOCKED -- codex AND opencode cannot run confined).
+- [x] SUPERSEDED by the containment item at the top of Remaining. Kept for the
+      evidence trail below, NOT as a second live gate -- two entries for one
+      piece of work is how an executor ends up waiting on something already
+      done. Provider write containment: reachable from config (DONE), default
+      on (#292).
       UNGATED 2026-07-28: #251 is MERGED, and the wiring re-verified on
       origin/main rather than trusted -- vconfig.ContainProviderWrites is read
       by PRODUCTION code at cmd/radioactive_ralph/binding_resolver.go:268, not

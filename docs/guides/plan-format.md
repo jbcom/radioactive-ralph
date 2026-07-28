@@ -110,10 +110,10 @@ than in pieces.
 | `id` | **enforced** | stable task id, **required whenever a `ralph-task` block is present** — the parser rejects a block whose `id` is missing or empty. A step with NO block gets the positional id (`0.1`). Must be unique within the plan. |
 | `after` | **enforced** | dependency edges (see above). |
 | `team` | **persisted** | slash-delimited path, stored as the task's `team_path`. Nothing consumes it yet: `TeamRollups` exists but has no caller, and the operator snapshot does not expose a team field, so it does not currently affect any view. |
-| `binding` | parsed | pins provider identity: `mode`, `alias`, `provider`, `model`, `effort`, `calibration`, `repetitions`, `fixture`. |
+| `binding` | **enforced** (`provider`) | pins provider identity: `mode`, `alias`, `provider`, `model`, `effort`, `calibration`, `repetitions`, `fixture`. `provider` is matched against the binding's TYPE at dispatch — an alias merely *named* after a provider does not satisfy it — and a partition is never coalesced across differing pins. The other sub-fields are parsed and not yet consumed. |
 | `requires` | parsed | capability keys the bound provider must satisfy. |
-| `providers` | parsed | restricts the task to a subset of configured providers. |
-| `differentFrom` | **validated** | task ids that must not share this task's independence domain. References are checked at import; the runtime constraint is not enforced yet. See below. |
+| `providers` | **enforced** | restricts the task to a subset of configured providers, matched against a binding's alias OR type. Dispatch rotates the pool to find a permitted binding and refuses if none exists; a native fan-out group never coalesces a restricted task, since one turn cannot honour a per-task restriction. |
+| `differentFrom` | **enforced** | task ids that must not share this task's independence domain. References are checked at import (unknown, self-referencing, whitespace-padded, and CYCLIC references are all rejected), and dispatch rotates to a binding whose calibrated domain differs from every named peer. A peer with an unknown domain DEFERS rather than passing — a constraint that passes on absence of evidence enforces nothing. See below. |
 | `inputs` | parsed | files the task reads: `{"path": ..., "sha256": ...}`. |
 | `outputs` | parsed | files the task writes: `{"path": ..., "mode": "exclusive"}`. |
 
