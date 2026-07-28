@@ -912,7 +912,7 @@ type ProviderCalibration struct {
 ```
 
 <a name="ReadyPartition"></a>
-## type [ReadyPartition](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/ready_partition.go#L16-L22>)
+## type [ReadyPartition](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/ready_partition.go#L17-L33>)
 
 ReadyPartition is one dispatchable wave slice: the tasks that are ready RIGHT NOW and share a leaf group.
 
@@ -924,7 +924,17 @@ type ReadyPartition struct {
     // Tasks (a dotted StepRef path such as "0.2"). Empty for tasks created
     // without a task_metadata row.
     GroupPath string
-    Tasks     []Task
+    // BindingKey is the task's DECLARED per-task binding, canonicalized, shared
+    // by every task in Tasks. Empty means no binding was declared.
+    //
+    // It partitions alongside GroupPath because a partition is delegated to ONE
+    // provider in ONE turn: two same-group tasks pinning different providers
+    // cannot both be honoured by a single turn, so merging them would discard a
+    // restriction the plan author wrote down. An UNPINNED task gets its own key
+    // rather than joining a pinned partition -- an absent binding means the pool
+    // resolves it, which is not the same claim as "compatible with that pin".
+    BindingKey string
+    Tasks      []Task
 }
 ```
 
@@ -1550,7 +1560,7 @@ func (s *Store) Ready(ctx context.Context, planID string) ([]Task, error)
 Ready returns tasks that are ready to run — every dependency is in a terminal\-satisfied state \(\`done\`, \`skipped\`, or \`decomposed\`\) — and are in a claimable status: \`pending\` \(ungated\) or \`ready\` \(a task that WAS gated behind approval and has since been approved via ApproveTask\). A task still in \`ready\_pending\_approval\` is deliberately NOT returned: the approval gate holds it until an operator approves it. Result is ordered by created\_at for stable test output.
 
 <a name="Store.ReadyPartitions"></a>
-### func \(\*Store\) [ReadyPartitions](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/ready_partition.go#L52>)
+### func \(\*Store\) [ReadyPartitions](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/ready_partition.go#L63>)
 
 ```go
 func (s *Store) ReadyPartitions(ctx context.Context, planID string) ([]ReadyPartition, error)

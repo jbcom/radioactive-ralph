@@ -137,3 +137,60 @@ func TestDeclaredBindingKeyIgnoresUnrelatedFields(t *testing.T) {
 			"may legitimately own", a, b)
 	}
 }
+
+// TestDeclaredBindingKeyIsCollisionFree pins that two DIFFERENT bindings can
+// never produce the same key.
+//
+// The first implementation joined fields with "|", which is ambiguous the moment
+// a field can contain that byte -- and nothing forbids it. provider "claude|x"
+// with model "y" and provider "claude" with model "x|y" produced BYTE-IDENTICAL
+// keys, so two differently-pinned tasks merged into one partition and could be
+// handed to a single provider turn: exactly the restriction this key exists to
+// preserve, defeated by its own encoding.
+//
+// JSON escapes its own delimiters, so the encoding is injective.
+func TestDeclaredBindingKeyIsCollisionFree(t *testing.T) {
+	cases := map[string][2]string{
+		"delimiter in provider vs model": {
+			`{"binding":{"provider":"claude|x","model":"y"}}`,
+			`{"binding":{"provider":"claude","model":"x|y"}}`,
+		},
+		"delimiter shifts one field over": {
+			`{"binding":{"alias":"a|b","provider":"c"}}`,
+			`{"binding":{"alias":"a","provider":"b|c"}}`,
+		},
+		"quote in a field": {
+			`{"binding":{"provider":"a\"b","model":"c"}}`,
+			`{"binding":{"provider":"a","model":"b\"c"}}`,
+		},
+	}
+	for name, pair := range cases {
+		t.Run(name, func(t *testing.T) {
+			a, b := declaredBindingKey(pair[0]), declaredBindingKey(pair[1])
+			if a == "" || b == "" {
+				t.Fatalf("a declared binding keyed as unpinned: a=%q b=%q", a, b)
+			}
+			if a == b {
+				t.Fatalf("COLLISION: %q and %q both key as %q; two differently-pinned "+
+					"tasks would merge into one partition and be handed to a single "+
+					"provider turn", pair[0], pair[1], a)
+			}
+		})
+	}
+}
+
+// TestDeclaredBindingKeyIsStable pins that the same binding keys identically
+// across calls and across field ORDER in the source document -- partitioning
+// compares these keys, so an unstable encoding would split a group that one
+// worker may legitimately own.
+func TestDeclaredBindingKeyIsStable(t *testing.T) {
+	a := declaredBindingKey(`{"binding":{"provider":"codex","model":"opus"}}`)
+	b := declaredBindingKey(`{"binding":{"model":"opus","provider":"codex"}}`)
+	if a == "" {
+		t.Fatal("declaredBindingKey returned \"\" for a task that DOES pin a provider")
+	}
+	if a != b {
+		t.Fatalf("key depends on source field order (%q vs %q); the same binding must "+
+			"always produce the same key", a, b)
+	}
+}
