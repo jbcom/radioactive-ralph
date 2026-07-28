@@ -141,6 +141,41 @@ func (s *Store) ListTaskGroupPaths(ctx context.Context, planID string) (map[stri
 	return out, nil
 }
 
+// ListTaskBlockingReasons returns task id -> blocked reason for one plan,
+// including only tasks that actually have one.
+//
+// Bulk rather than per-task: the observe snapshot already lists every task, so
+// calling GetTaskExecutionMetadata for each would be an N+1 on the path an
+// operator hits every refresh. Omitting empty reasons keeps the payload to
+// facts — an empty string per healthy task is bytes that say nothing.
+//
+// Scoped to planID because task ids repeat across plans; an unscoped query would
+// attribute one plan's block to another.
+func (s *Store) ListTaskBlockingReasons(ctx context.Context, planID string) (map[string]string, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT task_id, blocked_reason
+		FROM task_metadata
+		WHERE plan_id = ? AND blocked_reason IS NOT NULL AND blocked_reason != ''
+	`, planID)
+	if err != nil {
+		return nil, fmt.Errorf("store: list task blocking reasons: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	out := map[string]string{}
+	for rows.Next() {
+		var taskID, reason string
+		if err := rows.Scan(&taskID, &reason); err != nil {
+			return nil, fmt.Errorf("store: scan task blocking reason: %w", err)
+		}
+		out[taskID] = reason
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("store: iterate task blocking reasons: %w", err)
+	}
+	return out, nil
+}
+
 // BindTaskCalibration snapshots the immutable calibration resolved for an
 // await-calibration task. The first successful bind wins; idempotent repeats
 // with the same content address are allowed, while a different address fails

@@ -22,8 +22,13 @@ type fakeReader struct {
 	messagesErr  error
 	descriptions map[string]string
 	detailErr    error
-	messagesCall int
-	messagesQ    store.OperatorMessageQuery
+	// blockingReasons is keyed by PLAN, mirroring the plan-scoped query, so a
+	// test can assert one plan's reasons never appear in another's snapshot.
+	blockingReasons    map[string]map[string]string
+	blockingReasonsErr error
+	blockingCalls      int
+	messagesCall       int
+	messagesQ          store.OperatorMessageQuery
 }
 
 func (f *fakeReader) ReadOperatorSnapshot(
@@ -858,4 +863,105 @@ func (f *fakeReader) ListOperatorTaskDescriptions(
 		return nil, f.detailErr
 	}
 	return f.descriptions, nil
+}
+
+func (f *fakeReader) ListTaskBlockingReasons(
+	_ context.Context, planID string,
+) (map[string]string, error) {
+	f.blockingCalls++
+	if f.blockingReasonsErr != nil {
+		return nil, f.blockingReasonsErr
+	}
+	return f.blockingReasons[planID], nil
+}
+
+// TestSnapshotSurfacesBlockedReasonToClients is the point of the field.
+//
+// A blocked task and a task waiting on a dependency both show zero progress. One
+// clears itself as upstream work finishes; the other needs an operator to change
+// configuration or fix the plan. Before this, telling them apart meant reading
+// task_metadata directly in SQLite — exactly the access the dumb-client boundary
+// exists to remove, so the answer was unavailable through the supported surface.
+func TestSnapshotSurfacesBlockedReasonToClients(t *testing.T) {
+	captured := time.Now().UTC().Truncate(time.Second)
+	reader := &fakeReader{
+		snapshot: &store.OperatorSnapshot{
+			CapturedAt: captured,
+			Project:    store.OperatorProject{ID: "p", DisplayName: "P", CreatedAt: captured},
+			Tasks: store.OperatorTaskPage{
+				Items: []store.OperatorTask{
+					{
+						PlanID: "plan-1", ID: "stuck",
+						Status:    store.TaskStatusBlockedCapability,
+						CreatedAt: captured, UpdatedAt: captured,
+					},
+					{
+						PlanID: "plan-1", ID: "healthy",
+						Status:    store.TaskStatusPending,
+						CreatedAt: captured, UpdatedAt: captured,
+					},
+				},
+			},
+		},
+		blockingReasons: map[string]map[string]string{
+			"plan-1": {"stuck": "binding lacks native_fanout"},
+		},
+	}
+	svc, err := New(reader)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	snap, err := svc.Snapshot(context.Background(), SnapshotQuery{ProjectID: "p"})
+	if err != nil {
+		t.Fatalf("Snapshot: %v", err)
+	}
+
+	byID := map[string]Task{}
+	for _, task := range snap.Tasks.Items {
+		byID[task.ID] = task
+	}
+	if got := byID["stuck"].BlockedReason; got != "binding lacks native_fanout" {
+		t.Errorf("blocked task reason = %q, want the recorded reason — without it a "+
+			"client cannot tell a blocked task from one waiting on a dependency", got)
+	}
+	if got := byID["healthy"].BlockedReason; got != "" {
+		t.Errorf("unblocked task carries reason %q; it must stay empty so the field "+
+			"means something when present", got)
+	}
+
+	// One query per PLAN, not per task: two tasks, one plan, one call.
+	if reader.blockingCalls != 1 {
+		t.Errorf("blocking-reason queries = %d, want 1 for a single-plan page; "+
+			"per-task reads would be an N+1 on every operator refresh",
+			reader.blockingCalls)
+	}
+}
+
+// TestBlockedStatusesDoNotBlankTheSnapshot is the more serious half of what
+// exposing blocking reasons uncovered.
+//
+// StateForTask's default FAILS the entire projection, and neither
+// blocked_capability nor blocked_input was mapped. So a single fail-closed
+// blocked task returned "unknown Ralph task status" for the whole snapshot: the
+// status that exists to make a stall VISIBLE instead hid every plan, task, and
+// worker from the operator.
+func TestBlockedStatusesDoNotBlankTheSnapshot(t *testing.T) {
+	for _, status := range []store.TaskStatus{
+		store.TaskStatusBlockedCapability,
+		store.TaskStatusBlockedInput,
+	} {
+		t.Run(string(status), func(t *testing.T) {
+			state, err := StateForTask(status)
+			if err != nil {
+				t.Fatalf("StateForTask(%s) = %v; an unmapped status fails the WHOLE "+
+					"projection, so one blocked task blanks the operator's snapshot",
+					status, err)
+			}
+			if state != sdka2a.TaskStateInputRequired {
+				t.Errorf("state = %v, want InputRequired — the task will not advance "+
+					"until something outside it changes", state)
+			}
+		})
+	}
 }

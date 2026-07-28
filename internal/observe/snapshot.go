@@ -335,6 +335,11 @@ type Reader interface {
 		projectID, planID string,
 		taskIDs []string,
 	) (map[string]string, error)
+	// ListTaskBlockingReasons returns task id -> blocked reason for one plan,
+	// omitting tasks that have none. Plan-scoped and bulk for the same reason as
+	// the descriptions read above: a snapshot lists many tasks, so per-task reads
+	// would be an N+1 on an operator's refresh path.
+	ListTaskBlockingReasons(ctx context.Context, planID string) (map[string]string, error)
 }
 
 var _ Reader = (*store.Store)(nil)
@@ -439,19 +444,31 @@ type PlanPage struct {
 // projection. Description, acceptance commands, raw messages, and artifacts
 // are intentionally absent.
 type Task struct {
-	PlanID            string       `json:"plan_id"`
-	ID                string       `json:"id"`
-	CanonicalID       string       `json:"canonical_id"`
-	Status            string       `json:"status"`
-	ParallelGroup     *int64       `json:"parallel_group,omitempty"`
-	SequenceOrdinal   *int64       `json:"sequence_ordinal,omitempty"`
-	RetryCount        int          `json:"retry_count"`
-	ReclaimCount      int          `json:"reclaim_count"`
-	ParentTaskID      string       `json:"parent_task_id,omitempty"`
-	ClaimedByWorkerID string       `json:"claimed_by_worker_id,omitempty"`
-	CreatedAt         time.Time    `json:"created_at"`
-	UpdatedAt         time.Time    `json:"updated_at"`
-	A2ATask           *sdka2a.Task `json:"a2a_task"`
+	PlanID            string `json:"plan_id"`
+	ID                string `json:"id"`
+	CanonicalID       string `json:"canonical_id"`
+	Status            string `json:"status"`
+	ParallelGroup     *int64 `json:"parallel_group,omitempty"`
+	SequenceOrdinal   *int64 `json:"sequence_ordinal,omitempty"`
+	RetryCount        int    `json:"retry_count"`
+	ReclaimCount      int    `json:"reclaim_count"`
+	ParentTaskID      string `json:"parent_task_id,omitempty"`
+	ClaimedByWorkerID string `json:"claimed_by_worker_id,omitempty"`
+
+	// BlockedReason is why a fail-closed pre-dispatch block was applied
+	// (blocked_capability / blocked_input), empty when the task is not blocked.
+	//
+	// Exposed because a blocked task is otherwise indistinguishable from one
+	// waiting on a dependency: both show zero progress, but one clears itself as
+	// upstream tasks finish and the other needs an operator to change
+	// configuration or fix the plan. Without the reason, "why is this stalled?"
+	// required raw SQLite — which is exactly the access the dumb-client boundary
+	// removes.
+	BlockedReason string `json:"blocked_reason,omitempty"`
+
+	CreatedAt time.Time    `json:"created_at"`
+	UpdatedAt time.Time    `json:"updated_at"`
+	A2ATask   *sdka2a.Task `json:"a2a_task"`
 }
 
 // TaskPage is one deterministic composite-key task page.
@@ -608,7 +625,21 @@ func (s *Service) Snapshot(
 	out.Summary.PlanTotal = totalCount(out.Summary.PlanStatusCounts)
 	out.Summary.TaskTotal = totalCount(out.Summary.TaskStatusCounts)
 
-	tasks, err := tasksFromStore(raw.Tasks)
+	// One query per DISTINCT plan in the page, not per task: a snapshot lists
+	// many tasks and an operator hits this on every refresh, so per-task reads
+	// would be an N+1 exactly where it is most visible.
+	reasons := map[string]string{}
+	for planID := range distinctPlanIDs(raw.Tasks.Items) {
+		planReasons, rerr := s.reader.ListTaskBlockingReasons(ctx, planID)
+		if rerr != nil {
+			return nil, fmt.Errorf("observe: load blocking reasons for %s: %w", planID, rerr)
+		}
+		for taskID, reason := range planReasons {
+			reasons[taskID] = reason
+		}
+	}
+
+	tasks, err := tasksFromStore(raw.Tasks, reasons)
 	if err != nil {
 		return nil, err
 	}
@@ -849,7 +880,19 @@ func plansFromStore(page store.OperatorPlanPage) PlanPage {
 	return out
 }
 
-func tasksFromStore(page store.OperatorTaskPage) (TaskPage, error) {
+// distinctPlanIDs collects the plans a task page touches, so blocking reasons
+// are fetched once per plan rather than once per task.
+func distinctPlanIDs(items []store.OperatorTask) map[string]struct{} {
+	out := make(map[string]struct{}, len(items))
+	for _, item := range items {
+		if item.PlanID != "" {
+			out[item.PlanID] = struct{}{}
+		}
+	}
+	return out
+}
+
+func tasksFromStore(page store.OperatorTaskPage, reasons map[string]string) (TaskPage, error) {
 	out := TaskPage{
 		Items:   make([]Task, 0, len(page.Items)),
 		HasMore: page.HasMore,
@@ -861,7 +904,7 @@ func tasksFromStore(page store.OperatorTaskPage) (TaskPage, error) {
 		}
 	}
 	for _, item := range page.Items {
-		task, err := taskFromStore(item)
+		task, err := taskFromStore(item, reasons[item.ID])
 		if err != nil {
 			return TaskPage{}, err
 		}
@@ -870,7 +913,7 @@ func tasksFromStore(page store.OperatorTaskPage) (TaskPage, error) {
 	return out, nil
 }
 
-func taskFromStore(item store.OperatorTask) (Task, error) {
+func taskFromStore(item store.OperatorTask, blockedReason string) (Task, error) {
 	if item.PlanID == "" || item.ID == "" {
 		return Task{}, fmt.Errorf(
 			"%w: task has empty identity",
@@ -911,6 +954,7 @@ func taskFromStore(item store.OperatorTask) (Task, error) {
 		ReclaimCount:      item.ReclaimCount,
 		ParentTaskID:      item.ParentTaskID,
 		ClaimedByWorkerID: item.ClaimedByWorkerID,
+		BlockedReason:     blockedReason,
 		CreatedAt:         item.CreatedAt,
 		UpdatedAt:         item.UpdatedAt,
 		A2ATask:           protocolTask,
@@ -978,7 +1022,16 @@ func StateForTask(status store.TaskStatus) (sdka2a.TaskState, error) {
 		return sdka2a.TaskStateSubmitted, nil
 	case store.TaskStatusRunning:
 		return sdka2a.TaskStateWorking, nil
-	case store.TaskStatusBlocked, store.TaskStatusReadyPendingApproval:
+	case store.TaskStatusBlocked, store.TaskStatusReadyPendingApproval,
+		store.TaskStatusBlockedCapability, store.TaskStatusBlockedInput:
+		// The two fail-closed pre-dispatch blocks map to InputRequired with the
+		// others: all four mean the task will not advance until something outside
+		// the task changes — an approval, a provider binding, or an input digest.
+		//
+		// They were absent, and the default FAILS the whole projection: a single
+		// capability-blocked task blanked an operator's entire snapshot with
+		// "unknown Ralph task status". The status that exists to make a stall
+		// visible instead hid everything.
 		return sdka2a.TaskStateInputRequired, nil
 	case store.TaskStatusDone, store.TaskStatusDecomposed:
 		return sdka2a.TaskStateCompleted, nil
