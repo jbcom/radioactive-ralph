@@ -68,8 +68,9 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
 
 ## Remaining
 
-- [ ] [WAIT-AGENT] Land the 9 open PRs: 222, 225, 251, 252, 255, 257, 259, 262,
-      268. MERGED: #263 (calibration IPC, 9fe7d33), #267 (watchdog barrier),
+- [ ] [WAIT-AGENT] Land the 8 open PRs: 222, 225, 251, 252, 255, 257, 262, 268.
+      MERGED: #259 (differentFrom import validation), #263 (calibration IPC,
+      9fe7d33), #267 (watchdog barrier),
       #265, #261, #258, #236, #247, #256, #245, #246.
 
       MECHANISM CHANGED 2026-07-28 (user-directed). The driver is STOPPED and
@@ -92,9 +93,15 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
            the queued commit IS main's future state and merging happens BECAUSE
            those checks passed. Verified no workflow_run consumer depends on it.
 
-      BOOTSTRAP: the queue cannot run until ci.yml's merge_group trigger is on
-      MAIN, and that ships in #268 -- so #268 must land through the pre-queue
-      path first. Everything is auto-merge armed and flows once it does.
+      BOOTSTRAP -- I GOT THIS WRONG ONCE. The queue cannot run until ci.yml's
+      merge_group trigger is on MAIN, and that ships in #268. I enabled the
+      queue anyway, in the same pass as naming the dependency; it accepted #259
+      and parked it in AWAITING_CHECKS waiting for a merge_group run that could
+      never be created. Ruleset 19896999 is now DISABLED and #259 merged fine
+      through the normal path.
+      CORRECT ORDER: (1) land #268, (2) then re-enable ruleset 19896999,
+      (3) verify a merge_group CI run actually APPEARS before trusting it.
+      Naming a prerequisite is not satisfying it.
       ROLLBACK: /tmp/protection-backup.json holds the original 25-check config.
 
       There is ALWAYS an action here; this is not a wait.
