@@ -31,14 +31,51 @@ for pr in $(gh pr list --state open --json number --jq '.[].number' 2>/dev/null)
 done
 say "unresolved review threads" "$tot"
 
-# 3. Failing checks — distinct from "blocked", which only means waiting.
+# 3. Failing checks — distinct from "blocked", which only means waiting, and
+#    distinct from a failure the MERGE QUEUE has already superseded.
+#
+#    A queued PR's branch keeps whatever result it last had, but the queue tests
+#    base+PR on a gh-readonly-queue/* branch. So a fix that landed on main after
+#    the PR's last push is present in what the queue is actually testing while
+#    the PR branch still shows red. #252 read FAILURE for Package GUI on its own
+#    branch and completed/SUCCESS on queue branch 2f9f2549, which carried the
+#    appimagetool fix from #270.
+#
+#    That distinction decides whether an agent has work to do. Counting a
+#    superseded failure as actionable is not merely noisy: a queued PR CANNOT be
+#    rebased ("Branches that are queued for merging cannot be updated"), so the
+#    only way to "act" on it is to dequeue — undoing progress to chase a result
+#    that is already green one layer up.
 f=0
+stale_f=0
 for pr in $(gh pr list --state open --json number --jq '.[].number' 2>/dev/null); do
   c=$(gh pr view "$pr" --json statusCheckRollup \
-    --jq '[.statusCheckRollup[]?|select(.conclusion=="FAILURE")]|length' 2>/dev/null)
-  [ -n "$c" ] && f=$((f+c))
+    --jq '[.statusCheckRollup[]?|select(.conclusion=="FAILURE")|.name]|join(",")' 2>/dev/null)
+  [ -z "$c" ] && continue
+  qsha=$(git ls-remote --heads origin "refs/heads/gh-readonly-queue/*" 2>/dev/null \
+    | grep "pr-$pr-" | head -1 | cut -f1)
+  if [ -n "$qsha" ]; then
+    # Every name that failed on the PR branch must also be failing on the queue
+    # branch for this to be real work.
+    live=0
+    for name in ${c//,/ }; do
+      qc=$(gh api "repos/jbcom/radioactive-ralph/commits/$qsha/check-runs" \
+        --jq "[.check_runs[]|select(.name==\"$name\" and .conclusion==\"failure\")]|length" 2>/dev/null)
+      [ "${qc:-0}" != "0" ] && live=$((live+1))
+    done
+    if [ "$live" = "0" ]; then
+      say "  PR #$pr failure(s) SUPERSEDED by queue" "$c"
+      stale_f=$((stale_f+1))
+      continue
+    fi
+    f=$((f+live))
+  else
+    n=$(printf '%s' "$c" | tr ',' '\n' | grep -c .)
+    f=$((f+n))
+  fi
 done
 say "failing checks across open PRs" "$f"
+[ "$stale_f" != "0" ] && say "  (superseded-by-queue, not actionable)" "$stale_f"
 
 # 4. Conflicted PRs — these need a human-equivalent decision, not waiting.
 d=$(gh pr list --state open --json number,mergeStateStatus \
@@ -86,15 +123,32 @@ for wt in /Users/jbogaty/src/jbcom/radioactive-ralph /Users/jbogaty/src/jbcom/.w
   [ "$n" != "0" ] && say "  $(basename "$wt") UNPUSHED commits" "$n"
 done
 
-# 8. The directive must not mark EVERY open item as a wait while real work is
-#    outstanding. An all-[WAIT] queue tells the anti-stop hook the turn may end,
-#    so a stale wait-label is how a session stops with PRs still open — which is
+# 8. The directive must not mark EVERY open item as a wait while ACTIONABLE work
+#    is outstanding. An all-[WAIT] queue tells the anti-stop hook the turn may
+#    end, so a stale wait-label is how a session stops with real work left —
 #    exactly what happened before this check existed.
+#
+#    "Actionable" is the load-bearing word, and the first version of this check
+#    got it wrong by firing on open-PR count alone. A PR that is MERGEABLE with
+#    no failing checks, no conflict, and no unresolved thread has nothing an
+#    agent can do to it: every remaining check is a CI job on a serialized
+#    runner pool, and pushing more work at that pool measurably slows it (a
+#    burst of state-only commits, then a rebase of every branch at once, both
+#    made the queue worse). Demanding a non-wait label in that state does not
+#    produce progress — it produces invented adjacent work to satisfy the
+#    detector, which is its own failure mode.
+#
+#    So the guard now asks what it actually cares about: is there a failure to
+#    fix, a conflict to resolve, or a thread to answer? Any of those with an
+#    all-[WAIT] directive is a stale label. None of them means waiting is the
+#    honest state, and the driver plus the monitor carry it.
 tot_items=$(grep -cE '^- \[ \]|^      - \[ \]' .agent-state/directive.md 2>/dev/null)
 wait_items=$(grep -cE '^- \[ \] \[WAIT|^      - \[ \] \[WAIT' .agent-state/directive.md 2>/dev/null)
 say "directive open items" "$tot_items ($wait_items wait-labelled)"
-if [ "$tot_items" != "0" ] && [ "$tot_items" = "$wait_items" ] && [ "${open:-0}" != "0" ]; then
-  say "  ALL open items are [WAIT]" "but $open PRs are still open — FIX THE LABEL"
+actionable=$(( ${tot:-0} + ${f:-0} + ${d:-0} ))
+if [ "$tot_items" != "0" ] && [ "$tot_items" = "$wait_items" ] && [ "$actionable" != "0" ]; then
+  say "  ALL open items are [WAIT]" \
+    "but $actionable actionable item(s) exist (threads+failures+DIRTY) — FIX THE LABEL"
   fail=1
 fi
 
