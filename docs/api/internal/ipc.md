@@ -186,7 +186,7 @@ func IsCode(err error, code string) bool
 IsCode reports whether err carries the given error class. It matches any error implementing the Coded interface \(Code\(\) string\) — both the client's \*CodedError \(decoded from a wire Response.Code\) and a handler\-side coded error returned by a direct in\-process call.
 
 <a name="NewServer"></a>
-## func [NewServer](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/server.go#L172>)
+## func [NewServer](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/server.go#L189>)
 
 ```go
 func NewServer(opts ServerOptions) (*Server, error)
@@ -206,7 +206,7 @@ ServiceEndpoint returns the local control\-plane endpoint plus its heartbeat fil
 On POSIX the endpoint is normally sessionsDir/service.sock. But a deeply nested sessionsDir — a long XDG/App Support path, a deep RALPH\_STATE\_DIR, or a macOS /var/folders/... temp root under test — can push that path past the kernel's sun\_path limit, so bind\(\) fails with EINVAL. When that would happen we fall back to a short, collision\-resistant socket path under the system temp dir keyed by a hash of sessionsDir. The heartbeat file always stays in sessionsDir \(it is a plain file, not a socket, so it has no path limit\) which keeps discovery/liveness colocated with the workspace.
 
 <a name="SocketAlive"></a>
-## func [SocketAlive](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/server.go#L724>)
+## func [SocketAlive](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/server.go#L814>)
 
 ```go
 func SocketAlive(heartbeatPath string, maxAge time.Duration) bool
@@ -419,7 +419,7 @@ func (c *Client) WorkerKill(ctx context.Context, args WorkerKillArgs) error
 WorkerKill kills a running worker via kill\-and\-reclaim.
 
 <a name="Coded"></a>
-## type [Coded](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/server.go#L664-L666>)
+## type [Coded](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/server.go#L754-L756>)
 
 Coded is implemented by handler errors that carry a stable machine\-readable error class \(Code\* consts\). writeResult copies it into Response.Code so the client can branch on the failure kind.
 
@@ -460,7 +460,7 @@ func (e *CodedError) Error() string
 
 
 <a name="DriveHandler"></a>
-## type [DriveHandler](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/server.go#L78-L99>)
+## type [DriveHandler](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/server.go#L84-L105>)
 
 DriveHandler is the OPTIONAL v2 drive surface. A Handler that also implements DriveHandler gains the plan\-import/plan\-set\-status/task\-approve/ worker\-kill commands; one that does not still serves the v1 observe surface, and the server answers a drive command with an unsupported\_command response. Keeping it a separate interface means existing v1 Handler implementations \(and their test doubles\) compile unchanged.
 
@@ -515,7 +515,7 @@ type EnqueueReply struct {
 ```
 
 <a name="Handler"></a>
-## type [Handler](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/server.go#L49-L70>)
+## type [Handler](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/server.go#L55-L76>)
 
 Handler handles a single client request. Attach streams events by calling emit repeatedly; other commands return \(reply, nil\) and the server transmits a single Response frame.
 
@@ -661,15 +661,16 @@ type PlanSetStatusReply struct {
 ```
 
 <a name="ProjectConfigApplyArgs"></a>
-## type [ProjectConfigApplyArgs](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/protocol.go#L345-L350>)
+## type [ProjectConfigApplyArgs](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/protocol.go#L358-L364>)
 
 ProjectConfigApplyArgs upserts and deletes project config keys \(CmdProjectConfigApply\).
 
-Both sets travel in ONE call because vconfig's override path computes them together — an overlay to write and, when a provider selection replaces the legacy singular key, a key to remove. Splitting them across two round trips would let a crash in between leave the project half\-configured.
+Both sets travel in ONE call because vconfig's override path computes them together — an overlay to write and, when a provider selection replaces the legacy singular key, a key to remove. Splitting them across two round trips would let a crash in between leave the project half\-configured. Project and UserScope select the target under the same mutually exclusive rule as ProjectConfigGetArgs. A client applying to the user layer must say so with UserScope rather than sending the id that layer resolves to: naming the resolved id asks the supervisor to trust a client\-computed identity for a scope the supervisor owns.
 
 ```go
 type ProjectConfigApplyArgs struct {
-    Project    string            `json:"project"`
+    Project string `json:"project"`
+    // UserScope targets the user-level config project. Requires Project empty.
     UserScope  bool              `json:"user_scope,omitempty"`
     Upserts    map[string]string `json:"upserts,omitempty"`
     DeleteKeys []string          `json:"delete_keys,omitempty"`
@@ -677,22 +678,28 @@ type ProjectConfigApplyArgs struct {
 ```
 
 <a name="ProjectConfigGetArgs"></a>
-## type [ProjectConfigGetArgs](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/protocol.go#L320-L324>)
+## type [ProjectConfigGetArgs](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/protocol.go#L327-L332>)
 
 ProjectConfigGetArgs asks for one project's stored config \(CmdProjectConfigGet\).
 
-An EMPTY Project means the user\-scope project — the synthetic project holding user\-level config. The supervisor resolves \(and creates\) it, rather than the client doing so and then telling the supervisor which id to use: that resolution is a store write, and the supervisor is the single writer.
+The two selectors are MUTUALLY EXCLUSIVE, and the supervisor rejects any other combination rather than guessing:
+
+- UserScope=true with an EMPTY Project selects the user\-scope project — the synthetic project holding user\-level config.
+- UserScope=false with a NON\-EMPTY Project selects that project.
+
+An empty Project alone does NOT select user scope; it is an invalid request. The supervisor resolves \(and creates\) the user\-scope project rather than the client doing so and telling the supervisor which id to use: that resolution is a store write, and the supervisor is the single writer.
 
 ```go
 type ProjectConfigGetArgs struct {
     Project string `json:"project"`
     // UserScope asks for the user-level config project instead of naming one.
+    // Requires Project to be empty.
     UserScope bool `json:"user_scope,omitempty"`
 }
 ```
 
 <a name="ProjectConfigGetReply"></a>
-## type [ProjectConfigGetReply](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/protocol.go#L331-L336>)
+## type [ProjectConfigGetReply](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/protocol.go#L339-L344>)
 
 ProjectConfigGetReply carries the stored config values verbatim.
 
@@ -748,7 +755,7 @@ type ProjectFingerprint struct {
 ```
 
 <a name="QueryHandler"></a>
-## type [QueryHandler](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/server.go#L105-L118>)
+## type [QueryHandler](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/server.go#L111-L124>)
 
 QueryHandler is the OPTIONAL v3 content\-safe query surface. Keeping it separate preserves source and wire compatibility with v1/v2 handlers: a rolling old supervisor answers query commands with unsupported\_command instead of returning an unsafe fallback.
 
@@ -801,7 +808,7 @@ type Response struct {
 ```
 
 <a name="Server"></a>
-## type [Server](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/server.go#L121-L145>)
+## type [Server](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/server.go#L127-L162>)
 
 Server is the repo\-service IPC server. One instance per repo service.
 
@@ -812,7 +819,7 @@ type Server struct {
 ```
 
 <a name="Server.Start"></a>
-### func \(\*Server\) [Start](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/server.go#L250>)
+### func \(\*Server\) [Start](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/server.go#L295>)
 
 ```go
 func (s *Server) Start() error
@@ -821,7 +828,7 @@ func (s *Server) Start() error
 Start binds the socket and begins accepting connections in a background goroutine. Safe to call once. Returns the listener error if bind fails. The heartbeat interval comes from ServerOptions.HeartbeatInterval \(set at NewServer\), not a parameter here — a single source of truth.
 
 <a name="Server.Stop"></a>
-### func \(\*Server\) [Stop](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/server.go#L265>)
+### func \(\*Server\) [Stop](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/server.go#L313>)
 
 ```go
 func (s *Server) Stop() error
@@ -830,7 +837,7 @@ func (s *Server) Stop() error
 Stop shuts the server down and waits for goroutines to exit.
 
 <a name="ServerOptions"></a>
-## type [ServerOptions](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/server.go#L148-L168>)
+## type [ServerOptions](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/server.go#L165-L185>)
 
 ServerOptions configures a Server.
 

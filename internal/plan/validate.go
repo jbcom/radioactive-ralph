@@ -63,7 +63,74 @@ func ValidateForImport(md []byte) error {
 	if countPlanSteps(parsed.Groups) == 0 {
 		return ValidationErrors{{Msg: "plan has no steps"}}
 	}
+	if findings := validateDifferentFrom(parsed); len(findings) > 0 {
+		return ValidationErrors(findings)
+	}
 	return nil
+}
+
+// validateDifferentFrom checks every declared independence constraint resolves.
+//
+// An unresolvable reference is worse than an unenforced field: it is silently
+// VACUOUS, so the plan looks as though it carries an independence guarantee
+// while nothing can satisfy or violate it. A self-reference is the opposite
+// failure — unsatisfiable, so dispatch could only ever block the task forever.
+//
+// Both are caught at import, where the author is present to fix them, rather
+// than surfacing later as a review that was never actually independent or a task
+// that mysteriously never runs.
+func validateDifferentFrom(p *Plan) []PlanError {
+	known := map[string]struct{}{}
+	walkPlanSteps(p, func(id string, _ Step) {
+		known[id] = struct{}{}
+	})
+
+	var findings []PlanError
+	walkPlanSteps(p, func(id string, step Step) {
+		if step.Metadata == nil {
+			return
+		}
+		for _, peer := range step.Metadata.DifferentFrom {
+			peer = strings.TrimSpace(peer)
+			if peer == "" {
+				continue
+			}
+			if peer == id {
+				findings = append(findings, PlanError{Msg: fmt.Sprintf(
+					"task %q declares differentFrom itself; a task cannot run on a "+
+						"provider different from its own", id)})
+				continue
+			}
+			if _, ok := known[peer]; !ok {
+				findings = append(findings, PlanError{Msg: fmt.Sprintf(
+					"task %q declares differentFrom %q, which is not a task in this "+
+						"plan; the constraint could never be enforced", id, peer)})
+			}
+		}
+	})
+	return findings
+}
+
+// walkPlanSteps visits every step with the task id it will be imported under —
+// the annotated id when present, the positional ref otherwise — so validation
+// compares against the SAME ids dispatch will use.
+func walkPlanSteps(p *Plan, fn func(id string, step Step)) {
+	var walk func(groups []Group, path []int)
+	walk = func(groups []Group, path []int) {
+		for i, group := range groups {
+			childPath := append(append([]int(nil), path...), i)
+			for j, step := range group.Steps {
+				ref := StepRef{GroupPath: childPath, Index: j}
+				id := ref.ID()
+				if step.Metadata != nil && step.Metadata.ID != "" {
+					id = step.Metadata.ID
+				}
+				fn(id, step)
+			}
+			walk(group.SubGroups, childPath)
+		}
+	}
+	walk(p.Groups, nil)
 }
 
 func countPlanSteps(groups []Group) int {
