@@ -93,12 +93,16 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
       the strict refusal, every fingerprint property incl. stability, and the
       limits section), so the page cannot drift from the code.
 
-- [ ] Enforce `differentFrom`. It is the last ralph-task field with no reader
-      (`requires` #247, `providers` #250, `inputs`/`outputs` #228/#229 all
-      landed). It names tasks that must not share this task's INDEPENDENCE
-      DOMAIN. #234 shipped the invocation identity; #236 (calibrations, with
-      inference/control/independence domains) is still open, so build the
-      comparison against the domain #236 defines and land after it.
+- [x] `differentFrom` REFERENCES validated at import (PR #259). An unresolvable
+      reference is silently VACUOUS — the plan reads as carrying an independence
+      guarantee while nothing enforces it, which is worse than no field — and a
+      self-reference is unsatisfiable, so dispatch could only block it forever.
+      walkPlanSteps derives ids the way import does, so validation and dispatch
+      share one notion of identity. Guide says validated-not-enforced.
+      - [ ] Enforce the runtime constraint: compare independence domains at
+            dispatch. Gated on #236 (calibrations carry
+            inference/control/independence domains); nothing on main defines a
+            domain to compare yet.
 
 - [x] Increment 11 operator half — DONE (PR #258). Task carries BlockedReason,
       backed by a bulk plan-scoped store.ListTaskBlockingReasons (per-task reads
