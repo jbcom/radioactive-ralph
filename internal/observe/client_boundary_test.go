@@ -125,8 +125,6 @@ var clientBoundaryExemptions = map[string]string{
 	"init_cmd.go": "#204: resolves vconfig layers against the store before a " +
 		"supervisor exists for the project; needs a supervisor-side " +
 		"config-apply surface usable at first contact",
-	"desktop_launch.go": "#204: resolves the project for a Finder/Explorer " +
-		"launch before any supervisor is known to be running",
 }
 
 func assertFileDoesNotImportStore(t *testing.T, root, path string) {
