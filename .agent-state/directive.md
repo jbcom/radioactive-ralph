@@ -68,7 +68,22 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
 
 ## Remaining
 
-- [ ] Land the 10 open PRs: 222, 225, 251, 252, 255, 257, 259, 262, 263, 265.
+- [ ] [WAIT-AGENT] Land the 10 open PRs: 222, 225, 251, 252, 255, 257, 259, 262,
+      263, 265. Delegated to scripts/drive-open-prs.sh, running in the
+      background: it rebases the leader, arms auto-merge, merges CLEAN/UNSTABLE
+      with no failures, and exits 2/3/4 the moment anything needs a decision
+      rather than reporting false success. The monitor reports failures,
+      conflicts, and driver death.
+      RE-LABEL TO `[ ]` THE MOMENT any PR has a FAILING check, a DIRTY branch,
+      or an unresolved thread -- all three are agent-doable and none is a wait.
+      verify-repo-claims.sh guard 8 enforces exactly that and will fail the
+      verifier if this label outlives its justification.
+      WHY THIS IS A WAIT, verified 2026-07-28: all 10 read BLOCKED/MERGEABLE with
+      0 failures, 0 DIRTY, 0 unresolved threads. Every outstanding check is a CI
+      job on a serialized runner pool. Pushing more work at that pool measurably
+      SLOWS it -- I did it twice (a burst of state-only commits, then rebasing
+      every branch at once) and both made the queue worse. #236, #258, and #261
+      all merged through this path with no manual step.
       NOT wait-labelled, deliberately, and I tried it the other way: labelling
       this [WAIT-AGENT] because the background driver owns it made EVERY open
       item a wait, and verify-repo-claims.sh guard 8 caught it --
