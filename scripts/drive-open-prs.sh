@@ -31,13 +31,34 @@ for round in $(seq 1 400); do
     exit 0
   fi
   blocked=0; behind=0; ready=0; dirty=""; failing=""; merged=""
+  # Rebase ONE behind PR per round — the one closest to green — instead of all
+  # of them.
+  #
+  # `strict` protection means every merge makes every other PR BEHIND, and
+  # `gh pr update-branch` restarts that PR's whole 23-job matrix. Rebasing all
+  # eight at once queued ~184 jobs against a macOS pool that runs a couple at a
+  # time (measured: queued=42 running=0 immediately after one such round), so
+  # nothing finished and the next merge invalidated the work anyway. The merge
+  # queue is serialized by protection, so only the leader's rebase can pay off;
+  # the rest are re-run again after the next merge regardless.
+  leader=""; leader_left=9999
   for pr in $prs; do
     st=$(gh pr view "$pr" --json mergeStateStatus --jq '.mergeStateStatus' 2>/dev/null)
     f=$(gh pr view "$pr" --json statusCheckRollup \
       --jq '[.statusCheckRollup[]?|select(.conclusion=="FAILURE")|.name]|join(",")' 2>/dev/null)
     [ -n "$f" ] && failing="$failing $pr($f)"
     case "$st" in
-      BEHIND) behind=$((behind+1)); gh pr update-branch "$pr" >/dev/null 2>&1 ;;
+      BEHIND)
+        behind=$((behind+1))
+        left=$(gh pr view "$pr" --json statusCheckRollup \
+          --jq '[.statusCheckRollup[]?|select((.name!=null) and (.conclusion//"")!="SUCCESS" and (.conclusion//"")!="SKIPPED")]|length' 2>/dev/null)
+        case "$left" in (''|*[!0-9]*) left=9999;; esac
+        # Prefer the PR with the FEWEST outstanding checks, and never a failing
+        # one: rebasing a PR that still has to fix a failure spends the pool on
+        # work that cannot merge yet.
+        if [ -z "$f" ] && [ "$left" -lt "$leader_left" ]; then
+          leader=$pr; leader_left=$left
+        fi ;;
       DIRTY)  dirty="$dirty $pr" ;;
       CLEAN|UNSTABLE)
         if [ -z "$f" ]; then
@@ -49,6 +70,12 @@ for round in $(seq 1 400); do
     armed=$(gh pr view "$pr" --json autoMergeRequest --jq 'if .autoMergeRequest then 1 else 0 end' 2>/dev/null)
     [ "$armed" = "0" ] && gh pr merge "$pr" --squash --auto --delete-branch >/dev/null 2>&1
   done
+  # Only when nothing is already merging: a rebase during a merge is immediately
+  # invalidated by it.
+  if [ -n "$leader" ] && [ "$ready" = "0" ]; then
+    gh pr update-branch "$leader" >/dev/null 2>&1
+    echo "round $round: rebased #$leader only ($leader_left checks out, $behind behind)"
+  fi
   n=$(echo "$prs"|wc -w|tr -d ' ')
   line="round $round: open=$n blocked=$blocked behind=$behind ready=$ready"
   [ -n "$merged" ]  && line="$line MERGED:$merged"
