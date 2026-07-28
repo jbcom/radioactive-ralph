@@ -64,10 +64,10 @@ func TestMarkBlockedTransitionsBetweenBlockCauses(t *testing.T) {
 
 	t.Run("input then capability", func(t *testing.T) {
 		planID := seedMetadataTask(t, s, projectID, "p-in-cap", "t", "0.0", "team/a")
-		if err := s.MarkBlockedInput(ctx, planID, "t", "input missing"); err != nil {
+		if _, err := s.MarkBlockedInput(ctx, planID, "t", "input missing"); err != nil {
 			t.Fatalf("MarkBlockedInput: %v", err)
 		}
-		if err := s.MarkBlockedCapability(ctx, planID, "t", "capability missing"); err != nil {
+		if _, err := s.MarkBlockedCapability(ctx, planID, "t", "capability missing"); err != nil {
 			t.Fatalf("MarkBlockedCapability after an input block: %v", err)
 		}
 		meta, err := s.GetTaskExecutionMetadata(ctx, planID, "t")
@@ -81,10 +81,10 @@ func TestMarkBlockedTransitionsBetweenBlockCauses(t *testing.T) {
 
 	t.Run("input then input again", func(t *testing.T) {
 		planID := seedMetadataTask(t, s, projectID, "p-in-in", "t", "0.0", "team/a")
-		if err := s.MarkBlockedInput(ctx, planID, "t", "first reason"); err != nil {
+		if _, err := s.MarkBlockedInput(ctx, planID, "t", "first reason"); err != nil {
 			t.Fatalf("first MarkBlockedInput: %v", err)
 		}
-		if err := s.MarkBlockedInput(ctx, planID, "t", "second reason"); err != nil {
+		if _, err := s.MarkBlockedInput(ctx, planID, "t", "second reason"); err != nil {
 			t.Fatalf("re-marking the same block cause: %v", err)
 		}
 		meta, err := s.GetTaskExecutionMetadata(ctx, planID, "t")
