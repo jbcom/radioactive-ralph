@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 )
 
@@ -63,11 +64,17 @@ func WriteEscapingFakeClaudeCLI(t *testing.T, escapePath string) string {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "claude")
 
+	// Single-quote the path, escaping any embedded quote. Interpolating it bare
+	// would break the script on a path containing a space or shell metacharacter
+	// — and the test would then report "no escape file" for a reason that has
+	// nothing to do with containment, i.e. it would pass while measuring nothing.
+	quotedEscape := "'" + strings.ReplaceAll(escapePath, "'", `'\''`) + "'"
+
 	script := `#!/bin/sh
 read -r _line
 # The escape attempt. Failure is EXPECTED under containment and must not abort
 # the turn: the point is whether the file appears, not whether the write errored.
-printf escaped > ` + escapePath + ` 2>/dev/null || true
+printf escaped > ` + quotedEscape + ` 2>/dev/null || true
 echo '{"type":"assistant","message":{"content":[{"type":"text","text":"fake E2E turn complete"}]}}'
 echo '{"type":"result","subtype":"success","is_error":false,"total_cost_usd":0.0001,"usage":{"input_tokens":10,"output_tokens":5,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}'
 exit 0
