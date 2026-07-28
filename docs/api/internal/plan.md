@@ -42,6 +42,7 @@ Plans are markdown documents parsed with goldmark into an AST and decomposed heu
 - [type TaskBinding](<#TaskBinding>)
 - [type TaskInput](<#TaskInput>)
 - [type TaskMetadata](<#TaskMetadata>)
+  - [func \(m \*TaskMetadata\) AllowedProviders\(\) \[\]string](<#TaskMetadata.AllowedProviders>)
   - [func \(m \*TaskMetadata\) DependsOn\(\) \(ids \[\]string, stated bool\)](<#TaskMetadata.DependsOn>)
 - [type TaskOutput](<#TaskOutput>)
 - [type ValidationErrors](<#ValidationErrors>)
@@ -356,6 +357,15 @@ type TaskMetadata struct {
     Outputs []TaskOutput `json:"outputs"`
 }
 ```
+
+<a name="TaskMetadata.AllowedProviders"></a>
+### func \(\*TaskMetadata\) [AllowedProviders](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plan/types.go#L160>)
+
+```go
+func (m *TaskMetadata) AllowedProviders() []string
+```
+
+AllowedProviders returns the task's provider restriction, tolerating a nil receiver so dispatch can ask without a nil check at every call site.
 
 <a name="TaskMetadata.DependsOn"></a>
 ### func \(\*TaskMetadata\) [DependsOn](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/plan/types.go#L151>)
