@@ -95,6 +95,7 @@ The schema is embedded under schema/\*.sql and applied in lexical order by Migra
   - [func \(s \*Store\) HeartbeatWorker\(ctx context.Context, workerID string\) error](<#Store.HeartbeatWorker>)
   - [func \(s \*Store\) HeartbeatWorkerAndSession\(ctx context.Context, workerID string\) error](<#Store.HeartbeatWorkerAndSession>)
   - [func \(s \*Store\) ListCalibrationAttempts\(ctx context.Context, planID, taskID string\) \(\[\]CalibrationAttempt, error\)](<#Store.ListCalibrationAttempts>)
+  - [func \(s \*Store\) ListCalibrations\(ctx context.Context\) \(\[\]ProviderCalibration, error\)](<#Store.ListCalibrations>)
   - [func \(s \*Store\) ListMessages\(ctx context.Context, planID, taskID string\) \(\[\]A2AMessage, error\)](<#Store.ListMessages>)
   - [func \(s \*Store\) ListOperatorMessages\(ctx context.Context, q OperatorMessageQuery\) \(\*OperatorMessagePage, error\)](<#Store.ListOperatorMessages>)
   - [func \(s \*Store\) ListOperatorTaskDescriptions\(ctx context.Context, projectID, planID string, taskIDs \[\]string\) \(map\[string\]string, error\)](<#Store.ListOperatorTaskDescriptions>)
@@ -359,7 +360,7 @@ type AppendMessageOpts struct {
 ```
 
 <a name="CalibrationAttempt"></a>
-## type [CalibrationAttempt](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/calibrations.go#L200-L214>)
+## type [CalibrationAttempt](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/calibrations.go#L240-L254>)
 
 CalibrationAttempt is one repetition of one calibrated task run.
 
@@ -1304,13 +1305,24 @@ func (s *Store) HeartbeatWorkerAndSession(ctx context.Context, workerID string) 
 HeartbeatWorkerAndSession refreshes both a worker row AND its owning session row in one call. A worker's session \(spawnWorkerRows\) is not heartbeated by anything else — only the supervisor's own session is \(HeartbeatSession\) — so without this a live worker's session goes stale and the reaper's step\-2 session delete would CASCADE\-delete the still\-running worker, NULLing its task's claim and letting branch \(b\) re\-dispatch a live task \(double execution\). Beating both keeps the session as fresh as the worker for the reaper's staleness math. The two UPDATEs share one tx so a mid\-call failure never leaves the pair inconsistent.
 
 <a name="Store.ListCalibrationAttempts"></a>
-### func \(\*Store\) [ListCalibrationAttempts](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/calibrations.go#L288>)
+### func \(\*Store\) [ListCalibrationAttempts](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/calibrations.go#L328>)
 
 ```go
 func (s *Store) ListCalibrationAttempts(ctx context.Context, planID, taskID string) ([]CalibrationAttempt, error)
 ```
 
 ListCalibrationAttempts returns one task's attempts in RUN ORDER, so a caller comparing outputs walks them the way they happened rather than however the storage engine returns them.
+
+<a name="Store.ListCalibrations"></a>
+### func \(\*Store\) [ListCalibrations](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/calibrations.go#L201>)
+
+```go
+func (s *Store) ListCalibrations(ctx context.Context) ([]ProviderCalibration, error)
+```
+
+ListCalibrations returns every recorded measurement, ordered by alias.
+
+Ordered rather than insertion\-ordered so an operator comparing two hosts sees the same sequence: this is the query that answers "which aliases have a measured independence domain and which do not", and that is the difference between a differentFrom constraint that can be enforced and one that silently cannot.
 
 <a name="Store.ListMessages"></a>
 ### func \(\*Store\) [ListMessages](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/a2a.go#L50>)
@@ -1589,7 +1601,7 @@ RecordCalibration stores a measurement, returning it with its content address fi
 Recording the same measurement twice is a no\-op that returns the same id. Recording a DIFFERENT measurement under an alias that already has one fails with ErrCalibrationConflict rather than overwriting — an upgraded binary or a changed invocation is a new fact, and quietly replacing the old one would change what every already\-bound task is documented to have run on.
 
 <a name="Store.RecordCalibrationAttempt"></a>
-### func \(\*Store\) [RecordCalibrationAttempt](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/calibrations.go#L221>)
+### func \(\*Store\) [RecordCalibrationAttempt](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/calibrations.go#L261>)
 
 ```go
 func (s *Store) RecordCalibrationAttempt(ctx context.Context, a CalibrationAttempt) error

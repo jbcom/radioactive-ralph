@@ -89,6 +89,12 @@ const (
 	CmdObserveSnapshot         = "observe-snapshot"
 	CmdObserveMessages         = "observe-messages"
 	CmdObserveTaskDescriptions = "observe-task-descriptions"
+
+	// v2 — calibration surface. A calibration is a MEASUREMENT of one provider
+	// command line, so recording it is a write and belongs on the drive
+	// protocol version rather than the read-only query one.
+	CmdCalibrationPut  = "calibration-put"
+	CmdCalibrationList = "calibration-list"
 )
 
 // Stable machine-readable error classes carried in Response.Code so a client
@@ -389,4 +395,59 @@ type ProjectConfigApplyArgs struct {
 	UserScope  bool              `json:"user_scope,omitempty"`
 	Upserts    map[string]string `json:"upserts,omitempty"`
 	DeleteKeys []string          `json:"delete_keys,omitempty"`
+}
+
+// CalibrationRecord is the wire form of one provider calibration — a
+// MEASUREMENT of a single provider command line.
+//
+// The three domains are separate fields because they can genuinely differ: a
+// self-hosted model behind a vendor's control plane shares one domain and not
+// the others. IndependenceDomain is the one a `differentFrom` constraint
+// compares, and it is recorded rather than derived: inferring it from the
+// provider name would put a vendor table in the dispatch path and disagree with
+// whatever was actually measured here.
+type CalibrationRecord struct {
+	Alias    string `json:"alias"`
+	Provider string `json:"provider"`
+	Model    string `json:"model,omitempty"`
+	Effort   string `json:"effort,omitempty"`
+
+	BinaryPath    string `json:"binary_path,omitempty"`
+	BinaryVersion string `json:"binary_version,omitempty"`
+	BinarySHA256  string `json:"binary_sha256,omitempty"`
+	// InvocationHash fingerprints the whole binding config plus the exact
+	// model/effort, so two records with different hashes measured different
+	// command lines whatever else matches.
+	InvocationHash string `json:"invocation_hash"`
+
+	InferenceDomain    string `json:"inference_domain,omitempty"`
+	ControlDomain      string `json:"control_domain,omitempty"`
+	IndependenceDomain string `json:"independence_domain,omitempty"`
+
+	ModelDigest      string `json:"model_digest,omitempty"`
+	CapabilitiesJSON string `json:"capabilities_json,omitempty"`
+	EvidenceJSON     string `json:"evidence_json,omitempty"`
+}
+
+// CalibrationPutArgs records one calibration (CmdCalibrationPut).
+//
+// There is no ID field: the store content-addresses a calibration from what
+// identifies the measurement, so an id supplied by a client would either be
+// redundant or a claim the supervisor cannot verify. Re-recording the same
+// measurement is idempotent; re-recording a DIFFERENT one under a live alias is
+// a conflict the store refuses rather than silently replacing, because a
+// silently swapped calibration would retroactively change what every task
+// recorded against that alias is believed to have run on.
+type CalibrationPutArgs struct {
+	Calibration CalibrationRecord `json:"calibration"`
+}
+
+// CalibrationPutReply returns the content-addressed id the store derived.
+type CalibrationPutReply struct {
+	ID string `json:"id"`
+}
+
+// CalibrationListReply enumerates the recorded calibrations, one per alias.
+type CalibrationListReply struct {
+	Calibrations []CalibrationRecord `json:"calibrations"`
 }
