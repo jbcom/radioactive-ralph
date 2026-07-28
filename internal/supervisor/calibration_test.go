@@ -6,7 +6,6 @@ import (
 	"testing"
 
 	"github.com/jonboulle/clockwork"
-
 	"github.com/jbcom/radioactive-ralph/internal/ipc"
 )
 
