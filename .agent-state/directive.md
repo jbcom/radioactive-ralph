@@ -68,14 +68,20 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
 
 ## Remaining
 
-- [ ] [WAIT-AGENT] Land the 10 open PRs: 222, 225, 251, 252, 255, 257, 258, 259,
-      262, 263. Delegated to scripts/drive-open-prs.sh, running in the
-      background: it rebases BEHIND, arms auto-merge, merges CLEAN/UNSTABLE with
-      no failures, and exits 2 the moment anything needs a decision (3 on a gh
-      failure, 4 on a verifier failure) rather than reporting false success.
-      RE-LABEL TO `[ ]` THE MOMENT the driver exits or the monitor reports a
-      FAILING check, a DIRTY branch, or an unresolved thread -- those are all
-      agent-actionable and none of them is a wait.
+- [ ] Land the 10 open PRs: 222, 225, 251, 252, 255, 257, 258, 259, 262, 263.
+      NOT wait-labelled, deliberately, and I tried it the other way: labelling
+      this [WAIT-AGENT] because the background driver owns it made EVERY open
+      item a wait, and verify-repo-claims.sh guard 8 caught it --
+      "ALL open items are [WAIT] but 10 PRs are still open". That guard exists
+      because an all-wait queue tells the anti-stop hook the turn may end, which
+      is precisely how a session once stopped with PRs open. The driver running
+      does not make the item a wait: a FAILING check, a DIRTY branch, or an
+      unresolved thread can appear at any moment and every one of those is
+      agent-doable. Delegation is not absence of work.
+      The driver (scripts/drive-open-prs.sh) rebases BEHIND, arms auto-merge,
+      merges CLEAN/UNSTABLE with no failures, and exits 2 the moment anything
+      needs a decision (3 on a gh failure, 4 on a verifier failure) rather than
+      reporting false success.
       Verified actionable-empty 2026-07-28: all 10 read BLOCKED/MERGEABLE with
       zero failures, zero DIRTY, zero unresolved threads; every outstanding check
       is a macOS job, and the queue is confirmed MOVING (rotating run ids), not
