@@ -166,6 +166,19 @@ done
 tot_items=$(grep -cE '^- \[ \]|^      - \[ \]' .agent-state/directive.md 2>/dev/null)
 wait_items=$(grep -cE '^- \[ \] \[WAIT|^      - \[ \] \[WAIT' .agent-state/directive.md 2>/dev/null)
 say "directive open items" "$tot_items ($wait_items wait-labelled)"
+# ZERO open items is only credible while the directive is RELEASED. An ACTIVE
+# directive with nothing open means the checkbox pattern above stopped matching
+# -- the same silent no-op that disabled guard 9 twice, where a count of zero
+# and a genuinely empty queue print identically.
+#
+# Checked against the file's own Status line rather than assumed, so finishing
+# the queue legitimately does not trip it.
+if [ "$tot_items" = "0" ] && grep -q '^\*\*Status:\*\* ACTIVE' .agent-state/directive.md 2>/dev/null; then
+  say "  directive is ACTIVE with ZERO open items" \
+    "the checkbox pattern matched nothing — guard 8 is not checking anything"
+  fail=1
+fi
+
 actionable=$(( ${tot:-0} + ${f:-0} + ${d:-0} ))
 if [ "$tot_items" != "0" ] && [ "$tot_items" = "$wait_items" ] && [ "$actionable" != "0" ]; then
   say "  ALL open items are [WAIT]" \
@@ -184,7 +197,21 @@ stale_refs=""
 # extracted, and the guard reported "no merged PRs listed as open" while the
 # line was stale. A check that passes because it found nothing to check is
 # worse than no check.
-open_line=$(grep -E '^- \[ \].*Land the .*open PRs' .agent-state/directive.md 2>/dev/null | head -1)
+# Matches "open PR" and "open PRs" alike. This is the THIRD time a formatting
+# choice silently disabled this guard: first bare numbers (no `#` tokens to
+# extract), then a singular label the pattern did not match. Each time the guard
+# reported success while checking NOTHING, which is worse than reporting a
+# failure -- a green tick that examined no data is indistinguishable from one
+# that examined all of it.
+#
+# The lesson is not "write the label carefully". It is that a guard whose
+# pattern can miss must SAY so rather than pass, which is what the empty-match
+# check below now does.
+open_line=$(grep -E '^- \[ \].*Land the .*open PRs?\b' .agent-state/directive.md 2>/dev/null | head -1)
+if [ -z "$open_line" ]; then
+  say "  open-PR line NOT FOUND" "guard 9 cannot check it — fix the label or this pattern"
+  fail=1
+fi
 for n in $(printf '%s' "$open_line" | grep -oE '[0-9]{3}' | sort -u); do
   # An OPEN item naming a MERGED PR reads as work still to do that is already
   # done — the exact drift that made this file claim seventeen open PRs when
