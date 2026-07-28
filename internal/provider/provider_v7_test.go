@@ -122,7 +122,7 @@ while True:
     sys.stdout.buffer.flush()
 PY
 `)
-	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), endlessOutputBudget)
 	defer cancel()
 	result, err := OpencodeRunner{}.Run(ctx, Binding{
 		Name:   "opencode",
@@ -157,7 +157,7 @@ while True:
     sys.stdout.buffer.flush()
 PY
 `)
-	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), endlessOutputBudget)
 	defer cancel()
 	result, err := ClaudeRunner{}.Run(ctx, Binding{
 		Name:   "claude",
@@ -195,7 +195,7 @@ while True:
     sys.stdout.buffer.flush()
 PY
 `)
-	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), endlessOutputBudget)
 	defer cancel()
 	result, err := CodexRunner{}.Run(ctx, Binding{
 		Name:            "codex",
