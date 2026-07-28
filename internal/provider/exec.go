@@ -30,6 +30,22 @@ func runCommand(ctx context.Context, dir, bin string, args []string) (string, er
 }
 
 func runCommandWithStall(ctx context.Context, stallTimeout time.Duration, dir, bin string, args []string) (string, error) {
+	return runCommandWithStallContained(ctx, stallTimeout, dir, "", bin, args)
+}
+
+// runCommandWithStallContained is runCommandWithStall with an optional
+// kernel-enforced write boundary. An empty containmentRoot leaves the process
+// unconfined, exactly as before.
+func runCommandWithStallContained(
+	ctx context.Context,
+	stallTimeout time.Duration,
+	dir, containmentRoot, bin string,
+	args []string,
+) (string, error) {
+	bin, args, wrapErr := applyContainment(containmentRoot, bin, args)
+	if wrapErr != nil {
+		return "", wrapErr
+	}
 	stallCtx, progress, cancelStall := withProgressLease(ctx, stallTimeout)
 	defer cancelStall()
 	cmd := exec.CommandContext(stallCtx, bin, args...) //nolint:gosec // argv is runtime-controlled

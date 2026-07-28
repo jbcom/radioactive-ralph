@@ -62,8 +62,15 @@ func runSupervisorMode(ctx context.Context, logFormat string) error {
 	// falling back to the built-in claude binding. Without this, the
 	// supervisor's default orch.New(store) would ignore stored config
 	// entirely and always run claude.
+	// Containment is resolved the same way, and for the same reason: the
+	// contain_provider_writes key is stored PER PROJECT, so a process-wide flag
+	// could only apply one project's answer to every project on the host.
+	// Without this the key is inert — vconfig parses it and nothing consults it,
+	// so an operator who enables containment gets none and no indication that
+	// the setting did nothing. A config that lies is worse than a missing one.
 	orchestratorOptions := []orch.Option{
 		orch.WithBindingResolver(storeBindingResolver(st)),
+		orch.WithContainmentResolver(storeContainmentResolver(st)),
 	}
 	if maxParallel > 0 {
 		orchestratorOptions = append(orchestratorOptions, orch.WithMaxParallel(maxParallel))
