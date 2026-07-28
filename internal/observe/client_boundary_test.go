@@ -120,11 +120,14 @@ var clientBoundaryExemptions = map[string]string{
 	"supervisor_cmd.go":   "runs the supervisor process; it IS the store owner",
 	"binding_resolver.go": "resolves bindings for the supervisor's orchestrator",
 
-	// REAL DEBT (#204). Each of these is a client that still reads the store
-	// directly. Removing an entry is the definition of done for that file.
-	"init_cmd.go": "#204: resolves vconfig layers against the store before a " +
-		"supervisor exists for the project; needs a supervisor-side " +
-		"config-apply surface usable at first contact",
+	// REAL DEBT (#204): NONE REMAINING. Every CLI client now reaches the store
+	// through the supervisor. init_cmd.go was the last one, and desktop_launch.go
+	// was cleared by #246 (non-mutating ProjectEnsure at protocol v4).
+	//
+	// This section is deliberately kept, empty, rather than deleted: it is where
+	// a NEW exemption would go, and the gate fails on any entry whose file has
+	// stopped importing store — so an exemption added here has to be retired
+	// when its debt is paid.
 }
 
 func assertFileDoesNotImportStore(t *testing.T, root, path string) {
