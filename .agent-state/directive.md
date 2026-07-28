@@ -102,6 +102,23 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
       CORRECT ORDER: (1) land #268, (2) then re-enable ruleset 19896999,
       (3) verify a merge_group CI run actually APPEARS before trusting it.
       Naming a prerequisite is not satisfying it.
+      DONE 2026-07-28: #268 merged (5c5159a), ruleset re-enabled, and the
+      verification passed -- 5 entries queued and merge_group CI runs started.
+
+      QUEUE MECHANICS, learned the hard way:
+      * `gh pr merge --auto` DOES enqueue. My repeated "queued=[]" readings were
+        a stale/empty GraphQL response, not a stall -- confirmed by trying an
+        explicit enqueuePullRequest and getting "Pull request is already in the
+        queue" for all four. Query entries with entries(first:N){totalCount ...}
+        and trust totalCount over an empty nodes list.
+      * `gh pr merge --squash` prints "The merge strategy for main is set by the
+        merge queue" -- that is INFORMATIONAL, not a failure. The enqueue
+        succeeded.
+      * `--delete-branch` is REJECTED under a queue; the queue owns deletion.
+      * A queue entry can read UNMERGEABLE while the PR itself reads
+        CLEAN/MERGEABLE. That is the queue doing its job: the PR conflicts with
+        the BATCH ahead of it, which is the semantic conflict a queue exists to
+        catch before it reaches main.
       ROLLBACK: /tmp/protection-backup.json holds the original 25-check config.
 
       There is ALWAYS an action here; this is not a wait.
