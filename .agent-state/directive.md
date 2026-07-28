@@ -164,8 +164,20 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
                  negative test: recording only claimed[0] leaves peer "0.1" with
                  an empty domain, which reads as INDEPENDENT and would satisfy
                  differentFrom for the tasks that most obviously violate it.
-              2. Record a calibration for a binding (or derive the domain from
-                 binding config) so there is something to compare against.
+              2. Port the CALIBRATION LANE so something actually produces a
+                 calibration. Scoped 2026-07-28: nothing in the tree records one
+                 (grep for RecordCalibration outside store/ + its tests returns
+                 nothing), so #262's domain lookup finds none and correctly
+                 records empty. The lane is already DESIGNED, not to be
+                 improvised: docs/superpowers/specs/2026-07-26-dag-integration-design.md
+                 lines 118-144 specify internal/orch/calibration_admission.go
+                 (~255 lines + tests) ported as-is, carrying ONE *calibrationLane
+                 pointer rather than seven loose dispatchStepArgs fields, and
+                 warns NEVER to port orchestrator.go's diff -- hand-apply the
+                 readiness swap, since main has since gained native-fanout and
+                 stepGateBlocks. store.BindTaskCalibration already exists for
+                 await-calibration tasks, so the store side is in place.
+                 This is a full increment, not a wire-up.
               3. Only then compare at dispatch and refuse a matching domain.
             Verified by grepping origin/main for callers, not by assuming the
             types being present meant they were wired.
