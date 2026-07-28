@@ -1221,6 +1221,69 @@ func mustPayloadJSON(p store.EventPayload) string {
 // Provider runners own progress observation and renew only their stall lease.
 // This layer independently applies the absolute turn deadline so custom/fake
 // runners cannot bypass the bounded-turn invariant.
+// recordExecutionProvenance records WHAT a task is about to run on, before its
+// turn starts.
+//
+// This is the write half of provenance the store has carried since #236. Until
+// it existed, nothing in production called RecordTaskExecution, so
+// assigned_independence_domain was empty in every real run — and differentFrom
+// enforcement built on that column would have compared "" against "" and
+// permitted everything. A guarantee that always passes is the vacuous kind plan
+// import already refuses (#259); this is what makes a dispatch-side comparison
+// possible at all.
+//
+// The domain comes from the binding's CALIBRATION rather than being derived
+// here. Dispatch knows the alias, provider, model and effort, but "who is this
+// result independent OF" is a measured property, not something to infer from a
+// provider name — hardcoding, say, claude→"anthropic" would put a vendor table
+// in the dispatch path and quietly disagree with whatever calibration later
+// measures. An uncalibrated binding records an EMPTY domain, which is honest:
+// nothing has established what it is independent of yet.
+//
+// Best-effort by design. Provenance is a record of the turn, not a
+// precondition for it: failing the dispatch because the metadata write lost a
+// race would trade a complete turn for a bookkeeping error. The failure is
+// emitted so it is visible rather than silent.
+func (o *Orchestrator) recordExecutionProvenance(
+	ctx context.Context, projectID, planID, taskID, sessionID string,
+	binding provider.Binding, req provider.Request,
+) {
+	var domain string
+	cal, err := o.store.GetCalibrationByAlias(ctx, binding.Name)
+	switch {
+	case err == nil:
+		domain = cal.IndependenceDomain
+	case errors.Is(err, store.ErrCalibrationNotFound):
+		// Expected: most bindings are never calibrated. Empty domain, no event.
+	default:
+		_ = o.store.Emit(ctx, store.EmitOpts{
+			ProjectID: projectID, PlanID: planID, TaskID: taskID,
+			Kind:   "task.provenance_calibration_error",
+			Stream: "service",
+			PayloadJSON: mustPayloadJSON(store.EventPayload{
+				Provider: binding.Name, Reason: err.Error(),
+			}),
+		})
+	}
+
+	// Model and effort come from the REQUEST, which carries what this turn
+	// actually asked for, rather than from the binding config, which only holds
+	// the per-tier mapping. Recording the config would say what the binding
+	// could run, not what this task did.
+	if err := o.store.RecordTaskExecution(ctx, planID, taskID, binding.Name,
+		binding.Config.Type, string(req.Model), req.Effort,
+		domain, sessionID); err != nil {
+		_ = o.store.Emit(ctx, store.EmitOpts{
+			ProjectID: projectID, PlanID: planID, TaskID: taskID,
+			Kind:   "task.provenance_write_failed",
+			Stream: "service",
+			PayloadJSON: mustPayloadJSON(store.EventPayload{
+				Provider: binding.Name, Reason: err.Error(),
+			}),
+		})
+	}
+}
+
 func (o *Orchestrator) dispatchWorker(ctx context.Context, projectID, projectDir, planID, sessionID, workerID string, binding provider.Binding, ds *dispatchedStep, scoped scopedContext) error {
 	runner, err := o.newRunner(binding)
 	if err != nil {
@@ -1244,6 +1307,11 @@ func (o *Orchestrator) dispatchWorker(ctx context.Context, projectID, projectDir
 	}
 	req.TurnTimeout = limits.TurnTimeout
 	req.StallTimeout = limits.StallTimeout
+
+	// Written BEFORE runner.Run: RecordTaskExecution requires the task to be
+	// running with this session still holding the claim, and a turn that crashes
+	// should still have left a record of what it ran on.
+	o.recordExecutionProvenance(ctx, projectID, planID, ds.task.ID, sessionID, binding, req)
 
 	// The total turn timeout bounds ONLY the agent turn: cancel it the instant Run
 	// returns (not at function end) so the timeout resources aren't held
@@ -1503,6 +1571,16 @@ func (o *Orchestrator) runFanoutGroup(ctx context.Context, projectID, projectDir
 	}
 	req.TurnTimeout = limits.TurnTimeout
 	req.StallTimeout = limits.StallTimeout
+
+	// EVERY task in the group, not just the first. A fan-out runs the whole group
+	// in ONE turn on ONE binding, so all of them share that provenance — and a
+	// group sharing a provider is exactly the case a differentFrom constraint
+	// exists to catch. Recording only the first task would leave its peers
+	// looking like they ran on nothing, which reads as "independent".
+	for _, ds := range claimed {
+		o.recordExecutionProvenance(ctx, projectID, planID, ds.task.ID, sessionID, binding, req)
+	}
+
 	// The total timeout bounds ONLY the fan-out turn; cancel it the instant Run
 	// returns so it isn't held through the per-task verification below. The run
 	// context is also registered under workerID so a worker-kill cancels the

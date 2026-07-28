@@ -189,6 +189,14 @@ var (
 )
 ```
 
+<a name="ErrCalibrationAttemptNoOutput"></a>ErrCalibrationAttemptNoOutput reports an attempt with no output digest.
+
+Attempts are identified by what they produced, and agreement is computed by comparing digests — so an empty one is not a degraded record but an actively misleading one: repeated failures would all match.
+
+```go
+var ErrCalibrationAttemptNoOutput = errors.New("store: calibration attempt has no output digest")
+```
+
 <a name="ErrCalibrationConflict"></a>ErrCalibrationConflict reports the same alias measured against a DIFFERENT command line than the one already recorded.
 
 ```go
@@ -338,7 +346,7 @@ type AppendMessageOpts struct {
 ```
 
 <a name="CalibrationAttempt"></a>
-## type [CalibrationAttempt](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/calibrations.go#L174-L188>)
+## type [CalibrationAttempt](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/calibrations.go#L200-L214>)
 
 CalibrationAttempt is one repetition of one calibrated task run.
 
@@ -848,7 +856,7 @@ const (
 ```
 
 <a name="ProviderCalibration"></a>
-## type [ProviderCalibration](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/calibrations.go#L30-L56>)
+## type [ProviderCalibration](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/calibrations.go#L37-L63>)
 
 ProviderCalibration is one measurement of one exact provider command line.
 
@@ -1189,7 +1197,7 @@ func (s *Store) EventsAfter(ctx context.Context, projectID string, afterID int64
 EventsAfter returns a project's events with id strictly greater than afterID, in ascending id order, capped at limit. It is the tail query backing the Attach event stream: a client resumes from its last\-seen id and each call returns the next contiguous batch. Ascending order is deliberate — events are delivered oldest\-first so a live view applies them in the order they occurred \(the opposite of ListProjectEvents, which is newest\-first for a backlog snapshot\). Pass afterID=0 to start from the beginning. Scoping includes plan\-linked events \(see eventProjectScope\).
 
 <a name="Store.GetCalibrationByAlias"></a>
-### func \(\*Store\) [GetCalibrationByAlias](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/calibrations.go#L144>)
+### func \(\*Store\) [GetCalibrationByAlias](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/calibrations.go#L170>)
 
 ```go
 func (s *Store) GetCalibrationByAlias(ctx context.Context, alias string) (ProviderCalibration, error)
@@ -1261,7 +1269,7 @@ func (s *Store) HeartbeatWorkerAndSession(ctx context.Context, workerID string) 
 HeartbeatWorkerAndSession refreshes both a worker row AND its owning session row in one call. A worker's session \(spawnWorkerRows\) is not heartbeated by anything else — only the supervisor's own session is \(HeartbeatSession\) — so without this a live worker's session goes stale and the reaper's step\-2 session delete would CASCADE\-delete the still\-running worker, NULLing its task's claim and letting branch \(b\) re\-dispatch a live task \(double execution\). Beating both keeps the session as fresh as the worker for the reaper's staleness math. The two UPDATEs share one tx so a mid\-call failure never leaves the pair inconsistent.
 
 <a name="Store.ListCalibrationAttempts"></a>
-### func \(\*Store\) [ListCalibrationAttempts](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/calibrations.go#L221>)
+### func \(\*Store\) [ListCalibrationAttempts](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/calibrations.go#L288>)
 
 ```go
 func (s *Store) ListCalibrationAttempts(ctx context.Context, planID, taskID string) ([]CalibrationAttempt, error)
@@ -1505,7 +1513,7 @@ func (s *Store) ReclaimWorker(ctx context.Context, workerID string) (found bool,
 ReclaimWorker forcibly reclaims a worker's in\-flight task and marks the worker terminated — the store side of an operator/GUI "kill this worker" action. It mirrors the reaper's reclaim: the worker's running task \(if any\) goes back to 'pending' with its claim cleared \(so it re\-dispatches\), and the worker row is marked terminated. found=false \(no error\) when workerID is unknown, so a kill of an already\-gone worker is a benign no\-op the caller can surface as CodeNotFound. The actual subprocess is killed by the orchestrator/provider layer that owns the pty; this only does the store\-side bookkeeping.
 
 <a name="Store.RecordCalibration"></a>
-### func \(\*Store\) [RecordCalibration](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/calibrations.go#L102>)
+### func \(\*Store\) [RecordCalibration](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/calibrations.go#L109>)
 
 ```go
 func (s *Store) RecordCalibration(ctx context.Context, c ProviderCalibration) (ProviderCalibration, error)
@@ -1516,7 +1524,7 @@ RecordCalibration stores a measurement, returning it with its content address fi
 Recording the same measurement twice is a no\-op that returns the same id. Recording a DIFFERENT measurement under an alias that already has one fails with ErrCalibrationConflict rather than overwriting — an upgraded binary or a changed invocation is a new fact, and quietly replacing the old one would change what every already\-bound task is documented to have run on.
 
 <a name="Store.RecordCalibrationAttempt"></a>
-### func \(\*Store\) [RecordCalibrationAttempt](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/calibrations.go#L195>)
+### func \(\*Store\) [RecordCalibrationAttempt](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/calibrations.go#L221>)
 
 ```go
 func (s *Store) RecordCalibrationAttempt(ctx context.Context, a CalibrationAttempt) error
