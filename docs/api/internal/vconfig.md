@@ -37,6 +37,7 @@ viper does the mechanical defaults\<file merge \(TOML\) per layer; this package 
 - [func FormatMissing\(missing \[\]MissingField\) string](<#FormatMissing>)
 - [func LoadFileValues\(path string\) \(map\[string\]any, error\)](<#LoadFileValues>)
 - [func UserScopeProjectID\(ctx context.Context, st \*store.Store\) \(string, error\)](<#UserScopeProjectID>)
+- [type ConfigSource](<#ConfigSource>)
 - [type Conflict](<#Conflict>)
   - [func DiffConflicts\(stored ProjectConfig, incoming map\[string\]any\) \[\]Conflict](<#DiffConflicts>)
 - [type Fingerprint](<#Fingerprint>)
@@ -48,8 +49,15 @@ viper does the mechanical defaults\<file merge \(TOML\) per layer; this package 
   - [func EffectiveProject\(ctx context.Context, st \*store.Store, projectsCfg ProjectConfig, projectID, projectConfigFile string, mode Mode\) \(ProjectConfig, error\)](<#EffectiveProject>)
   - [func EffectiveProjectFromValues\(ctx context.Context, st \*store.Store, projectsCfg ProjectConfig, projectID string, overlay map\[string\]any, mode Mode\) \(ProjectConfig, error\)](<#EffectiveProjectFromValues>)
   - [func ResolveProjects\(ctx context.Context, st \*store.Store, userCfg UserConfig, projectID string\) \(ProjectConfig, error\)](<#ResolveProjects>)
+  - [func ResolveProjectsFrom\(ctx context.Context, src ConfigSource, userCfg UserConfig, projectID string\) \(ProjectConfig, error\)](<#ResolveProjectsFrom>)
+- [type StoreConfigSource](<#StoreConfigSource>)
+  - [func NewStoreConfigSource\(st \*store.Store\) \*StoreConfigSource](<#NewStoreConfigSource>)
+  - [func \(s \*StoreConfigSource\) ApplyProjectConfigValues\(ctx context.Context, projectID string, upserts map\[string\]string, deleteKeys \[\]string\) error](<#StoreConfigSource.ApplyProjectConfigValues>)
+  - [func \(s \*StoreConfigSource\) ProjectConfigValues\(ctx context.Context, projectID string\) \(map\[string\]string, error\)](<#StoreConfigSource.ProjectConfigValues>)
+  - [func \(s \*StoreConfigSource\) UserScopeProject\(ctx context.Context\) \(string, error\)](<#StoreConfigSource.UserScopeProject>)
 - [type UserConfig](<#UserConfig>)
   - [func ResolveUser\(ctx context.Context, st \*store.Store, configFile, userConfigFile string\) \(UserConfig, error\)](<#ResolveUser>)
+  - [func ResolveUserFrom\(ctx context.Context, src ConfigSource, configFile, userConfigFile string\) \(UserConfig, error\)](<#ResolveUserFrom>)
 
 
 ## Constants
@@ -136,13 +144,34 @@ func LoadFileValues(path string) (map[string]any, error)
 LoadFileValues loads a standalone TOML file \(a \-\-project\-config\-file\) and returns its top\-level settings as a flat map\[string\]any. Exported so callers that need the incoming values BEFORE deciding whether to call EffectiveProject — e.g. the \-\-init path's DiffConflicts pre\-check against the stored project config — can load the same file the same way without duplicating viper setup.
 
 <a name="UserScopeProjectID"></a>
-## func [UserScopeProjectID](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/vconfig/vconfig.go#L82>)
+## func [UserScopeProjectID](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/vconfig/vconfig.go#L81>)
 
 ```go
 func UserScopeProjectID(ctx context.Context, st *store.Store) (string, error)
 ```
 
 UserScopeProjectID returns the reserved store project id that backs USER\-level \(as opposed to per\-project\) DB\-resident config, creating the backing projects row on first use. It is idempotent: subsequent calls resolve the same row via its fingerprint rather than creating duplicates.
+
+<a name="ConfigSource"></a>
+## type [ConfigSource](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/vconfig/source.go#L21-L31>)
+
+ConfigSource is where vconfig reads and writes project config.
+
+It exists so resolving config layers does not REQUIRE a \*store.Store. Taking the store directly meant every caller that wanted its effective config had to be a direct database reader — and the CLI is supposed to be a dumb client that talks to the supervisor and refuses to run without one. With this seam the supervisor passes a store\-backed source and the CLI passes an IPC\-backed one, and BOTH run the same resolution code: one path, not a client path and a server path that drift.
+
+```go
+type ConfigSource interface {
+    // UserScopeProject returns the id of the synthetic project holding
+    // user-level (non-project) config, creating it if needed.
+    UserScopeProject(ctx context.Context) (string, error)
+    // ProjectConfigValues returns one project's stored config as the RAW
+    // JSON-encoded strings the store holds. Decoding stays in vconfig, which
+    // owns the format.
+    ProjectConfigValues(ctx context.Context, projectID string) (map[string]string, error)
+    // ApplyProjectConfigValues upserts and deletes keys in one operation.
+    ApplyProjectConfigValues(ctx context.Context, projectID string, upserts map[string]string, deleteKeys []string) error
+}
+```
 
 <a name="Conflict"></a>
 ## type [Conflict](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/vconfig/diff.go#L10-L14>)
@@ -167,7 +196,7 @@ func DiffConflicts(stored ProjectConfig, incoming map[string]any) []Conflict
 DiffConflicts compares stored \(the project's current effective config, e.g. from ResolveProjects\) against incoming \(candidate values headed for that project, e.g. a projects: stanza entry\) and reports every key present in both where the values differ. Keys only in one side are not conflicts — there's nothing to override.
 
 <a name="Fingerprint"></a>
-## type [Fingerprint](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/vconfig/vconfig.go#L32>)
+## type [Fingerprint](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/vconfig/vconfig.go#L31>)
 
 Fingerprint is a re\-export of store.Fingerprint so callers of vconfig never need to import internal/store just to build fingerprints for UserScopeProjectID.
 
@@ -197,7 +226,7 @@ func Validate(cfg ProjectConfig, required []string) []MissingField
 Validate checks cfg against required, reporting one MissingField per key that is absent or holds an empty value \("", nil, or an empty string\-keyed/slice value\). The merged layer \(DB \< configFile \< userConfigFile \< projectConfigFile, per EffectiveProject\) is what callers should pass in — Validate itself does no layering.
 
 <a name="Mode"></a>
-## type [Mode](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/vconfig/vconfig.go#L37>)
+## type [Mode](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/vconfig/vconfig.go#L36>)
 
 Mode distinguishes a persisted config CHANGE from a runtime\-only OVERRIDE. See spec §5a "change vs. override — the load\-bearing distinction".
 
@@ -221,7 +250,7 @@ const (
 ```
 
 <a name="Mode.String"></a>
-### func \(Mode\) [String](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/vconfig/vconfig.go#L51>)
+### func \(Mode\) [String](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/vconfig/vconfig.go#L50>)
 
 ```go
 func (m Mode) String() string
@@ -230,7 +259,7 @@ func (m Mode) String() string
 String renders the mode name for logs/errors.
 
 <a name="ProjectConfig"></a>
-## type [ProjectConfig](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/vconfig/vconfig.go#L109-L111>)
+## type [ProjectConfig](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/vconfig/vconfig.go#L108-L110>)
 
 ProjectConfig is a resolved virtual PROJECTS layer for one project: DB project config overlaid by the projects: stanza entry for that project \(ResolveProjects\), and optionally further overlaid by a \-\-project\-config\-file \(EffectiveProject\).
 
@@ -266,7 +295,7 @@ func EffectiveProjectFromValues(ctx context.Context, st *store.Store, projectsCf
 EffectiveProjectFromValues is EffectiveProject's core: merge \(and, under ModeChange, persist\) overlay directly, without going through a file on disk. Exported so a caller that has already computed the overlay it wants applied — e.g. the \-\-init path's conflict UX, which may want to apply an vconfig.AutoRemove\-filtered subset of an incoming \-\-project\-config\-file rather than the file's values verbatim — can reuse the exact same merge/persist semantics EffectiveProject uses, instead of round\-tripping the filtered map back through a TOML file just to satisfy EffectiveProject's file\-path signature.
 
 <a name="ResolveProjects"></a>
-### func [ResolveProjects](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/vconfig/vconfig.go#L163>)
+### func [ResolveProjects](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/vconfig/vconfig.go#L169>)
 
 ```go
 func ResolveProjects(ctx context.Context, st *store.Store, userCfg UserConfig, projectID string) (ProjectConfig, error)
@@ -274,8 +303,64 @@ func ResolveProjects(ctx context.Context, st *store.Store, userCfg UserConfig, p
 
 ResolveProjects builds the virtual PROJECTS config for one project: DB project config as the base, overlaid by userCfg.Projects\[projectID\] \(the projects: stanza entry for that project, if any\).
 
+<a name="ResolveProjectsFrom"></a>
+### func [ResolveProjectsFrom](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/vconfig/vconfig.go#L174>)
+
+```go
+func ResolveProjectsFrom(ctx context.Context, src ConfigSource, userCfg UserConfig, projectID string) (ProjectConfig, error)
+```
+
+ResolveProjectsFrom is ResolveProjects against any ConfigSource.
+
+<a name="StoreConfigSource"></a>
+## type [StoreConfigSource](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/vconfig/source.go#L35-L37>)
+
+StoreConfigSource adapts a \*store.Store to ConfigSource. Used by the supervisor, which legitimately owns the database.
+
+```go
+type StoreConfigSource struct {
+    Store *store.Store
+}
+```
+
+<a name="NewStoreConfigSource"></a>
+### func [NewStoreConfigSource](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/vconfig/source.go#L41>)
+
+```go
+func NewStoreConfigSource(st *store.Store) *StoreConfigSource
+```
+
+NewStoreConfigSource returns a ConfigSource backed by st, or nil when st is nil so callers can keep the "no store, file layers only" behavior.
+
+<a name="StoreConfigSource.ApplyProjectConfigValues"></a>
+### func \(\*StoreConfigSource\) [ApplyProjectConfigValues](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/vconfig/source.go#L60-L62>)
+
+```go
+func (s *StoreConfigSource) ApplyProjectConfigValues(ctx context.Context, projectID string, upserts map[string]string, deleteKeys []string) error
+```
+
+ApplyProjectConfigValues upserts and deletes config keys in one operation.
+
+<a name="StoreConfigSource.ProjectConfigValues"></a>
+### func \(\*StoreConfigSource\) [ProjectConfigValues](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/vconfig/source.go#L55>)
+
+```go
+func (s *StoreConfigSource) ProjectConfigValues(ctx context.Context, projectID string) (map[string]string, error)
+```
+
+ProjectConfigValues returns one project's raw stored config values.
+
+<a name="StoreConfigSource.UserScopeProject"></a>
+### func \(\*StoreConfigSource\) [UserScopeProject](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/vconfig/source.go#L50>)
+
+```go
+func (s *StoreConfigSource) UserScopeProject(ctx context.Context) (string, error)
+```
+
+UserScopeProject resolves \(creating if needed\) the synthetic project that holds user\-level config.
+
 <a name="UserConfig"></a>
-## type [UserConfig](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/vconfig/vconfig.go#L100-L103>)
+## type [UserConfig](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/vconfig/vconfig.go#L99-L102>)
 
 UserConfig is the resolved virtual USER layer: top\-level values merged from DB user\-scope config \< \-\-config\-file \< \-\-user\-config\-file, plus the projects: stanza extracted from that same merge \(also present at any of those three levels\), keyed by the project's resolved store id.
 
@@ -287,12 +372,21 @@ type UserConfig struct {
 ```
 
 <a name="ResolveUser"></a>
-### func [ResolveUser](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/vconfig/vconfig.go#L124>)
+### func [ResolveUser](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/vconfig/vconfig.go#L123>)
 
 ```go
 func ResolveUser(ctx context.Context, st *store.Store, configFile, userConfigFile string) (UserConfig, error)
 ```
 
 ResolveUser builds the virtual USER config: it seeds viper with defaults, merges in DB user\-scope config \(lowest precedence above defaults\), then configFile, then userConfigFile \(highest precedence\). Both file paths are optional; an empty string skips that layer. Config files are TOML.
+
+<a name="ResolveUserFrom"></a>
+### func [ResolveUserFrom](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/vconfig/vconfig.go#L130>)
+
+```go
+func ResolveUserFrom(ctx context.Context, src ConfigSource, configFile, userConfigFile string) (UserConfig, error)
+```
+
+ResolveUserFrom is ResolveUser against any ConfigSource, so a client that reaches config over the supervisor socket runs the SAME resolution as the supervisor itself. A nil src keeps the file\-layers\-only behavior.
 
 Generated by [gomarkdoc](<https://github.com/princjef/gomarkdoc>)

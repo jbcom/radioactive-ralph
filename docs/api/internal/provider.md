@@ -18,6 +18,7 @@ Package provider adapts configured CLI backends into radioactive\_ralph's provid
 - [Constants](<#constants>)
 - [Variables](<#variables>)
 - [func DefaultWatchdogConfig\(\) agent.WatchdogConfig](<#DefaultWatchdogConfig>)
+- [func InvocationConfigHash\(binding Binding, model Model, effort string\) \(string, error\)](<#InvocationConfigHash>)
 - [func StreamJSONWatchdogConfig\(\) agent.WatchdogConfig](<#StreamJSONWatchdogConfig>)
 - [func ValidateBinding\(binding Binding\) error](<#ValidateBinding>)
 - [func ValidateConfiguredTimeout\(field, raw string\) error](<#ValidateConfiguredTimeout>)
@@ -44,6 +45,8 @@ Package provider adapts configured CLI backends into radioactive\_ralph's provid
   - [func \(f Failure\) Unwrap\(\) error](<#Failure.Unwrap>)
 - [type FailureCategory](<#FailureCategory>)
 - [type File](<#File>)
+- [type Invocation](<#Invocation>)
+  - [func ResolveInvocation\(binding Binding, req Request\) \(Invocation, error\)](<#ResolveInvocation>)
 - [type Local](<#Local>)
   - [func \(l Local\) BinaryFor\(providerName string\) \(string, bool\)](<#Local.BinaryFor>)
 - [type Model](<#Model>)
@@ -155,6 +158,12 @@ var DefaultStallTimeout = 3 * time.Minute
 var ErrAgentBlocked = errors.New("provider: agent blocked (killed by watchdog)")
 ```
 
+<a name="ErrBindingCannotHonorRequest"></a>ErrBindingCannotHonorRequest reports a StrictBinding request the binding cannot satisfy exactly. Distinct from an I/O fault: the binding is fine, it simply does not map what was asked for.
+
+```go
+var ErrBindingCannotHonorRequest = errors.New("provider: binding cannot honor the request exactly")
+```
+
 <a name="ErrClaudeMaximumTurns"></a>ErrClaudeMaximumTurns is the static category for error\_max\_turns.
 
 ```go
@@ -230,6 +239,17 @@ func DefaultWatchdogConfig() agent.WatchdogConfig
 
 DefaultWatchdogConfig returns a WatchdogConfig seeded with DefaultStallTimeout and DefaultPromptPatterns. Runners call this \(rather than constructing agent.WatchdogConfig\{\} directly\) so every provider gets the same baseline prompt/stall detection unless a caller has a reason to override it. Use this ONLY for providers whose output is free\-form pane text where a raw interactive prompt could actually appear \(see StreamJSONWatchdogConfig for the structured\-output case\).
 
+<a name="InvocationConfigHash"></a>
+## func [InvocationConfigHash](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/invocation.go#L165>)
+
+```go
+func InvocationConfigHash(binding Binding, model Model, effort string) (string, error)
+```
+
+InvocationConfigHash fingerprints every binding value that can alter the command line, plus the exact requested model and effort.
+
+A calibration is a measurement of ONE command line. Reusing it across a different binary, different args, or a different model would report a capability the running configuration was never observed to have — so the hash covers the whole config, not just the parts that look interesting.
+
 <a name="StreamJSONWatchdogConfig"></a>
 ## func [StreamJSONWatchdogConfig](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/watchdog.go#L99>)
 
@@ -240,7 +260,7 @@ func StreamJSONWatchdogConfig() agent.WatchdogConfig
 StreamJSONWatchdogConfig is the watchdog config for providers driven in a structured stream\-json mode \(claude/opencode: \`\-\-output\-format stream\-json\`\). Their normal output is JSON frames whose text can innocently contain prompt\-like words \("permission", "continue?"\), which content\-blind matching would misread and KILL a valid turn. It keeps the prompt patterns but sets SkipPromptMatchOnJSONLines: patterns are matched ONLY on lines that are NOT valid JSON, so a legitimate JSON frame is never a false prompt while a GENUINE raw interactive prompt \(never valid JSON\) is still caught immediately — not merely by the slower stall timeout.
 
 <a name="ValidateBinding"></a>
-## func [ValidateBinding](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/declarative.go#L176>)
+## func [ValidateBinding](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/declarative.go#L190>)
 
 ```go
 func ValidateBinding(binding Binding) error
@@ -300,7 +320,7 @@ type Binding struct {
 ```
 
 <a name="ResolveBinding"></a>
-### func [ResolveBinding](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/provider.go#L84>)
+### func [ResolveBinding](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/provider.go#L99>)
 
 ```go
 func ResolveBinding(cfg File, local Local, fromConfig VariantFile) (Binding, error)
@@ -580,6 +600,37 @@ type File struct {
 }
 ```
 
+<a name="Invocation"></a>
+## type [Invocation](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/invocation.go#L25-L30>)
+
+Invocation is the exact tuple that will be placed on a provider command line.
+
+It exists because "what was requested" and "what will run" are different things, and until now only the former was recorded. A caller asking for the "opus" TIER has no way to learn which concrete model its binding resolved that to, so provenance captured the request rather than the reality.
+
+An empty Effort is meaningful: it is a binding that runs at its provider's own default, not a missing value.
+
+```go
+type Invocation struct {
+    Alias    string
+    Provider string
+    Model    string
+    Effort   string
+}
+```
+
+<a name="ResolveInvocation"></a>
+### func [ResolveInvocation](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/invocation.go#L45>)
+
+```go
+func ResolveInvocation(binding Binding, req Request) (Invocation, error)
+```
+
+ResolveInvocation resolves what a request will actually run as.
+
+By default it reproduces today's LOOSE resolution exactly — every existing plan depends on tiers resolving with fallbacks, and changing that silently would change what those plans run. What it adds is visibility: the result names the concrete model and effort.
+
+With Request.StrictBinding it additionally REFUSES a request the binding cannot honor exactly. That matters because the loose path substitutes silently: resolveModel treats the sonnet override as a general fallback, so a codex binding configured only with SonnetModel="gpt\-5" answers a request for OPUS with "gpt\-5" and no error. A task pinned to a model then runs on a different one with nothing reporting it, which defeats the point of pinning.
+
 <a name="Local"></a>
 ## type [Local](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/binding.go#L89-L92>)
 
@@ -643,7 +694,7 @@ func (OpencodeRunner) Run(ctx context.Context, binding Binding, req Request) (Re
 Run spawns \`opencode run \<prompt\> \-\-format json\` and blocks until the CLI exits naturally. A step\_finish with reason=tool\-calls is an intermediate model step; OpenCode 1.18.3 closes the actual run only after session.status becomes idle, so Ralph must consume the complete stream.
 
 <a name="Request"></a>
-## type [Request](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/provider.go#L27-L53>)
+## type [Request](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/provider.go#L27-L62>)
 
 Request is the provider\-neutral execution contract for one worker turn.
 
@@ -674,11 +725,20 @@ type Request struct {
     // Zero values inherit the resolved provider/project defaults.
     TurnTimeout  time.Duration
     StallTimeout time.Duration
+
+    // StrictBinding refuses a request the binding cannot honor EXACTLY,
+    // instead of letting model/effort resolution fall back.
+    //
+    // Off by default because every existing plan relies on tiers resolving
+    // loosely. On, it closes a real hole: the loose path substitutes silently,
+    // so a task pinned to a model can run on a different one with nothing
+    // reporting it. See ResolveInvocation.
+    StrictBinding bool
 }
 ```
 
 <a name="Result"></a>
-## type [Result](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/provider.go#L72-L76>)
+## type [Result](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/provider.go#L81-L91>)
 
 Result captures the observable output of one provider turn.
 
@@ -687,11 +747,17 @@ type Result struct {
     SessionID       string
     AssistantOutput string
     Usage           Usage
+
+    // Invocation is what the turn ACTUALLY ran as — the concrete model and
+    // effort after resolution, not the tier that was requested. Recorded so
+    // provenance reflects reality: "opus" in a plan and "gpt-5" on the command
+    // line are both true, and only the second says what produced the result.
+    Invocation Invocation
 }
 ```
 
 <a name="Runner"></a>
-## type [Runner](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/provider.go#L79-L81>)
+## type [Runner](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/provider.go#L94-L96>)
 
 Runner executes one provider turn.
 
@@ -702,7 +768,7 @@ type Runner interface {
 ```
 
 <a name="NewRunner"></a>
-### func [NewRunner](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/provider.go#L129>)
+### func [NewRunner](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/provider.go#L144>)
 
 ```go
 func NewRunner(binding Binding) (Runner, error)
@@ -732,7 +798,7 @@ func ResolveTurnLimits(binding Binding, req Request) (TurnLimits, error)
 ResolveTurnLimits resolves request overrides over binding configuration over safe defaults. Every result is positive and bounded.
 
 <a name="Usage"></a>
-## type [Usage](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/provider.go#L64-L69>)
+## type [Usage](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/provider.go#L73-L78>)
 
 Usage captures the token/cost accounting for one provider turn. Fields are zero when the provider does not report them. Coverage today: the claude and opencode runners populate Usage from their stream\-json frames; codex and declarative bindings report zero \(their CLIs surface usage differently and are not yet parsed\). CostUSD is authoritative when non\-zero; the runtime accumulates it for spend\-cap enforcement, so a capped variant on an unreported provider still requires a cap value but its cost is not yet metered. Extending codex parsing is the follow\-up to close that gap.
 

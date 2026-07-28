@@ -50,6 +50,15 @@ type Request struct {
 	// Zero values inherit the resolved provider/project defaults.
 	TurnTimeout  time.Duration
 	StallTimeout time.Duration
+
+	// StrictBinding refuses a request the binding cannot honor EXACTLY,
+	// instead of letting model/effort resolution fall back.
+	//
+	// Off by default because every existing plan relies on tiers resolving
+	// loosely. On, it closes a real hole: the loose path substitutes silently,
+	// so a task pinned to a model can run on a different one with nothing
+	// reporting it. See ResolveInvocation.
+	StrictBinding bool
 }
 
 // Usage captures the token/cost accounting for one provider turn. Fields
@@ -73,6 +82,12 @@ type Result struct {
 	SessionID       string
 	AssistantOutput string
 	Usage           Usage
+
+	// Invocation is what the turn ACTUALLY ran as — the concrete model and
+	// effort after resolution, not the tier that was requested. Recorded so
+	// provenance reflects reality: "opus" in a plan and "gpt-5" on the command
+	// line are both true, and only the second says what produced the result.
+	Invocation Invocation
 }
 
 // Runner executes one provider turn.
