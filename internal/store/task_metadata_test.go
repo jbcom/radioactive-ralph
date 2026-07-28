@@ -146,9 +146,9 @@ func TestMarkBlockedRecordsReasonAndStatus(t *testing.T) {
 			planID := seedMetadataTask(t, s, projectID, tc.slug, "t", "0.0", "team/a")
 			var err error
 			if tc.status == TaskStatusBlockedCapability {
-				err = s.MarkBlockedCapability(ctx, planID, "t", "missing capability")
+				_, err = s.MarkBlockedCapability(ctx, planID, "t", "missing capability")
 			} else {
-				err = s.MarkBlockedInput(ctx, planID, "t", "input admission failed")
+				_, err = s.MarkBlockedInput(ctx, planID, "t", "input admission failed")
 			}
 			if err != nil {
 				t.Fatalf("mark blocked: %v", err)
@@ -189,7 +189,7 @@ func TestMarkBlockedFailsClosedWithoutMetadata(t *testing.T) {
 	}
 	// Deliberately no PutTaskMetadata.
 
-	err := s.MarkBlockedCapability(ctx, planID, "bare", "missing capability")
+	_, err := s.MarkBlockedCapability(ctx, planID, "bare", "missing capability")
 	if !errors.Is(err, ErrTaskMetadataMissing) {
 		t.Fatalf("MarkBlockedCapability = %v, want ErrTaskMetadataMissing", err)
 	}
