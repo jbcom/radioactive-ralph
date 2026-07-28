@@ -95,10 +95,16 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
       inference/control/independence domains) is still open, so build the
       comparison against the domain #236 defines and land after it.
 
-- [ ] Increment 11: IPC + clients over the DAG. Increment 10's orch half is on
-      main now (#234). Extend the drive/observe surface so a client can see and
-      act on the graph — ready partitions, blocked reasons, and the per-task
-      provenance the store already records.
+- [x] Increment 11 operator half — DONE (PR #258). Task carries BlockedReason,
+      backed by a bulk plan-scoped store.ListTaskBlockingReasons (per-task reads
+      would be an N+1 on every operator refresh; ids repeat across plans).
+      FOUND WHILE TESTING IT: StateForTask never mapped blocked_capability or
+      blocked_input and its default fails the WHOLE projection — one blocked
+      task returned "unknown Ralph task status" for the entire snapshot, so the
+      status meant to make a stall visible hid everything instead.
+      - [ ] Remaining half: ready partitions + per-task provenance over the
+            observe surface. Gated on #225 (ReadyPartitions) and #236
+            (calibration provenance), neither on main yet.
 
 - [ ] Provider write containment beyond macOS+Linux. Both ship in #251
       (sandbox-exec; Landlock via a re-exec helper). Native Windows is CLOSED
