@@ -240,3 +240,31 @@ func stringSliceValue(v any) ([]string, error) {
 	}
 	return names, nil
 }
+
+// storeContainmentResolver answers, per project, whether provider writes are
+// confined — reading the same stored config layers the binding resolver does.
+//
+// This is the wire that makes vconfig.ContainProviderWrites mean anything. The
+// key parsed and NOTHING consulted it, so an operator who set
+// contain_provider_writes = true got no containment and no indication the
+// setting did nothing: a config that lies, which is worse than one that is
+// absent because it is trusted.
+//
+// FAILS CLOSED-TO-OFF on a config error, matching the key's own contract:
+// absent or malformed means OFF, because a boundary switched on by accident
+// makes provider writes fail far from any visible cause. The error is logged so
+// a resolution failure is not silent, but it does not enable containment the
+// operator did not ask for.
+func storeContainmentResolver(st *store.Store) orch.ContainmentResolver {
+	return func(ctx context.Context, projectID string) bool {
+		userCfg, err := vconfig.ResolveUser(ctx, st, "", "")
+		if err != nil {
+			return false
+		}
+		projectCfg, err := vconfig.ResolveProjects(ctx, st, userCfg, projectID)
+		if err != nil {
+			return false
+		}
+		return vconfig.ContainProviderWrites(projectCfg)
+	}
+}

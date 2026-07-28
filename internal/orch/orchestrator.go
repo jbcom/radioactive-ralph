@@ -80,6 +80,9 @@ type Orchestrator struct {
 	// outside the checkout (a shared cache, a user-level config) would start
 	// failing on upgrade. Operators enable it deliberately.
 	containProviderWrites bool
+	// containmentResolver, when set, decides containment PER PROJECT from stored
+	// config and takes precedence over containProviderWrites.
+	containmentResolver ContainmentResolver
 
 	// decisionLogAbsorb, when set, is invoked by AbsorbDecisionLog (see
 	// lifecycle.go) instead of the default XDG-backed implementation. Test
@@ -173,9 +176,42 @@ func WithProviderWriteContainment(enabled bool) Option {
 	return func(o *Orchestrator) { o.containProviderWrites = enabled }
 }
 
+// ContainmentResolver reports whether provider writes are confined for one
+// project.
+//
+// A FUNCTION rather than a bool because the setting is PER PROJECT: one
+// orchestrator serves every project on the host, so a process-wide flag could
+// only ever apply one project's answer to all of them. This mirrors
+// BindingResolver, which exists for exactly the same reason.
+type ContainmentResolver func(ctx context.Context, projectID string) bool
+
+// WithContainmentResolver makes the stored per-project config decide whether a
+// turn is confined.
+//
+// Without it the config key is INERT: vconfig parses contain_provider_writes and
+// nothing consults it, so an operator setting it true gets no containment and no
+// indication that the setting did nothing — a config that lies. That is the same
+// class of gap as the stream-json shape that skipped applyContainment, and the
+// reason the binding resolver exists at all: stored config that never reaches
+// the orchestrator is stored config the orchestrator ignores.
+func WithContainmentResolver(resolve ContainmentResolver) Option {
+	return func(o *Orchestrator) { o.containmentResolver = resolve }
+}
+
 // containmentRootFor returns the write boundary for a turn in projectDir, or ""
-// when containment is disabled.
-func (o *Orchestrator) containmentRootFor(projectDir string) string {
+// when containment is disabled for this project.
+//
+// The resolver wins when set; the static flag remains for tests and for a
+// caller that wants containment on unconditionally. Both are checked because
+// removing the flag would silently turn containment OFF for every existing
+// caller that passes it.
+func (o *Orchestrator) containmentRootFor(ctx context.Context, projectID, projectDir string) string {
+	if o.containmentResolver != nil {
+		if !o.containmentResolver(ctx, projectID) {
+			return ""
+		}
+		return projectDir
+	}
 	if !o.containProviderWrites {
 		return ""
 	}
@@ -1274,7 +1310,7 @@ func (o *Orchestrator) dispatchWorker(ctx context.Context, projectID, projectDir
 	// already-expired deadline. Use runCtx for Run; keep the parent ctx after.
 	req := provider.Request{
 		WorkingDir:      projectDir,
-		ContainmentRoot: o.containmentRootFor(projectDir),
+		ContainmentRoot: o.containmentRootFor(ctx, projectID, projectDir),
 		UserPrompt:      scoped.prompt(),
 		TurnTimeout:     o.turnTimeout,
 		StallTimeout:    o.stallTimeout,
@@ -1534,7 +1570,7 @@ func (o *Orchestrator) runFanoutGroup(ctx context.Context, projectID, projectDir
 
 	req := provider.Request{
 		WorkingDir:      projectDir,
-		ContainmentRoot: o.containmentRootFor(projectDir),
+		ContainmentRoot: o.containmentRootFor(ctx, projectID, projectDir),
 		UserPrompt:      scoped.prompt(),
 		TurnTimeout:     o.turnTimeout,
 		StallTimeout:    o.stallTimeout,

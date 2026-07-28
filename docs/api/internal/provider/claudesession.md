@@ -49,7 +49,7 @@ const DefaultClaudeBin = "claude"
 ```
 
 <a name="Event"></a>
-## type [Event](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/claudesession/session.go#L73-L76>)
+## type [Event](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/claudesession/session.go#L72-L75>)
 
 Event is a parsed inbound frame plus any decoding error. Consumers handle Err before Inbound.
 
@@ -95,7 +95,7 @@ type Inbound struct {
 ```
 
 <a name="Options"></a>
-## type [Options](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/claudesession/session.go#L79-L134>)
+## type [Options](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/claudesession/session.go#L78-L133>)
 
 Options configures a Session spawn.
 
@@ -204,7 +204,7 @@ type OutboundInner struct {
 ```
 
 <a name="Session"></a>
-## type [Session](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/claudesession/session.go#L38-L69>)
+## type [Session](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/claudesession/session.go#L37-L68>)
 
 Session wraps a running \`claude \-p\` subprocess speaking stream\-json.
 
@@ -229,7 +229,7 @@ type Session struct {
 ```
 
 <a name="Spawn"></a>
-### func [Spawn](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/claudesession/session.go#L143>)
+### func [Spawn](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/claudesession/session.go#L142>)
 
 ```go
 func Spawn(ctx context.Context, opts Options) (*Session, error)
@@ -249,7 +249,7 @@ func (s *Session) Close() error
 Close terminates the subprocess and waits for the reader to exit.
 
 <a name="Session.Events"></a>
-### func \(\*Session\) [Events](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/claudesession/session.go#L225>)
+### func \(\*Session\) [Events](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/claudesession/session.go#L224>)
 
 ```go
 func (s *Session) Events() <-chan Event
@@ -267,7 +267,7 @@ func (s *Session) Interrupt() error
 Interrupt sends SIGINT to the subprocess, which Claude Code treats as an in\-flight cancellation. Safe to call on a closed session.
 
 <a name="Session.SendUserMessage"></a>
-### func \(\*Session\) [SendUserMessage](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/claudesession/session.go#L230>)
+### func \(\*Session\) [SendUserMessage](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/claudesession/session.go#L229>)
 
 ```go
 func (s *Session) SendUserMessage(_ context.Context, text string) error
@@ -276,7 +276,7 @@ func (s *Session) SendUserMessage(_ context.Context, text string) error
 SendUserMessage writes a user\-role message as a JSON line on stdin. Resets the idle signal so a subsequent WaitForIdle waits for the next result frame.
 
 <a name="Session.SessionID"></a>
-### func \(\*Session\) [SessionID](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/claudesession/session.go#L221>)
+### func \(\*Session\) [SessionID](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/claudesession/session.go#L220>)
 
 ```go
 func (s *Session) SessionID() string
@@ -285,7 +285,7 @@ func (s *Session) SessionID() string
 SessionID returns Claude's session UUID for this process.
 
 <a name="Session.WaitForIdle"></a>
-### func \(\*Session\) [WaitForIdle](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/claudesession/session.go#L246>)
+### func \(\*Session\) [WaitForIdle](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/claudesession/session.go#L245>)
 
 ```go
 func (s *Session) WaitForIdle(ctx context.Context) error
