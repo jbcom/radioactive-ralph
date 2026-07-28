@@ -11,7 +11,6 @@ import (
 	"sync"
 
 	"github.com/google/uuid"
-
 	"github.com/jbcom/radioactive-ralph/internal/contain"
 )
 
