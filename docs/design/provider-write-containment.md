@@ -51,9 +51,41 @@ from their cause. Now that absent means on, a typo must not silently *remove* a
 security boundary the operator believes is active. Both readings choose "behave
 like the absent key"; only the key's meaning changed.
 
-An explicit `false` always wins, and a provider that cannot run confined at all
-is spared automatically — see `BindingConfig.SupportsContainment`. On-by-default
-is defensible only because both of those are real.
+An explicit `false` always wins. On-by-default is defensible only because that
+opt-out is real.
+
+### Providers that cannot run confined
+
+Some CLIs cannot start under the write-deny profile at all. Verified with real
+turns against an uncontained control:
+
+| provider | contained turn |
+|---|---|
+| claude | completes normally |
+| codex | fails at startup — `failed to initialize in-process app-server client: Operation not permitted` |
+| opencode | does not complete |
+
+This is **not** a file-path problem, so widening the policy does not fix it:
+under `(allow default)` with no write-deny codex succeeds, and adding
+`(deny file-write*)` breaks it even with `TMPDIR` re-allowed. The app-server
+needs a write the profile cannot enumerate.
+
+A binding therefore declares whether it can be confined
+(`BindingConfig.SupportsContainment`), and dispatch does one of two things:
+
+- **containment not requested** — the incapable provider runs normally,
+  unconfined, exactly as before.
+- **containment requested** — the dispatch is **refused**, with a
+  `worker.admission_refused` event naming the provider.
+
+The second case is deliberately a refusal rather than a silent downgrade.
+Running the turn unconfined would hand the operator the opposite of what the
+config asked for, with no error and no event — and in a mixed pool, turns would
+alternate between confined and unconfined with nothing distinguishing them.
+
+To run codex or opencode on a project, set `contain_provider_writes = false`
+for it. The flag is unset-means-capable so a NEW provider fails loudly rather
+than quietly skipping the boundary.
 
 Containment is **opt-in per `agent.Start`** via `ContainmentRoot`, not derived
 from `Dir`. Where a process starts is not the same claim as the only place it
