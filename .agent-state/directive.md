@@ -136,6 +136,16 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
       and every single one had started jobs, so cancelling would discard 2-17
       completed jobs apiece and force a full re-run. Add nothing, cancel nothing,
       let them drain.
+      SECOND LOAD SOURCE, found 2026-07-28 after #258 merged: the DRIVER
+      rebased all eight BEHIND PRs in one round, restarting eight full 23-job
+      matrices at once. Measured queued=42 running=0 immediately after, with
+      every PR's outstanding count jumping from 1-4 back to ~30. Fixed in
+      a0cf1b2: rebase exactly ONE per round -- fewest outstanding checks, never a
+      failing PR, never while another is merging. Protection is `strict`, so the
+      merge queue is serialized and only the leader's rebase can pay off; the
+      rest are re-run after the next merge regardless.
+      SAME LESSON as the state-push storm, one level up: the constraint is a
+      small serialized pool, so the winning move is always to add LESS work.
       #252 IS THE PREVENTION and is therefore the highest-priority PR: its
       concurrency group is per-PR-number with cancel-in-progress on
       pull_request, so each push cancels its predecessor AT PUSH TIME, before
