@@ -12,11 +12,22 @@
 cd /Users/jbogaty/src/jbcom/radioactive-ralph || exit 1
 prev=""
 for round in $(seq 1 400); do
-  prs=$(gh pr list --state open --json number,title \
-    --jq '.[]|select(.title|test("^chore\\(main\\): release")|not)|.number' 2>/dev/null)
+  # Do NOT swallow the query's exit status. An auth failure, rate limit, or
+  # network blip makes `gh pr list` return nothing, which is indistinguishable
+  # from "every PR merged" — so the previous version announced success and ran
+  # the verifier on a lie. A failed query is an ERROR, not an empty result.
+  if ! prs=$(gh pr list --state open --json number,title \
+    --jq '.[]|select(.title|test("^chore\\(main\\): release")|not)|.number'); then
+    echo "round $round: gh pr list FAILED (auth, rate limit, or network) — not " \
+      "treating that as an empty queue" >&2
+    exit 3
+  fi
   if [ -z "$prs" ]; then
     echo "round $round: ALL NON-RELEASE PRs MERGED"
-    bash scripts/verify-repo-claims.sh
+    if ! bash scripts/verify-repo-claims.sh; then
+      echo "round $round: queue is empty but the verifier FAILED" >&2
+      exit 4
+    fi
     exit 0
   fi
   blocked=0; behind=0; ready=0; dirty=""; failing=""; merged=""

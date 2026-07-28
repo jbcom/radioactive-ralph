@@ -594,6 +594,7 @@ jobs:
             scripts/ci/smoke_launchd.sh \
             scripts/ci/smoke_systemd_user.sh \
             scripts/ci/test_shellcheck_coverage.sh \
+            .claude/hooks/task-batch-flush.sh \
             scripts/ci/wait_for_package_publication.sh \
             scripts/ci/test_wait_for_package_publication.sh \
             scripts/ci/test_publish_cli_manifests.sh \

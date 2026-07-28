@@ -51,9 +51,25 @@ for wt in /Users/jbogaty/src/jbcom/.worktrees/*/; do
   name=$(basename "$wt")
   if ! (cd "$wt" && go build ./... >/dev/null 2>&1); then
     say "  $name" "BUILD FAILS"; fail=1
+    continue
+  fi
+  # Tests too, not just compilation. "Green" is a claim about behavior, and a
+  # worktree that compiles with failing tests is exactly the state this verifier
+  # exists to catch — reporting it as green was the bug.
+  #
+  # Opt-IN because a full sweep across every worktree takes minutes, and a check
+  # too slow to run is a check nobody runs. Pass VERIFY_TESTS=1 before asserting
+  # "all green"; the default reports build-only and SAYS so, rather than
+  # implying more than it verified.
+  if [ "${VERIFY_TESTS:-}" = "1" ] && ! (cd "$wt" && go test ./internal/... >/dev/null 2>&1); then
+    say "  $name" "TESTS FAIL"; fail=1
   fi
 done
-say "all worktrees build" "$([ "$fail" = "0" ] && echo yes || echo NO)"
+if [ "${VERIFY_TESTS:-}" = "1" ]; then
+  say "all worktrees build+test" "$([ "$fail" = "0" ] && echo yes || echo NO)"
+else
+  say "all worktrees build" "$([ "$fail" = "0" ] && echo yes || echo NO) (VERIFY_TESTS=1 to also run tests)"
+fi
 
 # 6. Uncommitted work anywhere — silent local-only changes are lost work.
 for wt in /Users/jbogaty/src/jbcom/radioactive-ralph /Users/jbogaty/src/jbcom/.worktrees/*/; do
@@ -84,9 +100,23 @@ fi
 
 # 9. Directive PR references must match reality. A stale list reads as progress
 #    that has not happened.
+stale_refs=""
 for n in $(grep -oE '#[0-9]{3}' .agent-state/directive.md 2>/dev/null | tr -d '#' | sort -u); do
-  :
+  # An OPEN item naming a MERGED PR reads as work still to do that is already
+  # done — the exact drift that made this file claim seventeen open PRs when
+  # eight were. Only the open-PR list line is checked; prose citing merged PRs
+  # as history is correct and must not be flagged.
+  if grep -qE "^- \\[ \\].*Land the .* open PRs.*#?$n" .agent-state/directive.md; then
+    state=$(gh pr view "$n" --json state --jq '.state' 2>/dev/null || echo UNKNOWN)
+    [ "$state" = "MERGED" ] && stale_refs="$stale_refs $n"
+  fi
 done
+if [ -n "$stale_refs" ]; then
+  say "  open-PR list names MERGED PRs" "$stale_refs"
+  fail=1
+else
+  say "directive open-PR list" "no merged PRs listed as open"
+fi
 
 # 10. decisions.ndjson must stay parseable — it has conflicted repeatedly.
 python3 -c "
