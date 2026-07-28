@@ -151,10 +151,6 @@ func BindingSupportsContainment(binding Binding) bool {
 	return supportsContainment(binding.Config)
 }
 
-// containmentUnsupported is a fixed value for the flag, so the default
-// constructors read as declarations rather than as pointer plumbing.
-func containmentUnsupported() *bool { no := false; return &no }
-
 // File is the provider package's own minimal config surface: enough for
 // ResolveBinding to read DefaultProvider and look up a named provider's
 // BindingConfig. A later phase may replace this with a direct
