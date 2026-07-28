@@ -109,11 +109,11 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
 - [ ] Make provider write containment reachable from config, then default it on.
       macOS and Linux both enforce in #251; native Windows is closed as
       not-needed (no provider runs there). Two steps, in order:
-      1. Expose it through vconfig so an operator enables it without a rebuild.
-         Verified today: nothing in vconfig mentions containment, so it is
-         code-only via WithProviderWriteContainment. This belongs ON #251's
-         branch rather than a parallel one — a separate PR touching the same
-         orchestrator option would conflict for no reason.
+      1. [x] DONE on #251: contain_provider_writes project config key. Absent
+         OR malformed means off — a typo must not silently enable a boundary
+         that makes provider writes fail, since that surfaces as unexplained
+         provider errors far from the cause. Accepts bool and string because a
+         store layer round-trips values as JSON strings.
       2. Flip the default only after real turns have run with it enabled. A
          provider that legitimately writes to a shared cache outside the
          checkout would start failing on upgrade, and that is not a guess worth
