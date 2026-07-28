@@ -1331,7 +1331,10 @@ func (o *Orchestrator) dispatchWorker(ctx context.Context, projectID, projectDir
 		return nil
 	}
 
-	if _, err := o.VerifyAndComplete(persistCtx, planID, ds.task.ID, ev); err != nil {
+	// Attribute the evidence to the session that PRODUCED it. Letting
+	// verification read the current owner instead means a worker the reaper
+	// already replaced can overwrite its replacement's attempt (#248).
+	if _, err := o.VerifyAndCompleteAs(persistCtx, planID, ds.task.ID, sessionID, ev); err != nil {
 		return fmt.Errorf("orch: verify and complete: %w", err)
 	}
 	_ = o.store.ClearWorkerTask(persistCtx, workerID, "idle")
@@ -1592,7 +1595,9 @@ func (o *Orchestrator) runFanoutGroup(ctx context.Context, projectID, projectDir
 	// and keep going, then always release the worker.
 	var verifyErr error
 	for _, ds := range claimed {
-		if _, err := o.VerifyAndComplete(persistCtx, planID, ds.task.ID, ev); err != nil && verifyErr == nil {
+		// Same reason as the per-step path: the reporting session, not whoever
+		// owns the task by the time verification runs.
+		if _, err := o.VerifyAndCompleteAs(persistCtx, planID, ds.task.ID, sessionID, ev); err != nil && verifyErr == nil {
 			verifyErr = fmt.Errorf("orch: verify and complete %s: %w", ds.task.ID, err)
 		}
 	}
