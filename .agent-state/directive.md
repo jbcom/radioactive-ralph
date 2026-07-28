@@ -68,8 +68,12 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
 
 ## Remaining
 
-- [ ] Land the 12 open PRs: 222, 225, 236, 245, 247, 251, 252, 255, 257, 258,
-      259, 261. (#246 desktop-launch and #256 reporting-owner MERGED.)
+- [ ] Land the 11 open PRs: 222, 225, 236, 247, 251, 252, 255, 257, 258, 259,
+      261. MERGED since this item was written: #246 (desktop launch), #256
+      (reporting owner), #245 (init over supervisor).
+      ISSUE #204 IS NOW FULLY CLOSED on main — the client/store exemption list
+      reads "REAL DEBT: NONE REMAINING". Every CLI client reaches the store
+      through the supervisor; init_cmd.go was the last one.
       #261 shellchecks every repo script and fails when one is missing from
       ci.yml's allowlist — seven had accumulated unchecked, including the two
       that back this file's own verification workflow.
