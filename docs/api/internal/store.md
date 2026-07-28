@@ -56,6 +56,7 @@ The schema is embedded under schema/\*.sql and applied in lexical order by Migra
 - [type Plan](<#Plan>)
 - [type PlanStatus](<#PlanStatus>)
 - [type ProviderCalibration](<#ProviderCalibration>)
+- [type ReadyPartition](<#ReadyPartition>)
 - [type RecordSpendOpts](<#RecordSpendOpts>)
 - [type RunningWorker](<#RunningWorker>)
 - [type SessionOpts](<#SessionOpts>)
@@ -110,6 +111,7 @@ The schema is embedded under schema/\*.sql and applied in lexical order by Migra
   - [func \(s \*Store\) MarkDone\(ctx context.Context, planID, taskID, sessionID string, evidenceJSON string\) \(\[\]Task, error\)](<#Store.MarkDone>)
   - [func \(s \*Store\) MarkFailed\(ctx context.Context, planID, taskID, sessionID, reason string, maxRetries int\) \(retried bool, err error\)](<#Store.MarkFailed>)
   - [func \(s \*Store\) MarkFailedWithPayload\(ctx context.Context, planID, taskID, sessionID string, payload EventPayload, maxRetries int\) \(retried bool, err error\)](<#Store.MarkFailedWithPayload>)
+  - [func \(s \*Store\) MaterializePlanGraph\(ctx context.Context, planID string, tasks \[\]GraphTaskSpec\) error](<#Store.MaterializePlanGraph>)
   - [func \(s \*Store\) MaxEventID\(ctx context.Context, projectID string\) \(int64, error\)](<#Store.MaxEventID>)
   - [func \(s \*Store\) ProjectAbsPath\(ctx context.Context, projectID string\) \(path string, found bool, err error\)](<#Store.ProjectAbsPath>)
   - [func \(s \*Store\) ProjectSpendByProvider\(ctx context.Context, projectID string\) \(map\[string\]float64, error\)](<#Store.ProjectSpendByProvider>)
@@ -117,6 +119,7 @@ The schema is embedded under schema/\*.sql and applied in lexical order by Migra
   - [func \(s \*Store\) ReadOperatorSnapshot\(ctx context.Context, q OperatorSnapshotQuery\) \(\*OperatorSnapshot, error\)](<#Store.ReadOperatorSnapshot>)
   - [func \(s \*Store\) ReadOperatorTaskDetail\(ctx context.Context, projectID, planID, taskID string\) \(OperatorTaskDetail, error\)](<#Store.ReadOperatorTaskDetail>)
   - [func \(s \*Store\) Ready\(ctx context.Context, planID string\) \(\[\]Task, error\)](<#Store.Ready>)
+  - [func \(s \*Store\) ReadyPartitions\(ctx context.Context, planID string\) \(\[\]ReadyPartition, error\)](<#Store.ReadyPartitions>)
   - [func \(s \*Store\) ReclaimStale\(ctx context.Context, staleAfter time.Duration\) \(reclaimed int, err error\)](<#Store.ReclaimStale>)
   - [func \(s \*Store\) ReclaimWorker\(ctx context.Context, workerID string\) \(found bool, err error\)](<#Store.ReclaimWorker>)
   - [func \(s \*Store\) RecordCalibration\(ctx context.Context, c ProviderCalibration\) \(ProviderCalibration, error\)](<#Store.RecordCalibration>)
@@ -125,6 +128,8 @@ The schema is embedded under schema/\*.sql and applied in lexical order by Migra
   - [func \(s \*Store\) RecordTaskExecution\(ctx context.Context, planID, taskID, alias, provider, model, effort, independenceDomain, sessionID string\) error](<#Store.RecordTaskExecution>)
   - [func \(s \*Store\) RecordTaskProviderSession\(ctx context.Context, planID, taskID, claimingSessionID, providerSessionID string\) error](<#Store.RecordTaskProviderSession>)
   - [func \(s \*Store\) ReleaseClaim\(ctx context.Context, planID, taskID, sessionID, reason string\) error](<#Store.ReleaseClaim>)
+  - [func \(s \*Store\) ReserveTaskInput\(ctx context.Context, planID, taskID, path, sha256 string\) error](<#Store.ReserveTaskInput>)
+  - [func \(s \*Store\) ReserveTaskOutput\(ctx context.Context, planID, taskID, path, mode string\) error](<#Store.ReserveTaskOutput>)
   - [func \(s \*Store\) ResolveProject\(ctx context.Context, fps \[\]Fingerprint\) \(projectID string, found bool, err error\)](<#Store.ResolveProject>)
   - [func \(s \*Store\) SetPlanStatus\(ctx context.Context, id string, status PlanStatus\) error](<#Store.SetPlanStatus>)
   - [func \(s \*Store\) SetProjectConfig\(ctx context.Context, projectID, key, value string\) error](<#Store.SetProjectConfig>)
@@ -134,6 +139,8 @@ The schema is embedded under schema/\*.sql and applied in lexical order by Migra
   - [func \(s \*Store\) TouchProjectLastSeen\(ctx context.Context, projectID string\) error](<#Store.TouchProjectLastSeen>)
 - [type Task](<#Task>)
 - [type TaskExecutionMetadata](<#TaskExecutionMetadata>)
+- [type TaskInputSpec](<#TaskInputSpec>)
+- [type TaskOutputSpec](<#TaskOutputSpec>)
 - [type TaskStatus](<#TaskStatus>)
 - [type TeamRollup](<#TeamRollup>)
 - [type WorkerOpts](<#WorkerOpts>)
@@ -242,6 +249,12 @@ var ErrNoReadyTask = errors.New("store: no ready task")
 
 ```go
 var ErrOperatorTaskDetailNotFound = errors.New("store: operator task detail not found")
+```
+
+<a name="ErrOutputReserved"></a>ErrOutputReserved reports a claim refused because another RUNNING task in the same plan has declared an exclusive write to one of this task's output paths.
+
+```go
+var ErrOutputReserved = errors.New("store: a running task already reserved this output path")
 ```
 
 <a name="ErrPlanNotFound"></a>ErrPlanNotFound is returned when an operation targets a plan id that no row matches. It is a typed sentinel so callers match with errors.Is rather than scraping the formatted message \(the drive API maps it to CodeNotFound\).
@@ -372,7 +385,7 @@ type CalibrationAttempt struct {
 ```
 
 <a name="CreatePlanGraphOpts"></a>
-## type [CreatePlanGraphOpts](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/plan_graph.go#L24-L30>)
+## type [CreatePlanGraphOpts](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/plan_graph.go#L42-L48>)
 
 CreatePlanGraphOpts is one plan and its complete task graph.
 
@@ -504,7 +517,7 @@ func Fingerprints(ctx context.Context, dir string) ([]Fingerprint, error)
 Fingerprints computes the identity fingerprints for a directory: always the cleaned absolute path, plus — best\-effort, if dir is a git repository — the root\-commit sha and any "origin" remote URL. A fingerprint whose git command fails \(e.g. no origin remote configured\) is silently skipped rather than failing the whole call.
 
 <a name="GraphTaskSpec"></a>
-## type [GraphTaskSpec](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/plan_graph.go#L10-L21>)
+## type [GraphTaskSpec](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/plan_graph.go#L10-L26>)
 
 GraphTaskSpec is one node in a plan graph: the task plus the ids it depends on. DependsOn names other tasks in the SAME plan.
 
@@ -520,6 +533,11 @@ type GraphTaskSpec struct {
     // MetadataJSON is the raw ralph-task block, or "{}" when the step carried
     // no annotation.
     MetadataJSON string
+    // Inputs and Outputs are the task's declared filesystem surface, persisted
+    // as reservations so the claim path can refuse to run two tasks that write
+    // the same exclusive path concurrently. Declared paths are project-relative.
+    Inputs  []TaskInputSpec
+    Outputs []TaskOutputSpec
 }
 ```
 
@@ -893,6 +911,23 @@ type ProviderCalibration struct {
 }
 ```
 
+<a name="ReadyPartition"></a>
+## type [ReadyPartition](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/ready_partition.go#L16-L22>)
+
+ReadyPartition is one dispatchable wave slice: the tasks that are ready RIGHT NOW and share a leaf group.
+
+Dispatch cannot treat "several tasks are ready" as "several tasks may be delegated together". Native fan\-out hands a whole partition to ONE provider under one group heading, so the unit of fan\-out is the leaf group, not the ready set. Two tasks from different groups being simultaneously ready is the normal case for a DAG and says nothing about whether one worker may own both.
+
+```go
+type ReadyPartition struct {
+    // GroupPath is the persisted leaf-group identity shared by every task in
+    // Tasks (a dotted StepRef path such as "0.2"). Empty for tasks created
+    // without a task_metadata row.
+    GroupPath string
+    Tasks     []Task
+}
+```
+
 <a name="RecordSpendOpts"></a>
 ## type [RecordSpendOpts](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/spend.go#L9-L18>)
 
@@ -1013,7 +1048,7 @@ func (s *Store) ApplyProjectConfig(ctx context.Context, projectID string, upsert
 ApplyProjectConfig atomically deletes and upserts a set of DB\-resident project config keys. Deletes run before upserts, so a key present in both collections ends with the upserted value. This is the mutation primitive for replacing logical config selections whose old aliases must not survive beside their canonical key.
 
 <a name="Store.ApproveTask"></a>
-### func \(\*Store\) [ApproveTask](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/tasks.go#L822>)
+### func \(\*Store\) [ApproveTask](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/tasks.go#L843>)
 
 ```go
 func (s *Store) ApproveTask(ctx context.Context, planID, taskID string) (found, changed bool, err error)
@@ -1122,7 +1157,7 @@ func (s *Store) CreatePlan(ctx context.Context, o CreatePlanOpts) (string, error
 CreatePlan inserts a fresh plan in draft status and returns the newly generated UUID v7 id.
 
 <a name="Store.CreatePlanGraph"></a>
-### func \(\*Store\) [CreatePlanGraph](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/plan_graph.go#L46>)
+### func \(\*Store\) [CreatePlanGraph](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/plan_graph.go#L64>)
 
 ```go
 func (s *Store) CreatePlanGraph(ctx context.Context, o CreatePlanGraphOpts) (string, error)
@@ -1225,7 +1260,7 @@ func (s *Store) GetProjectConfig(ctx context.Context, projectID string) (map[str
 GetProjectConfig returns all DB\-resident config key/value pairs for a project. Values are stored as JSON\-encoded scalars/arrays/objects \(the caller decodes\); this layer treats them as opaque strings.
 
 <a name="Store.GetTask"></a>
-### func \(\*Store\) [GetTask](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/tasks.go#L412>)
+### func \(\*Store\) [GetTask](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/tasks.go#L433>)
 
 ```go
 func (s *Store) GetTask(ctx context.Context, planID, id string) (*Task, error)
@@ -1348,7 +1383,7 @@ func (s *Store) ListRunningWorkers(ctx context.Context) ([]RunningWorker, error)
 ListRunningWorkers returns every worker row currently status='running', with the worker id and its current plan/task. It is the read backing the status reply's per\-worker detail so a client \(the GUI\) can name a specific worker to kill. Workers with no assigned task are still listed \(PlanID/TaskID empty\).
 
 <a name="Store.ListTaskEvents"></a>
-### func \(\*Store\) [ListTaskEvents](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/tasks.go#L474>)
+### func \(\*Store\) [ListTaskEvents](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/tasks.go#L495>)
 
 ```go
 func (s *Store) ListTaskEvents(ctx context.Context, planID, taskID string, limit int) ([]Event, error)
@@ -1368,7 +1403,7 @@ ListTaskGroupPaths returns task id \-\> leaf\-group path for one plan.
 Dispatch needs every ready task's group in one query rather than N lookups, and getting it from here rather than re\-parsing the plan markdown is the point: recovering positional information by re\-parsing is exactly the dependence the graph walk removes.
 
 <a name="Store.ListTasks"></a>
-### func \(\*Store\) [ListTasks](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/tasks.go#L433>)
+### func \(\*Store\) [ListTasks](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/tasks.go#L454>)
 
 ```go
 func (s *Store) ListTasks(ctx context.Context, planID string, statuses []TaskStatus) ([]Task, error)
@@ -1377,7 +1412,7 @@ func (s *Store) ListTasks(ctx context.Context, planID string, statuses []TaskSta
 ListTasks returns tasks for one plan, optionally filtered by status.
 
 <a name="Store.MarkBlocked"></a>
-### func \(\*Store\) [MarkBlocked](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/tasks.go#L692>)
+### func \(\*Store\) [MarkBlocked](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/tasks.go#L713>)
 
 ```go
 func (s *Store) MarkBlocked(ctx context.Context, planID, taskID, sessionID string, payload EventPayload) error
@@ -1406,7 +1441,7 @@ func (s *Store) MarkBlockedInput(ctx context.Context, planID, taskID, reason str
 MarkBlockedInput records a fail\-closed immutable\-input admission failure. The bool reports whether this call was the transition into the blocked state; see MarkBlockedCapability.
 
 <a name="Store.MarkDone"></a>
-### func \(\*Store\) [MarkDone](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/tasks.go#L504>)
+### func \(\*Store\) [MarkDone](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/tasks.go#L525>)
 
 ```go
 func (s *Store) MarkDone(ctx context.Context, planID, taskID, sessionID string, evidenceJSON string) ([]Task, error)
@@ -1415,7 +1450,7 @@ func (s *Store) MarkDone(ctx context.Context, planID, taskID, sessionID string, 
 MarkDone transitions a running task to done, logs the event, and returns the set of newly\-ready downstream tasks.
 
 <a name="Store.MarkFailed"></a>
-### func \(\*Store\) [MarkFailed](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/tasks.go#L572>)
+### func \(\*Store\) [MarkFailed](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/tasks.go#L593>)
 
 ```go
 func (s *Store) MarkFailed(ctx context.Context, planID, taskID, sessionID, reason string, maxRetries int) (retried bool, err error)
@@ -1424,7 +1459,7 @@ func (s *Store) MarkFailed(ctx context.Context, planID, taskID, sessionID, reaso
 MarkFailed transitions a running task, owned by sessionID, to failed or retries. See MarkFailedWithPayload.
 
 <a name="Store.MarkFailedWithPayload"></a>
-### func \(\*Store\) [MarkFailedWithPayload](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/tasks.go#L588>)
+### func \(\*Store\) [MarkFailedWithPayload](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/tasks.go#L609>)
 
 ```go
 func (s *Store) MarkFailedWithPayload(ctx context.Context, planID, taskID, sessionID string, payload EventPayload, maxRetries int) (retried bool, err error)
@@ -1433,6 +1468,19 @@ func (s *Store) MarkFailedWithPayload(ctx context.Context, planID, taskID, sessi
 MarkFailedWithPayload transitions a running task to failed or retries while preserving structured payload details in the event log.
 
 Both UPDATEs are guarded by \`status = 'running' AND claimed\_by\_session = sessionID\`, the same owner guard MarkDone and MarkBlocked carry. Without the owner guard a stale failure report from a worker whose claim the reaper already reclaimed \(and possibly reassigned to a new worker\) would flip the task back to pending / failed and clear the NEW owner's claim — double execution plus a dropped completion. When the guard matches nothing the task has moved on under a different session; MarkFailed returns ErrTaskNotOwnedRunning so the caller can drop the stale report rather than resurrect the task.
+
+<a name="Store.MaterializePlanGraph"></a>
+### func \(\*Store\) [MaterializePlanGraph](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/plan_graph.go#L105>)
+
+```go
+func (s *Store) MaterializePlanGraph(ctx context.Context, planID string, tasks []GraphTaskSpec) error
+```
+
+MaterializePlanGraph writes tasks, metadata, and edges for a plan that already exists, in one transaction.
+
+This is the graph half of CreatePlanGraph without the plan row. Dispatch uses it for a plan that reached the store outside the import path — one written by CreatePlan directly, or any plan predating the graph — which has source markdown but no nodes. Without it the edge walk would report such a plan as having nothing ready and it would silently never dispatch.
+
+The caller decides WHEN this is appropriate \(dispatch only calls it for a plan with no tasks at all\). This is deliberately not an upsert: re\-deriving edges under a plan mid\-run could contradict decisions the run has already made, so a duplicate task id fails the transaction rather than merging.
 
 <a name="Store.MaxEventID"></a>
 ### func \(\*Store\) [MaxEventID](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/events.go#L160>)
@@ -1500,6 +1548,23 @@ func (s *Store) Ready(ctx context.Context, planID string) ([]Task, error)
 ```
 
 Ready returns tasks that are ready to run — every dependency is in a terminal\-satisfied state \(\`done\`, \`skipped\`, or \`decomposed\`\) — and are in a claimable status: \`pending\` \(ungated\) or \`ready\` \(a task that WAS gated behind approval and has since been approved via ApproveTask\). A task still in \`ready\_pending\_approval\` is deliberately NOT returned: the approval gate holds it until an operator approves it. Result is ordered by created\_at for stable test output.
+
+<a name="Store.ReadyPartitions"></a>
+### func \(\*Store\) [ReadyPartitions](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/ready_partition.go#L52>)
+
+```go
+func (s *Store) ReadyPartitions(ctx context.Context, planID string) ([]ReadyPartition, error)
+```
+
+ReadyPartitions returns the currently\-ready tasks for planID, grouped by their persisted group\_path and ordered deterministically.
+
+Readiness is the SAME NOT EXISTS walk over task\_deps that Ready and ClaimNextReady use — this adds partitioning on top of it, it does not introduce a second notion of ready. The join to task\_metadata is a LEFT join on purpose: a task materialized by the plain CreateTask path has no metadata row, and dropping it here would make its plan silently unrunnable.
+
+Partitions come back in group\-path order, tasks within a partition in the same sequence\_ordinal/created\_at order ClaimNextReady picks them, so a caller that dispatches partition\-by\-partition reproduces author order.
+
+The two FAIL\-CLOSED blocked states are included deliberately, which reads backwards until you follow what releases them. \`blocked\_capability\` and \`blocked\_input\` are cleared by the dispatch\-time gates themselves \(capabilityGateBlocks, pathGateBlocks\) when the operator has fixed the binding or the declaration: the gate re\-checks, sees the requirement met, and clears the block. A task the walk never surfaces never reaches its gate, so excluding these states made the block outlive its own remedy — the exact permanent stall the gates exist to prevent. Surfacing them costs one gate evaluation per tick and nothing else: a still\-blocked task is re\-blocked by the same gate before any worker, session, or dispatch slot is allocated.
+
+ready\_pending\_approval is NOT included, and the asymmetry is the point. An approval gate is released by a HUMAN decision recorded out of band, never by re\-running the gate, so surfacing it would return a task that dispatch must unconditionally re\-block on every tick with nothing gained.
 
 <a name="Store.ReclaimStale"></a>
 ### func \(\*Store\) [ReclaimStale](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/reaper.go#L27>)
@@ -1574,13 +1639,33 @@ func (s *Store) RecordTaskProviderSession(ctx context.Context, planID, taskID, c
 RecordTaskProviderSession stores the session identifier returned by the provider after a turn. Both the live task claim and the execution metadata must still identify claimingSessionID; otherwise this is a stale post\-run write from a reclaimed worker.
 
 <a name="Store.ReleaseClaim"></a>
-### func \(\*Store\) [ReleaseClaim](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/tasks.go#L663>)
+### func \(\*Store\) [ReleaseClaim](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/tasks.go#L684>)
 
 ```go
 func (s *Store) ReleaseClaim(ctx context.Context, planID, taskID, sessionID, reason string) error
 ```
 
 ReleaseClaim requeues a running task owned by sessionID back to pending WITHOUT charging a retry, for SYSTEM\-level aborts \(e.g. a fan\-out group whose later claim failed\) as opposed to task\-execution failures. Using MarkFailed here would penalize the retry budget for something the task never got a chance to attempt, and could terminally fail an otherwise\-valid task after a few transient orchestrator hiccups. Owner\-guarded like MarkFailed: a task no longer running under sessionID yields ErrTaskNotOwnedRunning \(benign — someone else owns it now\).
+
+<a name="Store.ReserveTaskInput"></a>
+### func \(\*Store\) [ReserveTaskInput](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/output_reservation.go#L57>)
+
+```go
+func (s *Store) ReserveTaskInput(ctx context.Context, planID, taskID, path, sha256 string) error
+```
+
+ReserveTaskInput records that taskID reads path, pinned to sha256 when the plan declared a hash. An empty hash means "declared but unpinned".
+
+<a name="Store.ReserveTaskOutput"></a>
+### func \(\*Store\) [ReserveTaskOutput](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/output_reservation.go#L24>)
+
+```go
+func (s *Store) ReserveTaskOutput(ctx context.Context, planID, taskID, path, mode string) error
+```
+
+ReserveTaskOutput records that taskID writes path exclusively.
+
+Reservations exist because readiness and admission are different questions. The dependency graph answers "are this task's predecessors done"; it says nothing about two independent tasks that happen to write the same file. Those tasks are legitimately ready at the same instant and must still not run concurrently — an edge between them would be a lie \(neither consumes the other's result\) and would also serialize them permanently rather than only while one is running.
 
 <a name="Store.ResolveProject"></a>
 ### func \(\*Store\) [ResolveProject](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/projects.go#L31>)
@@ -1696,6 +1781,30 @@ type TaskExecutionMetadata struct {
     CapabilitySetJSON          string
     CompletionEvidenceJSON     string
     BlockedReason              string
+}
+```
+
+<a name="TaskInputSpec"></a>
+## type [TaskInputSpec](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/plan_graph.go#L29-L32>)
+
+TaskInputSpec is one declared input, optionally pinned to a content hash.
+
+```go
+type TaskInputSpec struct {
+    Path   string
+    SHA256 string
+}
+```
+
+<a name="TaskOutputSpec"></a>
+## type [TaskOutputSpec](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/plan_graph.go#L36-L39>)
+
+TaskOutputSpec is one declared output. Mode defaults to "exclusive", the only mode the schema admits today.
+
+```go
+type TaskOutputSpec struct {
+    Path string
+    Mode string
 }
 ```
 

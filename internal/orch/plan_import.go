@@ -140,6 +140,7 @@ func graphSpecs(parsed *plan.Plan) ([]store.GraphTaskSpec, error) {
 		if err != nil {
 			return nil, fmt.Errorf("orch: build acceptance for %q: %w", ids[i], err)
 		}
+		inputs, outputs := declaredReservations(n.step)
 		specs = append(specs, store.GraphTaskSpec{
 			CreateTaskOpts: store.CreateTaskOpts{
 				ID:               ids[i],
@@ -151,6 +152,8 @@ func graphSpecs(parsed *plan.Plan) ([]store.GraphTaskSpec, error) {
 			GroupPath:    n.group,
 			TeamPath:     team,
 			MetadataJSON: metadataJSON,
+			Inputs:       inputs,
+			Outputs:      outputs,
 		})
 	}
 	return specs, nil
@@ -225,20 +228,25 @@ func documentOrderEdges(parsed *plan.Plan, ids []string) [][]string {
 	return edges
 }
 
-// stepTaskID is THE rule mapping a plan step to its store task id: an explicit
-// `id` from the step's ralph-task metadata when present, else the positional
-// StepRef id every plan used before that grammar existed.
+// declaredReservations turns a step's declared filesystem surface into the
+// reservation specs the store persists alongside the node.
 //
-// Import and dispatch MUST agree on this. When they disagreed, importing a step
-// annotated `{"id":"build"}` created task "build", and dispatch then
-// materialized a SECOND positional task "0.0" for the same step — so the plan
-// held a duplicate node, and whichever one ClaimNextReady happened to pick
-// determined whether the run made sense. Worse, claiming "build" left it
-// running with no worker launched, because the caller could not parse a
-// non-positional id back into a StepRef.
-func stepTaskID(ref plan.StepRef, step plan.Step) string {
-	if step.Metadata != nil && step.Metadata.ID != "" {
-		return step.Metadata.ID
+// Outputs become the admission constraint: two tasks declaring the same
+// exclusive path must not run concurrently even when both are ready, because
+// readiness is about dependencies and this is not one — neither task consumes
+// the other's result, so an edge between them would be a lie AND would
+// serialize them permanently rather than only while one runs.
+func declaredReservations(step plan.Step) ([]store.TaskInputSpec, []store.TaskOutputSpec) {
+	if step.Metadata == nil {
+		return nil, nil
 	}
-	return ref.ID()
+	var inputs []store.TaskInputSpec
+	for _, in := range step.Metadata.Inputs {
+		inputs = append(inputs, store.TaskInputSpec{Path: in.Path, SHA256: in.SHA256})
+	}
+	var outputs []store.TaskOutputSpec
+	for _, out := range step.Metadata.Outputs {
+		outputs = append(outputs, store.TaskOutputSpec{Path: out.Path, Mode: out.Mode})
+	}
+	return inputs, outputs
 }

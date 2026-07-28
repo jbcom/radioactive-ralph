@@ -317,9 +317,17 @@ func TestDispatchNextApprovalProbeDoesNotConsumePoolCursor(t *testing.T) {
 	if n != 0 {
 		t.Fatalf("gated dispatch = %d, want 0", n)
 	}
-	probes, dispatches := pool.counts(projectID)
-	if probes != 1 || dispatches != 0 {
-		t.Fatalf("gated resolver calls = probes:%d dispatches:%d, want probes:1 dispatches:0", probes, dispatches)
+	// A gated pass must never CONSUME the pool cursor. It used to still probe,
+	// because readiness came from the markdown and the approval gate was checked
+	// per-step afterwards. Now the store's edge walk excludes an
+	// approval-gated task from the ready set outright, so a fully gated plan
+	// yields no partitions and dispatch returns before resolving anything —
+	// strictly better, since probing a binding for work that cannot run is
+	// wasted. Either way zero dispatches is the invariant, and the assertion
+	// after approval below is what proves the cursor did not move.
+	_, dispatches := pool.counts(projectID)
+	if dispatches != 0 {
+		t.Fatalf("gated resolver dispatches = %d, want 0", dispatches)
 	}
 
 	if found, changed, err := s.ApproveTask(ctx, planID, "0.0"); err != nil || !found || !changed {

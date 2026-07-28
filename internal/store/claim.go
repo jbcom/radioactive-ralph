@@ -95,6 +95,18 @@ func (s *Store) claimTaskOnce(
 		return nil, fmt.Errorf("store: select named ready task: %w", err)
 	}
 
+	// Admission, checked INSIDE the claim transaction. Readiness (the edge walk
+	// above) says this task's dependencies are satisfied; it says nothing about
+	// a peer that writes the same file. Checking here rather than in a separate
+	// query is what makes it safe: two claimers would otherwise both observe no
+	// conflict and both proceed, which is the exact race reservations exist to
+	// prevent.
+	if conflict, err := s.outputReservationConflict(ctx, tx, planID, selected); err != nil {
+		return nil, err
+	} else if conflict != "" {
+		return nil, fmt.Errorf("%w: %q", ErrOutputReserved, conflict)
+	}
+
 	// The status guard mirrors the SELECT's claimable set. If it matched only
 	// 'pending', an approved 'ready' task would pass the SELECT and then fail
 	// the UPDATE, reporting ErrNoReadyTask and stranding every approved task.

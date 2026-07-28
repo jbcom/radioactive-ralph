@@ -505,9 +505,16 @@ type dispatchedStep struct {
 	task *store.Task
 }
 
-// DispatchNext loads the plan for planID, computes what's ready right now,
-// and dispatches workers for as many ready steps as capacity (maxParallel)
+// DispatchNext loads the plan for planID, asks the store what is ready right
+// now, and dispatches workers for as many ready steps as capacity (maxParallel)
 // and spend caps allow. It returns the number of steps actually dispatched.
+//
+// Readiness comes from the dependency graph — the task_deps walk in
+// store.ReadyPartitions — not from recomputing positions out of the markdown.
+// A plan with no annotations imports as a chain of edges, so a linear plan is
+// the degenerate case of a DAG and dispatches exactly as it always did; a plan
+// that fans into independent branches now releases those branches together
+// instead of serializing them behind document order.
 //
 // DispatchNext does NOT wait for dispatched workers to finish — each
 // dispatch runs its provider turn in its own goroutine, wired through
@@ -529,17 +536,13 @@ func (o *Orchestrator) DispatchNext(ctx context.Context, projectID, planID strin
 		return 0, fmt.Errorf("orch: parse plan markdown: %w", err)
 	}
 
-	done, err := o.doneSet(ctx, planID)
+	wave, err := o.loadReadyWave(ctx, planID, parsedPlan)
 	if err != nil {
 		return 0, err
 	}
-
-	readySteps, refs, parallel := plan.DecomposeRefs(parsedPlan, done)
-	if len(readySteps) == 0 {
+	if len(wave.partitions) == 0 {
 		return 0, nil
 	}
-
-	groupHeading := groupHeadingFor(parsedPlan, refs[0])
 
 	// Resolve the project's checkout dir ONCE for this dispatch pass. Every
 	// worker for this plan runs in the project's own tree, not the
@@ -549,13 +552,65 @@ func (o *Orchestrator) DispatchNext(ctx context.Context, projectID, planID strin
 		return 0, err
 	}
 
-	candidateLimit := len(readySteps)
-	if !parallel {
-		// A sequential leaf group only ever returns its first not-done
-		// step (see plan.Decompose), but guard explicitly anyway: never
-		// dispatch more than one step from a non-parallel group at once.
-		candidateLimit = 1
+	// Each partition is one leaf group. Fan-out may delegate a whole partition
+	// to one provider; it must never span two, because a fan-out turn runs
+	// under a single group heading and a single resolved binding.
+	//
+	// TASKS and WORKERS are counted separately here, and conflating them is a
+	// real bug rather than bookkeeping pedantry. DispatchNext RETURNS a task
+	// count — callers want to know how much work started — but maxParallel
+	// bounds WORKERS, and a native fan-out partition is N tasks on exactly ONE
+	// worker with one provider turn. Charging N against the budget lets a
+	// two-task fan-out consume a maxParallel=2 pipeline outright, stranding an
+	// unrelated ready branch until the next tick while a semaphore slot sits
+	// free the whole time.
+	workers := 0
+	for _, group := range wave.partitions {
+		if o.maxParallel > 0 && workers >= o.maxParallel {
+			break
+		}
+		tasks, admitted, err := o.dispatchReadyGroup(ctx, dispatchGroupArgs{
+			projectID: projectID, projectDir: projectDir, planID: planID,
+			parsedPlan: parsedPlan, storeTitle: storedPlan.Title,
+			group: group, alreadyAdmitted: workers,
+		})
+		dispatched += tasks
+		workers += admitted
+		if err != nil {
+			return dispatched, err
+		}
 	}
+	return dispatched, nil
+}
+
+// dispatchGroupArgs bundles what dispatchReadyGroup needs for one leaf group.
+type dispatchGroupArgs struct {
+	projectID, projectDir, planID string
+	parsedPlan                    *plan.Plan
+	storeTitle                    string
+	group                         readyGroup
+	// alreadyAdmitted is how many WORKERS earlier partitions in this pass
+	// admitted, so maxParallel bounds the PASS rather than each group. Workers,
+	// not tasks: a fan-out partition is many tasks on one worker.
+	alreadyAdmitted int
+}
+
+// dispatchReadyGroup dispatches one leaf group from the ready wave: either as a
+// single native-fan-out turn owning the whole group, or as one Ralph-managed
+// worker per step.
+//
+// Returns the number of TASKS started and the number of WORKERS admitted.
+// These differ for native fan-out — N tasks, one worker — and the caller needs
+// both: tasks for what it reports, workers for the maxParallel budget.
+func (o *Orchestrator) dispatchReadyGroup(ctx context.Context, a dispatchGroupArgs) (dispatched, admitted int, err error) {
+	projectID, planID := a.projectID, a.planID
+	projectDir, parsedPlan := a.projectDir, a.parsedPlan
+	storedTitle := a.storeTitle
+	readySteps, refs := a.group.steps, a.group.refs
+	parallel := a.group.parallel
+	groupHeading := a.group.heading
+
+	candidateLimit := len(readySteps)
 
 	// Fan-out delegation: when the ready group is Parallel AND the binding
 	// resolved for it declares NativeFanout, one fan-out-capable worker
@@ -569,7 +624,7 @@ func (o *Orchestrator) DispatchNext(ctx context.Context, projectID, planID strin
 	if parallel && candidateLimit > 1 {
 		binding, err := o.resolveBinding(ctx, projectID, parallel, BindingProbe)
 		if err != nil {
-			return dispatched, fmt.Errorf("orch: resolve binding: %w", err)
+			return dispatched, admitted, fmt.Errorf("orch: resolve binding: %w", err)
 		}
 		if binding.Config.NativeFanout {
 			// Native fan-out consumes one Ralph worker, so scan the complete
@@ -580,7 +635,7 @@ func (o *Orchestrator) DispatchNext(ctx context.Context, projectID, planID strin
 			for i := 0; i < candidateLimit; i++ {
 				gated, err := o.stepGateBlocks(ctx, planID, projectID, parallel, refs[i], readySteps[i])
 				if err != nil {
-					return dispatched, err
+					return dispatched, admitted, err
 				}
 				if !gated {
 					eligibleSteps = append(eligibleSteps, readySteps[i])
@@ -588,15 +643,18 @@ func (o *Orchestrator) DispatchNext(ctx context.Context, projectID, planID strin
 				}
 			}
 			if len(eligibleSteps) == 0 {
-				return dispatched, nil
+				return dispatched, admitted, nil
 			}
 
 			// A fan-out group is one worker / one provider turn, so it takes ONE
 			// dispatch slot. If the pipeline is full there's no capacity now —
 			// return without dispatching; the next pass retries.
 			if !o.acquireDispatchSlot() {
+				// Report saturation (#257) with this branch's three-value
+				// signature: a full pipeline is a VISIBLE condition, not a
+				// silent no-op, and `admitted` still has to reach the caller.
 				o.reportSaturation(ctx, projectID, planID, len(eligibleSteps))
-				return dispatched, nil
+				return dispatched, admitted, nil
 			}
 			slotReleased := false
 			releaseSlot := func() {
@@ -608,29 +666,33 @@ func (o *Orchestrator) DispatchNext(ctx context.Context, projectID, planID strin
 			binding, err = o.resolveBinding(ctx, projectID, parallel, BindingDispatch)
 			if err != nil {
 				releaseSlot()
-				return dispatched, fmt.Errorf("orch: resolve binding for dispatch: %w", err)
+				return dispatched, admitted, fmt.Errorf("orch: resolve binding for dispatch: %w", err)
 			}
 			if !binding.Config.NativeFanout {
 				releaseSlot()
-				return dispatched, fmt.Errorf("orch: binding capability changed between probe and dispatch")
+				return dispatched, admitted, fmt.Errorf("orch: binding capability changed between probe and dispatch")
 			}
-			n, err := o.dispatchFanoutGroup(ctx, projectID, projectDir, planID, parsedPlan, storedPlan.Title, groupHeading, binding, eligibleSteps, eligibleRefs, releaseSlot)
+			n, err := o.dispatchFanoutGroup(ctx, projectID, projectDir, planID, parsedPlan, storedTitle, groupHeading, binding, eligibleSteps, eligibleRefs, releaseSlot)
 			if err != nil {
 				// dispatchFanoutGroup only returns an error on a synchronous
 				// pre-launch failure (claim/spend); the async turn was never
 				// started, so release the slot here.
 				releaseSlot()
-				return dispatched, err
+				return dispatched, admitted, err
 			}
-			return n, nil
+			// N tasks, but exactly ONE worker: a single provider turn owns the
+			// whole group.
+			return n, 1, nil
 		}
 	}
 
 	for i := 0; i < candidateLimit; i++ {
-		// maxParallel is an admission budget, not a prefix length. Keep scanning
-		// past approval- or spend-gated candidates and stop only after this pass
-		// has actually admitted the configured number of workers.
-		if o.maxParallel > 0 && dispatched >= o.maxParallel {
+		// maxParallel is an admission budget for the whole DISPATCH PASS, not a
+		// prefix length and not a per-group allowance — so it counts what earlier
+		// partitions already admitted. Keep scanning past approval- or spend-gated
+		// candidates and stop only after the pass has actually admitted the
+		// configured number of workers.
+		if o.maxParallel > 0 && a.alreadyAdmitted+admitted >= o.maxParallel {
 			break
 		}
 		// Skip a step still held behind the approval gate BEFORE acquiring a
@@ -640,7 +702,7 @@ func (o *Orchestrator) DispatchNext(ctx context.Context, projectID, planID strin
 		// use (see stepGateBlocks).
 		gated, err := o.stepGateBlocks(ctx, planID, projectID, parallel, refs[i], readySteps[i])
 		if err != nil {
-			return dispatched, err
+			return dispatched, admitted, err
 		}
 		if gated {
 			// Sequential: a gated step blocks the rest (they depend on it) → stop.
@@ -674,18 +736,21 @@ func (o *Orchestrator) DispatchNext(ctx context.Context, projectID, planID strin
 
 		launched, err := o.dispatchReadyStep(ctx, dispatchStepArgs{
 			projectID: projectID, projectDir: projectDir, planID: planID,
-			parsedPlan: parsedPlan, storeTitle: storedPlan.Title, groupHeading: groupHeading,
+			parsedPlan: parsedPlan, storeTitle: storedTitle, groupHeading: groupHeading,
 			parallel: parallel, ref: refs[i], step: readySteps[i],
 		})
 		if err != nil {
-			return dispatched, err
+			return dispatched, admitted, err
 		}
 		if launched {
+			// One Ralph-managed worker per step: task and worker counts move
+			// together on this path.
 			dispatched++
+			admitted++
 		}
 	}
 
-	return dispatched, nil
+	return dispatched, admitted, nil
 }
 
 // dispatchStepArgs bundles the per-step inputs dispatchReadyStep needs, so the
@@ -1221,7 +1286,68 @@ func (o *Orchestrator) stepGateBlocks(ctx context.Context, planID, projectID str
 	if task.Status == store.TaskStatusReadyPendingApproval {
 		return true, nil
 	}
+	// Both gates run, and the ORDER matters. The path gate is a local,
+	// filesystem-only check with no provider resolution; the capability gate
+	// resolves a binding. Checking paths first means a step whose declarations
+	// escape the project never costs a resolution to find that out.
+	blocked, err := o.pathGateBlocks(ctx, planID, task.ID, step)
+	if err != nil {
+		return false, err
+	}
+	if blocked {
+		return true, nil
+	}
 	return o.capabilityGateBlocks(ctx, planID, projectID, parallel, task, step)
+}
+
+// pathGateBlocks re-checks a step's declared inputs and outputs immediately
+// before dispatch, and blocks the task if any of them escapes the project root.
+//
+// Re-checking here rather than trusting the import-time check is the point: the
+// filesystem can change between admission and dispatch, and a declaration that
+// was fine when the plan was imported may resolve outside the project by the
+// time a worker would act on it.
+//
+// This is best-effort VALIDATION, not a write-side guarantee — see
+// secureProjectPath. It constrains what Ralph will dispatch, not what a provider
+// process can later open by pathname. Blocking rather than skipping is what
+// makes the refusal visible: a silently skipped task looks identical to one
+// waiting on a dependency.
+func (o *Orchestrator) pathGateBlocks(ctx context.Context, planID, taskID string, step plan.Step) (bool, error) {
+	decl := declFromMetadata(step)
+	if len(decl.Inputs) == 0 && len(decl.Outputs) == 0 {
+		return false, nil
+	}
+	projectDir, err := o.projectDirFor(ctx, planID)
+	if err != nil {
+		return false, err
+	}
+	validationErr := validateTaskFilesystem(projectDir, decl)
+	if validationErr == nil {
+		return false, nil
+	}
+	if !errors.Is(validationErr, ErrTaskPathEscapesProject) {
+		// An I/O fault resolving the paths is not a containment refusal. Surface
+		// it rather than marking the task permanently blocked for what may be a
+		// transient condition.
+		return false, validationErr
+	}
+	// MarkBlockedInput reports whether this call was the TRANSITION into the
+	// blocked state. Emit only on that transition: the dispatch loop re-runs this
+	// gate every tick, so emitting unconditionally would grow the event log
+	// without bound and bury the one entry an operator needs.
+	transitioned, err := o.store.MarkBlockedInput(ctx, planID, taskID, validationErr.Error())
+	if err != nil {
+		return false, fmt.Errorf("orch: block task %s on path containment: %w", taskID, err)
+	}
+	if transitioned {
+		_ = o.store.Emit(ctx, store.EmitOpts{
+			PlanID: planID, TaskID: taskID,
+			Kind:   "task.blocked_input",
+			Stream: "service",
+		})
+	}
+	return true, nil
 }
 
 // capabilityGateBlocks enforces a step's `requires` list against the provider it
@@ -1297,8 +1423,9 @@ func (o *Orchestrator) capabilityGateBlocks(ctx context.Context, planID, project
 
 // claimStepTask claims the SPECIFIC task dispatch selected for ref.
 //
-// It claims BY NAME rather than asking the store for "whatever is next".
-// Dispatch already chose this step and resolved its text; letting the store
+// It claims BY NAME rather than asking the store for "whatever is next". The
+// graph walk already chose this task, resolved its step text, and (for fan-out)
+// decided which group it belongs to; letting the store
 // substitute a different ready task would pair one task's row with another
 // task's instructions. That was survivable while ids were positional and the
 // caller could re-derive a step from the id — and became a hard bug the moment
@@ -1316,7 +1443,14 @@ func (o *Orchestrator) claimStepTask(ctx context.Context, planID string, _ *plan
 
 	claimed, err := o.store.ClaimTask(ctx, planID, task.ID, sessionID, workerID)
 	if err != nil {
-		if errors.Is(err, store.ErrNoReadyTask) {
+		// Both of these mean "not claimable RIGHT NOW", not "faulted". A lost
+		// claim race resolves when the other dispatcher finishes; an output
+		// reservation resolves when the holder finishes. Treating a reservation
+		// as fatal livelocked native fan-out: the group claims every eligible
+		// task under one worker, so two tasks sharing an output made
+		// dispatchFanoutGroup release every prior claim and error, and the next
+		// pass repeated the identical sequence forever.
+		if errors.Is(err, store.ErrNoReadyTask) || errors.Is(err, store.ErrOutputReserved) {
 			return nil, nil
 		}
 		return nil, fmt.Errorf("orch: claim %s: %w", task.ID, err)

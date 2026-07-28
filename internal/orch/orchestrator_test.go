@@ -172,8 +172,14 @@ func TestDispatchNextSequentialDispatchesOnlyFirstStep(t *testing.T) {
 	if doneCount != 1 {
 		t.Errorf("done tasks = %d, want 1", doneCount)
 	}
-	if pendingCount != 0 {
-		t.Errorf("pending tasks = %d, want 0 (second step not yet materialized until its group is ready)", pendingCount)
+	// The whole plan is materialized up front now — dispatch reads readiness
+	// from the graph rather than creating a task the first time it happens to
+	// look at a step. So the second step EXISTS and is pending; what matters is
+	// that it was not dispatched, which the done count above pins. Asserting
+	// pendingCount == 0 here would be asserting lazy materialization, an
+	// implementation detail this increment deliberately removed.
+	if pendingCount != 1 {
+		t.Errorf("pending tasks = %d, want 1 (the second step exists but must not have run)", pendingCount)
 	}
 }
 
@@ -250,8 +256,12 @@ func TestDispatchWorkerPanicIsContained(t *testing.T) {
 	if running != 0 {
 		t.Errorf("running tasks = %d, want 0 (the panicked task must not be left wedged running)", running)
 	}
-	if pending != 1 {
-		t.Errorf("pending tasks = %d, want 1 (the panicked task reclaimed to pending)", pending)
+	// Two pending: the panicked task, reclaimed — which is the subject here —
+	// plus the plan's second step, which is now materialized up front rather
+	// than on first dispatch. The load-bearing assertion is running == 0 above:
+	// the panicked task must not be left wedged.
+	if pending != 2 {
+		t.Errorf("pending tasks = %d, want 2 (the reclaimed task plus the not-yet-run second step)", pending)
 	}
 
 	// A second dispatch must be able to re-claim the reclaimed task right away.
