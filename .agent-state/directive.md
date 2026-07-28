@@ -148,9 +148,15 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
       task returned "unknown Ralph task status" for the entire snapshot, so the
       status meant to make a stall visible hid everything instead.
       - [ ] [WAIT] Remaining half: ready partitions + per-task provenance over
-            the observe surface. VERIFIED gated — #225 (ReadyPartitions) and
-            #236 (calibration provenance) are both still OPEN, and neither type
-            exists on main to project.
+            the observe surface. RE-VERIFIED 2026-07-28 after #236 merged
+            (9c04550) — the gate is now HALF open:
+              * per-task provenance: UNBLOCKED. internal/store/calibrations.go
+                is on main, so the types exist to project.
+              * ready partitions: still gated. `func (s *Store) ReadyPartitions`
+                is NOT on main; it ships with #225, which is open.
+            Do the provenance half first rather than waiting on both — checked
+            by grepping origin/main for each symbol, not by assuming the pair
+            moves together.
 
 - [ ] [WAIT] Make provider write containment reachable from config, then default
       it on. Step 1 (the config key) is DONE on #251; step 2 is gated on that PR
