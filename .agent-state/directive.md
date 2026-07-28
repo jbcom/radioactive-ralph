@@ -92,6 +92,11 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
       22 jobs executing, ZERO macOS among them, ubuntu+windows flowing. macOS is
       constrained UPSTREAM; waiting is what drains it.
       Remaining checks on every open PR are macOS jobs draining upstream.
+      MOVEMENT RE-MEASURED 2026-07-28 at queued=19/running=1, which looks alarming
+      and is not: sampling the SET of executing run ids 45s apart showed a
+      different set, so the queue is moving rather than wedged. Count alone
+      cannot tell those apart -- compare run ids, not totals. The monitor now
+      reports queue=moving/same-runs on that basis.
 
       HYGIENE (2026-07-28): 13 merged worktrees + 13 stale local branches
       removed. `merge-tree --write-tree` reported 7 of them NOT-absorbed, which
