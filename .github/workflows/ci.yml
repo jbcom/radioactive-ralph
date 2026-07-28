@@ -67,7 +67,13 @@ jobs:
         run: go mod download
       - name: go test (Unix)
         if: runner.os != 'Windows'
-        run: go test -race -coverprofile=coverage.out -covermode=atomic ./...
+        # -timeout explicitly, NOT the 10-minute default. Under -race the
+        # provider package's endless-output tests each budget 150s (they push
+        # 16 MiB through a pty and the detector costs ~19x), and the package
+        # clock covers the whole binary. Relying on the default made a
+        # per-test budget unspendable: the binary would panic before a test
+        # could use the time it was given.
+        run: go test -race -timeout 20m -coverprofile=coverage.out -covermode=atomic ./...
       - name: go test (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
