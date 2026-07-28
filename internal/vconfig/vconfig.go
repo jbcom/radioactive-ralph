@@ -19,7 +19,6 @@ package vconfig
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 
 	"github.com/jbcom/radioactive-ralph/internal/store"
@@ -122,15 +121,22 @@ const projectsStanzaKey = "projects"
 // configFile, then userConfigFile (highest precedence). Both file paths are
 // optional; an empty string skips that layer. Config files are TOML.
 func ResolveUser(ctx context.Context, st *store.Store, configFile, userConfigFile string) (UserConfig, error) {
+	return ResolveUserFrom(ctx, NewStoreConfigSource(st), configFile, userConfigFile)
+}
+
+// ResolveUserFrom is ResolveUser against any ConfigSource, so a client that
+// reaches config over the supervisor socket runs the SAME resolution as the
+// supervisor itself. A nil src keeps the file-layers-only behavior.
+func ResolveUserFrom(ctx context.Context, src ConfigSource, configFile, userConfigFile string) (UserConfig, error) {
 	v := viper.New()
 	v.SetConfigType("toml")
 
-	if st != nil {
-		userProjectID, err := UserScopeProjectID(ctx, st)
+	if !isNilConfigSource(src) {
+		userProjectID, err := src.UserScopeProject(ctx)
 		if err != nil {
 			return UserConfig{}, err
 		}
-		dbValues, err := loadStoreConfig(ctx, st, userProjectID)
+		dbValues, err := loadSourceConfig(ctx, src, userProjectID)
 		if err != nil {
 			return UserConfig{}, fmt.Errorf("vconfig: load DB user config: %w", err)
 		}
@@ -161,7 +167,12 @@ func ResolveUser(ctx context.Context, st *store.Store, configFile, userConfigFil
 // project config as the base, overlaid by userCfg.Projects[projectID] (the
 // projects: stanza entry for that project, if any).
 func ResolveProjects(ctx context.Context, st *store.Store, userCfg UserConfig, projectID string) (ProjectConfig, error) {
-	base, err := loadStoreConfig(ctx, st, projectID)
+	return ResolveProjectsFrom(ctx, NewStoreConfigSource(st), userCfg, projectID)
+}
+
+// ResolveProjectsFrom is ResolveProjects against any ConfigSource.
+func ResolveProjectsFrom(ctx context.Context, src ConfigSource, userCfg UserConfig, projectID string) (ProjectConfig, error) {
+	base, err := loadSourceConfig(ctx, src, projectID)
 	if err != nil {
 		return ProjectConfig{}, fmt.Errorf("vconfig: load DB project config: %w", err)
 	}
@@ -172,28 +183,6 @@ func ResolveProjects(ctx context.Context, st *store.Store, userCfg UserConfig, p
 	}
 
 	return ProjectConfig{Values: merged}, nil
-}
-
-// loadStoreConfig reads a project's DB-resident config and JSON-decodes
-// each value back into a Go value (store persists values as JSON-encoded
-// strings; see store.SetProjectConfig).
-func loadStoreConfig(ctx context.Context, st *store.Store, projectID string) (map[string]any, error) {
-	raw, err := st.GetProjectConfig(ctx, projectID)
-	if err != nil {
-		return nil, err
-	}
-	out := make(map[string]any, len(raw))
-	for k, v := range raw {
-		var decoded any
-		if err := json.Unmarshal([]byte(v), &decoded); err != nil {
-			// A non-JSON legacy value would be a store-layer bug, not a
-			// vconfig caller error; surface it rather than silently
-			// dropping the key.
-			return nil, fmt.Errorf("vconfig: decode stored value for %q: %w", k, err)
-		}
-		out[k] = decoded
-	}
-	return out, nil
 }
 
 // mergeFileInto points v at path and merges it in. viper.MergeInConfig
