@@ -126,6 +126,13 @@ completion is never agent-asserted and never inferred from termination.
   Both verifier guards now fail loudly on an empty match. When writing a check,
   ask what it prints if its input format changes — if that output is
   indistinguishable from success, the check is decorative.
+
+  The rule applies to the VERIFICATION of a check too. Confirming the above,
+  a first attempt to break guard 8 rewrote only top-level `- [ ]` and left one
+  indented sub-item, so the count was 1 rather than 0 and the guard correctly
+  stayed quiet — which looked like the guard failing to fire. The test was
+  incomplete, not the guard. A negative result is only evidence once the setup
+  is confirmed to produce the condition being tested.
 - **Prove a fix by reverting it.** A test that passes after a change may have
   passed before it. Re-apply the defect and confirm the named test fails for
   the stated reason; if it does not, the test is not testing the fix.
