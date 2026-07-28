@@ -135,14 +135,27 @@ func runLiveContainedTurn(t *testing.T, providerName string) {
 		}),
 	)
 
+	// Resolve the binding the same way dispatch does, to ask what capability it
+	// declares. This is the provider's OWN answer, not the test's assumption.
+	binding, berr := provider.ResolveBinding(provider.File{}, provider.Local{},
+		provider.VariantFile{Provider: providerName})
+	if berr != nil {
+		t.Fatalf("ResolveBinding(%q): %v", providerName, berr)
+	}
+
 	dispatchCtx, cancel := context.WithTimeout(ctx, 3*time.Minute)
 	defer cancel()
 	dispatched, err := o.DispatchNext(dispatchCtx, projectID, planID)
 	if err != nil {
 		t.Fatalf("DispatchNext: %v", err)
 	}
-	if dispatched != 1 {
-		t.Fatalf("DispatchNext dispatched = %d, want 1", dispatched)
+	// dispatched==0 is CORRECT for a provider that cannot run confined: the
+	// containment admission gate refuses before claiming, so nothing is
+	// dispatched. Asserting 1 unconditionally would fail the honest outcome and
+	// pass only the silent-downgrade one.
+	if provider.BindingSupportsContainment(binding) && dispatched != 1 {
+		t.Fatalf("DispatchNext dispatched = %d, want 1 for a containment-capable "+
+			"provider", dispatched)
 	}
 	o.Wait()
 
@@ -151,17 +164,53 @@ func runLiveContainedTurn(t *testing.T, providerName string) {
 		t.Fatalf("GetTask: %v", err)
 	}
 	t.Logf("live contained dispatch: task status = %s (retry_count=%d)", task.Status, task.RetryCount)
-	if events, evErr := st.ListTaskEvents(ctx, planID, "0.0", 20); evErr == nil {
-		for _, ev := range events {
-			t.Logf("live contained dispatch: event kind=%s payload=%s", ev.Kind, ev.PayloadJSON)
-		}
+	events, _ := st.ListTaskEvents(ctx, planID, "0.0", 20)
+	for _, ev := range events {
+		t.Logf("live contained dispatch: event kind=%s payload=%s", ev.Kind, ev.PayloadJSON)
 	}
 
-	if task.Status != store.TaskStatusDone {
-		t.Fatalf("a REAL provider turn did NOT complete under containment: status=%q "+
-			"(retry_count=%d). This is the upgrade-breakage risk that gates defaulting "+
-			"contain_provider_writes on -- a real CLI needs something the project-root "+
-			"policy denies. See the logged events for what it attempted; do NOT flip the "+
-			"default until this passes.", task.Status, task.RetryCount)
+	// Two ACCEPTABLE outcomes, and one that is not.
+	//
+	// A containment-CAPABLE provider must complete the turn: that is the
+	// upgrade-breakage evidence the default-on flip is gated on.
+	//
+	// A provider that declares it CANNOT run confined must be REFUSED, visibly.
+	// Running it unconfined would be a silent security downgrade -- the operator
+	// asked for a boundary and would get a turn with full write access, no
+	// error, and no event. So "did not complete" is correct for those, but only
+	// if the refusal is recorded.
+	//
+	// What is NEVER acceptable is a turn that neither completes nor explains
+	// itself, which is exactly what codex did before the capability existed:
+	// a bare nonzero exit plus a retry that could not succeed.
+	if provider.BindingSupportsContainment(binding) {
+		if task.Status != store.TaskStatusDone {
+			t.Fatalf("a CONTAINMENT-CAPABLE provider did not complete under "+
+				"containment: status=%q (retry_count=%d). This is the upgrade-breakage "+
+				"risk the default-on flip is gated on -- a real CLI needs something the "+
+				"project-root policy denies. See the logged events.",
+				task.Status, task.RetryCount)
+		}
+		return
 	}
+
+	if task.Status == store.TaskStatusDone {
+		t.Fatalf("a provider declaring SupportsContainment=false COMPLETED a turn " +
+			"while the project requested containment; it ran with full write access " +
+			"while the config claimed a boundary")
+	}
+	var refused bool
+	for _, ev := range events {
+		if ev.Kind == "worker.admission_refused" {
+			refused = true
+		}
+	}
+	if !refused {
+		t.Fatalf("provider %q neither completed nor recorded worker.admission_refused "+
+			"(status=%q, retry_count=%d); a turn that does not run must say why, or the "+
+			"plan stalls with no operator-visible reason",
+			providerName, task.Status, task.RetryCount)
+	}
+	t.Logf("provider %q correctly REFUSED: it cannot run confined and the project "+
+		"requested containment", providerName)
 }

@@ -212,39 +212,64 @@ func WithContainmentResolver(resolve ContainmentResolver) Option {
 	return func(o *Orchestrator) { o.containmentResolver = resolve }
 }
 
-// containmentRootFor returns the write boundary for a turn in projectDir, or ""
-// when containment is disabled for this project.
+// containmentRootFor returns the write boundary for a turn in projectDir, and
+// whether containment was REQUESTED for this project.
+//
+// The two answers are separate because "" is ambiguous on its own: it means
+// both "no boundary asked for" and "a boundary was asked for and cannot be
+// provided", and those demand opposite handling. The first runs normally; the
+// second must NOT run, because proceeding hands the turn full write access
+// while the config claims a boundary.
 //
 // The resolver wins when set; the static flag remains for tests and for a
 // caller that wants containment on unconditionally. Both are checked because
 // removing the flag would silently turn containment OFF for every existing
 // caller that passes it.
-func (o *Orchestrator) containmentRootFor(ctx context.Context, projectID, projectDir string, binding provider.Binding) string {
-	// A provider that cannot RUN confined is never confined, whatever the
-	// config says. Codex dies at startup under the write-deny profile and
-	// opencode cannot complete a turn, both verified with real turns against an
-	// uncontained control -- and neither is a file-path problem, so widening the
-	// policy does not help (codex fails even with TMPDIR re-allowed).
-	//
-	// Refusing to confine is the honest outcome rather than a silent downgrade:
-	// the alternative was a bare nonzero exit plus a retry, where nothing named
-	// containment as the cause and the retry could not succeed. The capability
-	// is declared per binding with a reproduction attached, and absent means
-	// CAPABLE so a new provider fails loudly instead of quietly skipping the
-	// boundary. See BindingConfig.SupportsContainment.
-	if !provider.BindingSupportsContainment(binding) {
-		return ""
-	}
+func (o *Orchestrator) containmentRootFor(ctx context.Context, projectID, projectDir string) (root string, requested bool) {
 	if o.containmentResolver != nil {
 		if !o.containmentResolver(ctx, projectID) {
-			return ""
+			return "", false
 		}
-		return projectDir
+		return projectDir, true
 	}
 	if !o.containProviderWrites {
-		return ""
+		return "", false
 	}
-	return projectDir
+	return projectDir, true
+}
+
+// resolveContainment decides a turn's write boundary, refusing rather than
+// downgrading when the request cannot be honoured.
+//
+// A provider that cannot RUN confined is spared when nobody asked for
+// containment -- codex dies at startup under the write-deny profile and
+// opencode cannot complete a turn, both verified with real turns against an
+// uncontained control, and neither is a file-path problem (codex fails even
+// with TMPDIR re-allowed).
+//
+// But when containment IS requested, sparing it would be a SILENT SECURITY
+// DOWNGRADE: the turn runs with full write access, no error, no event, and in a
+// mixed pool turns would alternate between confined and unconfined with nothing
+// distinguishing them. That is worse than the opaque failure this capability
+// replaced -- an unexplained exit at least stops, while a silent downgrade
+// proceeds under a config that lies.
+//
+// So an unhonourable request refuses the dispatch and says why.
+func (o *Orchestrator) resolveContainment(
+	ctx context.Context, projectID, projectDir string, binding provider.Binding,
+) (root string, err error) {
+	root, requested := o.containmentRootFor(ctx, projectID, projectDir)
+	if !requested {
+		return "", nil
+	}
+	if !provider.BindingSupportsContainment(binding) {
+		return "", fmt.Errorf(
+			"orch: project requires provider write containment, but binding %q "+
+				"(type %q) cannot run confined; set contain_provider_writes=false for "+
+				"this project or use a provider that supports containment",
+			binding.Name, binding.Config.Type)
+	}
+	return root, nil
 }
 
 // workerHeartbeatInterval is how often a running worker's store heartbeat is
@@ -874,6 +899,25 @@ func (o *Orchestrator) dispatchReadyStep(ctx context.Context, a dispatchStepArgs
 			return false, nil
 		}
 		binding = rotated
+	}
+
+	// Containment admission, AFTER every rotation above so the check sees the
+	// binding that will actually run. A project requesting containment must not
+	// dispatch onto a provider that cannot be confined: doing so runs the turn
+	// with full write access, no error, and no event, while the config claims a
+	// boundary. Refusing here means the operator sees worker.admission_refused
+	// naming the provider instead of silently getting the opposite of what the
+	// config asked for.
+	if _, cerr := o.resolveContainment(ctx, a.projectID, a.projectDir, binding); cerr != nil {
+		release()
+		_ = o.store.Emit(ctx, store.EmitOpts{
+			ProjectID: a.projectID, PlanID: a.planID,
+			TaskID:      stepTaskID(a.ref, a.step),
+			Kind:        "worker.admission_refused",
+			Stream:      "service",
+			PayloadJSON: mustPayloadJSON(store.EventPayload{Reason: cerr.Error()}),
+		})
+		return false, nil
 	}
 
 	if err := o.checkSpendCap(ctx, a.projectID, binding.Name); err != nil {
@@ -1864,7 +1908,7 @@ func (o *Orchestrator) dispatchWorker(ctx context.Context, projectID, projectDir
 	// already-expired deadline. Use runCtx for Run; keep the parent ctx after.
 	req := provider.Request{
 		WorkingDir:      projectDir,
-		ContainmentRoot: o.containmentRootFor(ctx, projectID, projectDir, binding),
+		ContainmentRoot: containmentRootOrEmpty(o.resolveContainment(ctx, projectID, projectDir, binding)),
 		UserPrompt:      scoped.prompt(),
 		TurnTimeout:     o.turnTimeout,
 		StallTimeout:    o.stallTimeout,
@@ -2184,7 +2228,7 @@ func (o *Orchestrator) runFanoutGroup(ctx context.Context, projectID, projectDir
 
 	req := provider.Request{
 		WorkingDir:      projectDir,
-		ContainmentRoot: o.containmentRootFor(ctx, projectID, projectDir, binding),
+		ContainmentRoot: containmentRootOrEmpty(o.resolveContainment(ctx, projectID, projectDir, binding)),
 		UserPrompt:      scoped.prompt(),
 		TurnTimeout:     o.turnTimeout,
 		StallTimeout:    o.stallTimeout,
@@ -2329,4 +2373,19 @@ func derefSteps(claimed []*dispatchedStep) []dispatchedStep {
 		out[i] = *ds
 	}
 	return out
+}
+
+// containmentRootOrEmpty adapts resolveContainment for the two request-building
+// sites, which run AFTER admission has already refused an unhonourable request.
+//
+// The error is deliberately dropped here and nowhere else: reaching these lines
+// means admission passed, so a non-nil error would be a contradiction rather
+// than a condition to handle. Returning "" keeps the fallback safe if that
+// invariant is ever broken -- an unconfined turn is what the incapable provider
+// needs, and the admission gate is what prevents it from being a downgrade.
+func containmentRootOrEmpty(root string, err error) string {
+	if err != nil {
+		return ""
+	}
+	return root
 }
