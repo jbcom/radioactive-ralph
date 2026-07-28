@@ -135,20 +135,27 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
       self-reference is unsatisfiable, so dispatch could only block it forever.
       walkPlanSteps derives ids the way import does, so validation and dispatch
       share one notion of identity. Guide says validated-not-enforced.
-      - [ ] Enforce the runtime constraint: compare independence domains at
-            dispatch. UNGATED 2026-07-28 — #236 merged (9c04550) and main now
-            defines BOTH halves of the identity this needs:
-              * store.Calibration.IndependenceDomain (internal/store/calibrations.go:58)
-                — what a provider's domain IS.
-              * store.TaskMetadata.AssignedIndependenceDomain
-                (internal/store/task_metadata.go:35) — what a task RAN on.
-            So the comparison no longer has to invent a second notion of
-            identity. Shape: at dispatch, for each id in the step's
-            differentFrom, read the referenced task's assigned domain and refuse
-            a binding whose calibrated domain equals it. Import already rejects
-            unknown/self/empty references (#259), so enforcement can assume the
-            references resolve. Verified by grepping origin/main for both
-            symbols, not by assuming #236 carried them.
+      - [ ] Populate the independence domains, THEN enforce differentFrom. #236
+            (9c04550) shipped the STORAGE for both halves, and I briefly marked
+            this ungated on that alone. Checking the write paths corrected it:
+              * store.Calibration.IndependenceDomain exists
+                (internal/store/calibrations.go:58), but NO production code
+                records a calibration — only tests do.
+              * store.TaskMetadata.AssignedIndependenceDomain exists
+                (task_metadata.go:35) and RecordTaskExecution writes it
+                (task_metadata.go:224), but that function has ZERO production
+                callers — again only tests.
+            So both columns are empty in every real run, and enforcement built
+            on them today would compare "" against "" and permit everything —
+            the exact VACUOUS GUARANTEE #259 rejects at import, reintroduced at
+            dispatch and harder to see. Order is therefore:
+              1. Have dispatch call RecordTaskExecution with the binding's
+                 resolved domain, so a task records what it actually ran on.
+              2. Record a calibration for a binding (or derive the domain from
+                 binding config) so there is something to compare against.
+              3. Only then compare at dispatch and refuse a matching domain.
+            Verified by grepping origin/main for callers, not by assuming the
+            types being present meant they were wired.
 
 - [x] Increment 11 operator half — DONE (PR #258). Task carries BlockedReason,
       backed by a bulk plan-scoped store.ListTaskBlockingReasons (per-task reads
