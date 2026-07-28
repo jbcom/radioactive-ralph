@@ -14,6 +14,7 @@ depend on.
 | [Declarative provider bindings](./declarative-provider-bindings.md) | Config-only provider onboarding for compatible CLI framings |
 | [Config virtual layers](./config-layers.md) | USER/PROJECTS layering, changes vs. overrides, conflict diffing |
 | [Orchestrator-verified completion and A2A](./completion-and-a2a.md) | Why a worker never marks its own work done, and the A2A vocabulary that carries evidence |
+| [Plan-adaptive concurrency](./plan-adaptive-concurrency.md) | How readiness, leaf-group partitioning, and output reservations decide what runs at once |
 
 ```{toctree}
 :hidden:
@@ -22,4 +23,5 @@ provider-contract
 declarative-provider-bindings
 config-layers
 completion-and-a2a
+plan-adaptive-concurrency
 ```
