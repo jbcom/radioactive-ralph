@@ -56,6 +56,25 @@ for round in $(seq 1 400); do
   [ -n "$failing" ] && line="$line FAILING:$failing"
   [ "$line" != "$prev" ] && { echo "$line"; prev="$line"; }
   { [ -n "$dirty" ] || [ -n "$failing" ]; } && { echo "STOP: needs a decision"; exit 2; }
+
+  # Queue hygiene is the ACTION when everything reads blocked with no failures,
+  # not a reason to wait. CI rebuilds the full matrix on every push, so each
+  # force-push leaves its predecessor queued, and those superseded runs hold the
+  # scarce macOS slots the near-complete PRs need. Measured 2026-07-28:
+  # cancelling 10 took the repo from queued=14/running=1 to queued=6/running=8,
+  # which proves the runs were holding slots rather than queueing behind a
+  # capacity limit. Keep only the newest CI run per branch.
+  if [ "$ready" = "0" ] && [ -z "$failing" ]; then
+    for br in $(gh pr list --state open --json headRefName --jq '.[].headRefName'); do
+      newest=$(gh run list --limit 20 --branch "$br" --json databaseId,name,createdAt \
+        --jq '[.[]|select(.name=="CI")]|sort_by(.createdAt)|reverse|.[0].databaseId' 2>/dev/null)
+      [ -z "$newest" ] && continue
+      for rid in $(gh run list --limit 20 --branch "$br" --json databaseId,name,status \
+        --jq '[.[]|select(.name=="CI" and .status=="queued")]|.[].databaseId' 2>/dev/null); do
+        [ "$rid" != "$newest" ] && gh run cancel "$rid" >/dev/null 2>&1
+      done
+    done
+  fi
   sleep 90
 done
 echo "round cap reached; still open: $(gh pr list --state open --json number --jq 'length')"
