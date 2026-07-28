@@ -20,7 +20,21 @@ const (
 	// PID outside the valid range as KERN_INVALID_ARGUMENT. Neither sets ESRCH.
 	machKernInvalidArgument = 4
 	machKernFailure         = 5
+	// MACH_SEND_INVALID_DEST. Once the target exits, the task-name port acquired
+	// moments earlier becomes a dead name, so a later message to it (the
+	// TASK_AUDIT_TOKEN query) fails at the IPC layer with this code rather than
+	// with a kern_return_t. It is an exit race, not a cleanup failure.
+	machSendInvalidDest = 0x10000003
 )
+
+// darwinProcessGoneCode reports whether a Mach status means the target PID no
+// longer names a live process, as opposed to a genuine permission or kernel
+// failure that cleanup must surface.
+func darwinProcessGoneCode(code int32) bool {
+	return code == machKernFailure ||
+		code == machKernInvalidArgument ||
+		code == machSendInvalidDest
+}
 
 // errDarwinProcessGone reports that a PID enumerated moments earlier no longer
 // names a live process. task_name_for_pid(2) fails with a Mach code rather than
@@ -111,7 +125,7 @@ func (api darwinProcessAPI) auditTokenForPID(pid int) (darwinAuditToken, error) 
 		// an ordinary race during teardown, not a cleanup failure, so report it
 		// as errDarwinProcessGone and let the caller skip the member. EPERM-like
 		// refusals keep surfacing as real errors.
-		if code == machKernFailure || code == machKernInvalidArgument {
+		if darwinProcessGoneCode(code) {
 			return darwinAuditToken{}, fmt.Errorf(
 				"%w: task_name_for_pid(%d) failed with Mach code %d", errDarwinProcessGone, pid, code)
 		}
@@ -122,6 +136,14 @@ func (api darwinProcessAPI) auditTokenForPID(pid int) (darwinAuditToken, error) 
 	var token darwinAuditToken
 	count := uint32(len(token))
 	if code := api.taskInfo(taskName, taskAuditTokenFlavor, &token[0], &count); code != machSuccess {
+		// The same exit race as task_name_for_pid above, one call later: the
+		// member can die between acquiring its task-name port and reading the
+		// token, leaving a dead port that fails the query. Report it as a
+		// vanished member rather than a cleanup failure.
+		if darwinProcessGoneCode(code) {
+			return darwinAuditToken{}, fmt.Errorf(
+				"%w: TASK_AUDIT_TOKEN for PID %d failed with Mach code %d", errDarwinProcessGone, pid, code)
+		}
 		return darwinAuditToken{}, fmt.Errorf("agent: TASK_AUDIT_TOKEN for PID %d failed with Mach code %d", pid, code)
 	}
 	if count != uint32(len(token)) || token.pid() != pid {

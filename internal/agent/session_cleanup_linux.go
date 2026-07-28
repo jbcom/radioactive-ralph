@@ -16,8 +16,12 @@ import (
 )
 
 const (
-	sessionCleanupAttempts = 100
 	sessionCleanupInterval = 5 * time.Millisecond
+	// sessionCleanupBudget bounds reclamation in WALL-CLOCK time, not in poll
+	// attempts. Each pass walks all of /proc, so under CPU contention an
+	// attempt-count budget elapses far sooner than attempts*interval of real
+	// time and aborts a converging cleanup.
+	sessionCleanupBudget = 2 * time.Second
 )
 
 // cleanupOriginalProcessSession reclaims descendants that moved to another
@@ -34,7 +38,8 @@ func cleanupOriginalProcessSession(
 	}
 	sessionID := process.Pid // creack/pty Start makes the child the session leader.
 	var remaining []int
-	for range sessionCleanupAttempts {
+	deadline := time.Now().Add(sessionCleanupBudget)
+	for {
 		members, err := linuxSessionMembers(sessionID)
 		if err != nil {
 			return err
@@ -53,6 +58,9 @@ func cleanupOriginalProcessSession(
 		}
 		if len(remaining) == 0 {
 			return nil
+		}
+		if time.Now().After(deadline) {
+			break
 		}
 		time.Sleep(sessionCleanupInterval)
 	}
