@@ -53,8 +53,17 @@ func renderMeso(m Model) string {
 			if label := partitionLabels[t.PartitionOrdinal]; label != "" {
 				part = styleMuted.Render(" " + label)
 			}
-			fmt.Fprintf(&b, "%s%-12s %-24s %s%s%s%s\n",
-				marker, t.ID, statusStr, m.snap.descriptions[t.ID], worker, via, part)
+			// Why a blocked task is stalled. It is the one status an operator
+			// cannot act on from the status string alone: a blocked task and one
+			// waiting on a dependency both sit at zero progress, but only one
+			// clears itself. Blocked carries a fixed classification and static
+			// remediation, never the stored error string.
+			blocked := ""
+			if t.Blocked != nil && t.Blocked.Summary != "" {
+				blocked = styleMuted.Render(" — " + t.Blocked.Summary)
+			}
+			fmt.Fprintf(&b, "%s%-12s %-24s %s%s%s%s%s\n",
+				marker, t.ID, statusStr, m.snap.descriptions[t.ID], worker, via, part, blocked)
 			row++
 		}
 	}

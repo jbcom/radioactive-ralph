@@ -86,7 +86,14 @@ project=demo plans=2 tasks=3 active_workers=1 captured_at=2026-07-28T19:00:00Z
   task-a           running                  via=primary p1
   task-b           running                  via=codex p1
   task-c           ready
+  task-d           blocked_capability       — the bound provider does not satisfy this task's requirements; bind a provider that does
 ```
+
+A blocked task carries its remediation, because that is the one status an
+operator cannot act on from the status string alone: a blocked task and a
+task waiting on a dependency both sit at zero progress, but only one of
+them clears itself. The text is a fixed classification, never the stored
+error string.
 
 A truncated page says so rather than ending silently — a bounded list that
 looks complete would read as "the rest finished".

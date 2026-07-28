@@ -434,3 +434,50 @@ func TestRunStatusQueryTaskLinesHaveNoTrailingSpace(t *testing.T) {
 		}
 	}
 }
+
+// TestRunStatusQueryExplainsBlockedTasks closes the gap the code review found:
+// the task list rendered "why is this stalled?" as a bare status string, which
+// is the one question observe.Blocked exists to answer.
+//
+// A blocked task is otherwise indistinguishable from one waiting on a
+// dependency -- both show zero progress, but one clears itself as upstream work
+// finishes and the other needs the operator to change something. Printing only
+// "blocked_capability" left them still needing --json for exactly the case the
+// human-readable output is most useful for.
+//
+// Blocked is a CLASSIFICATION with static remediation text, deliberately not
+// the stored reason string, so rendering it carries no author content across
+// the boundary.
+func TestRunStatusQueryExplainsBlockedTasks(t *testing.T) {
+	reply := querySnapshotFixture(1)
+	reply.Tasks = observe.TaskPage{Items: []observe.Task{
+		{
+			PlanID: "plan-1", ID: "task-a", Status: "blocked_capability",
+			Blocked: &observe.BlockedSummary{
+				Category: observe.BlockedCapability,
+				Summary:  "the bound provider does not satisfy this task's requirements; bind a provider that does",
+			},
+		},
+		{PlanID: "plan-1", ID: "task-b", Status: "ready"},
+	}}
+
+	var out bytes.Buffer
+	if err := runStatusQueryWith(
+		context.Background(), &out, &fakeObserveClient{snapshot: reply},
+		ipc.ObserveSnapshotArgs{ProjectID: "project-1"}, false, false,
+	); err != nil {
+		t.Fatalf("runStatusQueryWith: %v", err)
+	}
+	got := out.String()
+
+	if !strings.Contains(got, "bind a provider that does") {
+		t.Errorf("a blocked task printed no remediation, so the operator cannot "+
+			"tell whether it self-clears or needs them to act:\n%s", got)
+	}
+	// The unblocked task must not gain a trailing separator for an absent reason.
+	for _, line := range strings.Split(strings.TrimRight(got, "\n"), "\n") {
+		if strings.Contains(line, "task-b") && strings.Contains(line, "—") {
+			t.Errorf("an unblocked task rendered a blocked-reason separator: %q", line)
+		}
+	}
+}

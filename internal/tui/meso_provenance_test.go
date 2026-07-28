@@ -105,3 +105,35 @@ func TestMesoOmitsPartitionMarkerWithoutOrdinals(t *testing.T) {
 			"absent metadata is not evidence of a shared partition:\n%s", out)
 	}
 }
+
+// TestMesoExplainsBlockedTasks closes the same gap a code review found in the
+// CLI: a blocked task rendered as a bare status string, which is the one status
+// an operator cannot act on without more. A blocked task and one waiting on a
+// dependency both sit at zero progress; only one clears itself.
+func TestMesoExplainsBlockedTasks(t *testing.T) {
+	f := testFake()
+	m := newTestModel(t, f)
+	m.lvl = levelMeso
+	m.selectedPlan = f.plans[0]
+	m.snap.tasks = []observe.Task{
+		{
+			ID: "task-1", PlanID: "plan-1", Status: "blocked_capability",
+			Blocked: &observe.BlockedSummary{
+				Category: observe.BlockedCapability,
+				Summary:  "bind a provider that does",
+			},
+		},
+		{ID: "task-2", PlanID: "plan-1", Status: "ready"},
+	}
+	out := m.View()
+
+	if !strings.Contains(out, "bind a provider that does") {
+		t.Errorf("blocked task shows no remediation, so the operator cannot tell "+
+			"whether it self-clears or needs them to act:\n%s", out)
+	}
+	for _, line := range strings.Split(out, "\n") {
+		if strings.Contains(line, "task-2") && strings.Contains(line, "—") {
+			t.Errorf("an unblocked task rendered a blocked-reason separator: %q", line)
+		}
+	}
+}

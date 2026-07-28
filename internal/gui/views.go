@@ -284,6 +284,12 @@ func (u *ui) buildMeso(s snapshot) {
 		if label := partitionLabels[t.PartitionOrdinal]; label != "" {
 			row.Add(widget.NewLabel(label))
 		}
+		// The remediation for a blocked task -- the one status an operator cannot
+		// act on from the status chip alone. Static classification text, never
+		// the stored error string.
+		if t.Blocked != nil && t.Blocked.Summary != "" {
+			row.Add(widget.NewLabel("— " + t.Blocked.Summary))
+		}
 		if t.Status == "ready_pending_approval" {
 			row.Add(widget.NewButton("Approve", func() {
 				u.drive("approve", func() error { return u.ctrl.ApproveTask(u.ctx, planID, taskID) })

@@ -282,6 +282,19 @@ func writeTaskLines(out io.Writer, page observe.TaskPage) error {
 		if label := labels[task.PartitionOrdinal]; label != "" {
 			line += " " + label
 		}
+		// Why it is stalled, for the one status where the operator cannot infer
+		// it. A blocked task looks exactly like one waiting on a dependency --
+		// both sit at zero progress -- but one clears itself as upstream work
+		// finishes and the other needs the operator to change something. Without
+		// this the human-readable list still sent them to --json for precisely
+		// the case it is most useful for.
+		//
+		// Safe to print because Blocked is a CLASSIFICATION carrying static
+		// remediation text, deliberately not the stored reason string, which is
+		// error-derived and would leak free text across this boundary.
+		if task.Blocked != nil && task.Blocked.Summary != "" {
+			line += " — " + task.Blocked.Summary
+		}
 		// The status column is padded so the marker columns align, which leaves
 		// trailing spaces on any row whose markers are all absent -- an unrun
 		// task, the common case. Trailing whitespace is invisible until it shows
