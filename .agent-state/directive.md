@@ -68,7 +68,8 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
 
 ## Remaining
 
-- [ ] [WAIT] Land the open PRs: #292, #294, #295 (containment stack).
+- [ ] [WAIT] Land the open PR: #299 (config write_paths test).
+      The containment stack all LANDED: #292 #294 #295 #297 #298.
       #290 and #293 LANDED. Hash-prefixed deliberately: guard 9 extracts
       `#[0-9]{3}` tokens from THIS line, so bare numbers would be invisible to
       it and a stale list would pass the check.
@@ -103,15 +104,24 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
           retryable, when the generic sentinel was already correctly terminal.
           Naming a category is choosing a retry policy.
 
-- [ ] [WAIT] Containment arc -- tracked ENTIRELY by "Land the open PRs" above.
-      #285 is RESOLVED, not blocked: #290 (LANDED) gives a binding a declared
-      containment capability and makes dispatch REFUSE an unhonourable request
-      instead of silently downgrading it; #292 flips the default; #293 (LANDED)
-      and #294 correct the docs; #295 this sync.
-      All three shipped providers behave correctly -- claude completes confined,
-      codex and opencode refuse visibly with worker.admission_refused.
-      Nothing to decide, only landing. The detailed historical entry further
-      down is SUPERSEDED and must not be actioned.
+- [x] CONTAINMENT ARC COMPLETE. All three shipped providers now run a real
+      turn CONFINED -- claude, codex, opencode, every one status=done. It
+      started from codex being unable to run under containment at all.
+      What shipped: #290 a declared per-binding containment capability, with
+      dispatch REFUSING an unhonourable request instead of silently downgrading
+      it; #292 the default flipped ON; #297 narrow per-provider write
+      allowances; #298 the measured paths (~/.codex, ~/.local/share/opencode)
+      declared and wired through to the kernel policy; #293/#294 the docs.
+      THREE wrong turns of mine are worth keeping, since each has a general
+      shape:
+        * I declared "no policy widening exists" after ONE bisection step. A
+          negative needs more evidence than a positive.
+        * Codex had TWO distinct failures (app-server startup, then the result
+          file) and I fixed only the second, saw no change, and concluded the
+          path was irrelevant. Each fix alone leaves the other standing.
+        * I shipped it darwin-only; Linux CI caught that ExtraWritable never
+          reached Landlock. A platform-specific implementation needs a
+          platform-specific check.
 
 - [x] Issue #273 CLOSED, fix landed in #288. NOT a product bug: the ceiling
       trips in ~370ms and the full runner path returns the right error in 2.06s
