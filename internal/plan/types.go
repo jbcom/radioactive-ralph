@@ -5,6 +5,8 @@ package plan
 // traversal, and so the dependency-edge metadata sits next to the Step it
 // annotates.
 
+import "strings"
+
 // Plan is the parsed, nested representation of a plan document.
 type Plan struct {
 	// Groups holds the top-level (heading level 1) groups in document
@@ -162,6 +164,26 @@ func (m *TaskMetadata) AllowedProviders() []string {
 		return nil
 	}
 	return m.Providers
+}
+
+// PinnedProviderType returns the provider TYPE a task's binding pins, or "".
+//
+// Deliberately separate from AllowedProviders, which was the first attempt and
+// was wrong. CheckAllowedProviders matches an entry against either the binding
+// ALIAS or its type, which is right for `providers` -- an operator naming
+// "reviewer" means that configured binding. It is wrong for a pin: an alias
+// merely NAMED "codex" that is backed by type "claude" would satisfy
+// binding.provider="codex" and run the task on Claude, honouring the
+// declaration's spelling rather than its meaning.
+//
+// So the pin is checked against Config.Type ALONE, at dispatch, where the
+// resolved binding is known. Import cannot decide this: alias-to-type mapping
+// lives in operator config that ValidateForImport never sees.
+func (m *TaskMetadata) PinnedProviderType() string {
+	if m == nil {
+		return ""
+	}
+	return strings.TrimSpace(m.Binding.Provider)
 }
 
 // IndependencePeers returns the tasks this one must not share an independence
