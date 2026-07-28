@@ -219,7 +219,22 @@ func WithContainmentResolver(resolve ContainmentResolver) Option {
 // caller that wants containment on unconditionally. Both are checked because
 // removing the flag would silently turn containment OFF for every existing
 // caller that passes it.
-func (o *Orchestrator) containmentRootFor(ctx context.Context, projectID, projectDir string) string {
+func (o *Orchestrator) containmentRootFor(ctx context.Context, projectID, projectDir string, binding provider.Binding) string {
+	// A provider that cannot RUN confined is never confined, whatever the
+	// config says. Codex dies at startup under the write-deny profile and
+	// opencode cannot complete a turn, both verified with real turns against an
+	// uncontained control -- and neither is a file-path problem, so widening the
+	// policy does not help (codex fails even with TMPDIR re-allowed).
+	//
+	// Refusing to confine is the honest outcome rather than a silent downgrade:
+	// the alternative was a bare nonzero exit plus a retry, where nothing named
+	// containment as the cause and the retry could not succeed. The capability
+	// is declared per binding with a reproduction attached, and absent means
+	// CAPABLE so a new provider fails loudly instead of quietly skipping the
+	// boundary. See BindingConfig.SupportsContainment.
+	if !provider.BindingSupportsContainment(binding) {
+		return ""
+	}
 	if o.containmentResolver != nil {
 		if !o.containmentResolver(ctx, projectID) {
 			return ""
@@ -1849,7 +1864,7 @@ func (o *Orchestrator) dispatchWorker(ctx context.Context, projectID, projectDir
 	// already-expired deadline. Use runCtx for Run; keep the parent ctx after.
 	req := provider.Request{
 		WorkingDir:      projectDir,
-		ContainmentRoot: o.containmentRootFor(ctx, projectID, projectDir),
+		ContainmentRoot: o.containmentRootFor(ctx, projectID, projectDir, binding),
 		UserPrompt:      scoped.prompt(),
 		TurnTimeout:     o.turnTimeout,
 		StallTimeout:    o.stallTimeout,
@@ -2169,7 +2184,7 @@ func (o *Orchestrator) runFanoutGroup(ctx context.Context, projectID, projectDir
 
 	req := provider.Request{
 		WorkingDir:      projectDir,
-		ContainmentRoot: o.containmentRootFor(ctx, projectID, projectDir),
+		ContainmentRoot: o.containmentRootFor(ctx, projectID, projectDir, binding),
 		UserPrompt:      scoped.prompt(),
 		TurnTimeout:     o.turnTimeout,
 		StallTimeout:    o.stallTimeout,
