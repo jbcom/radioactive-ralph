@@ -201,6 +201,42 @@ func TestWatchdogUsesReadActivityTimestampForTrickledPartialLine(t *testing.T) {
 	}
 }
 
+// waitForBlockedSender blocks until the goroutine identified by gid is parked
+// in a channel send, i.e. until a receive on that channel is guaranteed to
+// succeed immediately. It reads the runtime's own goroutine dump and looks for
+// the "chan send" wait state, which the scheduler sets exactly when the sender
+// has enqueued itself in the channel's sendq.
+//
+// This is a real barrier. A fixed sleep is not: on a shared/oversubscribed CI
+// vCPU the sender can be scheduled later than any chosen duration, leaving only
+// the expired timer ready so the watchdog legitimately reports Stall and the
+// test fails for a reason that has nothing to do with the behavior under test.
+func waitForBlockedSender(t *testing.T, gid string) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	buf := make([]byte, 1<<20)
+	want := []byte("goroutine " + gid + " [chan send")
+	for {
+		n := runtime.Stack(buf, true)
+		if bytes.Contains(buf[:n], want) {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("sender goroutine %s never parked in a channel send", gid)
+		}
+		runtime.Gosched()
+	}
+}
+
+// goroutineID returns the calling goroutine's ID, parsed from its stack header.
+func goroutineID() string {
+	buf := make([]byte, 64)
+	n := runtime.Stack(buf, false)
+	// Header is "goroutine NNN [running]:"
+	fields := bytes.Fields(buf[:n])
+	return string(fields[1])
+}
+
 func TestWatchdogPrefersReadyOutputOverExpiredStall(t *testing.T) {
 	for iteration := range 100 {
 		a := &Agent{
@@ -208,12 +244,16 @@ func TestWatchdogPrefersReadyOutputOverExpiredStall(t *testing.T) {
 			activity: make(chan time.Time, 1),
 		}
 		line := []byte(`{"type":"item.completed"}` + "\n")
+		senderID := make(chan string, 1)
 		go func() {
+			senderID <- goroutineID()
 			a.out <- line
 		}()
-		// Let the unbuffered sender park before starting the already-expired
-		// timer so both cases are genuinely ready.
-		time.Sleep(time.Millisecond)
+		// Wait for the unbuffered sender to actually PARK in a.out's sendq
+		// before starting the already-expired timer, so both select cases are
+		// genuinely ready. See waitForBlockedSender: a fixed sleep is not a
+		// barrier and is what made this test flake on CI.
+		waitForBlockedSender(t, <-senderID)
 
 		ctx, cancel := context.WithCancel(context.Background())
 		sigs := Watch(ctx, a, WatchdogConfig{StallTimeout: time.Nanosecond})
