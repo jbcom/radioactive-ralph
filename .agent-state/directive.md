@@ -68,9 +68,10 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
 
 ## Remaining
 
-- [ ] Land the 5 open PRs: 225, 251, 252, 257, 262.
-      NOT wait-labelled: two have a failing check, which is agent-doable.
-      MERGED via the queue this session: #222, #270, #255, #268, #267, #263,
+- [ ] Land the 4 open PRs: 225, 251, 252, 257.
+      NOT wait-labelled: #252 carries a non-required Package GUI failure and the
+      two BEHIND PRs need rebases -- both agent-doable.
+      MERGED via the queue this session: #262, #222, #270, #255, #268, #267, #263,
       #259, #265, #261, #258, #236, #247, #256, #245, #246.
 
       MECHANISM: GitHub merge queue (ruleset 19896999, squash, ALLGREEN, batches
