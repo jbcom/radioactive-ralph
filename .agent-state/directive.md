@@ -362,17 +362,38 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
       blocked_input and its default fails the WHOLE projection — one blocked
       task returned "unknown Ralph task status" for the entire snapshot, so the
       status meant to make a stall visible hid everything instead.
-      - [ ] UNBLOCKED 2026-07-28: ready partitions + per-task provenance over
-            the observe surface. BOTH gates are now on main -- verified by
+      - [x] DONE 2026-07-28 (#304): per-task provenance over the observe
+            surface. assigned_alias/provider/model/effort and
+            assigned_independence_domain now project store -> observe ->
+            TUI (`via=`) + GUI (`via `). LEFT JOIN so a task with no metadata
+            row still appears; absent provenance stays empty/omitted rather
+            than defaulted, so "never dispatched" cannot read as "ran on the
+            pool default". ProvenanceLabel lives on observe.Task because both
+            UIs render it and a divergent fallback would make one task read
+            differently per surface.
+            Each hop negative-proofed SEPARATELY, which is the part worth
+            keeping: dropping the observe copy fails the observe test while
+            the STORE tests stay green -- proof the second test covers a real
+            gap instead of duplicating the first. A single end-to-end test
+            could not have distinguished those hops.
+      - [ ] REMAINING half: ready partitions over the observe surface.
+            `func (s *Store) ReadyPartitions` IS on main (#225, refined by #282
+            to split on the declared binding) but is still projected NOWHERE in
+            internal/observe. Same shape as the provenance half just closed --
+            the gate is open, nobody has walked through it. Verify by grepping
+            internal/observe/snapshot.go for ReadyPartition before starting;
+            if it returns non-zero, this item is already done.
+            Original gating record for BOTH halves follows -- verified by
             grepping, as this item insists:
               * `func (s *Store) ReadyPartitions` IS on main (#225, refined by
                 #282 to split on the declared binding).
               * `recordExecutionProvenance` IS on main (#262), 6 call sites.
-            NEITHER is projected over the observe surface yet: grepping
-            internal/observe/snapshot.go for ReadyPartition,
-            AssignedIndependenceDomain, and assigned_alias returns ZERO. So
-            this is real work, not a wait -- the gate opened and nobody walked
-            through it.
+            As of 2026-07-28 NEITHER was projected over the observe surface:
+            grepping internal/observe/snapshot.go for ReadyPartition,
+            AssignedIndependenceDomain, and assigned_alias returned ZERO. So
+            this was real work, not a wait -- the gate opened and nobody walked
+            through it. The provenance half is now closed by #304; the
+            ReadyPartition half is still ZERO.
             Prior gating notes follow. RE-VERIFIED 2026-07-28 after #236 merged
             (9c04550) — the gate was then HALF open:
               * per-task provenance: UNBLOCKED. internal/store/calibrations.go
