@@ -69,7 +69,7 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
 ## Remaining
 
 - [ ] [WAIT-AGENT] Land the 10 open PRs: 222, 225, 251, 252, 255, 257, 259, 262,
-      263, 267. Delegated to scripts/drive-open-prs.sh, running in the
+      263, 268. Delegated to scripts/drive-open-prs.sh, running in the
       background: it rebases the leader, arms auto-merge, merges CLEAN/UNSTABLE
       with no failures, and exits 2/3/4 the moment anything needs a decision
       rather than reporting false success. The monitor reports failures,
@@ -105,7 +105,8 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
       (reporting owner), #245 (init over supervisor), #247 (capability
       requirements, squashed as 82ff030), #236 (calibration records, 9c04550 --
       merged by the driver with no manual step once its checks went green),
-      #265 (leader-only rebase + leader-hold, b9313db), #261 (shellcheck
+      #267 (watchdog test barrier, 5d23e3c), #265 (leader-only rebase +
+      leader-hold, b9313db), #261 (shellcheck
       coverage + the non-cancelling driver), #258 (observe
       blocked-reason, c94ca79 -- merged by the driver, and it conflicted NOTHING:
       all eight others went BEHIND, none DIRTY).
