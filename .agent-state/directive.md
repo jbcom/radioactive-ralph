@@ -68,66 +68,104 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
 
 ## Remaining
 
-- [ ] [WAIT-AGENT] Land the 8 open PRs: 222, 225, 251, 252, 255, 257, 262, 268.
-      MERGED: #259 (differentFrom import validation), #263 (calibration IPC,
-      9fe7d33), #267 (watchdog barrier),
-      #265, #261, #258, #236, #247, #256, #245, #246.
+- [ ] Land the 2 open PRs: 225 (queued), 272 (CI running on the review fixes).
+      #272's three Codex findings are fixed in 8d58fba and all threads resolved:
+      native fan-out bypassed differentFrom entirely (P1 -- coalesced groups
+      never reached the check, so the reviewer was the author), independence
+      rotation overrode `providers`, and a whitespace-padded peer ID passed
+      import then never resolved. Each has a negative proof.
 
-      MECHANISM CHANGED 2026-07-28 (user-directed). The driver is STOPPED and
-      obsolete; GitHub now does the merging. Three changes, all live:
-        1. MERGE QUEUE (ruleset 19896999): squash, ALLGREEN, batches up to 5.
-           This is the structural fix for `strict` protection -- the queue tests
-           base + PR + everything ahead of it ONCE, in order, instead of making
-           every author rebase into a moving target. I had been throttling
-           rebases to work around this rather than solving it.
-        2. REQUIRED CHECKS 25 -> 13, macOS 4 -> 1. User: "why are we validating
-           builds in CI they will validate in CD". Correct -- release.yml runs
-           GoReleaser, which rebuilds and smoke-tests every platform target and
-           the installer, so CI gating 7 cross-compile Build jobs and 6
-           packaging jobs re-validated at merge time what CD validates at
-           release time. Dropped checks STILL RUN on every PR; they just stop
-           blocking. Immediate effect: #257/#255/#252 flipped BLOCKED -> CLEAN.
-        3. ci.yml is PR + merge_group ONLY. User: "why is ci.yml running on
-           anything other than pull requests". The push trigger re-ran the whole
-           23-job matrix on every merge, which under a queue verifies nothing --
-           the queued commit IS main's future state and merging happens BECAUSE
-           those checks passed. Verified no workflow_run consumer depends on it.
+- [ ] Issue #273: the observed-output ceiling does not trip under -race on
+      main. TestOpencodeRunnerBoundsEndlessNonJSONProgress and
+      TestCodexRunnerBoundsEndlessObservationalProgress both hit the 90s
+      deadline instead of ErrObservedOutputTooLarge. Reproduced on clean main
+      at 1b832a9, so it is not from any open branch. Establish first whether
+      the ceiling is unenforced on that path or the test never reaches it --
+      product bug vs inert test. Same family as the PTY reaping item below.
 
-      BOOTSTRAP -- I GOT THIS WRONG ONCE. The queue cannot run until ci.yml's
-      merge_group trigger is on MAIN, and that ships in #268. I enabled the
-      queue anyway, in the same pass as naming the dependency; it accepted #259
-      and parked it in AWAITING_CHECKS waiting for a merge_group run that could
-      never be created. Ruleset 19896999 is now DISABLED and #259 merged fine
-      through the normal path.
-      CORRECT ORDER: (1) land #268, (2) then re-enable ruleset 19896999,
-      (3) verify a merge_group CI run actually APPEARS before trusting it.
-      Naming a prerequisite is not satisfying it.
-      DONE 2026-07-28: #268 merged (5c5159a), ruleset re-enabled, and the
-      verification passed -- 5 entries queued and merge_group CI runs started.
+- [ ] [WAIT-AGENT] PTY process-group reaping: cleanup can leave a live child.
+      Surfaced in a merge_group run of #252 (a PR touching only two workflow
+      YAML files, so the bug is on MAIN):
+        TestAgentObservedOutputCeilingKillsReapsDiscardedEndlessLine
+        agent: PTY process group 2709 still has live members after cleanup:
+        [2710], want static ErrObservedOutputTooLarge
+      After the agent kills the group for exceeding the output ceiling, a child
+      survives cleanup, so the error wraps and no longer matches the sentinel.
+      POTENTIALLY A REAL PRODUCT BUG, not just a test-timing issue: if the kill
+      path does not actually wait for the group to die, a real provider turn can
+      LEAK PROCESSES. That is the never-block invariant's blind spot -- cleanup
+      must not hang the supervisor, but it also must not silently give up.
+      NOT reproducible locally (4+ runs pass on an idle machine); same CI-only,
+      load-sensitive profile as the watchdog flake fixed in #267.
+      Dispatched to stuck-loop-debugger WITH the ruled-out list, and the
+      explicit question of test-bug vs product-bug -- that determines the fix
+      and must not be guessed. Escalated immediately rather than after four
+      wrong theories, which is what the watchdog flake cost.
+      WAIT-labelled 2026-07-28 after verifying NOTHING is actionable: zero DIRTY,
+      zero unresolved threads, and #252's only "failure" is STALE -- Package GUI
+      reads FAILURE on its PR branch but completed/SUCCESS on its queue branch
+      2f9f2549, which carries #270's appimagetool fix. A queued PR also CANNOT
+      be rebased, so there is no way to refresh the PR branch even if I wanted
+      to.
+      #257 and #252 are in the queue (19/23 checks done on #257's branch);
+      #225 and #251 are running checks after their rebases, down from 22
+      outstanding to 9.
+      RE-LABEL TO `[ ]` the moment any PR goes DIRTY, gains an unresolved
+      thread, or shows a failure that is ALSO failing on its queue branch --
+      verify-repo-claims.sh guard 8 fails the verifier if this label outlives
+      its justification.
+      MERGED via the queue this session: #271, #251, #252, #257, #262, #222, #270,
+      #255,
+      #268,
+      #267, #263,
+      #259, #265, #261, #258, #236, #247, #256, #245, #246.
 
-      QUEUE MECHANICS, learned the hard way:
-      * `gh pr merge --auto` DOES enqueue. My repeated "queued=[]" readings were
-        a stale/empty GraphQL response, not a stall -- confirmed by trying an
-        explicit enqueuePullRequest and getting "Pull request is already in the
-        queue" for all four. Query entries with entries(first:N){totalCount ...}
-        and trust totalCount over an empty nodes list.
-      * `gh pr merge --squash` prints "The merge strategy for main is set by the
-        merge queue" -- that is INFORMATIONAL, not a failure. The enqueue
-        succeeded.
-      * `--delete-branch` is REJECTED under a queue; the queue owns deletion.
-      * A queue entry can read UNMERGEABLE while the PR itself reads
-        CLEAN/MERGEABLE. That is the queue doing its job: the PR conflicts with
-        the BATCH ahead of it, which is the semantic conflict a queue exists to
-        catch before it reaches main.
-      ROLLBACK: /tmp/protection-backup.json holds the original 25-check config.
+      MECHANISM: GitHub merge queue (ruleset 19896999, squash, ALLGREEN, batches
+      up to 5). The driver is STOPPED and obsolete. Three user-directed changes
+      made this work:
+        1. MERGE QUEUE -- the structural fix for `strict` protection. The queue
+           tests base + PR + everything ahead of it ONCE, in order, instead of
+           making every author rebase into a moving target.
+        2. REQUIRED CHECKS 25 -> 11. CD re-validates every build/package target
+           via GoReleaser, so CI gating them re-ran at merge time what CD runs
+           at release time. CodeQL came out too: codeql.yml excludes
+           gh-readonly-queue/** and is fleet-synced from jbdevprimary/gh-fleet-sync
+           ("Do not edit in place"), so its two required checks could NEVER
+           report on a queue branch. Everything dropped still RUNS on each PR.
+        3. ci.yml is PR + merge_group ONLY. The push trigger re-ran the whole
+           matrix on a tree the queue had just tested.
 
-      There is ALWAYS an action here; this is not a wait.
-      1. `bash scripts/verify-repo-claims.sh` first -- never assert from memory.
-      2. DIRTY -> resolve. Nearly every conflict is GENERATED docs
-         (docs/api/internal/*.md): run `make docs-api`, then `git add` the path
-         (regeneration rewrites the file but does NOT mark it resolved).
-      3. FAILING -> read the job log, fix the cause. Re-check before believing
-         it: CI re-runs constantly and a FAILURE seen once is often already gone.
+      QUEUE MECHANICS worth knowing:
+      * `gh pr merge --auto` DOES enqueue; "The merge strategy for main is set
+        by the merge queue" is INFORMATIONAL, not an error. `--delete-branch` is
+        rejected -- the queue owns deletion.
+      * Query entries with entries(first:N){totalCount ...} and trust
+        totalCount; the nodes list can come back empty while entries exist.
+      * A queue entry reading UNMERGEABLE while the PR reads CLEAN means it
+        conflicts with the BATCH ahead of it -- the queue doing its job.
+      * ALLGREEN dissolves the whole batch when one entry fails, ejecting
+        PASSING entries too. They are re-added automatically. Measured 1
+        dissolution against 4 successes -- not worth reconfiguring.
+      * Each queue branch carries ~23 check-runs. A snapshot showing required
+        checks "missing" usually means NOT YET COMPLETE. Watch completed-vs-
+        running across two samples before calling it a stall.
+      * A FAILING check on the PR BRANCH can be STALE once the PR is queued.
+        The queue tests base+PR, so a fix that landed on main after the PR's
+        last push IS present in the queue branch even though the PR branch
+        lacks it. #252 showed Package GUI failing while its queue branch
+        2f9f2549 had #270's appimagetool fix and was re-running that job green.
+        Check the gh-readonly-queue/* branch before acting on a PR-branch
+        failure -- and note a queued PR CANNOT be rebased ("Branches that are
+        queued for merging cannot be updated"), so dequeuing to "fix" a stale
+        failure would be strictly worse than leaving it.
+
+      ACTIONS, in order:
+      1. `bash scripts/verify-repo-claims.sh` -- never assert status from memory.
+      2. DIRTY -> resolve. Most conflicts are GENERATED docs
+         (docs/api/internal/*.md): `make docs-api`, then `git add` the path.
+         docs/design/index.md conflicts are additive -- keep BOTH entries.
+      3. FAILING -> read the job log. Re-check before believing it: CI re-runs
+         constantly and a FAILURE seen once is often already gone.
       4. Unresolved thread -> verify against the code, then fix or counter it.
       5. Nothing actionable -> the queue is working; do not add CI load.
 
@@ -144,15 +182,18 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
       self-reference is unsatisfiable, so dispatch could only block it forever.
       walkPlanSteps derives ids the way import does, so validation and dispatch
       share one notion of identity. Guide says validated-not-enforced.
-      - [ ] [WAIT] Populate the independence domains, THEN enforce differentFrom.
-            Steps 1 and 2 are DONE but neither is on main yet: #262 writes the
-            domain, #263 populates it, both OPEN as of 2026-07-28. VERIFIED --
-            git grep on origin/main finds recordExecutionProvenance absent,
-            HandleCalibrationPut absent, and AssignedIndependenceDomain only in
-            internal/store/task_metadata.go, i.e. the type with no writer.
-            Building step 3 now would compare "" against "" and permit
-            everything: the same vacuous guarantee, one layer further in. It
-            unblocks the moment #262 and #263 merge -- no other work needed.
+      - [ ] Populate the independence domains, THEN enforce differentFrom.
+            UNGATED 2026-07-28: #262 and #263 are both MERGED, and re-verified
+            on origin/main rather than trusted -- recordExecutionProvenance
+            present in internal/orch/orchestrator.go, HandleCalibrationPut
+            present in internal/supervisor/calibration.go. Step 3 (enforcement)
+            is BUILT and in review as #272, including the three findings that
+            review surfaced: native fan-out bypassed the check entirely,
+            rotation overrode `providers`, and a padded peer ID never resolved.
+            Closes when #272 lands.
+            Historical note on why this WAS gated: building enforcement before
+            the domains had a writer would have compared "" against "" and
+            permitted everything -- the same vacuous guarantee, one layer in.
             Original scoping follows. #236
             (9c04550) shipped the STORAGE for both halves, and I briefly marked
             this ungated on that alone. Checking the write paths corrected it:
@@ -251,9 +292,14 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
             by grepping origin/main for each symbol, not by assuming the pair
             moves together.
 
-- [ ] [WAIT] Make provider write containment reachable from config, then default
-      it on. Step 1 (the config key) is DONE on #251; step 2 is gated on that PR
-      merging.
+- [ ] Make provider write containment reachable from config, then default it on.
+      UNGATED 2026-07-28: #251 is MERGED, and the wiring re-verified on
+      origin/main rather than trusted -- vconfig.ContainProviderWrites is read
+      by PRODUCTION code at cmd/radioactive_ralph/binding_resolver.go:268, not
+      only by tests. That distinction is the whole point here: the key was
+      previously parsed and never read, which is the inert-feature defect this
+      item exists to close. Step 2 (flip the default on) is now ACTIONABLE with
+      no remaining gate -- its audit and real-turn evidence are both complete.
       "REAL TURNS USING IT" IS NOW SATISFIED (14f58f7): tests/e2e now runs a real
       orchestrator + real provider subprocess under its own pty, with the project
       config key set exactly as an operator sets it and a fake CLI that genuinely
