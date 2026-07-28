@@ -43,6 +43,27 @@ func TestTaskProjectsExecutionProvenance(t *testing.T) {
 	}
 }
 
+// TestTaskProjectsPartitionOrdinal covers the same store->observe hop for the
+// partition half. The store selecting it and the projection copying it are
+// separate edits, so a field added to one but not the other yields a snapshot
+// silently missing the grouping while every store test still passes.
+func TestTaskProjectsPartitionOrdinal(t *testing.T) {
+	got, err := taskFromStore(store.OperatorTask{
+		PlanID:           "plan-1",
+		ID:               "task-1",
+		Status:           store.TaskStatusRunning,
+		PartitionOrdinal: "a1b2c3d4e5f60718",
+	})
+	if err != nil {
+		t.Fatalf("taskFromStore: %v", err)
+	}
+	if got.PartitionOrdinal != "a1b2c3d4e5f60718" {
+		t.Errorf("PartitionOrdinal = %q, want %q: the store computes it but the "+
+			"observe projection drops it, so an operator cannot see which tasks "+
+			"one fan-out turn owns", got.PartitionOrdinal, "a1b2c3d4e5f60718")
+	}
+}
+
 // TestTaskOmitsProvenanceBeforeExecution pins the wire shape, not just the Go
 // field. omitempty is the load-bearing part: a task that has not run must be
 // ABSENT from the JSON rather than present as "assigned_provider": "", which a

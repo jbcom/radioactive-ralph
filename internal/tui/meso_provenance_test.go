@@ -61,3 +61,47 @@ func TestMesoRowShowsProvenanceOnlyWhenRecorded(t *testing.T) {
 			got)
 	}
 }
+
+// TestMesoLabelsFanoutPartitionsOnly pins the rendering rule for partitions:
+// a marker on every row would be noise, since a partition of one is the
+// ordinary case and tells an operator nothing they can act on. The marker
+// earns its place only where it says "these rows are ONE fan-out turn".
+func TestMesoLabelsFanoutPartitionsOnly(t *testing.T) {
+	f := testFake()
+	m := newTestModel(t, f)
+	m.lvl = levelMeso
+	m.selectedPlan = f.plans[0]
+	m.snap.tasks = []observe.Task{
+		{ID: "task-1", PlanID: "plan-1", Status: "running", PartitionOrdinal: "aaaa"},
+		{ID: "task-2", PlanID: "plan-1", Status: "running", PartitionOrdinal: "aaaa"},
+		{ID: "task-3", PlanID: "plan-1", Status: "ready", PartitionOrdinal: "bbbb"},
+	}
+	out := m.View()
+
+	if !strings.Contains(out, "p1") {
+		t.Errorf("the two tasks sharing a partition carry no marker, so an "+
+			"operator cannot see they are one fan-out turn:\n%s", out)
+	}
+	if strings.Contains(out, "p2") {
+		t.Errorf("a partition holding ONE task was labelled; singletons are the "+
+			"ordinary case and labelling them buries the real fan-out groups:\n%s", out)
+	}
+}
+
+// TestMesoOmitsPartitionMarkerWithoutOrdinals guards the empty case: tasks
+// created without metadata have no ordinal at all, and they must not collapse
+// into a shared "" partition that renders as a fan-out group.
+func TestMesoOmitsPartitionMarkerWithoutOrdinals(t *testing.T) {
+	f := testFake()
+	m := newTestModel(t, f)
+	m.lvl = levelMeso
+	m.selectedPlan = f.plans[0]
+	m.snap.tasks = []observe.Task{
+		{ID: "task-1", PlanID: "plan-1", Status: "ready"},
+		{ID: "task-2", PlanID: "plan-1", Status: "ready"},
+	}
+	if out := m.View(); strings.Contains(out, "p1") {
+		t.Errorf("tasks with no partition ordinal were labelled as sharing one; "+
+			"absent metadata is not evidence of a shared partition:\n%s", out)
+	}
+}

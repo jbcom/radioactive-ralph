@@ -264,6 +264,27 @@ func (u *ui) buildMeso(s snapshot) {
 		u.body.Add(widget.NewLabel("No tasks in this plan."))
 		return
 	}
+	// Only partitions holding more than one task are labelled: a partition of
+	// one is the ordinary case, so marking every row would bury the fan-out
+	// groups the marker exists to reveal. Numbered per view because the ordinal
+	// itself is an unreadable hash — the operator needs "these two rows are one
+	// turn", never the digest.
+	partitionSize := map[string]int{}
+	for _, t := range s.tasks {
+		if t.PartitionOrdinal != "" {
+			partitionSize[t.PartitionOrdinal]++
+		}
+	}
+	partitionLabels := map[string]string{}
+	for _, t := range s.tasks {
+		if partitionSize[t.PartitionOrdinal] < 2 {
+			continue
+		}
+		if _, seen := partitionLabels[t.PartitionOrdinal]; !seen {
+			partitionLabels[t.PartitionOrdinal] = fmt.Sprintf("p%d", len(partitionLabels)+1)
+		}
+	}
+
 	for _, t := range s.tasks {
 		taskID := t.ID
 		open := u.button(taskLabel(t), func() { u.drillTo(planID, taskID) })
@@ -276,6 +297,9 @@ func (u *ui) buildMeso(s snapshot) {
 		// undispatched task never displays a provider it did not use.
 		if name := t.ProvenanceLabel(); name != "" {
 			row.Add(widget.NewLabel("via " + name))
+		}
+		if label := partitionLabels[t.PartitionOrdinal]; label != "" {
+			row.Add(widget.NewLabel(label))
 		}
 		if t.Status == "ready_pending_approval" {
 			row.Add(widget.NewButton("Approve", func() {

@@ -55,6 +55,17 @@ group.)
 A task that has not been dispatched shows no `via=` at all — an unexecuted
 task must not read as though some provider owned it.
 
+- `p1`, `p2`, … — the **ready partition** the task belongs to. Rows sharing
+  a marker are the ones native fan-out may hand to a single provider turn.
+
+Only partitions holding more than one task are marked. A partition of one
+is the ordinary case, so labelling every row would bury the fan-out groups
+the marker exists to reveal. The numbers are per view, not global ids: the
+underlying ordinal is a hash, and the only question it answers is "same
+partition or not?" — deliberately not "pinned to what?", since a
+partition's real identity embeds the plan author's own binding text, which
+this surface withholds.
+
 ## What it reads
 
 - `Status` — supervisor status snapshot (worker counts, task counts,

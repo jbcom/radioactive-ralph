@@ -147,6 +147,19 @@ type OperatorTask struct {
 	AssignedEffort             string `json:"assigned_effort"`
 	AssignedIndependenceDomain string `json:"assigned_independence_domain"`
 
+	// PartitionOrdinal is the opaque identity of the ready-partition this task
+	// belongs to: tasks sharing it are the ones native fan-out may delegate to a
+	// single provider turn. It exists so an operator can SEE that grouping --
+	// otherwise five simultaneously-running tasks look alike whether they are
+	// one fan-out turn or five independent dispatches.
+	//
+	// Opaque on purpose. A partition's real identity is (group path, declared
+	// binding key), and the binding key re-encodes the author's own binding
+	// fields, so exposing it would carry plan-authored text across a boundary
+	// that withholds descriptions and acceptance commands. The ordinal answers
+	// "same partition or not?" without answering "pinned to what?".
+	PartitionOrdinal string `json:"partition_ordinal"`
+
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 }
@@ -681,6 +694,7 @@ func readOperatorTasks(
 		       COALESCE(m.assigned_alias, ''), COALESCE(m.assigned_provider, ''),
 		       COALESCE(m.assigned_model, ''), COALESCE(m.assigned_effort, ''),
 		       COALESCE(m.assigned_independence_domain, ''),
+		       COALESCE(m.group_path, ''), COALESCE(m.metadata_json, ''),
 		       t.created_at, t.updated_at
 		FROM tasks t
 		JOIN plans p ON p.id = t.plan_id
@@ -721,6 +735,7 @@ func readOperatorTasks(
 		var task OperatorTask
 		var parallel, sequence sql.NullInt64
 		var createdRaw, updatedRaw string
+		var groupPath, metadataJSON string
 		if err := rows.Scan(
 			&task.PlanID,
 			&task.ID,
@@ -736,6 +751,8 @@ func readOperatorTasks(
 			&task.AssignedModel,
 			&task.AssignedEffort,
 			&task.AssignedIndependenceDomain,
+			&groupPath,
+			&metadataJSON,
 			&createdRaw,
 			&updatedRaw,
 		); err != nil {
@@ -743,6 +760,15 @@ func readOperatorTasks(
 		}
 		task.ParallelGroup = operatorNullableInt64(parallel)
 		task.SequenceOrdinal = operatorNullableInt64(sequence)
+		// Derived through the SAME function ReadyPartitions groups by, so the
+		// operator's view of "these run together" cannot drift from the rule
+		// dispatch actually applies. Recomputing the grouping here in SQL would
+		// be a second definition of a partition, and the two would diverge the
+		// first time either changed.
+		task.PartitionOrdinal = readyPartitionOrdinal(ReadyPartition{
+			GroupPath:  groupPath,
+			BindingKey: declaredBindingKey(metadataJSON),
+		})
 		task.CreatedAt, err = parseOperatorTimestamp("task.created_at", createdRaw)
 		if err != nil {
 			return OperatorTaskPage{}, err

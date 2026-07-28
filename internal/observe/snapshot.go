@@ -483,6 +483,17 @@ type Task struct {
 	AssignedEffort             string `json:"assigned_effort,omitempty"`
 	AssignedIndependenceDomain string `json:"assigned_independence_domain,omitempty"`
 
+	// PartitionOrdinal identifies the ready-partition this task belongs to:
+	// tasks sharing it are the ones native fan-out may hand to a single provider
+	// turn. Without it, several running tasks look identical whether they are one
+	// fan-out turn or that many independent dispatches.
+	//
+	// Opaque by construction -- it is a hash, not the partition's real
+	// (group path, binding) identity, because the binding key re-encodes the
+	// plan author's own text. It answers "same partition?" and deliberately not
+	// "pinned to what?".
+	PartitionOrdinal string `json:"partition_ordinal,omitempty"`
+
 	// Blocked classifies a fail-closed pre-dispatch block, nil when the task is
 	// not blocked.
 	//
@@ -1022,6 +1033,7 @@ func taskFromStore(item store.OperatorTask) (Task, error) {
 		AssignedModel:              item.AssignedModel,
 		AssignedEffort:             item.AssignedEffort,
 		AssignedIndependenceDomain: item.AssignedIndependenceDomain,
+		PartitionOrdinal:           item.PartitionOrdinal,
 
 		Blocked:   blockedSummaryFor(item.Status),
 		CreatedAt: item.CreatedAt,

@@ -60,6 +60,61 @@ func TestReadyPartitionShapeIsContentFree(t *testing.T) {
 	}
 }
 
+// TestOperatorTasksAgreeWithReadyPartitions is the projection's real contract:
+// the ordinal an operator sees must match the grouping dispatch actually uses.
+//
+// Computing the grouping a second way in the snapshot query would be a second
+// DEFINITION of a partition, and the two would diverge the first time either
+// changed -- leaving the operator confidently reading a grouping that dispatch
+// no longer performs. So this asserts agreement with ReadyPartitions rather
+// than asserting some particular hash value.
+func TestOperatorTasksAgreeWithReadyPartitions(t *testing.T) {
+	ctx := context.Background()
+	s := openTestStore(t)
+	projectID := mustCreateProject(t, s, "partition-projection")
+	planID := seedReadyGraph(t, s, projectID, "waves", []GraphTaskSpec{
+		bindingSpec("a", "0", "claude"),
+		bindingSpec("b", "0", "claude"),
+		bindingSpec("c", "0", "codex"),
+		readySpec("d", "1"),
+	})
+
+	parts, err := s.ReadyPartitions(ctx, planID)
+	if err != nil {
+		t.Fatalf("ReadyPartitions: %v", err)
+	}
+	want := map[string]string{} // task id -> ordinal dispatch would use
+	for _, p := range parts {
+		for _, task := range p.Tasks {
+			want[task.ID] = readyPartitionOrdinal(p)
+		}
+	}
+
+	items, err := operatorTasksForTest(ctx, s, projectID)
+	if err != nil {
+		t.Fatalf("operator tasks: %v", err)
+	}
+	if len(items) != len(want) {
+		t.Fatalf("snapshot has %d task(s), partitions cover %d", len(items), len(want))
+	}
+	for _, item := range items {
+		if got := item.PartitionOrdinal; got != want[item.ID] {
+			t.Errorf("task %s: snapshot ordinal %q != dispatch ordinal %q; the "+
+				"operator would read a grouping dispatch does not perform",
+				item.ID, got, want[item.ID])
+		}
+	}
+
+	// a and b share a partition; c and d must each differ from it and each other.
+	if want["a"] != want["b"] {
+		t.Error("a and b share a group AND a binding but got different ordinals")
+	}
+	if want["a"] == want["c"] || want["a"] == want["d"] || want["c"] == want["d"] {
+		t.Errorf("distinct partitions collapsed: a=%q c=%q d=%q",
+			want["a"], want["c"], want["d"])
+	}
+}
+
 // TestReadyPartitionOrdinalIsStableAndDistinct pins the two properties an
 // opaque ordinal must have to be useful at all: tasks in the SAME partition
 // must share it (or the operator cannot see that one turn owns them), and
