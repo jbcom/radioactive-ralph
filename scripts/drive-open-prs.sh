@@ -11,6 +11,9 @@
 # surfaced a real #245 failure within two rounds.
 cd /Users/jbogaty/src/jbcom/radioactive-ralph || exit 1
 prev=""
+# inflight is the leader whose rebase is still working through CI. It survives
+# across rounds so a BLOCKED-while-checking leader is not mistaken for idle.
+inflight=""
 for round in $(seq 1 400); do
   # Do NOT swallow the query's exit status. An auth failure, rate limit, or
   # network blip makes `gh pr list` return nothing, which is indistinguishable
@@ -70,11 +73,44 @@ for round in $(seq 1 400); do
     armed=$(gh pr view "$pr" --json autoMergeRequest --jq 'if .autoMergeRequest then 1 else 0 end' 2>/dev/null)
     [ "$armed" = "0" ] && gh pr merge "$pr" --squash --auto --delete-branch >/dev/null 2>&1
   done
+  # Hold the in-flight leader across rounds.
+  #
+  # A just-rebased PR reports BLOCKED while its required checks run, so it stops
+  # being a BEHIND candidate and the next round would pick a DIFFERENT branch to
+  # rebase. Over the several rounds a 23-job matrix takes, that walks through
+  # every PR and recreates the exact queue flood this logic exists to prevent.
+  # So once a leader is chosen it stays the leader until it merges, goes DIRTY,
+  # starts failing, or disappears from the open list.
+  if [ -n "$inflight" ]; then
+    still_open=0
+    for pr in $prs; do
+      [ "$pr" = "$inflight" ] && still_open=1
+    done
+    inflight_state=$(gh pr view "$inflight" --json mergeStateStatus --jq '.mergeStateStatus' 2>/dev/null)
+    inflight_fail=$(gh pr view "$inflight" --json statusCheckRollup \
+      --jq '[.statusCheckRollup[]?|select(.conclusion=="FAILURE")]|length' 2>/dev/null)
+    case "$still_open:$inflight_state:${inflight_fail:-0}" in
+      0:*:*)        echo "round $round: leader #$inflight left the queue; releasing"; inflight="" ;;
+      *:DIRTY:*)    echo "round $round: leader #$inflight went DIRTY; releasing"; inflight="" ;;
+      *:*:0)        : ;;  # healthy and still working: keep holding
+      *)            echo "round $round: leader #$inflight has a failing check; releasing"; inflight="" ;;
+    esac
+  fi
+
   # Only when nothing is already merging: a rebase during a merge is immediately
-  # invalidated by it.
-  if [ -n "$leader" ] && [ "$ready" = "0" ]; then
-    gh pr update-branch "$leader" >/dev/null 2>&1
-    echo "round $round: rebased #$leader only ($leader_left checks out, $behind behind)"
+  # invalidated by it. And only when no leader is already in flight.
+  if [ -z "$inflight" ] && [ -n "$leader" ] && [ "$ready" = "0" ]; then
+    # Do NOT claim success on a failed update. A discarded exit status turns an
+    # API, permission, or network failure into a cheerful "rebased" line every
+    # round until the run cap, with nothing surfacing the decision that needs
+    # making.
+    if update_err=$(gh pr update-branch "$leader" 2>&1); then
+      inflight=$leader
+      echo "round $round: rebased #$leader only ($leader_left checks out, $behind behind)"
+    else
+      echo "round $round: update-branch FAILED for #$leader: $update_err" >&2
+      exit 2
+    fi
   fi
   n=$(echo "$prs"|wc -w|tr -d ' ')
   line="round $round: open=$n blocked=$blocked behind=$behind ready=$ready"
