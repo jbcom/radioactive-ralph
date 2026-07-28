@@ -140,10 +140,23 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
       rebased all eight BEHIND PRs in one round, restarting eight full 23-job
       matrices at once. Measured queued=42 running=0 immediately after, with
       every PR's outstanding count jumping from 1-4 back to ~30. Fixed in
-      a0cf1b2: rebase exactly ONE per round -- fewest outstanding checks, never a
-      failing PR, never while another is merging. Protection is `strict`, so the
-      merge queue is serialized and only the leader's rebase can pay off; the
-      rest are re-run after the next merge regardless.
+      a0cf1b2 (+ 7b8d5ec), shipped as PR #265 on a CLEAN branch off main -- the
+      original commit sat on ci/shellcheck-coverage, whose PR (#261) had already
+      merged, so it had NO path to main. A fix committed to a merged branch is a
+      fix that never ships.
+      Rebase exactly ONE per round -- fewest outstanding checks, never a failing
+      PR, never while another is merging. Protection is `strict`, so the merge
+      queue is serialized and only the leader's rebase can pay off; the rest are
+      re-run after the next merge regardless.
+      REVIEW CAUGHT THAT THE FIRST FIX DEFEATED ITSELF (7b8d5ec): a just-rebased
+      PR reports BLOCKED while its checks run, so it stopped being a BEHIND
+      candidate and the NEXT round picked a different branch -- walking the whole
+      queue over several rounds and recreating the flood. The leader is now HELD
+      in `inflight` until it merges, leaves the queue, goes DIRTY, or fails.
+      Same review caught a discarded `gh pr update-branch` exit status that would
+      print "rebased #N" every round while rebasing NOTHING -- the THIRD time
+      this one script has had an error path indistinguishable from its success
+      path.
       SAME LESSON as the state-push storm, one level up: the constraint is a
       small serialized pool, so the winning move is always to add LESS work.
       #252 IS THE PREVENTION and is therefore the highest-priority PR: its
