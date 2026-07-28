@@ -65,3 +65,59 @@ func TestNativeFanoutDoesNotCoalesceProviderRestrictedTasks(t *testing.T) {
 			"silently not applied", pinned.AssignedAlias)
 	}
 }
+
+// pinnedFanoutPlan pins ONE task in a parallel group via `binding.provider`
+// rather than `providers`. Both express the same intent.
+const pinnedFanoutPlan = "# Pinned fan-out\n\n" +
+	"- free work\n\n" +
+	"   ```ralph-task\n   {\"id\": \"free\"}\n   ```\n\n" +
+	"- pinned work\n\n" +
+	"   ```ralph-task\n   {\"id\": \"pinned\", \"binding\": {\"provider\": \"codex\"}}\n   ```\n\n" +
+	"- more free work\n\n" +
+	"   ```ralph-task\n   {\"id\": \"free2\"}\n   ```\n"
+
+// TestNativeFanoutDoesNotCoalesceBindingPinnedTasks is the THIRD instance of
+// one hole, and the one coalescableSteps' own doc comment predicted.
+//
+// That comment says a fourth per-step restriction "inherits this hole unless it
+// is added here too". `binding.provider` was added as a restriction and NOT
+// added there, so a task pinned to codex could be swept into a claude fan-out
+// turn -- the same silent violation `providers` had until #272 and
+// `differentFrom` had before it.
+//
+// Predicting a failure mode in a comment does not prevent it. The rule is
+// stated once and must be APPLIED once: a fan-out group is one binding chosen
+// before any member is examined, so NO per-step binding restriction survives
+// coalescing.
+func TestNativeFanoutDoesNotCoalesceBindingPinnedTasks(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	projectID := mustCreateTestProject(t, s, "fanout-pinned")
+	planID := mustCreateTestPlan(t, s, projectID, "fanout-pinned", "Fan", pinnedFanoutPlan)
+
+	runner := &fakeRunner{results: []provider.Result{
+		{AssistantOutput: "a"}, {AssistantOutput: "b"},
+		{AssistantOutput: "c"}, {AssistantOutput: "d"},
+	}}
+	o := New(s,
+		WithRunnerFactory(func(provider.Binding) (provider.Runner, error) { return runner, nil }),
+		WithBindingResolver(fakeBindingResolver("claude", true)), // NativeFanout
+	)
+	for pass := 0; pass < 3; pass++ {
+		if _, err := o.DispatchNext(ctx, projectID, planID); err != nil {
+			t.Fatalf("DispatchNext pass %d: %v", pass, err)
+		}
+		o.Wait()
+	}
+
+	pinned, err := s.GetTaskExecutionMetadata(ctx, planID, "pinned")
+	if err != nil || pinned.AssignedAlias == "" {
+		return // correctly never ran: no binding of type codex is available
+	}
+	if pinned.AssignedProvider != "codex" {
+		t.Fatalf("task pins binding.provider=codex but ran on provider type %q; "+
+			"native fan-out coalesced it into another provider's turn, so the pin "+
+			"imported clean, the turn was recorded, and the restriction was never "+
+			"applied", pinned.AssignedProvider)
+	}
+}
