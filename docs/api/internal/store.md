@@ -69,7 +69,7 @@ The schema is embedded under schema/\*.sql and applied in lexical order by Migra
   - [func \(s \*Store\) BindTaskCalibration\(ctx context.Context, planID, taskID, calibrationID, capabilitySetJSON string\) error](<#Store.BindTaskCalibration>)
   - [func \(s \*Store\) ClaimNextReady\(ctx context.Context, planID, sessionID, workerID string\) \(\*Task, error\)](<#Store.ClaimNextReady>)
   - [func \(s \*Store\) ClaimTask\(ctx context.Context, planID, taskID, sessionID, workerID string\) \(\*Task, error\)](<#Store.ClaimTask>)
-  - [func \(s \*Store\) ClearTaskBlock\(ctx context.Context, planID, taskID string\) \(bool, error\)](<#Store.ClearTaskBlock>)
+  - [func \(s \*Store\) ClearTaskBlock\(ctx context.Context, planID, taskID string, blocked TaskStatus\) \(bool, error\)](<#Store.ClearTaskBlock>)
   - [func \(s \*Store\) ClearWorkerTask\(ctx context.Context, workerID, status string\) error](<#Store.ClearWorkerTask>)
   - [func \(s \*Store\) Close\(\) error](<#Store.Close>)
   - [func \(s \*Store\) CloseSession\(ctx context.Context, sessionID string\) error](<#Store.CloseSession>)
@@ -971,17 +971,19 @@ It is the graph counterpart to ClaimNextReady, which picks whichever ready task 
 The readiness predicate is deliberately identical to ClaimNextReady's, minus the ordering and LIMIT: same claimable statuses, same NOT EXISTS walk over task\_deps. Two predicates that must agree but are written twice would drift, so any change here belongs in both.
 
 <a name="Store.ClearTaskBlock"></a>
-### func \(\*Store\) [ClearTaskBlock](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/task_metadata.go#L373>)
+### func \(\*Store\) [ClearTaskBlock](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/task_metadata.go#L379>)
 
 ```go
-func (s *Store) ClearTaskBlock(ctx context.Context, planID, taskID string) (bool, error)
+func (s *Store) ClearTaskBlock(ctx context.Context, planID, taskID string, blocked TaskStatus) (bool, error)
 ```
 
-ClearTaskBlock returns a pre\-dispatch\-blocked task to pending and drops its recorded reason. Reports whether a row actually changed.
+ClearTaskBlock returns a task blocked in exactly \`blocked\` to pending and drops its recorded reason. Reports whether a row actually changed.
+
+The caller names WHICH block it is clearing, because a block may only be released by the condition that caused it. Clearing both fail\-closed states meant a satisfied capability requirement also released a task blocked on an immutable\-input mismatch — a cause the capability gate never re\-checks — so the task dispatched with its input pin still violated.
 
 Without this a block is a TRAP rather than a gate: ClaimTask accepts only pending or ready, so a task blocked on a capability stayed unclaimable even after an operator performed the exact fix the block asked for, and the plan never completed.
 
-Only the two fail\-closed pre\-dispatch states are cleared. A running, done, or failed task is untouched — those are owned by the worker lifecycle, and resetting one here would discard real execution state.
+Only a fail\-closed pre\-dispatch state is clearable. A running, done, or failed task is untouched — those are owned by the worker lifecycle, and resetting one here would discard real execution state.
 
 <a name="Store.ClearWorkerTask"></a>
 ### func \(\*Store\) [ClearWorkerTask](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/workers.go#L224>)
@@ -1484,7 +1486,7 @@ func (s *Store) StatusCounts(ctx context.Context) (StatusCounts, error)
 StatusCounts returns the plan/task aggregates for the status reply, across all projects \(the supervisor is project\-agnostic\). Counts are derived from the live rows so they stay accurate without any in\-process bookkeeping.
 
 <a name="Store.TeamRollups"></a>
-### func \(\*Store\) [TeamRollups](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/task_metadata.go#L501>)
+### func \(\*Store\) [TeamRollups](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/task_metadata.go#L511>)
 
 ```go
 func (s *Store) TeamRollups(ctx context.Context, projectID string) ([]TeamRollup, error)
@@ -1589,7 +1591,7 @@ const (
 ```
 
 <a name="TeamRollup"></a>
-## type [TeamRollup](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/task_metadata.go#L485-L496>)
+## type [TeamRollup](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/task_metadata.go#L495-L506>)
 
 TeamRollup aggregates task state per team path for the operator views.
 

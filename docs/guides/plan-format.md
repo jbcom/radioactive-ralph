@@ -46,6 +46,94 @@ decomposition, no separate plan-definition language to learn.
 is sequential (ordered list) and only starts once every step in "Fix the
 login bug" is done.
 
+## Task annotations (`ralph-task`)
+
+A step can carry a fenced ```` ```ralph-task ```` block of JSON. This is
+**optional**: every plan written before the grammar existed keeps working
+unchanged, and an unannotated step is a perfectly valid graph node.
+
+````markdown
+# Build and verify
+
+1. compile the binary
+
+   ```ralph-task
+   {"id": "build"}
+   ```
+
+2. run the integration suite
+
+   ```ralph-task
+   {"id": "integration", "after": ["build"]}
+   ```
+
+3. run the linters
+
+   ```ralph-task
+   {"id": "lint", "after": ["build"]}
+   ```
+````
+
+Here `integration` and `lint` both wait on `build` and then run
+**concurrently** — something heading order alone cannot express, because
+document order would have forced them into a sequence.
+
+### `after` — the one field that changes ordering
+
+`after` has three distinct meanings, and the difference is load-bearing:
+
+| Written as | Means |
+|---|---|
+| *(omitted)* | document order applies, exactly as before annotations existed |
+| `"after": []` | an explicit **root** — no predecessors, ready immediately |
+| `"after": ["a","b"]` | ready only once `a` and `b` are both done |
+
+Omitting `after` is **not** the same as `"after": []`. Annotating a step
+with a team or a binding must not silently reorder execution, so a block
+with no `after` keeps whatever order the document already implied. Writing
+`[]` is how you say "this genuinely has no predecessors."
+
+A plan with no annotations imports as a chain of edges derived from
+document order, so **a linear plan is the degenerate case of a DAG** rather
+than a separate code path.
+
+### Fields
+
+`id` and `after` and `team` are acted on today. The remaining fields
+**parse and persist** but are not yet enforced — they are recorded on the
+task so the features that consume them can be added without a plan-format
+change, and they are listed here so the format is documented once rather
+than in pieces.
+
+| Field | Status | Meaning |
+|---|---|---|
+| `id` | **enforced** | stable task id, **required whenever a `ralph-task` block is present** — the parser rejects a block whose `id` is missing or empty. A step with NO block gets the positional id (`0.1`). Must be unique within the plan. |
+| `after` | **enforced** | dependency edges (see above). |
+| `team` | **persisted** | slash-delimited path, stored as the task's `team_path`. Nothing consumes it yet: `TeamRollups` exists but has no caller, and the operator snapshot does not expose a team field, so it does not currently affect any view. |
+| `binding` | parsed | pins provider identity: `mode`, `alias`, `provider`, `model`, `effort`, `calibration`, `repetitions`, `fixture`. |
+| `requires` | parsed | capability keys the bound provider must satisfy. |
+| `providers` | parsed | restricts the task to a subset of configured providers. |
+| `differentFrom` | parsed | task ids that must not share this task's independence domain. |
+| `inputs` | parsed | files the task reads: `{"path": ..., "sha256": ...}`. |
+| `outputs` | parsed | files the task writes: `{"path": ..., "mode": "exclusive"}`. |
+
+### The grammar fails closed
+
+A malformed block is refused at import rather than silently ignored,
+because a dropped annotation changes what runs:
+
+- an **unknown field** is an error, not a no-op — a typo'd `dependsOn`
+  would otherwise import with no edges and run in the wrong order;
+- `"after": null` is refused, because null and omitted are
+  indistinguishable after decoding and they mean different things;
+- a **duplicate key** is refused. `encoding/json` keeps the *last* value,
+  so `{"after":["prepare"],"after":[]}` would decode as an unconditioned
+  root and dispatch **before** `prepare` — the exact ordering guarantee the
+  grammar exists to provide;
+- **two blocks on one step** is refused rather than picking one;
+- an `after` naming a task that is not in the plan is refused;
+- a **cycle** is refused (the store's `AddDep` checks it).
+
 ## Approval gates
 
 A step can be **held for human approval** before it runs. End the step's

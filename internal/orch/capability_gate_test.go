@@ -494,3 +494,61 @@ func TestProvidersGateConsidersEveryPoolMember(t *testing.T) {
 			dispatched, status)
 	}
 }
+
+// TestClearingACapabilityBlockLeavesAnInputBlockIntact is a Major on #247.
+//
+// ClearTaskBlock cleared BOTH fail-closed states, and this gate only re-checks
+// capabilities. So a task blocked on an immutable-input mismatch would be
+// released the moment its (unrelated) capability requirement became
+// satisfiable — dispatching work whose input pin is still violated, which is
+// the exact admission failure blocked_input exists to prevent.
+//
+// A block must only be cleared by the condition that caused it.
+func TestClearingACapabilityBlockLeavesAnInputBlockIntact(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	projectID := mustCreateTestProject(t, s, "clear-scope")
+	planID := mustCreateTestPlan(t, s, projectID, "clear-scope", "Cap", requiresFanoutPlan)
+
+	// Start with an INCAPABLE binding so the first pass materializes the task
+	// and blocks it on capability rather than running it to completion.
+	capable := false
+	o := New(s,
+		WithRunnerFactory(func(provider.Binding) (provider.Runner, error) {
+			return &fakeRunner{results: []provider.Result{{AssistantOutput: "x"}}}, nil
+		}),
+		WithBindingResolver(func(_ context.Context, _ string, _ bool, _ BindingResolutionPurpose) (provider.Binding, error) {
+			return provider.Binding{
+				Name:   "claude",
+				Config: provider.BindingConfig{Type: "claude", Binary: "true", NativeFanout: capable},
+			}, nil
+		}),
+	)
+	if _, err := o.DispatchNext(ctx, projectID, planID); err != nil {
+		t.Fatalf("seed DispatchNext: %v", err)
+	}
+	o.Wait()
+
+	// Now re-block it on INPUT — a DIFFERENT cause this gate never re-checks.
+	if _, err := s.MarkBlockedInput(ctx, planID, "needs-fanout", "input digest mismatch"); err != nil {
+		t.Fatalf("MarkBlockedInput: %v", err)
+	}
+
+	// Satisfy the capability requirement, which triggers the clear path.
+	capable = true
+
+	if _, err := o.DispatchNext(ctx, projectID, planID); err != nil {
+		t.Fatalf("DispatchNext: %v", err)
+	}
+	o.Wait()
+
+	task, err := s.GetTask(ctx, planID, "needs-fanout")
+	if err != nil {
+		t.Fatalf("GetTask: %v", err)
+	}
+	if task.Status != store.TaskStatusBlockedInput {
+		t.Fatalf("status = %q, want %q — a satisfied capability requirement must "+
+			"not clear an INPUT block the gate never re-checked; the input pin is "+
+			"still violated", task.Status, store.TaskStatusBlockedInput)
+	}
+}
