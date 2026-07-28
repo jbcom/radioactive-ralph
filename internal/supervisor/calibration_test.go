@@ -5,8 +5,8 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/jonboulle/clockwork"
 	"github.com/jbcom/radioactive-ralph/internal/ipc"
+	"github.com/jonboulle/clockwork"
 )
 
 func sampleCalibration() ipc.CalibrationRecord {
