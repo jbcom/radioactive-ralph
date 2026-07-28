@@ -157,36 +157,47 @@ func declaredBindingKey(metadataJSON string) string {
 		return ""
 	}
 	var doc struct {
-		Binding *struct {
-			Mode        string `json:"mode"`
-			Alias       string `json:"alias"`
-			Provider    string `json:"provider"`
-			Model       string `json:"model"`
-			Effort      string `json:"effort"`
-			Calibration string `json:"calibration"`
-			Repetitions int    `json:"repetitions"`
-			Fixture     string `json:"fixture"`
-		} `json:"binding"`
+		Binding *declaredBinding `json:"binding"`
 	}
 	if err := json.Unmarshal([]byte(metadataJSON), &doc); err != nil || doc.Binding == nil {
 		return ""
 	}
-	b := *doc.Binding
-	canonical := fmt.Sprintf("%s|%s|%s|%s|%s|%s|%d|%s",
-		b.Mode, b.Alias, b.Provider, b.Model, b.Effort, b.Calibration, b.Repetitions, b.Fixture)
 	// A binding object present but entirely empty pins nothing, so it must key
 	// the same as an absent one -- otherwise `"binding":{}` would split a
 	// partition while declaring no restriction at all.
-	//
-	// Compared against the zero value formatted by the SAME expression rather
-	// than a literal: hand-writing the separator string got the pipe count wrong
-	// on the first attempt, and it would silently drift again the moment a field
-	// is added to the binding.
-	if canonical == emptyBindingKey {
+	if *doc.Binding == (declaredBinding{}) {
 		return ""
 	}
-	return canonical
+	// Re-encoded as JSON rather than joined with a separator. A delimiter-joined
+	// key is AMBIGUOUS whenever a field can contain the delimiter, and nothing
+	// forbids that here: provider "claude|x" + model "y" and provider "claude" +
+	// model "x|y" produced BYTE-IDENTICAL keys, so two differently-pinned tasks
+	// merged into one partition -- defeating the restriction this key exists to
+	// preserve. JSON escapes its own delimiters, so the encoding is injective.
+	//
+	// Field order is fixed by the struct definition, so encoding/json emits the
+	// same bytes for the same binding on every call.
+	key, err := json.Marshal(doc.Binding)
+	if err != nil {
+		// Unreachable for a struct of strings and an int, but a marshal error
+		// must not silently become "" -- that would merge this task into the
+		// unpinned partition, which is the failure this function prevents.
+		return "unencodable:" + metadataJSON
+	}
+	return string(key)
 }
 
-// emptyBindingKey is declaredBindingKey's output for a zero-valued binding.
-var emptyBindingKey = fmt.Sprintf("%s|%s|%s|%s|%s|%s|%d|%s", "", "", "", "", "", "", 0, "")
+// declaredBinding is the subset of a task's metadata that pins its provider
+// identity. The store deliberately does NOT import internal/plan: metadata_json
+// is authored upstream and only this sub-object matters here, so it decodes the
+// minimum rather than coupling storage to the plan model.
+type declaredBinding struct {
+	Mode        string `json:"mode"`
+	Alias       string `json:"alias"`
+	Provider    string `json:"provider"`
+	Model       string `json:"model"`
+	Effort      string `json:"effort"`
+	Calibration string `json:"calibration"`
+	Repetitions int    `json:"repetitions"`
+	Fixture     string `json:"fixture"`
+}
