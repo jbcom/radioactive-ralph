@@ -207,14 +207,14 @@ tags before deletion: `archive/plan-v2-dag`, `archive/release-022-recovery-scrat
       of the 25 required checks are macOS-only, so nothing can merge until the
       pool frees. Watcher armed; route to other work rather than idling.
       MERGED in this arc: #215, #216, #219, #220, #221, #226, #230, #231, #232,
-      #235, plus releases through v0.29.1. Worktrees reconciled 2026-07-28:
+      #235, plus releases through v0.29.1. Worktrees reconciled 2026-07-28 UTC:
       23 -> 13, every one current with main (behind_main=0), and remotes renamed
       so origin=GitHub.
       Reconciliation lesson (2026-07-27): after a stacked parent squash-merges,
       REBUILD the child from main and cherry-pick only its unique commits —
       applies everywhere; git rewrote every upstream to origin/* automatically.
 
-- [x] Remote naming FIXED (2026-07-28, user-confirmed direction): origin=GitHub
+- [x] Remote naming FIXED (2026-07-28 UTC, user-confirmed direction): origin=GitHub
       (source of truth), gitea=no-CI backup mirror. Previously origin pointed at
       Gitea, so an unqualified push/pull/gh targeted the MIRROR. Direction was
       verified EMPIRICALLY before renaming: Gitea's main matched GitHub exactly,
@@ -393,7 +393,7 @@ tags before deletion: `archive/plan-v2-dag`, `archive/release-022-recovery-scrat
 
 ## Rolling improvement queue (directive 0 appends here)
 
-- [x] LEFTOVERS AUDIT (2026-07-28) — DONE, this was the investigation itself. Prompted by the right question — I had
+- [x] LEFTOVERS AUDIT (2026-07-28 UTC) — DONE, this was the investigation itself. Prompted by the right question — I had
       verified the merged branches were ABSORBED, which is not the same as
       their WORK being finished. Audited main for unfinished scope and found
       three genuine items, each verified against the code rather than inferred:
@@ -441,7 +441,7 @@ tags before deletion: `archive/plan-v2-dag`, `archive/release-022-recovery-scrat
             reads. Root-caused by stuck-loop-debugger after I burned several
             cycles on it. Three tests now guard the mask directly.
             SECOND LESSON — the behavioral tests build a REAL helper binary.
-            Re-execing the go test binary makes it reject the sentinel and never
+            Re-executing the go test binary makes it reject the sentinel and never
             run the command, which every "did the file appear?" assertion reads
             as successful containment. That false pass was OBSERVED before being
             fixed; it is the same trap the macOS TMPDIR grant set.
