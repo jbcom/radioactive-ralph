@@ -68,7 +68,7 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
 
 ## Remaining
 
-- [ ] Land the 9 open PRs: 222, 225, 251, 252, 255, 257, 259, 262, 263.
+- [ ] Land the 10 open PRs: 222, 225, 251, 252, 255, 257, 259, 262, 263, 265.
       NOT wait-labelled, deliberately, and I tried it the other way: labelling
       this [WAIT-AGENT] because the background driver owns it made EVERY open
       item a wait, and verify-repo-claims.sh guard 8 caught it --
