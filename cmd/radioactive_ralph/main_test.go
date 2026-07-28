@@ -53,6 +53,9 @@ func TestInitMode_CreatesProject(t *testing.T) {
 	projectDir := t.TempDir()
 	chdir(t, projectDir)
 
+	// init is a dumb client now and refuses to run without a supervisor.
+	startTestSupervisor(t, stateDir)
+
 	cmd := newTestRootCmd(context.Background())
 	cmd.SetArgs([]string{"--init"})
 	if err := cmd.Execute(); err != nil {
