@@ -68,7 +68,13 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
 
 ## Remaining
 
-- [ ] [WAIT] Land the open PRs: 287, 288.
+- [ ] [WAIT] Land the open PRs: 290, 292, 293, 294 (the containment stack).
+      They land in order; #292 reads UNMERGEABLE in the queue only because it
+      conflicts with the BATCH ahead of it, which is the queue working. Verified
+      composed locally: one benign add/add on
+      internal/orch/containment_capability_test.go, all four capability tests
+      surviving, full suite green, and a live run showing claude confined with
+      codex and opencode refused.
       (225, 274, 272, 275, 277 and 278 landed this pass.)
       All four are QUEUED or auto-merge ARMED with zero unresolved threads and
       zero failing checks; the only remaining work is CI on a serialized runner
@@ -100,7 +106,16 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
           retryable, when the generic sentinel was already correctly terminal.
           Naming a category is choosing a retry policy.
 
-- [ ] [WAIT-BLOCKED-BY-#285] contain_provider_writes stays OFF by default.
+- [ ] [WAIT] Containment arc -- ONE live item. The detailed entry further down
+      is the same work and is marked SUPERSEDED so the queue cannot contradict
+      itself.
+      #285 is RESOLVED, not blocked. #290 gives a binding a declared
+      containment capability and makes dispatch REFUSE an unhonourable request
+      rather than silently downgrading it; #292 flips the default; #293 and
+      #294 correct the docs that had gone stale under those changes.
+      All three shipped providers behave correctly: claude completes confined,
+      codex and opencode refuse visibly with worker.admission_refused.
+      Remaining: land the stack. Nothing to decide.
       Opened and CLOSED #284 in one pass. The flip is right in principle and
       breaks TWO of three shipped providers in practice: a real codex turn and
       a real opencode turn both fail under containment, while claude passes.
@@ -377,7 +392,10 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
             by grepping origin/main for each symbol, not by assuming the pair
             moves together.
 
-- [ ] [WAIT-BLOCKED-BY-#285] Provider write containment: reachable from config
+- [x] SUPERSEDED by the containment item at the top of Remaining. Kept for its
+      evidence trail, NOT as a second live gate -- two entries for one piece of
+      work is how an executor waits on something already done.
+      Provider write containment: reachable from config
       (DONE), default on (BLOCKED -- codex AND opencode cannot run confined).
       UNGATED 2026-07-28: #251 is MERGED, and the wiring re-verified on
       origin/main rather than trusted -- vconfig.ContainProviderWrites is read
