@@ -251,6 +251,17 @@ type claudeResultFrame struct {
 	// the frame's human-readable `result` prose, which is unstable across CLI
 	// versions and would drag provider text across the boundary.
 	APIErrorStatus int `json:"api_error_status"`
+	// TerminalReason is the CLI's own enum for how the turn ended
+	// ("completed", "api_error", ...). It is a STRUCTURED field like
+	// APIErrorStatus, not operator-facing prose, so reading it does not cross
+	// the never-scrape boundary the way the frame's `result` text would.
+	//
+	// It exists here because api_error_status is not always populated on a real
+	// upstream failure. A CLI that is not logged in reports
+	// {"is_error":true,"subtype":"success","api_error_status":null,
+	// "terminal_reason":"api_error"} — verified against claude 2.1.220 — which
+	// fell through every status case to the generic ErrClaudeResultFailed.
+	TerminalReason string `json:"terminal_reason"`
 	Usage          struct {
 		InputTokens              int `json:"input_tokens"`
 		OutputTokens             int `json:"output_tokens"`
@@ -274,8 +285,27 @@ func (f claudeResultFrame) failure() error {
 	if category := claudeFailureForStatus(f.APIErrorStatus); category != nil {
 		return category
 	}
+	// api_error_status is not always populated on a real upstream failure. A CLI
+	// that is not logged in reports terminal_reason "api_error" with a NULL
+	// status, so every case above misses and the operator gets the generic
+	// "claude reported an unsuccessful result" for a problem with an obvious
+	// remedy. terminal_reason is a structured enum, so using it here keeps the
+	// never-scrape invariant intact — no provider prose crosses the boundary.
+	//
+	// ErrClaudeServiceUnavailable rather than ErrClaudeAuthentication: the field
+	// says the turn died against the API, not WHICH API failure it was, and
+	// naming a specific cause the frame did not state would just be a more
+	// confident wrong answer. "The upstream call failed" is what is actually
+	// known, and it is strictly more than the generic sentinel said.
+	if f.TerminalReason == claudeTerminalAPIError {
+		return ErrClaudeServiceUnavailable
+	}
 	return ErrClaudeResultFailed
 }
+
+// claudeTerminalAPIError is the CLI's terminal_reason for a turn that ended
+// against the API rather than completing.
+const claudeTerminalAPIError = "api_error"
 
 // claudeFailureForStatus maps an upstream HTTP status to a narrower category,
 // or nil when the status is absent or unrecognized.
