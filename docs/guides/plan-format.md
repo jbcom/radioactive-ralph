@@ -164,6 +164,84 @@ without stopping everything before it. Bracketed text that isn't the
 `[approval]` marker (e.g. a trailing `[WIP]`) is left untouched and does
 not gate the step.
 
+## Capability requirements
+
+A step can declare the provider capabilities it needs, in a `ralph-task`
+fence indented inside the step's list item:
+
+```markdown
+# Wide refactor
+
+- rename the symbol across every call site
+
+   ```ralph-task
+   {"id": "rename-all", "requires": ["native_fanout"]}
+   ```
+```
+
+Dispatch resolves the binding the step would run on and checks it
+**before** allocating a worker, a session, or a dispatch slot. A step
+whose requirements the binding cannot meet is moved to
+`blocked_capability` with the missing keys recorded as its blocked
+reason, rather than being run against a provider that cannot do the work.
+
+The vocabulary is closed — a key outside it is a typo, and a typo cannot
+be satisfied by any binding, so it blocks the step rather than passing
+silently:
+
+| Key | The binding must… |
+|-----|-------------------|
+| `native_fanout` | run a whole ready group in one turn (`native_fanout = true`) |
+| `resume` | continue a prior session (`supports_resume = true`) |
+| `append_system_prompt` | append to the system prompt rather than replace it (`use_append_system_prompt = true`) |
+
+Every key maps to something a binding declares in its config, so the two
+cannot drift apart. Steps that declare no `requires` are unaffected.
+
+Unblocking is a plan or configuration change — fix the key, or bind the
+project to a provider that has the capability — not something the
+supervisor retries its way out of. That is the point: a task that can
+never succeed on this binding says so immediately instead of stalling
+with no explanation.
+
+## Restricting which provider runs a task
+
+A step can name the providers allowed to run it:
+
+```markdown
+# Cross-check
+
+- review the generated migration
+
+   ```ralph-task
+   {"id": "review-migration", "providers": ["codex"]}
+   ```
+```
+
+A name matches either the binding **alias** or the provider **type**, because
+both are useful restrictions: several aliases can share one type (a
+round-robin pool of `claude` bindings), so "any claude" and "this specific
+pool member" mean different things.
+
+A task whose resolved provider is outside its list is **not dispatched**, and
+the refusal is recorded as a `worker.admission_refused` event naming the
+allowed providers. Where the project is bound to a *pool*, dispatch rotates
+through it first: a `[claude, codex]` pool can still run a codex-only task, so
+the restriction is about the work rather than about which member the rotation
+happened to reach.
+
+The task stays `pending` rather than becoming `blocked_capability`, and the
+difference from `requires` is deliberate. `providers` names operator
+**configuration** — binding the project to an allowed provider fixes it, so a
+durable block would leave an operator clearing a state their config edit had
+already resolved. `requires` is different: no configuration change makes a
+provider gain a capability it does not have, so that one does block.
+
+Unlike `requires`, there is no closed vocabulary here: provider names are
+operator-chosen configuration, so an unrecognized name is indistinguishable
+from a provider this project simply is not bound to right now. Either way the
+task blocks and names the list, which is the actionable report.
+
 ## Validation
 
 `internal/plan.Validate` checks the document against the grammar (sibling
