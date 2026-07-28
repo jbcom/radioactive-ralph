@@ -25,6 +25,7 @@ The schema is embedded under schema/\*.sql and applied in lexical order by Migra
 - [func Migrate\(ctx context.Context, db \*sql.DB\) error](<#Migrate>)
 - [type A2AMessage](<#A2AMessage>)
 - [type AppendMessageOpts](<#AppendMessageOpts>)
+- [type CalibrationAttempt](<#CalibrationAttempt>)
 - [type CreatePlanGraphOpts](<#CreatePlanGraphOpts>)
 - [type CreatePlanOpts](<#CreatePlanOpts>)
 - [type CreateTaskOpts](<#CreateTaskOpts>)
@@ -54,6 +55,7 @@ The schema is embedded under schema/\*.sql and applied in lexical order by Migra
 - [type Options](<#Options>)
 - [type Plan](<#Plan>)
 - [type PlanStatus](<#PlanStatus>)
+- [type ProviderCalibration](<#ProviderCalibration>)
 - [type RecordSpendOpts](<#RecordSpendOpts>)
 - [type RunningWorker](<#RunningWorker>)
 - [type SessionOpts](<#SessionOpts>)
@@ -83,6 +85,7 @@ The schema is embedded under schema/\*.sql and applied in lexical order by Migra
   - [func \(s \*Store\) DB\(\) \*sql.DB](<#Store.DB>)
   - [func \(s \*Store\) Emit\(ctx context.Context, o EmitOpts\) error](<#Store.Emit>)
   - [func \(s \*Store\) EventsAfter\(ctx context.Context, projectID string, afterID int64, limit int\) \(\[\]Event, error\)](<#Store.EventsAfter>)
+  - [func \(s \*Store\) GetCalibrationByAlias\(ctx context.Context, alias string\) \(ProviderCalibration, error\)](<#Store.GetCalibrationByAlias>)
   - [func \(s \*Store\) GetPlan\(ctx context.Context, id string\) \(\*Plan, error\)](<#Store.GetPlan>)
   - [func \(s \*Store\) GetProjectConfig\(ctx context.Context, projectID string\) \(map\[string\]string, error\)](<#Store.GetProjectConfig>)
   - [func \(s \*Store\) GetTask\(ctx context.Context, planID, id string\) \(\*Task, error\)](<#Store.GetTask>)
@@ -90,6 +93,7 @@ The schema is embedded under schema/\*.sql and applied in lexical order by Migra
   - [func \(s \*Store\) HeartbeatSession\(ctx context.Context, sessionID string\) error](<#Store.HeartbeatSession>)
   - [func \(s \*Store\) HeartbeatWorker\(ctx context.Context, workerID string\) error](<#Store.HeartbeatWorker>)
   - [func \(s \*Store\) HeartbeatWorkerAndSession\(ctx context.Context, workerID string\) error](<#Store.HeartbeatWorkerAndSession>)
+  - [func \(s \*Store\) ListCalibrationAttempts\(ctx context.Context, planID, taskID string\) \(\[\]CalibrationAttempt, error\)](<#Store.ListCalibrationAttempts>)
   - [func \(s \*Store\) ListMessages\(ctx context.Context, planID, taskID string\) \(\[\]A2AMessage, error\)](<#Store.ListMessages>)
   - [func \(s \*Store\) ListOperatorMessages\(ctx context.Context, q OperatorMessageQuery\) \(\*OperatorMessagePage, error\)](<#Store.ListOperatorMessages>)
   - [func \(s \*Store\) ListOperatorTaskDescriptions\(ctx context.Context, projectID, planID string, taskIDs \[\]string\) \(map\[string\]string, error\)](<#Store.ListOperatorTaskDescriptions>)
@@ -114,6 +118,8 @@ The schema is embedded under schema/\*.sql and applied in lexical order by Migra
   - [func \(s \*Store\) Ready\(ctx context.Context, planID string\) \(\[\]Task, error\)](<#Store.Ready>)
   - [func \(s \*Store\) ReclaimStale\(ctx context.Context, staleAfter time.Duration\) \(reclaimed int, err error\)](<#Store.ReclaimStale>)
   - [func \(s \*Store\) ReclaimWorker\(ctx context.Context, workerID string\) \(found bool, err error\)](<#Store.ReclaimWorker>)
+  - [func \(s \*Store\) RecordCalibration\(ctx context.Context, c ProviderCalibration\) \(ProviderCalibration, error\)](<#Store.RecordCalibration>)
+  - [func \(s \*Store\) RecordCalibrationAttempt\(ctx context.Context, a CalibrationAttempt\) error](<#Store.RecordCalibrationAttempt>)
   - [func \(s \*Store\) RecordSpend\(ctx context.Context, o RecordSpendOpts\) error](<#Store.RecordSpend>)
   - [func \(s \*Store\) RecordTaskExecution\(ctx context.Context, planID, taskID, alias, provider, model, effort, independenceDomain, sessionID string\) error](<#Store.RecordTaskExecution>)
   - [func \(s \*Store\) RecordTaskProviderSession\(ctx context.Context, planID, taskID, claimingSessionID, providerSessionID string\) error](<#Store.RecordTaskProviderSession>)
@@ -181,6 +187,20 @@ var (
         "store: operator snapshot exceeds safety bounds",
     )
 )
+```
+
+<a name="ErrCalibrationConflict"></a>ErrCalibrationConflict reports the same alias measured against a DIFFERENT command line than the one already recorded.
+
+```go
+var ErrCalibrationConflict = errors.New("store: alias already calibrated against a different invocation")
+```
+
+<a name="ErrCalibrationNotFound"></a>ErrCalibrationNotFound reports an alias with no recorded measurement.
+
+Distinct from a zero\-value calibration, which a caller could mistake for a real measurement of an empty command line.
+
+```go
+var ErrCalibrationNotFound = errors.New("store: no calibration recorded for this alias")
 ```
 
 <a name="ErrDuplicateSlug"></a>ErrDuplicateSlug is returned when a plan with \(project\_id, slug\) already exists. Callers either pick a new slug or update.
@@ -314,6 +334,31 @@ type AppendMessageOpts struct {
     TaskID      string
     Role        string // e.g. "ROLE_AGENT" | "ROLE_USER"
     ContentJSON string // the serialized a2a.Message
+}
+```
+
+<a name="CalibrationAttempt"></a>
+## type [CalibrationAttempt](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/calibrations.go#L174-L188>)
+
+CalibrationAttempt is one repetition of one calibrated task run.
+
+Calibration compares repeated runs of the SAME task, so each repetition is recorded separately and identified by the output it produced — agreement across repetitions is the signal, and that cannot be computed from a single collapsed row.
+
+```go
+type CalibrationAttempt struct {
+    PlanID          string
+    TaskID          string
+    AttemptSequence int
+    Repetition      int
+
+    Alias    string
+    Provider string
+    Model    string
+    Effort   string
+
+    SessionID             string
+    ProviderSessionID     string
+    AssistantOutputSHA256 string
 }
 ```
 
@@ -802,6 +847,43 @@ const (
 )
 ```
 
+<a name="ProviderCalibration"></a>
+## type [ProviderCalibration](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/calibrations.go#L30-L56>)
+
+ProviderCalibration is one measurement of one exact provider command line.
+
+It is a RECORD OF AN OBSERVATION, not configuration. That is why it is content\-addressed and why a conflicting remeasurement fails rather than overwrites: tasks bind to a calibration id to document what they ran on, and silently changing the row underneath them would retroactively rewrite that history.
+
+```go
+type ProviderCalibration struct {
+    ID       string
+    Alias    string
+    Provider string
+    Model    string
+    Effort   string
+
+    BinaryPath    string
+    BinaryVersion string
+    BinarySHA256  string
+    // InvocationHash fingerprints the whole binding config plus the exact
+    // model/effort (see provider.InvocationConfigHash). Two calibrations with
+    // different hashes measured different command lines, whatever else matches.
+    InvocationHash string
+
+    // The three domains an independence constraint is evaluated against: who
+    // runs the inference, who controls the endpoint, and who the result is
+    // independent OF. Distinct because they can differ — a self-hosted model
+    // behind a vendor's control plane shares one domain and not the others.
+    InferenceDomain    string
+    ControlDomain      string
+    IndependenceDomain string
+
+    ModelDigest      string
+    CapabilitiesJSON string
+    EvidenceJSON     string
+}
+```
+
 <a name="RecordSpendOpts"></a>
 ## type [RecordSpendOpts](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/spend.go#L9-L18>)
 
@@ -1106,6 +1188,15 @@ func (s *Store) EventsAfter(ctx context.Context, projectID string, afterID int64
 
 EventsAfter returns a project's events with id strictly greater than afterID, in ascending id order, capped at limit. It is the tail query backing the Attach event stream: a client resumes from its last\-seen id and each call returns the next contiguous batch. Ascending order is deliberate — events are delivered oldest\-first so a live view applies them in the order they occurred \(the opposite of ListProjectEvents, which is newest\-first for a backlog snapshot\). Pass afterID=0 to start from the beginning. Scoping includes plan\-linked events \(see eventProjectScope\).
 
+<a name="Store.GetCalibrationByAlias"></a>
+### func \(\*Store\) [GetCalibrationByAlias](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/calibrations.go#L144>)
+
+```go
+func (s *Store) GetCalibrationByAlias(ctx context.Context, alias string) (ProviderCalibration, error)
+```
+
+GetCalibrationByAlias returns the measurement recorded for alias, or ErrCalibrationNotFound.
+
 <a name="Store.GetPlan"></a>
 ### func \(\*Store\) [GetPlan](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/plans.go#L94>)
 
@@ -1168,6 +1259,15 @@ func (s *Store) HeartbeatWorkerAndSession(ctx context.Context, workerID string) 
 ```
 
 HeartbeatWorkerAndSession refreshes both a worker row AND its owning session row in one call. A worker's session \(spawnWorkerRows\) is not heartbeated by anything else — only the supervisor's own session is \(HeartbeatSession\) — so without this a live worker's session goes stale and the reaper's step\-2 session delete would CASCADE\-delete the still\-running worker, NULLing its task's claim and letting branch \(b\) re\-dispatch a live task \(double execution\). Beating both keeps the session as fresh as the worker for the reaper's staleness math. The two UPDATEs share one tx so a mid\-call failure never leaves the pair inconsistent.
+
+<a name="Store.ListCalibrationAttempts"></a>
+### func \(\*Store\) [ListCalibrationAttempts](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/calibrations.go#L221>)
+
+```go
+func (s *Store) ListCalibrationAttempts(ctx context.Context, planID, taskID string) ([]CalibrationAttempt, error)
+```
+
+ListCalibrationAttempts returns one task's attempts in RUN ORDER, so a caller comparing outputs walks them the way they happened rather than however the storage engine returns them.
 
 <a name="Store.ListMessages"></a>
 ### func \(\*Store\) [ListMessages](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/a2a.go#L50>)
@@ -1403,6 +1503,28 @@ func (s *Store) ReclaimWorker(ctx context.Context, workerID string) (found bool,
 ```
 
 ReclaimWorker forcibly reclaims a worker's in\-flight task and marks the worker terminated — the store side of an operator/GUI "kill this worker" action. It mirrors the reaper's reclaim: the worker's running task \(if any\) goes back to 'pending' with its claim cleared \(so it re\-dispatches\), and the worker row is marked terminated. found=false \(no error\) when workerID is unknown, so a kill of an already\-gone worker is a benign no\-op the caller can surface as CodeNotFound. The actual subprocess is killed by the orchestrator/provider layer that owns the pty; this only does the store\-side bookkeeping.
+
+<a name="Store.RecordCalibration"></a>
+### func \(\*Store\) [RecordCalibration](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/calibrations.go#L102>)
+
+```go
+func (s *Store) RecordCalibration(ctx context.Context, c ProviderCalibration) (ProviderCalibration, error)
+```
+
+RecordCalibration stores a measurement, returning it with its content address filled in.
+
+Recording the same measurement twice is a no\-op that returns the same id. Recording a DIFFERENT measurement under an alias that already has one fails with ErrCalibrationConflict rather than overwriting — an upgraded binary or a changed invocation is a new fact, and quietly replacing the old one would change what every already\-bound task is documented to have run on.
+
+<a name="Store.RecordCalibrationAttempt"></a>
+### func \(\*Store\) [RecordCalibrationAttempt](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/calibrations.go#L195>)
+
+```go
+func (s *Store) RecordCalibrationAttempt(ctx context.Context, a CalibrationAttempt) error
+```
+
+RecordCalibrationAttempt stores one repetition.
+
+The primary key covers \(plan, task, attempt, repetition\), so a double\-record fails rather than silently double\-counting one result when runs are compared for agreement.
 
 <a name="Store.RecordSpend"></a>
 ### func \(\*Store\) [RecordSpend](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/spend.go#L24>)
