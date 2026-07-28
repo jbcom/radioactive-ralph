@@ -124,6 +124,20 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
       self-inflicted.
       DO NOT push .agent-state incrementally. Batch state edits and push once per
       unit of real work.
+      MEASURED CONSEQUENCE 2026-07-28: my 8 state pushes created 8 PARALLEL CI
+      matrices on one branch, together holding 68 queued jobs, each with exactly
+      4 outstanding -- the four macOS jobs. Nine code PRs waited behind my
+      bookkeeping. Confirmed causally, not just correlationally: within one pass
+      of stopping, every PR's outstanding-check count fell sharply (#262 7->3,
+      #259 16->3, #251 29->4, #255 22->4).
+      Cancelling those runs is NOT the remedy -- checked all 7 superseded ones
+      and every single one had started jobs, so cancelling would discard 2-17
+      completed jobs apiece and force a full re-run. Add nothing, cancel nothing,
+      let them drain.
+      #252 IS THE PREVENTION and is therefore the highest-priority PR: its
+      concurrency group is per-PR-number with cancel-in-progress on
+      pull_request, so each push cancels its predecessor AT PUSH TIME, before
+      jobs start. My 8 matrices would have been 1.
       The structural fix already EXISTS as #252 (concurrency group +
       cancel-in-progress on pull_request), whose title names this exact problem.
       It cancels at PUSH time, before jobs start, which is why it is correct
