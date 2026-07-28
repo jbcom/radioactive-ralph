@@ -13,6 +13,18 @@ shipped. That means historical sections may still mention MCP, plugins,
 supervisors, or the archived Python implementation even though those are no
 longer part of the live contract.
 
+## [0.31.0](https://github.com/jbcom/radioactive-ralph/compare/v0.30.0...v0.31.0) (2026-07-28)
+
+
+### Features
+
+* **provider:** resolve and report the actual invocation ([#234](https://github.com/jbcom/radioactive-ralph/issues/234)) ([7f0b481](https://github.com/jbcom/radioactive-ralph/commit/7f0b481ae9eb2aa0b884d60153a48fc929d378d8))
+
+
+### Bug Fixes
+
+* **ipc:** retire the accept loop before closing the listener ([#224](https://github.com/jbcom/radioactive-ralph/issues/224)) ([c79c620](https://github.com/jbcom/radioactive-ralph/commit/c79c6201ea07c0e25e143e27f565f63b9efdf64a))
+
 ## [0.30.0](https://github.com/jbcom/radioactive-ralph/compare/v0.29.1...v0.30.0) (2026-07-28)
 
 
