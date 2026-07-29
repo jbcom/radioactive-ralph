@@ -188,6 +188,27 @@ threshold derived from a quiet machine would have predicted it.
 Remove the silence when a seam exists, raise the lease when it does not.
 Reaching for the lease first is how a real hang gets a longer rope.
 
+**Nobody chose the width.** Dispatch concurrency is `RALPH_MAX_PARALLEL`, and
+when it is unset the supervisor is *unbounded* — `supervisorMaxParallel` returns
+0 and the semaphore is nil. That is the state a self-test runs in by default, so
+the six-way contention starving the `race` step is not a considered setting; it
+is however many steps happen to be ready at once.
+
+That reframes the fix. The step is not competing with a tuned parallelism budget,
+it is competing with everything. Before raising `stall_timeout`, try capping the
+width:
+
+```bash
+RALPH_MAX_PARALLEL=4 radioactive_ralph --supervisor
+```
+
+The guide does not name an optimum, because there isn't one to name: the right
+value depends on the machine and on what the plan's steps do. The comment on
+`supervisorMaxParallel` is explicit that neither mode is adaptive or recommended.
+What matters is that the number becomes a *decision* rather than an accident —
+an unbounded default makes every step's timing depend on how many siblings its
+dependency graph happens to unblock.
+
 Only that ONE step is anywhere near the lease, which is worth knowing before
 changing anything globally. Every other step was measured: the unit suites and
 both `golangci-lint` runs finish in 2-13s, and `-race` over the same store
