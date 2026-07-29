@@ -526,10 +526,17 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
 
 ## Rolling improvement queue (directive 0 appends here)
 
-- [ ] [WAIT] Land the 1 open PR: #319 (store.DeletePlan -- the retention
-      primitive, with the CLI surface deliberately scoped out). Auto-merge
-      ARMED, no failing checks. Hash-prefixed deliberately: guard 9 extracts
-      `#[0-9]{3}` from THIS line.
+- [ ] [WAIT] Land the 1 open PR: #320 (absence assertions must prove presence
+      first -- audit + rule, from the vacuous fixture the #319 review exposed).
+      Auto-merge ARMED, no failing checks. Hash-prefixed deliberately: guard 9
+      extracts `#[0-9]{3}` from THIS line.
+
+- [x] #319 MERGED. store.DeletePlan, and a review caught that it left EVENTS
+      behind -- that table carries plan_id with no FK, so the cascade missed
+      the row class that actually grows (2 before, 2 after). My test could not
+      have caught it: the fixture never ran a task, so the plan had no events
+      and the assertion would have passed vacuously. Both fixed; the fixture
+      now asserts a non-zero pre-delete count so the check cannot go hollow.
 
 - [x] DONE 2026-07-29: store.DeletePlan -- the retention primitive the
       accumulation analysis said was eventually required. Verified before

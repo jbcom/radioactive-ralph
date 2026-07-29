@@ -188,6 +188,15 @@ produces running workers, fan-out partitions, and real provenance at once.
 - **Prove a fix by reverting it.** A test that passes after a change may have
   passed before it. Re-apply the defect and confirm the named test fails for
   the stated reason; if it does not, the test is not testing the fix.
+- **An absence assertion must first prove presence.** `count == 0` after a
+  delete passes identically whether the cleanup worked or the fixture never
+  created the row. That is not hypothetical: a DeletePlan test asserted no
+  orphaned `events` remained, its fixture never ran a task, and the plan
+  therefore had no events -- so the assertion passed while the delete really
+  did leave every event row behind (2 before, 2 after, caught in review).
+  Assert the pre-state is non-zero and FAIL if it is not, so the check cannot
+  go hollow when a fixture changes. Same rule as "a check that finds nothing
+  must fail", applied to the setup rather than the check.
 - **Docs claims need the same proof as code claims — EACH of them.** A guide
   written this session asserted four mechanisms that do not exist: that a
   contained turn sets HOME/TMPDIR under the containment root (nothing in
