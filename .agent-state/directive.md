@@ -884,8 +884,17 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
       projection (which rebuilds from the CATEGORY alone), and the
       clarification kind was UNREACHABLE because no detector pattern matched an
       open question. Correct code, no effect.
-      Verify by reverting: a real block must show a kind-specific category on a
-      dispatched run, not just in a projection test.
+      VERIFIED END TO END on a dispatched run (142624), before merge:
+        unit-provider    failed    via=codex — interactive_prompt_permission
+      So the whole path works -- detector, classifier, category, projection,
+      and the CLI row an operator reads.
+      AND IT ANSWERS THE QUESTION THIS THREAD HAS BEEN CIRCLING: these blocks
+      are PERMISSION requests. The fix is a write-path or binding grant, not a
+      keystroke and not a plan change. Every earlier guess (timeout, retry
+      budget, stale cache, contention) was looking at the wrong layer.
+      NEXT: find which write the provider is being denied. The containment
+      write paths are per-binding and static (BindingWritePaths), so the
+      candidate is a path codex needs that the binding does not grant.
 
 - [ ] [WAIT] unit-orch is INTERMITTENT and currently PASSING, so there is
       nothing to act on until it fails again. Not closed: an intermittent bug
