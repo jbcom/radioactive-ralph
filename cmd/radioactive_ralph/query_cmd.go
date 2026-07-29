@@ -314,14 +314,21 @@ func writeTaskLines(out io.Writer, page observe.TaskPage, events observe.EventPa
 		// "failed". The snapshot already carries the closed FailureSummary and
 		// the TUI has rendered it all along; without this the CLI human path
 		// stayed strictly less informative than its own --json.
-		if reason := reasons[taskKey(task.PlanID, task.ID)]; reason != "" {
-			line += " — " + reason
-		} else if task.FailureCategory != "" {
-			// Fallback for the evicted case: the event page is bounded, so a
-			// long-terminal task loses its event while the durable category on
-			// the task row survives. Less prose than the event summary, but it
-			// still answers "why" rather than leaving a bare "failed".
-			line += " — " + task.FailureCategory
+		// Gated on STATUS, which is the authority on what the task IS; an event
+		// only explains a failure status already reports. Newest-wins alone was
+		// not enough: it clears a stale reason only when a NEWER EVENT exists,
+		// and a task requeued and re-claimed may have none in the page yet, so
+		// its last attempt's failure would render on a row reading "running".
+		if task.Status == "failed" {
+			if reason := reasons[taskKey(task.PlanID, task.ID)]; reason != "" {
+				line += " — " + reason
+			} else if task.FailureCategory != "" {
+				// Fallback for the evicted case: the event page is bounded, so a
+				// long-terminal task loses its event while the durable category
+				// on the task row survives. Terser than the event summary, but
+				// it still answers "why" rather than leaving a bare "failed".
+				line += " — " + task.FailureCategory
+			}
 		}
 		// The status column is padded so the marker columns align, which leaves
 		// trailing spaces on any row whose markers are all absent -- an unrun

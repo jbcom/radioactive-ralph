@@ -667,3 +667,38 @@ func TestFailureReasonSurvivesEventEviction(t *testing.T) {
 			"\"failed\"; the durable category is what survives eviction:\n%s", got)
 	}
 }
+
+// TestFailureReasonOnlyOnFailedTasks pins the gate a review found after the
+// newest-wins fix. Newest-wins clears a stale reason only when a NEWER EVENT
+// exists; a task that was requeued and re-claimed may have no newer event in
+// the page yet, so its last attempt's failure would render on a row that now
+// reads "running" -- a misleading current state.
+//
+// Status is the authority on what the task IS; the event only explains a
+// failure that status already reports.
+func TestFailureReasonOnlyOnFailedTasks(t *testing.T) {
+	reply := querySnapshotFixture(1)
+	reply.EventCursor = 10
+	reply.Tasks = observe.TaskPage{Items: []observe.Task{
+		{PlanID: "plan-1", ID: "build", Status: "running"},
+	}}
+	reply.RecentEvents = observe.EventPage{Items: []observe.Event{{
+		ID: 10, PlanID: "plan-1", TaskID: "build", Kind: "task.failed",
+		Failure: &observe.FailureSummary{
+			Category: observe.FailureTaskAttempt,
+			Summary:  "task attempt failed and was requeued", Retryable: true,
+		},
+	}}}
+
+	var out bytes.Buffer
+	if err := runStatusQueryWith(
+		context.Background(), &out, &fakeObserveClient{snapshot: reply},
+		ipc.ObserveSnapshotArgs{ProjectID: "project-1"}, false, false,
+	); err != nil {
+		t.Fatalf("runStatusQueryWith: %v", err)
+	}
+	if got := out.String(); strings.Contains(got, "task attempt failed") {
+		t.Errorf("a RUNNING task rendered its previous attempt's failure; the "+
+			"row describes current state, not history:\n%s", got)
+	}
+}

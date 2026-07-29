@@ -83,7 +83,7 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
       session). Re-check with scripts/verify-repo-claims.sh before asserting.
       (225, 274, 272 and 275 already landed this pass.)
       All review threads resolved; each fix carries its own negative proof.
-        * #272 differentFrom enforcement -- MERGED. FIVE review findings, all real:
+        - #272 differentFrom enforcement -- MERGED. FIVE review findings, all real:
           native fan-out bypassed the check entirely (coalesced groups return
           before the per-step loop, so the reviewer WAS the author), rotation
           overrode `providers`, a padded peer ID passed import then never
@@ -93,15 +93,15 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
           chosen before any member is examined, so NO per-step restriction can
           be honoured by a coalesced turn -- because the field-by-field framing
           is exactly what let the `providers` twin slip.
-        * #275 PTY cleanup budget (#273 family) -- MERGED. Product bug: the budget was
+        - #275 PTY cleanup budget (#273 family) -- MERGED. Product bug: the budget was
           attempts*interval, but each pass walks the whole process table, so
           under load 100 attempts elapse well before 500ms and abort a
           CONVERGING cleanup. Now a 2s wall-clock deadline. The debugger's
           third fix was DROPPED -- it could not be independently proven.
-        * #277 live contained turn -- MERGED. Its TestMain also answers the
+        - #277 live contained turn -- MERGED. Its TestMain also answers the
           Linux containment-helper re-exec, without which the contained turn
           could never start and would have read as a PRODUCT failure.
-        * #278 claude API-failure categorization -- MERGED. Its first version
+        - #278 claude API-failure categorization -- MERGED. Its first version
           fixed the diagnosis and BROKE the retry policy: mapping an unstatused
           api_error to ErrClaudeServiceUnavailable made a terminal auth failure
           retryable, when the generic sentinel was already correctly terminal.
@@ -117,12 +117,12 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
       declared and wired through to the kernel policy; #293/#294 the docs.
       THREE wrong turns of mine are worth keeping, since each has a general
       shape:
-        * I declared "no policy widening exists" after ONE bisection step. A
+        - I declared "no policy widening exists" after ONE bisection step. A
           negative needs more evidence than a positive.
-        * Codex had TWO distinct failures (app-server startup, then the result
+        - Codex had TWO distinct failures (app-server startup, then the result
           file) and I fixed only the second, saw no change, and concluded the
           path was irrelevant. Each fix alone leaves the other standing.
-        * I shipped it darwin-only; Linux CI caught that ExtraWritable never
+        - I shipped it darwin-only; Linux CI caught that ExtraWritable never
           reached Landlock. A platform-specific implementation needs a
           platform-specific check.
 
@@ -217,20 +217,20 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
            matrix on a tree the queue had just tested.
 
       QUEUE MECHANICS worth knowing:
-      * `gh pr merge --auto` DOES enqueue; "The merge strategy for main is set
+      - `gh pr merge --auto` DOES enqueue; "The merge strategy for main is set
         by the merge queue" is INFORMATIONAL, not an error. `--delete-branch` is
         rejected -- the queue owns deletion.
-      * Query entries with entries(first:N){totalCount ...} and trust
+      - Query entries with entries(first:N){totalCount ...} and trust
         totalCount; the nodes list can come back empty while entries exist.
-      * A queue entry reading UNMERGEABLE while the PR reads CLEAN means it
+      - A queue entry reading UNMERGEABLE while the PR reads CLEAN means it
         conflicts with the BATCH ahead of it -- the queue doing its job.
-      * ALLGREEN dissolves the whole batch when one entry fails, ejecting
+      - ALLGREEN dissolves the whole batch when one entry fails, ejecting
         PASSING entries too. They are re-added automatically. Measured 1
         dissolution against 4 successes -- not worth reconfiguring.
-      * Each queue branch carries ~23 check-runs. A snapshot showing required
+      - Each queue branch carries ~23 check-runs. A snapshot showing required
         checks "missing" usually means NOT YET COMPLETE. Watch completed-vs-
         running across two samples before calling it a stall.
-      * A FAILING check on the PR BRANCH can be STALE once the PR is queued.
+      - A FAILING check on the PR BRANCH can be STALE once the PR is queued.
         The queue tests base+PR, so a fix that landed on main after the PR's
         last push IS present in the queue branch even though the PR branch
         lacks it. #252 showed Package GUI failing while its queue branch
@@ -280,10 +280,10 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
             Original scoping follows. #236
             (9c04550) shipped the STORAGE for both halves, and I briefly marked
             this ungated on that alone. Checking the write paths corrected it:
-              * store.Calibration.IndependenceDomain exists
+              - store.Calibration.IndependenceDomain exists
                 (internal/store/calibrations.go:58), but NO production code
                 records a calibration — only tests do.
-              * store.TaskMetadata.AssignedIndependenceDomain exists
+              - store.TaskMetadata.AssignedIndependenceDomain exists
                 (task_metadata.go:35) and RecordTaskExecution writes it
                 (task_metadata.go:224), but that function has ZERO production
                 callers — again only tests.
@@ -381,13 +381,13 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
             TUI/GUI, so an operator can see that several running tasks are ONE
             fan-out turn rather than that many independent dispatches.
             Two decisions worth keeping:
-              * OPAQUE, not the real identity. A partition is (group path,
+              - OPAQUE, not the real identity. A partition is (group path,
                 declared binding key) and the binding key re-encodes the
                 AUTHOR's binding fields, so projecting it would carry
                 plan-written text across the boundary that withholds
                 descriptions. The ordinal answers "same partition?" and
                 deliberately not "pinned to what?".
-              * DERIVED THROUGH THE SAME FUNCTION dispatch groups by, never
+              - DERIVED THROUGH THE SAME FUNCTION dispatch groups by, never
                 recomputed in the snapshot SQL. A second implementation is a
                 second DEFINITION of a partition; they diverge the first time
                 either changes, and the operator reads a grouping that no
@@ -397,9 +397,9 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
             row buries the fan-out groups.
             Original gating record for BOTH halves follows -- verified by
             grepping, as this item insists:
-              * `func (s *Store) ReadyPartitions` IS on main (#225, refined by
+              - `func (s *Store) ReadyPartitions` IS on main (#225, refined by
                 #282 to split on the declared binding).
-              * `recordExecutionProvenance` IS on main (#262), 6 call sites.
+              - `recordExecutionProvenance` IS on main (#262), 6 call sites.
             As of 2026-07-28 NEITHER was projected over the observe surface:
             grepping internal/observe/snapshot.go for ReadyPartition,
             AssignedIndependenceDomain, and assigned_alias returned ZERO. So
@@ -409,9 +409,9 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
             store -> observe -> TUI/GUI.
             Prior gating notes follow. RE-VERIFIED 2026-07-28 after #236 merged
             (9c04550) — the gate was then HALF open:
-              * per-task provenance: UNBLOCKED. internal/store/calibrations.go
+              - per-task provenance: UNBLOCKED. internal/store/calibrations.go
                 is on main, so the types exist to project.
-              * ready partitions: still gated. `func (s *Store) ReadyPartitions`
+              - ready partitions: still gated. `func (s *Store) ReadyPartitions`
                 is NOT on main; it ships with #225, which is open. RE-CHECKED
                 after #258 merged (c94ca79): the observe blocked surface IS on
                 main now, but that is the operator half, not this one.
@@ -551,10 +551,10 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
       surface at all, so it stays strictly less useful than its own --json.
       TWO CORRECTIONS I made while diagnosing this, both worth keeping because
       each nearly became a wrong fix:
-        * I first concluded observe.FailureCategory was "declared and never
+        - I first concluded observe.FailureCategory was "declared and never
           wired". WRONG -- internal/a2a and internal/provider both use it, and
           observe.Event carries `Failure *FailureSummary`.
-        * I then concluded failureForEvent did not handle
+        - I then concluded failureForEvent did not handle
           `task.failed_terminal`. ALSO WRONG -- it does; I had read only the
           first case of the switch.
       The data is fully populated end to end. Verified in the live snapshot:
@@ -641,9 +641,9 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
       Authored .radioactive-ralph/plans/observe-surface-followups.md, imported
       it, ran a real supervisor, and read Ralph's own state through the CLI
       table built this session. Two things came out of it:
-        * the importer REJECTED my first draft with a precise message
+        - the importer REJECTED my first draft with a precise message
           (narrative paragraph before the list) -- the validator working.
-        * `status` showed `build` sharing a partition marker with the three
+        - `status` showed `build` sharing a partition marker with the three
           tasks declaring after:[build]. Real bug in MY projection: the ordinal
           was computed for every task with no readiness filter, so it
           advertised a grouping dispatch would never perform. Fixed in #306.
@@ -673,11 +673,11 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
 - [x] DONE 2026-07-28: UI/UX pass on the meso views. The suspicion was right --
       every flaw was invisible to a green suite and obvious in the rendered
       output. Both questions it posed had a defect behind them:
-        * TUI width: the worst-case row was 215 columns and wrapped
+        - TUI width: the worst-case row was 215 columns and wrapped
           mid-sentence. Now ~104 (block reason on a continuation line, worker
           id abbreviated to its distinguishing TAIL -- a first pass truncated
           the head and made every row read "worker-…").
-        * GUI clipping: Codex caught it before I did. The remediation was an
+        - GUI clipping: Codex caught it before I did. The remediation was an
           HBox cell under a VERTICAL-only scroll, so it clipped at the window
           edge with no way to reach it. Now its own wrapping row.
       Dumping the GUI widget tree then found a THIRD thing neither question
@@ -691,12 +691,12 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
 - [x] GENERATED 2026-07-28 by forward-exploring the observe surface just
       shipped (#304); both findings resolved in that PR. Verified against the code before writing down, not
       inferred:
-      * The full consumer chain WAS checked and is sound: IPC uses type
+      - The full consumer chain WAS checked and is sound: IPC uses type
         ALIASES (`type ObserveSnapshotReply = observe.Snapshot`,
         internal/ipc/protocol.go:315), so no field can be dropped there, and
         `query --json` serializes the whole snapshot. No work needed -- recorded
         so the next pass does not re-derive it.
-      * REAL GAP: the human-readable `query` output is a single summary line
+      - REAL GAP: the human-readable `query` output is a single summary line
         (project/plans/tasks/active_workers/captured_at, query_cmd.go:146). It
         never lists tasks at all, so an operator without `--json` cannot see
         status, provenance, or partitions -- the TUI and GUI are the only way to
