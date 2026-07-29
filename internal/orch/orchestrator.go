@@ -321,6 +321,29 @@ const defaultTurnRetries = 3
 // errors are ignored — a missed beat is self-correcting on the next tick, and a
 // heartbeat failure must never fail the turn.
 func (o *Orchestrator) runWithHeartbeat(hbCtx context.Context, workerID string, fn func() (provider.Result, error)) (provider.Result, error) {
+	var out provider.Result
+	err := o.beatWhile(hbCtx, workerID, func() error {
+		var runErr error
+		out, runErr = fn()
+		return runErr
+	})
+	return out, err
+}
+
+// beatWhile keeps workerID's heartbeat alive for the duration of fn.
+//
+// Extracted from runWithHeartbeat because ACCEPTANCE VERIFICATION needs the
+// same protection and did not have it. The heartbeat stopped the instant the
+// provider turn returned, while verification -- which re-runs the step's
+// acceptance command, potentially a multi-minute test suite -- ran afterwards
+// with nothing beating. The reaper then reclaimed at 90s and the owner-guarded
+// MarkDone became a benign no-op, so successful work was silently requeued.
+//
+// Giving verification a longer budget without this made that WORSE, not better:
+// a 10-minute verification window with a 90-second stale threshold guarantees
+// the reclaim it was meant to prevent. The budget and the heartbeat have to move
+// together.
+func (o *Orchestrator) beatWhile(hbCtx context.Context, workerID string, fn func() error) error {
 	interval := workerHeartbeatInterval
 	if o.heartbeatInterval > 0 {
 		interval = o.heartbeatInterval // test override
@@ -488,6 +511,12 @@ func (o *Orchestrator) effectiveVerificationBudget() time.Duration {
 // Primarily for tests, which cannot wait out the real one.
 func WithVerificationBudget(d time.Duration) Option {
 	return func(o *Orchestrator) { o.verifyBudget = d }
+}
+
+// WithHeartbeatInterval overrides how often a running worker's heartbeat is
+// refreshed. Primarily for tests, which cannot wait out the real 20s.
+func WithHeartbeatInterval(d time.Duration) Option {
+	return func(o *Orchestrator) { o.heartbeatInterval = d }
 }
 
 // WithPersistBudget overrides the post-run store-write budget. Primarily for
@@ -2471,9 +2500,24 @@ func (o *Orchestrator) runFanoutGroup(ctx context.Context, projectID, projectDir
 	// and keep going, then always release the worker.
 	var verifyErr error
 	for _, ds := range claimed {
+		// A FRESH budget per task, not one shared across the group.
+		//
+		// VerifyAndCompleteAs detaches its own acceptance check, but only AFTER
+		// its initial GetTask/projectDirFor reads -- which still run on the
+		// caller's context. Handing every task the same persistCtx meant one slow
+		// verification could exhaust it, and every remaining task in the group
+		// then failed at GetTask with "context deadline exceeded" before its
+		// verification even started, staying 'running' until the reaper.
+		//
+		// Sequential verification of N tasks is legitimately N times one task's
+		// work, so a budget sized for one cannot bound the loop.
+		taskCtx, cancelTask := context.WithTimeout(
+			context.WithoutCancel(ctx), o.effectivePersistBudget())
 		// Same reason as the per-step path: the reporting session, not whoever
 		// owns the task by the time verification runs.
-		if _, err := o.VerifyAndCompleteAs(persistCtx, planID, ds.task.ID, sessionID, ev); err != nil && verifyErr == nil {
+		_, err := o.VerifyAndCompleteAs(taskCtx, planID, ds.task.ID, sessionID, ev)
+		cancelTask()
+		if err != nil && verifyErr == nil {
 			verifyErr = fmt.Errorf("orch: verify and complete %s: %w", ds.task.ID, err)
 		}
 	}
