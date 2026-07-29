@@ -129,6 +129,24 @@ func (s *Supervisor) HandlePlanDelete(ctx context.Context, args ipc.PlanDeleteAr
 	if args.PlanID == "" {
 		return zero, &codedError{ipc.CodeInvalidArgs, "plan-delete: plan_id required"}
 	}
+	// Cancel any live worker on this plan FIRST, mirroring HandleWorkerKill and
+	// for the same reason: deleting the task rows does not stop the agent
+	// subprocess. Without this, a `plan delete` on an active plan leaves the
+	// provider running -- still spending tokens and still mutating the checkout
+	// -- until its turn deadline, with its post-run writes then failing against
+	// rows that no longer exist.
+	//
+	// Best-effort per worker: KillWorker returns false when no live run is
+	// registered under that id, which is fine. The delete proceeds either way,
+	// because refusing here would make an abandoned plan undeletable.
+	if running, err := s.store.ListRunningWorkers(ctx); err == nil {
+		for _, w := range running {
+			if w.PlanID == args.PlanID {
+				s.orch.KillWorker(w.ID)
+			}
+		}
+	}
+
 	if err := s.store.DeletePlan(ctx, args.PlanID); err != nil {
 		if isPlanNotFound(err) {
 			return zero, &codedError{ipc.CodeNotFound, err.Error()}

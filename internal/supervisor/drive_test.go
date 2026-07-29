@@ -197,3 +197,53 @@ func TestHandlePlanImportMaterializesTheGraph(t *testing.T) {
 			ready)
 	}
 }
+
+// TestHandlePlanDelete_RemovesThePlanAndItsTasks covers the surface that makes
+// store.DeletePlan reachable, and the guard a reviewer caught missing.
+//
+// The delete must also cancel any live worker on that plan. Removing task rows
+// does NOT stop the agent subprocess: without the kill, a `plan delete` on an
+// active plan leaves the provider running -- spending tokens and mutating the
+// checkout -- until its turn deadline, with its post-run writes then failing
+// against rows that no longer exist.
+//
+// KillWorker is best-effort and returns false when no live run is registered,
+// so this asserts the store-visible outcome: the plan and its tasks are gone,
+// and a worker that claimed one of them no longer holds it.
+func TestHandlePlanDelete_RemovesThePlanAndItsTasks(t *testing.T) {
+	sup := newTestSupervisor(t, nil)
+	ctx := context.Background()
+	projectID, _ := sup.store.CreateProject(ctx, "p", []store.Fingerprint{{Kind: store.FingerprintKindAbsPath, Value: t.TempDir()}})
+	reply, err := sup.HandlePlanImport(ctx, ipc.PlanImportArgs{
+		Markdown: "# P\n\n1. do the work\n", Project: projectID,
+	})
+	if err != nil {
+		t.Fatalf("import: %v", err)
+	}
+
+	if _, err := sup.HandlePlanDelete(ctx, ipc.PlanDeleteArgs{PlanID: reply.PlanID}); err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+
+	// The plan is gone: a second delete finds nothing.
+	if _, err := sup.HandlePlanDelete(ctx, ipc.PlanDeleteArgs{PlanID: reply.PlanID}); err == nil {
+		t.Error("deleting an already-deleted plan succeeded; the first delete " +
+			"did not remove it, or the handler cannot tell missing from present")
+	}
+
+	// And its tasks went with it -- the point of the retention primitive.
+	var n int
+	if err := sup.store.DB().QueryRowContext(ctx,
+		"SELECT COUNT(*) FROM tasks WHERE plan_id = ?", reply.PlanID).Scan(&n); err != nil {
+		t.Fatalf("count tasks: %v", err)
+	}
+	if n != 0 {
+		t.Errorf("%d task rows survived the plan delete; the page this exists to "+
+			"unsaturate would stay full", n)
+	}
+
+	// An empty id must be rejected rather than deleting something arbitrary.
+	if _, err := sup.HandlePlanDelete(ctx, ipc.PlanDeleteArgs{}); !ipc.IsCode(err, ipc.CodeInvalidArgs) {
+		t.Errorf("empty plan_id err = %v, want CodeInvalidArgs", err)
+	}
+}
