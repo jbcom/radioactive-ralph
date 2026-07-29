@@ -526,10 +526,33 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
 
 ## Rolling improvement queue (directive 0 appends here)
 
-- [ ] [WAIT] Land the 1 open PR: #311 (a real self-test -- scripts/self-test.sh
-      plus docs/plans/self-test.md, with acceptance markers the orchestrator
-      re-runs). Auto-merge ARMED. Hash-prefixed deliberately: guard 9 extracts
-      `#[0-9]{3}` from THIS line.
+- [ ] GENERATED 2026-07-29 by the self-test run itself: a step EDITED FOUR
+      TRACKED SOURCE FILES while trying to make its acceptance command pass.
+      internal/agent/echo_unix.go, pty_reader_unix.go,
+      orch/contained_open_unix.go, provider/result_open_unix.go all gained an
+      integer-conversion guard (a new maxUnixFileDescriptor const, gosec G115
+      shape). The changes were internally consistent and the tree BUILT -- this
+      is the agent doing its job, not a malfunction.
+      I reverted them: unreviewed edits to security-adjacent code that appeared
+      in my tree without my authorship are not something to adopt by accident,
+      however plausible.
+      CHECKED, and the finding does NOT reproduce: golangci-lint is clean on
+      all three packages. So the agent was speculating -- writing a plausible
+      guard for a lint error nobody reported -- rather than fixing a real
+      defect. Reverting was right for a second reason.
+      The item that remains is about the HARNESS, not the code: a self-test
+      step can edit tracked source, and nothing stops it or flags it. Options
+      worth weighing -- run the self-test against a git worktree copy so edits
+      cannot touch the working tree, or have scripts/self-test.sh snapshot
+      `git status` before and after and report any tracked file the run
+      changed. The second is cheaper and keeps the run honest; the first is
+      stronger. Either beats relying on whoever is committing to notice.
+
+- [x] #311, #312, #313 ALL MERGED. The self-test arc is complete:
+      scripts/self-test.sh + docs/plans/self-test.md, with acceptance markers
+      the orchestrator re-runs, unique slugs per run, exact-slug watching, and
+      CI tests asserting the plan parses, that every step is verifiable, and
+      that no step depends on a task nothing declares.
 
 - [x] DONE 2026-07-28: a REAL self-test. `scripts/self-test.sh` imports
       `docs/plans/self-test.md` and has Ralph verify Ralph. Two things had made
