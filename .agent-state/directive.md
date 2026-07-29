@@ -743,18 +743,25 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
       file says "a field is not shipped until each renderer shows it". Not
       repeating that two commits later.
 
-- [ ] The self-test's own concurrency is unbounded and undocumented. Now that
-      a reclaim NAMES the load, the obvious next question is what the right
-      load is -- and nothing anywhere says. The plan declares dependencies but
-      no width; the supervisor dispatches whatever is ready.
-      That is why `race` loses claims: not because 6 parallel steps is wrong
-      in general, but because nobody chose 6. Find the actual dispatch width
-      and decide whether the self-test should cap its own, then WRITE DOWN the
-      number and why.
-      Verify by reverting: with a cap, the race step should stop losing claims
-      on a dispatched run; without one, it keeps burning two. That is the same
-      end-to-end proof the -v fix failed to satisfy, so it is the only one
-      worth accepting here.
+- [ ] [WAIT-AGENT] Capped-width self-test RUNNING (monitor bq7tfrdz1), the
+      end-to-end proof the -v fix failed to deliver.
+      ANSWERED already: dispatch width is RALPH_MAX_PARALLEL, and unset means
+      UNBOUNDED -- supervisorMaxParallel returns 0, the semaphore is nil.
+      Verified directly (unset -> 0; "4" -> 4) and confirmed on the live
+      process: the supervisor that produced every reclaim this session was
+      running with no cap on a 16-core machine. So the contention starving
+      `race` was never a tuned budget it lost against; nobody chose 6.
+      Documented in the guide, with no recommended optimum -- there is none to
+      name, and supervisorMaxParallel's own comment says neither mode is
+      adaptive. The point is that the width becomes a DECISION.
+      NOW TESTING: supervisor restarted with RALPH_MAX_PARALLEL=4 (confirmed
+      in its startup log), tree clean so no uncommitted edits pollute the run
+      as they did last time. The claim under test is narrow and falsifiable:
+      race should reach done with reclaim_count=0, where it burned 2 on both
+      prior unbounded runs.
+      If it still reclaims, the contention theory is WRONG and the remaining
+      explanation is stall_timeout being too short for this step regardless of
+      load -- which is a different fix, so the outcome decides it either way.
 
 - [x] CONFIRMING SELF-TEST RUN validated the stale-cache diagnosis. The whole
       point of re-running: `lint-internal` had failed with interactive_prompt,
