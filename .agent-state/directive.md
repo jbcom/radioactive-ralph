@@ -526,6 +526,11 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
 
 ## Rolling improvement queue (directive 0 appends here)
 
+- [ ] [WAIT] Land the 1 open PR: #317 (docs/guides/self-test.md -- the harness
+      was documented nowhere a newcomer would look). Auto-merge ARMED, no
+      failing checks. Hash-prefixed deliberately: guard 9 extracts `#[0-9]{3}`
+      from THIS line.
+
 - [x] DONE 2026-07-29: the self-test was documented NOWHERE a newcomer would
       look -- not the README, not any guide, only the plan file and AGENTS.md,
       both of which you must already know about. A self-test nobody can find
