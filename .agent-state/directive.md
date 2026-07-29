@@ -526,10 +526,47 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
 
 ## Rolling improvement queue (directive 0 appends here)
 
-- [ ] [WAIT] Land the 1 open PR: #311 (a real self-test -- scripts/self-test.sh
-      plus docs/plans/self-test.md, with acceptance markers the orchestrator
-      re-runs). Auto-merge ARMED. Hash-prefixed deliberately: guard 9 extracts
-      `#[0-9]{3}` from THIS line.
+- [ ] [WAIT] Land the 1 open PR: #314 (self-test warns when a run edits tracked
+      source; content-hash comparison so an already-dirty file is not a blind
+      spot). Auto-merge ARMED, both review threads resolved, no failing checks.
+      Hash-prefixed deliberately: guard 9 extracts `#[0-9]{3}` from THIS line.
+
+- [x] DONE 2026-07-29 (#314): a step EDITED FOUR
+      TRACKED SOURCE FILES while trying to make its acceptance command pass.
+      internal/agent/echo_unix.go, internal/agent/pty_reader_unix.go,
+      internal/orch/contained_open_unix.go,
+      internal/provider/result_open_unix.go all gained an
+      integer-conversion guard (a new maxUnixFileDescriptor const, gosec G115
+      shape). The changes were internally consistent and the tree BUILT -- this
+      is the agent doing its job, not a malfunction.
+      I reverted them: unreviewed edits to security-adjacent code that appeared
+      in my tree without my authorship are not something to adopt by accident,
+      however plausible.
+      CHECKED, and the finding does NOT reproduce: golangci-lint is clean on
+      all three packages. So the agent was speculating -- writing a plausible
+      guard for a lint error nobody reported -- rather than fixing a real
+      defect. Reverting was right for a second reason.
+      HARNESS FIXED 2026-07-29: scripts/self-test.sh now snapshots tracked
+      state before the run and reports any tracked file the run changed, naming
+      each one. Chose the snapshot over worktree isolation because it keeps the
+      run testing the REAL checkout -- isolation would verify a copy, which is
+      a different claim -- and the warning is what a reader needs either way.
+      THREE bugs while building it, each found by testing rather than reading:
+      the guard referenced $REPO_ROOT, a variable this script never defines
+      (borrowed from verify-repo-claims.sh), so it would have crashed on every
+      run; my first isolation test captured the before-state AFTER staging,
+      producing a silent pass that looked like a broken guard; and a review
+      caught that comparing `git status` output is blind when a path is ALREADY
+      dirty -- " M path" before and after while the content changed underneath.
+      Reproduced, then fixed by hashing `git diff` content instead of status
+      flags. A guard that misses the concurrent-edit case is decorative,
+      because that is the only case it exists for.
+
+- [x] #311, #312, #313 ALL MERGED. The self-test arc is complete:
+      scripts/self-test.sh + docs/plans/self-test.md, with acceptance markers
+      the orchestrator re-runs, unique slugs per run, exact-slug watching, and
+      CI tests asserting the plan parses, that every step is verifiable, and
+      that no step depends on a task nothing declares.
 
 - [x] DONE 2026-07-28: a REAL self-test. `scripts/self-test.sh` imports
       `docs/plans/self-test.md` and has Ralph verify Ralph. Two things had made
