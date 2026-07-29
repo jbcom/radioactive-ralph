@@ -64,7 +64,27 @@ jobs:
       - name: Install Claude Code CLI
         run: npm install -g @anthropic-ai/claude-code@2.1.220
       - name: go mod download
-        run: go mod download
+        # Retry: a transient proxy.golang.org / sum.golang.org failure is not a
+        # build failure. Both were observed on the same afternoon, on PRs that
+        # changed only a test fake and only a markdown file:
+        #   read "https://proxy.golang.org/...zip": stream error; INTERNAL_ERROR
+        #   verifying module: reading https://sum.golang.org/tile/...: stream error
+        # A bare `go mod download` turns either into a red check on a diff that
+        # cannot have caused it. Bounded at 3 attempts so a REAL resolution
+        # failure (a bad go.mod, a deleted module) still fails, just later.
+        # shell: bash is REQUIRED, not stylistic. The test matrix includes a
+        # windows-latest leg, where GitHub defaults to pwsh -- which cannot
+        # parse a POSIX `for ...; do` loop, so the required Windows check
+        # would fail before running a single test. Set on all four for
+        # consistency; bash is present on every GitHub-hosted runner.
+        shell: bash
+        run: |
+          for attempt in 1 2 3; do
+            if go mod download; then exit 0; fi
+            echo "go mod download failed (attempt $attempt/3)" >&2
+            [ "$attempt" -eq 3 ] && exit 1
+            sleep $((attempt * 10))
+          done
       - name: go test (Unix)
         if: runner.os != 'Windows'
         # -timeout explicitly, NOT the 10-minute default. Under -race the
@@ -333,7 +353,27 @@ jobs:
           go-version-file: go.mod
           cache: true
       - name: go mod download
-        run: go mod download
+        # Retry: a transient proxy.golang.org / sum.golang.org failure is not a
+        # build failure. Both were observed on the same afternoon, on PRs that
+        # changed only a test fake and only a markdown file:
+        #   read "https://proxy.golang.org/...zip": stream error; INTERNAL_ERROR
+        #   verifying module: reading https://sum.golang.org/tile/...: stream error
+        # A bare `go mod download` turns either into a red check on a diff that
+        # cannot have caused it. Bounded at 3 attempts so a REAL resolution
+        # failure (a bad go.mod, a deleted module) still fails, just later.
+        # shell: bash is REQUIRED, not stylistic. The test matrix includes a
+        # windows-latest leg, where GitHub defaults to pwsh -- which cannot
+        # parse a POSIX `for ...; do` loop, so the required Windows check
+        # would fail before running a single test. Set on all four for
+        # consistency; bash is present on every GitHub-hosted runner.
+        shell: bash
+        run: |
+          for attempt in 1 2 3; do
+            if go mod download; then exit 0; fi
+            echo "go mod download failed (attempt $attempt/3)" >&2
+            [ "$attempt" -eq 3 ] && exit 1
+            sleep $((attempt * 10))
+          done
       - name: Materialize the reference test-repo fixture
         run: |
           set -euo pipefail
@@ -388,7 +428,27 @@ jobs:
           sudo locale-gen en_US.UTF-8
           sudo update-locale
       - name: go mod download
-        run: go mod download
+        # Retry: a transient proxy.golang.org / sum.golang.org failure is not a
+        # build failure. Both were observed on the same afternoon, on PRs that
+        # changed only a test fake and only a markdown file:
+        #   read "https://proxy.golang.org/...zip": stream error; INTERNAL_ERROR
+        #   verifying module: reading https://sum.golang.org/tile/...: stream error
+        # A bare `go mod download` turns either into a red check on a diff that
+        # cannot have caused it. Bounded at 3 attempts so a REAL resolution
+        # failure (a bad go.mod, a deleted module) still fails, just later.
+        # shell: bash is REQUIRED, not stylistic. The test matrix includes a
+        # windows-latest leg, where GitHub defaults to pwsh -- which cannot
+        # parse a POSIX `for ...; do` loop, so the required Windows check
+        # would fail before running a single test. Set on all four for
+        # consistency; bash is present on every GitHub-hosted runner.
+        shell: bash
+        run: |
+          for attempt in 1 2 3; do
+            if go mod download; then exit 0; fi
+            echo "go mod download failed (attempt $attempt/3)" >&2
+            [ "$attempt" -eq 3 ] && exit 1
+            sleep $((attempt * 10))
+          done
       - name: Build GUI-enabled binary
         env:
           CGO_ENABLED: '1'
@@ -443,7 +503,27 @@ jobs:
           go-version-file: go.mod
           cache: true
       - name: go mod download
-        run: go mod download
+        # Retry: a transient proxy.golang.org / sum.golang.org failure is not a
+        # build failure. Both were observed on the same afternoon, on PRs that
+        # changed only a test fake and only a markdown file:
+        #   read "https://proxy.golang.org/...zip": stream error; INTERNAL_ERROR
+        #   verifying module: reading https://sum.golang.org/tile/...: stream error
+        # A bare `go mod download` turns either into a red check on a diff that
+        # cannot have caused it. Bounded at 3 attempts so a REAL resolution
+        # failure (a bad go.mod, a deleted module) still fails, just later.
+        # shell: bash is REQUIRED, not stylistic. The test matrix includes a
+        # windows-latest leg, where GitHub defaults to pwsh -- which cannot
+        # parse a POSIX `for ...; do` loop, so the required Windows check
+        # would fail before running a single test. Set on all four for
+        # consistency; bash is present on every GitHub-hosted runner.
+        shell: bash
+        run: |
+          for attempt in 1 2 3; do
+            if go mod download; then exit 0; fi
+            echo "go mod download failed (attempt $attempt/3)" >&2
+            [ "$attempt" -eq 3 ] && exit 1
+            sleep $((attempt * 10))
+          done
       - name: Cross-build module
         env:
           CGO_ENABLED: '0'
@@ -490,7 +570,18 @@ jobs:
         with:
           go-version-file: go.mod
       - name: Install actionlint
-        run: go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
+        # Retried for the same reason as `go mod download`: this RESOLVES
+        # MODULES over the network, so a transient proxy.golang.org failure
+        # fails the job. A Package GUI (windows-latest) run failed exactly
+        # here, inside `go install`, in a job with no download step to retry.
+        shell: bash
+        run: |
+          for attempt in 1 2 3; do
+            if go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12; then exit 0; fi
+            echo "go install actionlint failed (attempt $attempt/3)" >&2
+            [ "$attempt" -eq 3 ] && exit 1
+            sleep $((attempt * 10))
+          done
       - name: Lint workflows
         run: actionlint
 
@@ -519,7 +610,18 @@ jobs:
         with:
           python-version: '3.12'
       - name: Install gomarkdoc
-        run: go install github.com/princjef/gomarkdoc/cmd/gomarkdoc@v1.1.0
+        # Retried for the same reason as `go mod download`: this RESOLVES
+        # MODULES over the network, so a transient proxy.golang.org failure
+        # fails the job. A Package GUI (windows-latest) run failed exactly
+        # here, inside `go install`, in a job with no download step to retry.
+        shell: bash
+        run: |
+          for attempt in 1 2 3; do
+            if go install github.com/princjef/gomarkdoc/cmd/gomarkdoc@v1.1.0; then exit 0; fi
+            echo "go install gomarkdoc failed (attempt $attempt/3)" >&2
+            [ "$attempt" -eq 3 ] && exit 1
+            sleep $((attempt * 10))
+          done
       - name: Install tox
         run: python -m pip install --disable-pip-version-check "tox==4.53.0"
       - name: Build docs
@@ -593,7 +695,18 @@ jobs:
             libgl1-mesa-dev xorg-dev libxkbcommon-dev \
             libwayland-dev wayland-protocols
       - name: Install pinned Fyne CLI
-        run: go install fyne.io/tools/cmd/fyne@v1.7.2
+        # Retried for the same reason as `go mod download`: this RESOLVES
+        # MODULES over the network, so a transient proxy.golang.org failure
+        # fails the job. A Package GUI (windows-latest) run failed exactly
+        # here, inside `go install`, in a job with no download step to retry.
+        shell: bash
+        run: |
+          for attempt in 1 2 3; do
+            if go install fyne.io/tools/cmd/fyne@v1.7.2; then exit 0; fi
+            echo "go install fyne failed (attempt $attempt/3)" >&2
+            [ "$attempt" -eq 3 ] && exit 1
+            sleep $((attempt * 10))
+          done
       - name: Build and smoke exact native GUI package
         shell: bash
         run: |
