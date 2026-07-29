@@ -526,6 +526,25 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
 
 ## Rolling improvement queue (directive 0 appends here)
 
+- [x] DONE 2026-07-28: a REAL self-test. `scripts/self-test.sh` imports
+      `docs/plans/self-test.md` and has Ralph verify Ralph. Two things had made
+      every earlier dogfooding attempt useless, neither in the code under test:
+      - the plan lived in gitignored `.radioactive-ralph/plans/`, so a branch
+        switch deleted it. It is now a tracked SOURCE file in docs/plans/ --
+        which does NOT violate the clean-repos contract, because a plan file is
+        an input like a Makefile and the state it produces still goes to the
+        user-level DB.
+      - no step carried an `accept:` marker, so every task was judgment-only,
+        accepted on non-empty evidence and failed on empty. Nothing was ever
+        verified. Every step now carries a command the orchestrator RE-RUNS.
+      Running it for real then found two harness defects: broad sweeps
+      (./internal/... ./cmd/...) outlived the provider turn deadline while
+      single-package steps passed, and a re-import was refused on slug
+      conflict, making the script single-use. Both fixed.
+      The run is also the best exercise of the operator surface -- a live plan
+      is the only thing producing running workers, real provenance, and fan-out
+      partitions at once.
+
 - [x] DONE 2026-07-28: verify-repo-claims.sh attributed a FOREIGN repo's test
       failures to this one. VERIFY_TESTS=1 reported "fyne-lifecycle-ordering
       TESTS FAIL" and "all worktrees build+test NO" -- for a fork of upstream
@@ -538,10 +557,8 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
       the fork, and still fires on a real uncommitted file here. Scoped, not
       silenced, which is the distinction that matters when quieting a check.
 
-- [ ] [WAIT] Land the 1 open PR: #310 (flag a plan with no runnable work -- the
-      plan-level form of the stale claim, found by the FIFTH dogfooding pass).
-      Auto-merge ARMED. Hash-prefixed deliberately: guard 9 extracts
-      `#[0-9]{3}` from THIS line.
+- [x] #310 MERGED (flag a plan with no runnable work, plus the forward blocker
+      walk and the query-PLAN guard that replaced three failed timing bounds).
 
 - [x] DONE 2026-07-28 by a FIFTH dogfooding pass. With every task row now
       telling the truth, the remaining lie was one level up: BOTH of Ralph's
