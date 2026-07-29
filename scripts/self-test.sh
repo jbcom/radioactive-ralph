@@ -62,8 +62,16 @@ fi
 # The tracked plan is never modified: only the H1 title is rewritten, into a
 # temp copy. Old runs stay in the DB as history, and the operator surface marks
 # them "no runnable work" so a stale plan is visibly distinct from a live one.
-RUN_ID="$(date -u +%Y%m%d-%H%M%S)"
+# Second-resolution alone collides: two invocations in the same second derive
+# the same title, hence the same slug, and the store's per-project uniqueness
+# constraint rejects the second import. mktemp's token is the collision-
+# resistant part and costs nothing, since the temp file is created anyway.
 TMP_PLAN="$(mktemp -t ralph-self-test-XXXXXX).md"
+# LOWERCASED, because plan.Slug lowercases the title when deriving the slug.
+# mktemp's token is mixed case, so a mixed-case RUN_ID produced a RUN_SLUG that
+# could never equal the stored slug -- the exact-match watch would have silently
+# never fired, reintroducing the stale-run bug in a new disguise.
+RUN_ID="$(date -u +%Y%m%d-%H%M%S)-$(basename "$TMP_PLAN" .md | sed 's/^ralph-self-test-//' | tr '[:upper:]' '[:lower:]')"
 trap 'rm -f "$TMP_PLAN"' EXIT
 sed "1s|^# .*|# Prove the build is sound ($RUN_ID)|" "$PLAN" > "$TMP_PLAN"
 
@@ -87,9 +95,15 @@ fi
 # writePlanWarnings emits that line ONLY when the plan is dead, so a successful
 # run never matched and sat through every poll before reporting. Watching for
 # one outcome and calling it "terminal" is how a watcher hangs on success.
+missing=0
 for _ in $(seq 1 90); do
   sleep 20
-  snapshot=$("$BIN" status --json 2>/dev/null) || continue
+  # Raise the plan page well past the default 50. This script adds one plan per
+  # run, so a project that has self-tested 50 times would stop seeing the newest
+  # one -- a failure the script inflicts on itself, presenting as a silent
+  # timeout rather than an error. MaxOperatorPageLimit is 200; the loop also
+  # fails loudly below if the run is still not found.
+  snapshot=$("$BIN" status --json --plan-limit 200 2>/dev/null) || continue
   state=$(printf '%s' "$snapshot" | RUN_SLUG="prove-the-build-is-sound-$RUN_ID" python3 -c '
 import json,os,sys
 try:
@@ -106,7 +120,18 @@ for p in d.get("plans", {}).get("items", []):
         else:
             print(f"RUNNING {done}/{total}")
 ' 2>/dev/null)
-  [ -z "$state" ] && continue
+  if [ -z "$state" ]; then
+    # The run is not in the page at all. Silence here would look exactly like a
+    # slow run, so say so instead of polling on in the dark.
+    missing=$((missing + 1))
+    if [ "$missing" -ge 3 ]; then
+      echo "self-test: run $RUN_ID not found in the snapshot after $missing polls" >&2
+      echo "self-test: too many stored plans for one page? try pruning old runs" >&2
+      break
+    fi
+    continue
+  fi
+  missing=0
   echo "self-test: $state"
   case "$state" in
     COMPLETE*) echo "self-test: every step verified"; break ;;
