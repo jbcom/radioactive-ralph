@@ -867,6 +867,28 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
       real read of it. Do not mistake a green run for having verified the
       diagnostic.
 
+- [ ] [WAIT] Confirm the false-positive theory on a run built WITH PR 350.
+      Established so far:
+        - a real block classified interactive_prompt_PERMISSION (run 142624)
+        - codex is SupportsContainment:FALSE and gets
+          --dangerously-bypass-approvals-and-sandbox, so nothing denies it and
+          it should never ask for approval
+        - DefaultPromptPatterns matched a bare `(?i)permission`, which matches
+          "permission denied" -- error text. Tightened in PR 350.
+        - Ralph itself emits no "permission" text (checked internal/contain and
+          internal/provider/codex.go), and the acceptance command's output has
+          none when it passes -- so the trigger is in the PROVIDER TURN's own
+          output.
+      NOT established: the exact string codex prints. The chain is consistent
+      but I have not SEEN the line that matched, and this thread has already
+      produced four theories that fit the evidence and were wrong. Do not
+      record the false-positive theory as confirmed until a run with 350
+      either stops producing these blocks or produces one whose matched line
+      is captured.
+      That capture is now possible: the decision log records Ralph's
+      classification, and PR 350 changes what matches. A run on 350 where
+      unit-provider reaches done IS the confirmation.
+
 - [ ] [WAIT] unit-orch is INTERMITTENT and currently PASSING, so there is
       nothing to act on until it fails again. Not closed: an intermittent bug
       that stops reproducing is hidden, not fixed, and the decision log (wired
