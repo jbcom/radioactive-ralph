@@ -772,6 +772,26 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
       names RALPH_MAX_PARALLEL and says the unset default is UNBOUNDED. It was
       documented only in docs/design/, and an operator debugging a reclaimed
       task reads --help.
+      Two bot findings on 324 were FALSE POSITIVES (maxParallelEnv "undefined"
+      -- it is declared in the same package, go vet is clean, CI compiled it on
+      every platform). Countered rather than accepted: the suggested literal
+      would have made the test WEAKER, since referencing the constant is what
+      makes the assertion follow a rename. A reviewer analyzing a file in
+      isolation cannot see its package.
+
+- [x] GUI FLAKE FIXED (PR 325, un-hashed). Chasing a red check on the
+      release-please PR found a fixed 3-SECOND deadline for a headless GUI to
+      paint its first frame: failed on ubuntu-latest, passed 3/3 locally.
+      The release PR's diff is manifest + CHANGELOG only -- no Go code -- so it
+      could not have caused the failure it was blocking. Worth checking BEFORE
+      assuming a red check belongs to the PR it appears on.
+      Same defect this session keeps finding, now in a fourth place: a
+      threshold measuring the MACHINE rather than the code. Fixed all 39
+      positive waits, not just the failing one -- 38 siblings carried the
+      identical flaw waiting their turn. The two NEGATIVE assertions keep
+      their 50ms budgets, where the short timeout IS the assertion and raising
+      it would silently weaken the test into always passing.
+      Proven load-bearing by shrinking the constant to 1ns.
 
 - [x] CONFIRMING SELF-TEST RUN validated the stale-cache diagnosis. The whole
       point of re-running: `lint-internal` had failed with interactive_prompt,
