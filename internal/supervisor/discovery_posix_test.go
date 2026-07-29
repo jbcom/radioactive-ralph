@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"testing"
 	"time"
@@ -27,8 +28,8 @@ func TestAcquire_ReclaimsStaleSocketAfterCrash(t *testing.T) {
 	// PID file are left behind, but nothing is listening and the PID is
 	// dead.
 	socketPath, _, pidPath := endpointPaths(runtimeDir)
-	if err := os.MkdirAll(runtimeDir, 0o700); err != nil {
-		t.Fatalf("mkdir runtime dir: %v", err)
+	if err := os.MkdirAll(filepath.Dir(socketPath), 0o700); err != nil {
+		t.Fatalf("mkdir socket dir: %v", err)
 	}
 	if err := os.WriteFile(socketPath, nil, 0o600); err != nil {
 		t.Fatalf("write stale socket placeholder: %v", err)
@@ -85,7 +86,10 @@ func TestAcquire_LiveButUnresponsiveSupervisorNotClobbered(t *testing.T) {
 	// Materialize a socket-file placeholder that nothing is listening behind,
 	// so a dial will fail (mimicking a supervisor slow to accept). The live
 	// PID lock is still held, so shouldReclaim must be false.
-	socketPath, _, _ := endpointPaths(runtimeDir)
+	socketPath := live.SocketPath
+	if err := os.MkdirAll(filepath.Dir(socketPath), 0o700); err != nil {
+		t.Fatalf("mkdir socket dir: %v", err)
+	}
 	if err := os.WriteFile(socketPath, nil, 0o600); err != nil {
 		t.Fatalf("write unresponsive socket placeholder: %v", err)
 	}

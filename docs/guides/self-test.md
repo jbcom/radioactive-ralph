@@ -115,6 +115,22 @@ deadline fails for reasons unrelated to the code, and reads identically to a
 real failure. Broad sweeps (`go test ./internal/... ./cmd/...`) hit this;
 per-package steps do not.
 
+**A silent step is a stalled step.** Two independent bounds govern a turn, and
+the SHORTER one is the one that bites: the turn deadline (30m) is generous, but
+the progress lease (`DefaultStallTimeout`, 3m) is renewed by OUTPUT. A command
+that runs a long time while printing nothing looks identical to a hung provider,
+so the watchdog kills it and the reaper reclaims the task.
+
+Observed: the `race` step ran `go test -race ./internal/store/`, which prints a
+single `ok` line after 138s of silence. That is 41s of headroom against the
+lease -- and under a concurrent self-test run it lost that race twice
+(`reclaim_count: 2`) before finishing. Nothing was wrong with the code or the
+test; the step was simply invisible while it worked.
+
+The fix is to make the work OBSERVABLE, not to raise the ceiling: `go test` gets
+`-v` so each test renews the lease. Prefer that to lengthening `stall_timeout`,
+which buys silence more room instead of removing it.
+
 **Partition coverage, never drop it.** When a step grows too slow, split it —
 do not narrow what it tests. An early revision cut the unit pass down to one
 package, which fit comfortably and would have passed green while a regression

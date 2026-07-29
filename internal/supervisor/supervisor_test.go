@@ -170,26 +170,21 @@ func TestRun_ConcurrentStartersOnlyOneWins(t *testing.T) {
 	go func() { results <- Run(ctx, Options{RuntimeDir: runtimeDir, Store: st1}) }()
 	go func() { results <- Run(ctx, Options{RuntimeDir: runtimeDir, Store: st2}) }()
 
-	// Wait until SOMETHING is serving (the winner bound), then cancel so the
-	// winner exits; the loser has already refused (or is about to). Cancelling
-	// BEFORE collecting both results means a hypothetical double-bind can't hang
-	// the test — both would just return nil and the refusal assertion fails.
+	// Wait until SOMETHING is serving (the winner bound), then keep that winner
+	// alive until the other starter has actually attempted Acquire. Cancelling
+	// here would let a scheduler-delayed starter acquire the lock after the
+	// winner released it, then fail CreateSession with the shared cancelled
+	// context; that is a sequential restart, not a double-bind.
 	probe := waitForSupervisor(t, runtimeDir, 5*time.Second)
 	_ = probe.Close()
-	cancel()
 
-	// Collect both results (bounded). Accept either ordering of winner/loser — the
-	// only forbidden outcomes are a double-bind (zero refusals) or an unexpected
-	// error.
-	var refusals, others int
-	classifyRunResult(t, waitResult(t, results), &refusals, &others)
-	classifyRunResult(t, waitResult(t, results), &refusals, &others)
-
-	if refusals < 1 {
-		t.Errorf("refusals = %d, want at least 1 (a double-bind must be impossible)", refusals)
+	if err := waitResult(t, results); !errors.Is(err, ErrSupervisorRunning) {
+		t.Fatalf("concurrent Run() result = %v, want ErrSupervisorRunning", err)
 	}
-	if others != 0 {
-		t.Errorf("unexpected non-nil/non-refusal Run results: %d", others)
+
+	cancel()
+	if err := waitResult(t, results); err != nil {
+		t.Fatalf("winning Run() result after cancel = %v, want nil", err)
 	}
 }
 
@@ -203,21 +198,5 @@ func waitResult(t *testing.T, results <-chan error) error {
 	case <-time.After(shutdownWait):
 		t.Fatal("a Run() did not return within the shutdown bound")
 		return nil
-	}
-}
-
-// classifyRunResult tallies a Run result: ErrSupervisorRunning → refusal, nil →
-// a clean bind+exit (the winner), anything else → an unexpected error the test
-// fails on.
-func classifyRunResult(t *testing.T, err error, refusals, others *int) {
-	t.Helper()
-	switch {
-	case errors.Is(err, ErrSupervisorRunning):
-		*refusals++
-	case err == nil:
-		// clean exit (winner, after ctx cancel) — not counted, not an error.
-	default:
-		t.Errorf("unexpected Run() error: %v", err)
-		*others++
 	}
 }
