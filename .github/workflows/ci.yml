@@ -72,6 +72,12 @@ jobs:
         # A bare `go mod download` turns either into a red check on a diff that
         # cannot have caused it. Bounded at 3 attempts so a REAL resolution
         # failure (a bad go.mod, a deleted module) still fails, just later.
+        # shell: bash is REQUIRED, not stylistic. The test matrix includes a
+        # windows-latest leg, where GitHub defaults to pwsh -- which cannot
+        # parse a POSIX `for ...; do` loop, so the required Windows check
+        # would fail before running a single test. Set on all four for
+        # consistency; bash is present on every GitHub-hosted runner.
+        shell: bash
         run: |
           for attempt in 1 2 3; do
             if go mod download; then exit 0; fi
@@ -355,6 +361,12 @@ jobs:
         # A bare `go mod download` turns either into a red check on a diff that
         # cannot have caused it. Bounded at 3 attempts so a REAL resolution
         # failure (a bad go.mod, a deleted module) still fails, just later.
+        # shell: bash is REQUIRED, not stylistic. The test matrix includes a
+        # windows-latest leg, where GitHub defaults to pwsh -- which cannot
+        # parse a POSIX `for ...; do` loop, so the required Windows check
+        # would fail before running a single test. Set on all four for
+        # consistency; bash is present on every GitHub-hosted runner.
+        shell: bash
         run: |
           for attempt in 1 2 3; do
             if go mod download; then exit 0; fi
@@ -424,6 +436,12 @@ jobs:
         # A bare `go mod download` turns either into a red check on a diff that
         # cannot have caused it. Bounded at 3 attempts so a REAL resolution
         # failure (a bad go.mod, a deleted module) still fails, just later.
+        # shell: bash is REQUIRED, not stylistic. The test matrix includes a
+        # windows-latest leg, where GitHub defaults to pwsh -- which cannot
+        # parse a POSIX `for ...; do` loop, so the required Windows check
+        # would fail before running a single test. Set on all four for
+        # consistency; bash is present on every GitHub-hosted runner.
+        shell: bash
         run: |
           for attempt in 1 2 3; do
             if go mod download; then exit 0; fi
@@ -493,6 +511,12 @@ jobs:
         # A bare `go mod download` turns either into a red check on a diff that
         # cannot have caused it. Bounded at 3 attempts so a REAL resolution
         # failure (a bad go.mod, a deleted module) still fails, just later.
+        # shell: bash is REQUIRED, not stylistic. The test matrix includes a
+        # windows-latest leg, where GitHub defaults to pwsh -- which cannot
+        # parse a POSIX `for ...; do` loop, so the required Windows check
+        # would fail before running a single test. Set on all four for
+        # consistency; bash is present on every GitHub-hosted runner.
+        shell: bash
         run: |
           for attempt in 1 2 3; do
             if go mod download; then exit 0; fi
