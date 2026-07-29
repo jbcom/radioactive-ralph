@@ -775,9 +775,7 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
       previous "fixes" (-v, capping, raising stall_timeout) all targeted
       mechanisms that were not the cause.
 
-- [x] CAPPED-WIDTH EXPERIMENT CONCLUDED; PR 329 MERGED.
-      -- same premature-[x] error as the item above, found by the same review.
-      Closes when it merges. Result stands: Final: race reclaimed FOUR
+- [x] CAPPED-WIDTH EXPERIMENT CONCLUDED; PR 329 MERGED. Result: Final: race reclaimed FOUR
       times under RALPH_MAX_PARALLEL=4, versus two unbounded -- capping made it
       WORSE. Four successive readings (predicted 0, saw 1 "halved", saw 2 "no
       better", final 4) and only the last is a result; three were recorded as
@@ -845,11 +843,13 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
       makes the assertion follow a rename. A reviewer analyzing a file in
       isolation cannot see its package.
 
-- [x] PRs 327 (attempt accounting) + 328 (the policy decision) MERGED.
-      not merged -- main still has RetryCount/ReclaimCount only and a reaper
-      that touches neither. Marked [x] prematurely on the theory that "shipped"
-      meant "PR opened"; a reviewer caught that this would make the loop skip
-      reconciling work still absent from main. Closes when both merge.
+- [x] PRs 327 (attempt accounting) + 328 (the policy decision) MERGED. main now
+      has AttemptCount, the reclaim-reason surface, and the retry-budget policy.
+      Both were briefly marked [x] BEFORE merging, on the theory that "shipped"
+      meant "PR opened" -- a reviewer caught that, and the label was restored to
+      [WAIT] until they actually landed. Recorded because the failure mode is
+      subtle: a premature [x] tells the loop to skip reconciling work that is
+      still absent from main.
       A RECLAIMED TASK GETS A FRESH RETRY BUDGET, and the row hides it.
       Found by chasing two steps that failed `interactive_prompt` while their
       acceptance commands pass by hand -- the event history is what actually
