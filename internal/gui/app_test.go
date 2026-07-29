@@ -16,25 +16,6 @@ import (
 	"github.com/jbcom/radioactive-ralph/internal/store"
 )
 
-// guiWaitBudget is the deadline for every POSITIVE wait in this file -- "did the
-// window open", "did Run return", "did the first frame paint".
-//
-// It is deliberately far larger than the work these waits observe, because the
-// assertion is "does this EVER happen", not "does it happen within N". No
-// product requirement says the first frame lands in 3s, and a headless CI
-// runner is slower and noisier than any dev machine.
-//
-// The former 3s value failed TestRun_StartsAndStopsCleanly on ubuntu-latest
-// while passing 3/3 locally -- the tell that a threshold is measuring runner
-// speed rather than correctness. A hang still fails here, just later, and a
-// test that needs 30s to report a real hang beats one that reports a phantom
-// hang on a busy runner.
-//
-// NOT used for negative assertions ("this must NOT complete yet"), where a
-// short timeout IS the assertion; the one such wait in this file keeps its own
-// deliberately-brief budget.
-const guiWaitBudget = 30 * time.Second
-
 type blockingStatusController struct {
 	*fakeController
 	statusStarted chan struct{}
