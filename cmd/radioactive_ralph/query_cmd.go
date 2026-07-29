@@ -333,6 +333,18 @@ func writeTaskLines(out io.Writer, page observe.TaskPage, events observe.EventPa
 				line += " — " + task.FailureCategory
 			}
 		}
+		// A reclaimed task carries a count with no cause, which reads as alarming
+		// rather than informative: 2 looks identical whether the worker crashed
+		// twice or the turns were killed for producing no output. Diagnosing that
+		// difference on a live run meant reading watchdog source by hand.
+		//
+		// NOT gated on status, unlike the failure reason above: a reclaim moves
+		// the task back to pending and it may be re-claimed and running again by
+		// the time anyone looks. The count is on the row regardless, so the
+		// explanation belongs beside it in every state it can appear.
+		if task.ReclaimCount > 0 && task.ReclaimReason != "" {
+			line += fmt.Sprintf(" — reclaimed %dx: %s", task.ReclaimCount, task.ReclaimReason)
+		}
 		// The status column is padded so the marker columns align, which leaves
 		// trailing spaces on any row whose markers are all absent -- an unrun
 		// task, the common case. Trailing whitespace is invisible until it shows

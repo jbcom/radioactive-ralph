@@ -576,6 +576,15 @@ type Task struct {
 	// the case that left a terminal task reading a bare "failed" forever.
 	FailureCategory string `json:"failure_category,omitempty"`
 
+	// ReclaimReason names why this task's most recent claim was lost:
+	// stale_heartbeat (the worker stopped beating) or orphaned_claim (its worker
+	// row was already gone). Empty when ReclaimCount is 0.
+	//
+	// ReclaimCount alone poses a question it cannot answer -- 2 reads the same
+	// whether a worker crashed twice or two turns were killed for producing no
+	// output -- and answering it meant correlating the events stream by hand.
+	ReclaimReason string `json:"reclaim_reason,omitempty"`
+
 	// Blocked classifies a fail-closed pre-dispatch block, nil when the task is
 	// not blocked.
 	//
@@ -1119,6 +1128,7 @@ func taskFromStore(item store.OperatorTask) (Task, error) {
 		PartitionOrdinal:           item.PartitionOrdinal,
 		BlockedByTaskID:            item.BlockedByTaskID,
 		FailureCategory:            item.FailureCategory,
+		ReclaimReason:              item.ReclaimReason,
 
 		Blocked:   blockedSummaryFor(item.Status),
 		CreatedAt: item.CreatedAt,
