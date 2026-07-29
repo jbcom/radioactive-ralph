@@ -540,13 +540,16 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
       all three packages. So the agent was speculating -- writing a plausible
       guard for a lint error nobody reported -- rather than fixing a real
       defect. Reverting was right for a second reason.
-      The item that remains is about the HARNESS, not the code: a self-test
-      step can edit tracked source, and nothing stops it or flags it. Options
-      worth weighing -- run the self-test against a git worktree copy so edits
-      cannot touch the working tree, or have scripts/self-test.sh snapshot
-      `git status` before and after and report any tracked file the run
-      changed. The second is cheaper and keeps the run honest; the first is
-      stronger. Either beats relying on whoever is committing to notice.
+      HARNESS FIXED 2026-07-29: scripts/self-test.sh now snapshots tracked
+      state before the run and reports any tracked file the run changed, naming
+      each one. Chose the snapshot over worktree isolation because it keeps the
+      run testing the REAL checkout -- isolation would verify a copy, which is
+      a different claim -- and the warning is what a reader needs either way.
+      Two bugs while building it, both caught by testing rather than reading:
+      the guard referenced $REPO_ROOT, a variable this script never defines
+      (borrowed from verify-repo-claims.sh), so it would have crashed on every
+      run; and my first isolation test captured the before-state AFTER staging,
+      producing a silent pass that looked like a broken guard.
 
 - [x] #311, #312, #313 ALL MERGED. The self-test arc is complete:
       scripts/self-test.sh + docs/plans/self-test.md, with acceptance markers

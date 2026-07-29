@@ -75,11 +75,41 @@ RUN_ID="$(date -u +%Y%m%d-%H%M%S)-$(basename "$TMP_PLAN" .md | sed 's/^ralph-sel
 trap 'rm -f "$TMP_PLAN"' EXIT
 sed "1s|^# .*|# Prove the build is sound ($RUN_ID)|" "$PLAN" > "$TMP_PLAN"
 
+# Snapshot the tracked tree BEFORE the run.
+#
+# A self-test step can edit tracked source: a provider turn trying to make its
+# acceptance command pass will change code to do it. One run rewrote four files
+# across internal/agent, internal/orch and internal/provider, adding an
+# integer-conversion guard for a lint error that -- checked afterwards -- did
+# not actually reproduce. The tree still built, so nothing objected, and those
+# edits sat in the working tree waiting for someone's `git add -A`.
+#
+# That is the agent working as designed, not a malfunction. But it means a run
+# leaves changes nobody authored, and the only thing standing between them and
+# a commit was whoever happened to read `git status`. Report them instead.
+TRACKED_BEFORE=$(git status --porcelain --untracked-files=no 2>/dev/null || true)
+
 echo "self-test: importing $PLAN as run $RUN_ID"
 "$BIN" plan import "$TMP_PLAN"
 
 report() {
   "$BIN" status
+  report_tracked_edits
+}
+
+# report_tracked_edits names any TRACKED file the run changed. Untracked scratch
+# is expected and gitignored; a modified source file is not, and it is the thing
+# a reader is least likely to notice on their own.
+report_tracked_edits() {
+  local after
+  after=$(git status --porcelain --untracked-files=no 2>/dev/null || true)
+  [ "$after" = "$TRACKED_BEFORE" ] && return 0
+  echo
+  echo "self-test: WARNING — this run modified tracked files:"
+  diff <(printf '%s\n' "$TRACKED_BEFORE") <(printf '%s\n' "$after") 2>/dev/null |
+    grep '^>' | sed 's/^> /  /'
+  echo "  A provider turn edits source to make its acceptance pass. Review these"
+  echo "  before committing -- you did not write them."
 }
 
 if [ "${1:-}" != "--watch" ]; then
