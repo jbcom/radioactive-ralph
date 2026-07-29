@@ -138,6 +138,7 @@ func Run(ctx context.Context, opts ...Option) Report {
 		checkGhAuth,
 		checkServicePlatform,
 		checkStateDir,
+		checkProgressLease,
 	}
 
 	checks := make([]Check, len(checkFns))
