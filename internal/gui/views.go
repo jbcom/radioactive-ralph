@@ -278,6 +278,14 @@ func (u *ui) buildMeso(s snapshot) {
 		// a provider into it would make the same task read differently before
 		// and after it runs. Omitted entirely when unrecorded, so an
 		// undispatched task never displays a provider it did not use.
+		// Which worker HOLDS the task, a different question from which partition
+		// it shares: two tasks can sit in one ready partition and still be
+		// claimed by different workers. The TUI and CLI both show this; the GUI
+		// omitting it made the same task read differently depending on which
+		// surface an operator opened.
+		if id := t.ClaimedByWorkerID; id != "" {
+			row.Add(widget.NewLabel("w:" + observe.WorkerSuffix(id, 8)))
+		}
 		if name := t.ProvenanceLabel(); name != "" {
 			row.Add(widget.NewLabel("via " + name))
 		}

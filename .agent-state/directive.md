@@ -544,14 +544,23 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
       each skip was confirmed content-on-main FIRST (a past rebase silently ate
       two of my own commits by skipping without checking).
 
-- [ ] GENERATED 2026-07-28: UI/UX pass on the meso views now that task rows
-      carry three markers (worker=, via=, pN). Run the TUI and GUI against a
-      real fan-out plan, SCREENSHOT both, and read the screenshots -- the
-      trailing-whitespace defect in the CLI table was invisible to a passing
-      test suite and showed up only in the actual bytes, so assume the same
-      class of flaw exists in the rendered views. Specifically check: does a row
-      with all three markers still fit a normal terminal width, and does the GUI
-      HBox wrap or clip when it does not?
+- [x] DONE 2026-07-28: UI/UX pass on the meso views. The suspicion was right --
+      every flaw was invisible to a green suite and obvious in the rendered
+      output. Both questions it posed had a defect behind them:
+        * TUI width: the worst-case row was 215 columns and wrapped
+          mid-sentence. Now ~104 (block reason on a continuation line, worker
+          id abbreviated to its distinguishing TAIL -- a first pass truncated
+          the head and made every row read "worker-…").
+        * GUI clipping: Codex caught it before I did. The remediation was an
+          HBox cell under a VERTICAL-only scroll, so it clipped at the window
+          edge with no way to reach it. Now its own wrapping row.
+      Dumping the GUI widget tree then found a THIRD thing neither question
+      asked about: the GUI omitted the worker claim entirely while the TUI and
+      CLI both showed it, so one task read differently per surface. Fixed;
+      all three now render w: / via / pN identically.
+      Method note: the first dump walked only Button and Label and reported the
+      row as having no status at all -- the chip is a canvas.Text. Reading raw
+      output only helps if the reader sees everything the operator does.
 
 - [x] GENERATED 2026-07-28 by forward-exploring the observe surface just
       shipped (#304); both findings resolved in that PR. Verified against the code before writing down, not

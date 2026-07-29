@@ -121,3 +121,32 @@ func TestMesoBlockedReasonIsReachable(t *testing.T) {
 			"the operator cannot read the action they need")
 	}
 }
+
+// TestMesoShowsWorkerClaim closes a gap found by dumping the widget tree: the
+// TUI and CLI both render the worker claim and the GUI did not, so the same
+// task read differently depending on which surface an operator opened.
+//
+// The claim answers a different question from the partition -- two tasks can
+// share a ready partition and still be held by different workers -- so the
+// partition label cannot stand in for it.
+func TestMesoShowsWorkerClaim(t *testing.T) {
+	got := mesoText(t, []observe.Task{
+		{
+			PlanID: "p1", ID: "task-a", Status: "running",
+			ClaimedByWorkerID: "worker-session-01-7f3a2b1c", PartitionOrdinal: "aaaa",
+		},
+		{
+			PlanID: "p1", ID: "task-b", Status: "running",
+			ClaimedByWorkerID: "worker-session-01-9e8d7c6b", PartitionOrdinal: "aaaa",
+		},
+		{PlanID: "p1", ID: "task-c", Status: "ready"},
+	})
+
+	if !strings.Contains(got, "w:…7f3a2b1c") || !strings.Contains(got, "w:…9e8d7c6b") {
+		t.Errorf("worker claims missing or indistinguishable; two tasks sharing a "+
+			"partition can still be held by different workers:\n%s", got)
+	}
+	if strings.Count(got, "w:") != 2 {
+		t.Errorf("an unclaimed task gained a worker marker:\n%s", got)
+	}
+}
