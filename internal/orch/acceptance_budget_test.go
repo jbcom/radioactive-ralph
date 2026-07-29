@@ -2,6 +2,7 @@ package orch
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -156,5 +157,59 @@ func TestVerificationKeepsTheHeartbeatAlive(t *testing.T) {
 		t.Errorf("worker heartbeat did not advance across a 2.5s verification "+
 			"(before=%s after=%s); a long acceptance check runs unprotected and "+
 			"the reaper reclaims the task out from under it", before, after)
+	}
+}
+
+// TestVerificationTimeoutNamesItself keeps the next person from repeating this
+// investigation.
+//
+// When acceptance verification exceeds its budget the error was a bare
+// "context deadline exceeded" wrapped in "run acceptance check" -- which reads
+// exactly like the command failing on its own terms. That ambiguity is the
+// whole reason this bug took four explanations to find: the operator could not
+// tell "your test suite is failing" from "your test suite did not get to
+// finish".
+//
+// The message must name the budget and the command's own runtime, so the reader
+// can size the problem instead of guessing at it.
+func TestVerificationTimeoutNamesItself(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+
+	tooSlow := func(ctx context.Context, _ string, _ string, _ a2a.Evidence) (bool, string, error) {
+		<-ctx.Done()
+		return false, "", ctx.Err()
+	}
+	o := New(s, WithAcceptanceChecker(tooSlow), WithVerificationBudget(200*time.Millisecond))
+
+	projectID := mustCreateTestProject(t, s, "vtimeout-project")
+	planID := mustCreateTestPlan(t, s, projectID, "vtimeout-plan", "Ship", "# Ship\n\n- do the thing\n")
+	if err := s.CreateTask(ctx, store.CreateTaskOpts{
+		PlanID: planID, ID: "0.0", Description: "do the thing",
+		AcceptanceJSON: `{"command":"sleep 600"}`,
+	}); err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+	sessionID, workerID := mustCreateSessionAndWorkerForTest(t, s)
+	if _, err := s.ClaimNextReady(ctx, planID, sessionID, workerID); err != nil {
+		t.Fatalf("ClaimNextReady: %v", err)
+	}
+	_ = workerID
+
+	_, err := o.VerifyAndComplete(ctx, planID, "0.0",
+		a2a.Evidence{Ran: "sleep 600", ExitCode: 0, Output: "done"})
+	if err == nil {
+		t.Fatal("verification that blew its budget returned no error")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "acceptance verification exceeded") {
+		t.Errorf("error = %q, want it to say verification EXCEEDED ITS BUDGET -- "+
+			"a bare context deadline reads like the command failing on its own "+
+			"terms, which is the ambiguity that cost this bug four wrong "+
+			"explanations", msg)
+	}
+	if !strings.Contains(msg, "200ms") {
+		t.Errorf("error = %q, want it to state the budget so a reader can size "+
+			"the problem rather than guess", msg)
 	}
 }
