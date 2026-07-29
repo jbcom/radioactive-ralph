@@ -539,10 +539,50 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
       The operator surface carried it end to end -- category on the row, no
       raw provider text, and the dependent steps naming their root blocker.
 
-- [ ] [WAIT] Land the 1 open PR: #321 (fold three overlapping AGENTS.md rules
-      into one organized by layer -- check, setup, threshold). Auto-merge
-      ARMED, no failing checks. Hash-prefixed deliberately: guard 9 extracts
-      `#[0-9]{3}` from THIS line.
+- [x] #321 MERGED. Folded three overlapping AGENTS.md rules into one organized
+      by layer -- check, setup, threshold. All PRs landed: open=0, queued=0.
+
+
+- [x] DOGFOOD RESULT 2026-07-29, self-test on merged main. 8/12 steps verified
+      by re-run acceptance commands, 1 failed (`lint-internal`,
+      interactive_prompt), 2 correctly blocked. The run reproduced its own
+      documented hazards, which is the point of running it:
+
+      1. TRANSITIVE BLOCKER, proven live. `claims` declares `after: [e2e]` and
+         nothing else, yet reported `blocked_by=lint-internal` -- the root
+         failure two hops away, not the intermediate one. That is the #309
+         recursive CTE doing its job on a real plan.
+
+      2. THE GUARD-FOR-A-NONEXISTENT-LINT, reproduced exactly. A provider turn
+         wrote a plausible, compiling integer-overflow guard across the same
+         four `*_unix.go` files the self-test guide predicts. Verified by
+         stashing the edits and re-running golangci-lint: ZERO G115 findings.
+         The only issues reported were in a stale `.worktrees/rr-sandbox` path
+         whose files no longer exist. Edits discarded.
+         The doc claimed this happens; the run confirmed it rather than merely
+         restating it.
+
+      3. TWO WORKER EDITS TO TESTS THAT WERE CORRECT, and were kept. The
+         reflex is to distrust an agent rewriting tests, since that can delete
+         coverage -- but checking beat assuming, in the opposite direction from
+         (2):
+         - supervisor_test.go: the original cancelled the context BEFORE
+           collecting results, so a scheduler-delayed starter could acquire
+           the lock after the winner released it and then fail CreateSession
+           on the shared cancelled context -- a sequential restart miscounted
+           as an error. The rewrite waits for the loser's refusal first.
+           Ordering assumption checked, not assumed: 40/40 under -race.
+           waitForSupervisor returning means the winner is SERVING, so the
+           loser has already lost Acquire, and the winner cannot return first
+           because it does not return until cancel().
+         - discovery_posix_test.go: creates the directory that actually holds
+           the socket instead of assuming it equals runtimeDir, and uses
+           live.SocketPath rather than re-deriving a path that may not match.
+
+      The standing lesson, now with a counterexample on each side: unauthored
+      edits need VERIFICATION, not a policy. Blanket-reverting would have
+      discarded two real fixes; blanket-keeping would have shipped dead code
+      for a lint error that does not occur.
 
 - [x] #320 MERGED. Absence assertions must prove presence first -- the third
       distinct form of one mistake this session (a grep matching nothing, a
