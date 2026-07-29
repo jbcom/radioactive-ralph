@@ -79,6 +79,16 @@ func renderMeso(m Model) string {
 			// 200 columns: it wrapped on any normal terminal, and the wrap landed
 			// mid-sentence so the partition marker and the reason scattered across
 			// lines. Measured, not guessed -- the row is ~60 columns without it.
+			// Why a failed task failed, from the durable category on the task
+			// rather than the event feed: the feed is bounded and scrolls away,
+			// while this survives for as long as the task stays failed. Gated
+			// on status because status is the authority on what the task IS --
+			// an event only explains a failure status already reports.
+			if t.Status == "failed" && t.FailureCategory != "" {
+				b.WriteString(styleMuted.Render(
+					"               ↳ failure: " + t.FailureCategory))
+				b.WriteString("\n")
+			}
 			// A dependency that can never be satisfied. Its own line for the
 			// same reason as the block remediation: inline it pushes the row
 			// past a terminal's width. Distinct from Blocked -- that is a

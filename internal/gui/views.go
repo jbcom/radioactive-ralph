@@ -308,6 +308,15 @@ func (u *ui) buildMeso(s snapshot) {
 		// window width the end of the sentence was clipped with no way to scroll
 		// to it -- the configuration action the operator needs, unreachable. The
 		// TUI puts it on a continuation line for the same reason.
+		// Why a failed task failed, durable on the task rather than read from
+		// the bounded event feed. Its own wrapping row for the same reason the
+		// block remediation is: inside the task HBox, under a vertical-only
+		// scroll, a long line is clipped with no way to reach it.
+		if t.Status == "failed" && t.FailureCategory != "" {
+			why := widget.NewLabel("    ↳ failure: " + t.FailureCategory)
+			why.Wrapping = fyne.TextWrapWord
+			u.body.Add(why)
+		}
 		if t.BlockedByTaskID != "" {
 			dead := widget.NewLabel("    ↳ cannot run: " + t.BlockedByTaskID + " failed")
 			dead.Wrapping = fyne.TextWrapWord

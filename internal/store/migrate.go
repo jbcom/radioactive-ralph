@@ -16,7 +16,7 @@ import (
 
 // currentSchemaVersion is bumped whenever a new NNNN_*.up.sql ships.
 // The binary refuses to open a DB whose user_version exceeds this.
-const currentSchemaVersion = 3
+const currentSchemaVersion = 4
 
 // migrationBusyAttempts and migrationBusyBackoff bound how long a losing
 // concurrent opener waits for the winner's DDL to commit.

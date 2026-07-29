@@ -133,6 +133,17 @@ completion is never agent-asserted and never inferred from termination.
   stayed quiet — which looked like the guard failing to fire. The test was
   incomplete, not the guard. A negative result is only evidence once the setup
   is confirmed to produce the condition being tested.
+- **A new task field is not shipped until every surface renders it.** The
+  observe DTO feeds three renderers (TUI meso, GUI meso, CLI `status`), and
+  landing a field in one is the most repeated mistake in this repo's history --
+  three times in a single session: provenance, the terminal-blocker, and the
+  durable failure category each shipped to one surface first and had to be
+  chased into the others. The asymmetry is invisible to a green suite, because
+  each surface's tests only know about that surface.
+  When adding a field, write the per-renderer test at the same time, and put
+  any DISPLAY POLICY (which values are worth showing, how they are abbreviated)
+  in `observe` rather than in a renderer -- `PartitionLabels`, `ProvenanceLabel`
+  and `WorkerSuffix` are all there because a second copy drifted or was about to.
 - **Prove a fix by reverting it.** A test that passes after a change may have
   passed before it. Re-apply the defect and confirm the named test fails for
   the stated reason; if it does not, the test is not testing the fix.

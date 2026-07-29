@@ -542,7 +542,7 @@ type GraphTaskSpec struct {
 ```
 
 <a name="OperatorEvent"></a>
-## type [OperatorEvent](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/operator_snapshot.go#L211-L227>)
+## type [OperatorEvent](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/operator_snapshot.go#L217-L233>)
 
 OperatorEvent is safe event metadata. Raw payload, actor/provider output, and any IDs carried inside the payload are never selected.
 
@@ -567,7 +567,7 @@ type OperatorEvent struct {
 ```
 
 <a name="OperatorEventPage"></a>
-## type [OperatorEventPage](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/operator_snapshot.go#L231-L235>)
+## type [OperatorEventPage](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/operator_snapshot.go#L237-L241>)
 
 OperatorEventPage is one bounded newest\-first event page. NextBeforeID is a keyset cursor that continues toward older events.
 
@@ -721,7 +721,7 @@ type OperatorStatusCount struct {
 ```
 
 <a name="OperatorTask"></a>
-## type [OperatorTask](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/operator_snapshot.go#L117-L178>)
+## type [OperatorTask](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/operator_snapshot.go#L117-L184>)
 
 OperatorTask is safe task state. Description and AcceptanceJSON can contain source text, commands, or repository paths, so neither is projected.
 
@@ -785,6 +785,12 @@ type OperatorTask struct {
     // be noise on every healthy plan mid-flight.
     BlockedByTaskID string `json:"blocked_by_task_id"`
 
+    // FailureCategory is the closed provider taxonomy code for why this task
+    // failed, empty unless it is currently failed. Durable on the task rather
+    // than read from the event page, which is bounded and evicts the evidence
+    // while the task stays terminal.
+    FailureCategory string `json:"failure_category"`
+
     CreatedAt time.Time `json:"created_at"`
     UpdatedAt time.Time `json:"updated_at"`
 }
@@ -818,7 +824,7 @@ type OperatorTaskDetail struct {
 ```
 
 <a name="OperatorTaskPage"></a>
-## type [OperatorTaskPage](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/operator_snapshot.go#L181-L185>)
+## type [OperatorTaskPage](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/operator_snapshot.go#L187-L191>)
 
 OperatorTaskPage is one bounded, \(plan\_id, task\_id\)\-ordered task page.
 
@@ -831,7 +837,7 @@ type OperatorTaskPage struct {
 ```
 
 <a name="OperatorWorker"></a>
-## type [OperatorWorker](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/operator_snapshot.go#L191-L200>)
+## type [OperatorWorker](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/operator_snapshot.go#L197-L206>)
 
 OperatorWorker is one active Ralph\-managed worker. Ralph worker IDs are operator controls \(for example worker kill\), not provider\-session IDs. Claims contains every task claimed by the worker in this project, including native fan\-out claims beyond workers.current\_task\_id.
 
@@ -849,7 +855,7 @@ type OperatorWorker struct {
 ```
 
 <a name="OperatorWorkerClaim"></a>
-## type [OperatorWorkerClaim](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/operator_snapshot.go#L203-L207>)
+## type [OperatorWorkerClaim](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/operator_snapshot.go#L209-L213>)
 
 OperatorWorkerClaim is one project task held by an active worker.
 
@@ -1107,7 +1113,7 @@ func (s *Store) ApplyProjectConfig(ctx context.Context, projectID string, upsert
 ApplyProjectConfig atomically deletes and upserts a set of DB\-resident project config keys. Deletes run before upserts, so a key present in both collections ends with the upserted value. This is the mutation primitive for replacing logical config selections whose old aliases must not survive beside their canonical key.
 
 <a name="Store.ApproveTask"></a>
-### func \(\*Store\) [ApproveTask](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/tasks.go#L843>)
+### func \(\*Store\) [ApproveTask](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/tasks.go#L852>)
 
 ```go
 func (s *Store) ApproveTask(ctx context.Context, planID, taskID string) (found, changed bool, err error)
@@ -1471,7 +1477,7 @@ func (s *Store) ListTasks(ctx context.Context, planID string, statuses []TaskSta
 ListTasks returns tasks for one plan, optionally filtered by status.
 
 <a name="Store.MarkBlocked"></a>
-### func \(\*Store\) [MarkBlocked](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/tasks.go#L713>)
+### func \(\*Store\) [MarkBlocked](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/tasks.go#L722>)
 
 ```go
 func (s *Store) MarkBlocked(ctx context.Context, planID, taskID, sessionID string, payload EventPayload) error
@@ -1580,7 +1586,7 @@ func (s *Store) PutTaskMetadata(ctx context.Context, planID, taskID, groupPath, 
 PutTaskMetadata inserts the immutable half of a task's metadata row. Plan import owns this; provenance fields are filled in later by the dispatch path.
 
 <a name="Store.ReadOperatorSnapshot"></a>
-### func \(\*Store\) [ReadOperatorSnapshot](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/operator_snapshot.go#L245-L248>)
+### func \(\*Store\) [ReadOperatorSnapshot](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/operator_snapshot.go#L251-L254>)
 
 ```go
 func (s *Store) ReadOperatorSnapshot(ctx context.Context, q OperatorSnapshotQuery) (*OperatorSnapshot, error)
@@ -1698,7 +1704,7 @@ func (s *Store) RecordTaskProviderSession(ctx context.Context, planID, taskID, c
 RecordTaskProviderSession stores the session identifier returned by the provider after a turn. Both the live task claim and the execution metadata must still identify claimingSessionID; otherwise this is a stale post\-run write from a reclaimed worker.
 
 <a name="Store.ReleaseClaim"></a>
-### func \(\*Store\) [ReleaseClaim](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/tasks.go#L684>)
+### func \(\*Store\) [ReleaseClaim](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/tasks.go#L693>)
 
 ```go
 func (s *Store) ReleaseClaim(ctx context.Context, planID, taskID, sessionID, reason string) error

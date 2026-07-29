@@ -173,6 +173,12 @@ type OperatorTask struct {
 	// be noise on every healthy plan mid-flight.
 	BlockedByTaskID string `json:"blocked_by_task_id"`
 
+	// FailureCategory is the closed provider taxonomy code for why this task
+	// failed, empty unless it is currently failed. Durable on the task rather
+	// than read from the event page, which is bounded and evicts the evidence
+	// while the task stays terminal.
+	FailureCategory string `json:"failure_category"`
+
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 }
@@ -708,6 +714,7 @@ func readOperatorTasks(
 		       COALESCE(m.assigned_model, ''), COALESCE(m.assigned_effort, ''),
 		       COALESCE(m.assigned_independence_domain, ''),
 		       COALESCE(m.group_path, ''), COALESCE(m.metadata_json, ''),
+		       COALESCE(t.failure_category, ''),
 		       -- Does this task belong to a partition an operator can act on?
 		       --
 		       -- A RUNNING task always does: it was claimed AS a partition member,
@@ -803,6 +810,7 @@ func readOperatorTasks(
 			&task.AssignedIndependenceDomain,
 			&groupPath,
 			&metadataJSON,
+			&task.FailureCategory,
 			&partitioned,
 			&task.BlockedByTaskID,
 			&createdRaw,
