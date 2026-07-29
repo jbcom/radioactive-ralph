@@ -64,13 +64,40 @@ func TestResolveTurnLimitsRejectsUnboundedOrExcessiveValues(t *testing.T) {
 }
 
 func TestProgressLeaseRenewsStallButNeverTotalDeadline(t *testing.T) {
-	parent, cancelParent := context.WithTimeout(context.Background(), 120*time.Millisecond)
+	// The invariant under test is a RELATIONSHIP -- progress renews the stall
+	// lease but never extends the absolute deadline -- so the only thing the
+	// timings must guarantee is that the renewal loop cannot lose a race it is
+	// not supposed to be in.
+	//
+	// It flaked in CI (GUI (macos-latest), #269) reporting
+	// "cause = provider: progress stalled, want absolute turn deadline". At a
+	// 10ms tick renewing a 35ms lease the margin is 3.5 ticks: ONE scheduling
+	// gap of 35ms on a loaded runner trips the stall lease and the test
+	// reports a false failure of an invariant that never broke.
+	//
+	// Widened to a 20x margin. The absolute deadline grows with it, so the
+	// assertion is unchanged in kind -- this buys scheduling slack, it does
+	// not weaken what is being proven. Both bounds stay well inside the
+	// 1-second backstop below.
+	const tick = 10 * time.Millisecond
+	const stallLease = 20 * tick // 200ms: 20 missed ticks before a false stall
+	const totalDeadline = 3 * stallLease
+
+	parent, cancelParent := context.WithTimeout(context.Background(), totalDeadline)
 	defer cancelParent()
-	ctx, progress, stop := withProgressLease(parent, 35*time.Millisecond)
+	ctx, progress, stop := withProgressLease(parent, stallLease)
 	defer stop()
 
-	ticker := time.NewTicker(10 * time.Millisecond)
+	ticker := time.NewTicker(tick)
 	defer ticker.Stop()
+
+	// A single backstop for the whole loop. `case <-time.After(...)` inside
+	// the select is re-armed on EVERY tick, so it can never accumulate and
+	// the "progress extended the absolute deadline" branch is unreachable --
+	// a violation shows up as go test's 30s/10m panic instead of this
+	// assertion. Verified: detaching the lease from its parent makes the old
+	// form panic on timeout rather than report. Hoisted so it fires once.
+	backstop := time.After(4 * totalDeadline)
 	for {
 		select {
 		case <-ticker.C:
@@ -80,7 +107,7 @@ func TestProgressLeaseRenewsStallButNeverTotalDeadline(t *testing.T) {
 				t.Fatalf("cause = %v, want absolute turn deadline", context.Cause(ctx))
 			}
 			return
-		case <-time.After(time.Second):
+		case <-backstop:
 			t.Fatal("progress extended the absolute deadline")
 		}
 	}
