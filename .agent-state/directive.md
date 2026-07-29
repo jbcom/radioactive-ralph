@@ -765,9 +765,22 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
       MECHANISM CONFIRMED mid-run, independent of the outcome: with the cap at
       4, SEVEN tasks were dependency-eligible and exactly FOUR ran. The cap is
       genuinely binding, not coincidental -- unbounded, all eleven would have
-      dispatched at once. Zero reclaims on any task so far, and `race` is now
-      QUEUED behind the cap rather than competing for CPU, which is precisely
-      the behaviour change under test.
+      dispatched at once.
+      RESULT: MY PREDICTION WAS PARTLY WRONG, and the new observability is what
+      showed it. I predicted reclaim_count=0 under a cap. Actual:
+        race           reclaims=1  reason=stale_heartbeat  inflight=4
+        unit-provider  reclaims=2  reason=stale_heartbeat  inflight=3
+      So capping HALVED race's reclaims (2 -> 1) but did not eliminate them,
+      and a step that never reclaimed before now does. Contention is a real
+      CONTRIBUTOR, not the whole cause -- four concurrent test workers on 16
+      cores still starve a 138s silent step.
+      The inflight_at_reclaim field earned itself here: without it this would
+      read as "still flaky", instead of "reclaimed at 4 and 3 in flight", which
+      is what distinguishes a partial fix from no fix.
+      Correct conclusion: width and lease are BOTH real, and the guide's
+      "remove the silence when a seam exists, raise the lease when it does not"
+      needs a third clause -- when the silence is structural AND the load is
+      shared, capping alone is not sufficient. Do not overclaim the cap.
       Also shipped from this finding (PR 324, un-hashed): --supervisor help now
       names RALPH_MAX_PARALLEL and says the unset default is UNBOUNDED. It was
       documented only in docs/design/, and an operator debugging a reclaimed

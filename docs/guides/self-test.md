@@ -188,6 +188,27 @@ threshold derived from a quiet machine would have predicted it.
 Remove the silence when a seam exists, raise the lease when it does not.
 Reaching for the lease first is how a real hang gets a longer rope.
 
+**Capping the width helps, but does not finish the job.** Measured, because the
+prediction was that it would: with `RALPH_MAX_PARALLEL=4`, the `race` step's
+reclaims went from 2 to 1 — halved, not eliminated — and `unit-provider`, which
+had never reclaimed before, took 2. The reclaim rows name their own conditions:
+
+```
+race           reclaims=1  reason=stale_heartbeat  inflight=4
+unit-provider  reclaims=2  reason=stale_heartbeat  inflight=3
+```
+
+Four concurrent test workers on 16 cores still starve a 138s silent step. So
+contention is a real *contributor*, not the whole cause, and the two levers are
+not alternatives: when the silence is structural **and** the load is shared, a
+cap alone is not sufficient and `stall_timeout` still has to move.
+
+Worth stating plainly because the tidy version — "cap the width and the reclaims
+go away" — is what the first run seemed to show, and is wrong. Without
+`inflight` on the row this would have read as "still flaky" rather than "reduced
+by half under a measurable load", which is the difference between a partial fix
+and no fix.
+
 **Nobody chose the width.** Dispatch concurrency is `RALPH_MAX_PARALLEL`, and
 when it is unset the supervisor is *unbounded* — `supervisorMaxParallel` returns
 0 and the semaphore is nil. That is the state a self-test runs in by default, so
