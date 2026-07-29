@@ -65,6 +65,23 @@ the orchestrator rather than accepted on worker evidence. A step without one is
 judgment-only, which is why the first dogfooding plan produced nothing but
 failures.
 
+**A self-test run MUTATES the working tree, in two ways worth knowing before
+you start one.**
+
+It scatters scratch through the project dir on purpose -- a contained turn sets
+HOME and TMPDIR under the containment root so its writes cannot escape, and
+acceptance commands re-run in scratch trees of their own. Those are gitignored
+(`.codex-*`, `.rr-accept.*`, `.tmp-*`), and they have to be: their contents
+churn fast enough that `git add -A` does not merely stage junk, it FAILS
+mid-stat on a file the turn already deleted.
+
+More surprising: a step can EDIT TRACKED FILES. A provider turn trying to make
+its acceptance command pass will change source to do it -- during one run the
+`unit-client` step rewrote `internal/ipc/ipc_test.go`. That is the agent doing
+its job, but it means a self-test running while you commit can put someone
+else's edit in your staging area. Check `git status` before committing during a
+run, and revert what you did not write.
+
 **Coverage is maintained by hand; there is no test enforcing it.** I wrote one
 and removed it after four attempts, each of which passed against a plan with a
 package deliberately deleted: scanning the whole document let the LINT step's
