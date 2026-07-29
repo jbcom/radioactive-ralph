@@ -279,10 +279,40 @@ func (o *Orchestrator) VerifyAndCompleteAs(
 	if err != nil {
 		return false, err
 	}
-	ok, reason, err := o.acceptanceCheck(ctx, dir, task.AcceptanceJSON, ev)
+	// Acceptance verification gets its OWN budget, detached from whatever
+	// deadline the caller arrived with.
+	//
+	// The caller is usually the post-run path, whose persistCtx is bounded for
+	// STORE WRITES. But verification re-runs the step's acceptance command, and a
+	// real plan's command can be a test suite. A live self-test had a step whose
+	// command took 30s warm and 138s under load against a 30s persist budget: it
+	// could not fit, the context expired here, the task was never marked, and it
+	// sat 'running' with a dead heartbeat until the reaper requeued work that had
+	// already SUCCEEDED. Six times in one run, reading as a flaky step.
+	//
+	// Detached rather than merely lengthened, because the shutdown case that
+	// motivated persistCtx applies just as much here: a turn that has produced a
+	// result must get its verdict recorded even as the supervisor tears down.
+	verifyCtx, cancelVerify := context.WithTimeout(
+		context.WithoutCancel(ctx), o.effectiveVerificationBudget())
+	defer cancelVerify()
+	ok, reason, err := o.acceptanceCheck(verifyCtx, dir, task.AcceptanceJSON, ev)
 	if err != nil {
 		return false, fmt.Errorf("orch: run acceptance check: %w", err)
 	}
+
+	// From here on, everything RECORDS THE VERDICT that verification just
+	// produced, so it gets a fresh detached budget of its own.
+	//
+	// Detaching verification alone was not enough, and the test caught it: a
+	// slow-but-passing acceptance command legitimately consumes the caller's
+	// entire budget, so MarkDone then failed with "context deadline exceeded"
+	// and the task stayed unmarked -- the same lost-verdict bug one step later.
+	// A verdict that cannot be written is indistinguishable from no verdict, and
+	// that is precisely what the reaper requeues.
+	ctx, cancelPersist := context.WithTimeout(
+		context.WithoutCancel(ctx), o.effectivePersistBudget())
+	defer cancelPersist()
 
 	// Completion-time containment. This is the guarantee Ralph actually makes:
 	// pre-dispatch validation cannot stop a provider — a separate process
