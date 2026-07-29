@@ -762,6 +762,16 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
       If it still reclaims, the contention theory is WRONG and the remaining
       explanation is stall_timeout being too short for this step regardless of
       load -- which is a different fix, so the outcome decides it either way.
+      MECHANISM CONFIRMED mid-run, independent of the outcome: with the cap at
+      4, SEVEN tasks were dependency-eligible and exactly FOUR ran. The cap is
+      genuinely binding, not coincidental -- unbounded, all eleven would have
+      dispatched at once. Zero reclaims on any task so far, and `race` is now
+      QUEUED behind the cap rather than competing for CPU, which is precisely
+      the behaviour change under test.
+      Also shipped from this finding (PR 324, un-hashed): --supervisor help now
+      names RALPH_MAX_PARALLEL and says the unset default is UNBOUNDED. It was
+      documented only in docs/design/, and an operator debugging a reclaimed
+      task reads --help.
 
 - [x] CONFIRMING SELF-TEST RUN validated the stale-cache diagnosis. The whole
       point of re-running: `lint-internal` had failed with interactive_prompt,
