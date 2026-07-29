@@ -792,6 +792,29 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
       makes the assertion follow a rename. A reviewer analyzing a file in
       isolation cannot see its package.
 
+- [ ] TWO steps failed `interactive_prompt` while their acceptance commands
+      PASS. Verified by hand: `go test ./internal/provider/... ./internal/agent/
+      ./internal/agentdetect/ ./internal/contain/...` and the unit-orch command
+      both exit 0 right now, yet unit-provider and unit-orch both died asking
+      for input.
+      Earlier this session ONE such failure traced to a stale linter cache --
+      a real impossible task the agent correctly refused. That explanation does
+      NOT cover these: nothing is failing for them to try to fix.
+      So the question is what a provider turn is being asked that makes it
+      prompt when its own criterion already succeeds. Read the actual turn:
+      the transcript/evidence for one of these tasks, not the category.
+      Candidates worth ruling out in order: (a) the scoped prompt asks for a
+      decision the step does not authorize, (b) the agent hits a
+      permission/approval gate on a write it wants to make, (c) a provider CLI
+      config difference that only shows under dispatch.
+      Verify by reverting: whatever the cause, the proof is a dispatched run
+      where these steps reach done -- not a hand-run of their commands, which
+      already pass and therefore prove nothing about the dispatch path.
+      NOTE the pattern change: one occurrence was the invariant working, two
+      with passing criteria is a product problem. Do not re-file this as
+      "watchdog working as designed" -- that reading was correct ONCE and is
+      the reflex this item exists to resist.
+
 - [x] GUI FLAKE FIXED (PR 325, un-hashed). Chasing a red check on the
       release-please PR found a fixed 3-SECOND deadline for a headless GUI to
       paint its first frame: failed on ubuntu-latest, passed 3/3 locally.
