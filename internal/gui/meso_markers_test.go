@@ -255,3 +255,20 @@ func TestMesoShowsAttemptLabel(t *testing.T) {
 		t.Errorf("an untroubled task carries an attempt marker:\n%s", clean)
 	}
 }
+
+// TestMesoRendersPromptKindCategories mirrors the TUI and CLI: the prompt kinds
+// must reach every surface, since they exist to name WHICH fix applies.
+func TestMesoRendersPromptKindCategories(t *testing.T) {
+	for _, category := range []string{
+		"interactive_prompt_permission",
+		"interactive_prompt_confirm",
+		"interactive_prompt_clarification",
+	} {
+		got := mesoText(t, []observe.Task{
+			{PlanID: "p1", ID: "unit-provider", Status: "failed", FailureCategory: category},
+		})
+		if !strings.Contains(got, category) {
+			t.Errorf("gui meso does not render %q:\n%s", category, got)
+		}
+	}
+}

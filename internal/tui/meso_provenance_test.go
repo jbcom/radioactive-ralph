@@ -393,3 +393,35 @@ func TestMesoShowsAttemptLabel(t *testing.T) {
 		t.Errorf("an untroubled task carries an attempt marker:\n%s", out)
 	}
 }
+
+// TestMesoRendersPromptKindCategories closes the render-every-surface gap for
+// the prompt taxonomy.
+//
+// The kinds exist so an operator can tell WHICH fix applies -- a grant, a flag,
+// or a thinner scoped context than the step needed. That only helps if the
+// surfaces show them, and this repo has repeatedly landed a field in the store
+// and chased the renderers later.
+//
+// These pass without a renderer change, because meso prints FailureCategory
+// verbatim. Asserted anyway: "it happens to work today" and "it is covered" are
+// different states, and only the second survives someone special-casing the
+// category list.
+func TestMesoRendersPromptKindCategories(t *testing.T) {
+	for _, category := range []string{
+		"interactive_prompt_permission",
+		"interactive_prompt_confirm",
+		"interactive_prompt_clarification",
+	} {
+		f := testFake()
+		m := newTestModel(t, f)
+		m.lvl = levelMeso
+		m.selectedPlan = f.plans[0]
+		m.snap.tasks = []observe.Task{
+			{ID: "unit-provider", PlanID: "plan-1", Status: "failed", FailureCategory: category},
+		}
+		if out := m.View(); !strings.Contains(out, category) {
+			t.Errorf("meso does not render %q; an operator sees a failed task with "+
+				"no indication of which remediation applies:\n%s", category, out)
+		}
+	}
+}
