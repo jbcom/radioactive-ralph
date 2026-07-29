@@ -11,7 +11,14 @@
 # watcher matching a run I had cancelled myself, a test whose fixture never
 # reached the code path. Self-reported status has the same failure mode, so it
 # gets verified from the source of truth rather than from memory.
-cd /Users/jbogaty/src/jbcom/radioactive-ralph || exit 1
+# Resolve the repo from THIS script's location, not a hardcoded path. The
+# absolute path made every check machine-specific: on any other checkout the
+# script exited 1 immediately, and on the author's machine it could silently
+# verify a DIFFERENT checkout than the one being tested -- reporting green for
+# code nobody ran it against.
+REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+cd "$REPO_ROOT" || exit 1
+WORKTREE_ROOT=$(cd "$REPO_ROOT/.." && pwd)/.worktrees
 fail=0
 say() { printf '%-42s %s\n' "$1" "$2"; }
 
@@ -116,7 +123,7 @@ is_this_repo() {
 }
 
 # 5. Local worktrees must build and test — a claim of "green" is checkable.
-for wt in /Users/jbogaty/src/jbcom/.worktrees/*/; do
+for wt in "$WORKTREE_ROOT"/*/; do
   [ -f "$wt/go.mod" ] || continue
   is_this_repo "$wt" || continue
   name=$(basename "$wt")
@@ -143,7 +150,7 @@ else
 fi
 
 # 6. Uncommitted work anywhere — silent local-only changes are lost work.
-for wt in /Users/jbogaty/src/jbcom/radioactive-ralph /Users/jbogaty/src/jbcom/.worktrees/*/; do
+for wt in "$REPO_ROOT" "$WORKTREE_ROOT"/*/; do
   [ -d "$wt/.git" ] || [ -f "$wt/.git" ] || continue
   is_this_repo "$wt" || continue
   n=$(git -C "$wt" status --porcelain 2>/dev/null|wc -l|tr -d ' ')
@@ -151,7 +158,7 @@ for wt in /Users/jbogaty/src/jbcom/radioactive-ralph /Users/jbogaty/src/jbcom/.w
 done
 
 # 7. Unpushed commits — committed but not shared is also lost work.
-for wt in /Users/jbogaty/src/jbcom/radioactive-ralph /Users/jbogaty/src/jbcom/.worktrees/*/; do
+for wt in "$REPO_ROOT" "$WORKTREE_ROOT"/*/; do
   is_this_repo "$wt" || continue
   br=$(git -C "$wt" branch --show-current 2>/dev/null) || continue
   [ -z "$br" ] && continue
