@@ -2,7 +2,9 @@ package store
 
 import (
 	"context"
+	"fmt"
 	"testing"
+	"time"
 )
 
 // TestOperatorTasksNameATerminallyBlockedDependency closes the gap a second
@@ -84,5 +86,203 @@ func TestOperatorTasksIgnoreAnIncompleteDependency(t *testing.T) {
 				"RUNNING; that dependency clears itself, and flagging it would "+
 				"mark every healthy in-flight plan as blocked", it.BlockedByTaskID)
 		}
+	}
+}
+
+// TestOperatorTasksNameATransitivelyBlockedDependency closes the one-hop limit
+// a FOURTH dogfooding pass found. On Ralph's own plan:
+//
+//	build   failed
+//	race    pending  — cannot run: build failed
+//	parity  pending                              <- silent, and just as dead
+//
+// parity depends on race, race is dead behind build, so parity can never run
+// either -- but the check looked exactly one hop and left it reading like a
+// healthy queued task. That is the same lie the one-hop fix removed, one level
+// deeper, and a real DAG is mostly deeper levels.
+func TestOperatorTasksNameATransitivelyBlockedDependency(t *testing.T) {
+	ctx := context.Background()
+	s := openTestStore(t)
+	projectID := mustCreateProject(t, s, "dep-transitive")
+	planID := seedReadyGraph(t, s, projectID, "chain", []GraphTaskSpec{
+		readySpec("build", "0"),
+		readySpec("race", "0", "build"),
+		readySpec("parity", "0", "race"),
+	})
+	sessionID, workerID := mustCreateSessionAndWorker(t, s, "1")
+	if _, err := s.ClaimTask(ctx, planID, "build", sessionID, workerID); err != nil {
+		t.Fatalf("ClaimTask: %v", err)
+	}
+	if _, err := s.MarkFailed(ctx, planID, "build", sessionID, "boom", 0); err != nil {
+		t.Fatalf("MarkFailed: %v", err)
+	}
+
+	items, err := operatorTasksForTest(ctx, s, projectID)
+	if err != nil {
+		t.Fatalf("operator tasks: %v", err)
+	}
+	byID := map[string]OperatorTask{}
+	for _, it := range items {
+		byID[it.ID] = it
+	}
+	if got := byID["race"].BlockedByTaskID; got != "build" {
+		t.Fatalf("fixture wrong: race should already name build, got %q", got)
+	}
+	if got := byID["parity"].BlockedByTaskID; got == "" {
+		t.Errorf("parity names no blocker; it depends on race, which is dead " +
+			"behind build, so it can never run -- yet it reads exactly like a " +
+			"healthy queued task")
+	}
+}
+
+// TestTransitiveBlockerNamesTheRootFailure pins WHICH task gets named. The
+// operator needs the task that actually died -- naming the intermediate would
+// send them to another pending row to repeat the lookup.
+func TestTransitiveBlockerNamesTheRootFailure(t *testing.T) {
+	ctx := context.Background()
+	s := openTestStore(t)
+	projectID := mustCreateProject(t, s, "dep-root")
+	planID := seedReadyGraph(t, s, projectID, "deep", []GraphTaskSpec{
+		readySpec("build", "0"),
+		readySpec("race", "0", "build"),
+		readySpec("parity", "0", "race"),
+	})
+	sessionID, workerID := mustCreateSessionAndWorker(t, s, "1")
+	if _, err := s.ClaimTask(ctx, planID, "build", sessionID, workerID); err != nil {
+		t.Fatalf("ClaimTask: %v", err)
+	}
+	if _, err := s.MarkFailed(ctx, planID, "build", sessionID, "boom", 0); err != nil {
+		t.Fatalf("MarkFailed: %v", err)
+	}
+
+	items, err := operatorTasksForTest(ctx, s, projectID)
+	if err != nil {
+		t.Fatalf("operator tasks: %v", err)
+	}
+	for _, it := range items {
+		if it.ID == "parity" && it.BlockedByTaskID != "build" {
+			t.Errorf("parity names %q; it must name the task that actually FAILED "+
+				"(build), not the intermediate race, which is itself only pending",
+				it.BlockedByTaskID)
+		}
+	}
+}
+
+// TestHealthyChainNamesNoBlocker guards the other direction: an unfinished but
+// healthy intermediate must NOT be traversed. That chain clears itself as
+// upstream work completes, and following it would mark ordinary in-flight work
+// as dead -- the failure mode that keeps this marker meaningful.
+func TestHealthyChainNamesNoBlocker(t *testing.T) {
+	ctx := context.Background()
+	s := openTestStore(t)
+	projectID := mustCreateProject(t, s, "dep-healthy")
+	planID := seedReadyGraph(t, s, projectID, "alive", []GraphTaskSpec{
+		readySpec("build", "0"),
+		readySpec("race", "0", "build"),
+		readySpec("parity", "0", "race"),
+	})
+	sessionID, workerID := mustCreateSessionAndWorker(t, s, "1")
+	if _, err := s.ClaimTask(ctx, planID, "build", sessionID, workerID); err != nil {
+		t.Fatalf("ClaimTask: %v", err)
+	}
+
+	items, err := operatorTasksForTest(ctx, s, projectID)
+	if err != nil {
+		t.Fatalf("operator tasks: %v", err)
+	}
+	for _, it := range items {
+		if it.BlockedByTaskID != "" {
+			t.Errorf("%s names blocker %q while build is merely RUNNING; nothing "+
+				"in this chain is dead", it.ID, it.BlockedByTaskID)
+		}
+	}
+}
+
+// TestTransitiveBlockerSurvivesADeepChain closes a P2 review finding on the
+// recursion cap itself: `dead.depth < 64` silently recreated the exact bug this
+// projection fixes, just past 64 hops.
+//
+// The threshold is reachable by ordinary means -- plan import turns an ordered
+// group into a 1:1 dependency chain with no depth limit of its own, so a
+// 66-step ordered list is enough. Truncating there made the deepest tasks
+// render as healthy `pending` again, which is the failure mode the whole
+// marker exists to remove.
+func TestTransitiveBlockerSurvivesADeepChain(t *testing.T) {
+	ctx := context.Background()
+	s := openTestStore(t)
+	projectID := mustCreateProject(t, s, "dep-deep-chain")
+
+	const chain = 80 // comfortably past the old cap
+	specs := []GraphTaskSpec{readySpec("t0", "0")}
+	for i := 1; i < chain; i++ {
+		specs = append(specs, readySpec(
+			fmt.Sprintf("t%d", i), "0", fmt.Sprintf("t%d", i-1)))
+	}
+	planID := seedReadyGraph(t, s, projectID, "deep", specs)
+
+	sessionID, workerID := mustCreateSessionAndWorker(t, s, "1")
+	if _, err := s.ClaimTask(ctx, planID, "t0", sessionID, workerID); err != nil {
+		t.Fatalf("ClaimTask: %v", err)
+	}
+	if _, err := s.MarkFailed(ctx, planID, "t0", sessionID, "boom", 0); err != nil {
+		t.Fatalf("MarkFailed: %v", err)
+	}
+
+	// A page large enough to CONTAIN the deep tasks. The default page is 50, so
+	// a first probe of this read "" for tasks the snapshot never returned and
+	// looked like truncation everywhere -- pagination, not the recursion.
+	snap, err := s.ReadOperatorSnapshot(ctx, OperatorSnapshotQuery{
+		ProjectID: projectID, TaskLimit: 200,
+	})
+	if err != nil {
+		t.Fatalf("snapshot: %v", err)
+	}
+	items := snap.Tasks.Items
+	last := fmt.Sprintf("t%d", chain-1)
+	for _, it := range items {
+		if it.ID == last && it.BlockedByTaskID != "t0" {
+			t.Errorf("%s names blocker %q, want t0: it sits %d edges past a dead "+
+				"root and can never run, but renders as healthy pending",
+				last, it.BlockedByTaskID, chain-1)
+		}
+	}
+}
+
+// TestTransitiveBlockerTerminatesOnACycle guards the invariant the depth cap
+// used to provide. Removing the cap in favour of visited-node tracking is only
+// safe if UNION (not UNION ALL) really does stop a cycle from looping forever,
+// so this forces one into task_deps directly -- AddDep refuses to create one --
+// and asserts the projection still returns.
+//
+// Empirical rather than assumed: "the DAG has no cycles" is an invariant
+// enforced elsewhere, and a projection that could hang the operator surface
+// should not depend on it holding.
+func TestTransitiveBlockerTerminatesOnACycle(t *testing.T) {
+	ctx := context.Background()
+	s := openTestStore(t)
+	projectID := mustCreateProject(t, s, "dep-cycle")
+	planID := seedReadyGraph(t, s, projectID, "cyc", []GraphTaskSpec{
+		readySpec("a", "0"),
+		readySpec("b", "0", "a"),
+	})
+	if _, err := s.DB().ExecContext(ctx,
+		`INSERT INTO task_deps(plan_id, task_id, depends_on) VALUES (?,?,?)`,
+		planID, "a", "b"); err != nil {
+		t.Fatalf("force cycle: %v", err)
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := operatorTasksForTest(ctx, s, projectID)
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("operator tasks: %v", err)
+		}
+	case <-time.After(15 * time.Second):
+		t.Fatal("the projection HUNG on a dependency cycle; visited-node " +
+			"tracking must terminate without a depth cap")
 	}
 }

@@ -743,12 +743,43 @@ func readOperatorTasks(
 		       -- never clears (nothing transitions out of 'failed'), which is
 		       -- what makes the dependent's plain 'pending' badge a lie.
 		       COALESCE((
-		         SELECT d.depends_on FROM task_deps d
-		          JOIN tasks tdep ON tdep.plan_id = d.plan_id AND tdep.id = d.depends_on
-		         WHERE d.plan_id = t.plan_id
-		           AND d.task_id = t.id
-		           AND tdep.status = 'failed'
-		         ORDER BY d.depends_on
+		         -- Walks the dependency chain, not just one hop. A task whose
+		         -- blocker is itself dead is equally unreachable, and a real DAG
+		         -- is mostly deeper levels: stopping at depth 1 left every task
+		         -- past the first reading like a healthy queued one.
+		         --
+		         -- Reports the ROOT failure -- the task that actually died --
+		         -- because that is the one an operator can act on. Naming the
+		         -- intermediate would send them to another pending row.
+		         --
+		         -- Only 'failed' terminates the walk. An intermediate that is
+		         -- merely unfinished is NOT traversed: that chain still clears
+		         -- itself, and following it would mark healthy in-flight work as
+		         -- dead.
+		         -- Terminates by VISITED-NODE tracking, not a depth cap. UNION
+		         -- (not UNION ALL) discards rows already produced, so each task
+		         -- is expanded once and a cycle cannot loop forever -- bounded by
+		         -- the number of tasks in the plan rather than a magic number.
+		         --
+		         -- A cap was the first attempt and it silently recreated the very
+		         -- bug this projection fixes, just past its threshold: plan
+		         -- import turns an ordered group into a 1:1 dependency chain with
+		         -- no depth limit of its own, so an ordinary long ordered list
+		         -- reached it and its deepest tasks read as healthy again.
+		         WITH RECURSIVE dead(id, depth) AS (
+		           SELECT d.depends_on, 1
+		             FROM task_deps d
+		            WHERE d.plan_id = t.plan_id AND d.task_id = t.id
+		           UNION
+		           SELECT d.depends_on, dead.depth + 1
+		             FROM task_deps d
+		             JOIN dead ON d.task_id = dead.id
+		            WHERE d.plan_id = t.plan_id
+		         )
+		         SELECT dead.id FROM dead
+		          JOIN tasks tdep ON tdep.plan_id = t.plan_id AND tdep.id = dead.id
+		         WHERE tdep.status = 'failed'
+		         ORDER BY dead.depth, dead.id
 		         LIMIT 1
 		       ), '') AS blocked_by,
 		       t.created_at, t.updated_at
