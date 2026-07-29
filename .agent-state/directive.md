@@ -743,7 +743,7 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
       file says "a field is not shipped until each renderer shows it". Not
       repeating that two commits later.
 
-- [ ] REAL ROOT CAUSE, and every earlier story was wrong. A reviewer pointed
+- [ ] [WAIT] FIXED in PR 331, awaiting merge. REAL ROOT CAUSE, and every earlier story was wrong. A reviewer pointed
       out the fact that breaks them all: runWithHeartbeat beats every 20s
       INDEPENDENTLY of provider output, against a 90s stale window. A stalled
       turn keeps beating, so the watchdog killing a silent turn can never
@@ -760,9 +760,25 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
       That also explains what the lease story never could: why capping made it
       WORSE (slower machine -> slower acceptance -> more certain to exceed 30s),
       and why race reclaims with nothing else running.
-      FIX: acceptance verification must not run under a 30s deadline sized for
-      store writes. Either give verification its own budget derived from the
-      command it runs, or run it before the heartbeat stops.
+      FIXED in PR 331 (un-hashed), and it took TWO changes because the test
+      found the second after the first landed:
+        1. verification gets its own detached budget (10m), not the caller's
+        2. everything AFTER verification -- the writes recording its verdict --
+           gets a fresh detached persist budget too. Detaching verification
+           alone was not enough: a slow-but-passing command legitimately
+           consumes the caller's whole budget, so MarkDone then failed with
+           "context deadline exceeded" and the task stayed unmarked. Same
+           lost-verdict bug one step later. A verdict that cannot be WRITTEN is
+           indistinguishable from no verdict, which is what the reaper requeues.
+      Both proven independently by reverting.
+      The bare 30*time.Second literal at four sites is now named persistBudget,
+      with verificationBudget beside it -- an unnamed constant is part of why
+      nobody noticed acceptance was charged to a store-write budget.
+      TEST LESSON worth keeping: my first version of the regression test passed
+      a context.Background(), so it PASSED against the unfixed code -- there was
+      no caller deadline for verification to outlive. A test for a deadline bug
+      must supply the deadline. Caught only by running the negative proof and
+      getting no failure.
       Verify by reverting: a dispatched run must reach race=done with
       reclaim_count=0. Nothing short of that has settled this yet -- three
       previous "fixes" (-v, capping, raising stall_timeout) all targeted
@@ -777,9 +793,12 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
       conclusions and all three were wrong. A running experiment has no verdict
       until it stops.
       race carries NO pressure clause (gated on >1 in flight), so its reclaims
-      happened with nothing else running: the LEASE is the operative limit, and
-      capping only makes the step wait longer for a slot -- more exposure, not
-      less.
+      happened with nothing else running. SUPERSEDED: this said the LEASE was
+      the operative limit; it is not, and the root-cause item above has the
+      real answer (acceptance verification charged to a 30s store-write
+      budget). Capping also cannot add reclaim exposure by making a step wait
+      -- the slot is acquired BEFORE the claim, and only `running` tasks are
+      reclaimable.
       Original framing, kept for the diagnosis path:
 
 - [x] [WAIT-AGENT] Capped-width self-test RUNNING (monitor bq7tfrdz1), the
@@ -817,7 +836,8 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
       The MISSING pressure clause on race is the actual finding. It is gated on
       >1 in flight, so race's latest reclaim happened with NOTHING ELSE
       RUNNING. Contention cannot explain that one.
-      Correct conclusion: for a step like this the LEASE is the operative
+      SUPERSEDED -- see the root-cause item above. Left for the diagnosis
+      trail, not as a conclusion. What this said: for a step like this the LEASE is the operative
       limit, not the load. A 138s silent command cannot reliably survive a 180s
       renewable lease even alone on the machine. Capping helps its NEIGHBOURS
       (unit-provider reclaimed at 3 in flight) but does not make a silent step
