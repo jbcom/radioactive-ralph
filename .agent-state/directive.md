@@ -743,7 +743,37 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
       file says "a field is not shipped until each renderer shows it". Not
       repeating that two commits later.
 
-- [ ] [WAIT-AGENT] Capped-width self-test RUNNING (monitor bq7tfrdz1), the
+- [ ] APPLY the fix the experiment actually identified: raise stall_timeout for
+      the self-test's binding. Everything so far diagnosed the race step and
+      nothing changed its outcome -- `-v` cannot help under dispatch (the
+      watchdog sees one item.completed event), capping made it WORSE (4 vs 2
+      reclaims), and the lease is what is left.
+      The measurement that sizes it: 30s warm, 62s cold-cache, 138s under load,
+      against a 180s default. A value with real headroom over the worst
+      observed case is the point -- not a value that merely clears the median,
+      which is how 180s became insufficient in the first place.
+      Store it where a headless supervisor reads it (DB layers; there is no
+      --config-file to thread), and document the number WITH the measurement
+      that justifies it, so the next person can tell a chosen bound from a
+      guessed one.
+      Verify by reverting: a dispatched run must reach race=done with
+      reclaim_count=0. That is the end-to-end proof neither prior fix produced,
+      and the only one worth accepting -- the step passes standalone in 138s
+      today and that has never predicted its dispatched behaviour.
+
+- [x] CAPPED-WIDTH EXPERIMENT CONCLUDED (PR 329). Final: race reclaimed FOUR
+      times under RALPH_MAX_PARALLEL=4, versus two unbounded -- capping made it
+      WORSE. Four successive readings (predicted 0, saw 1 "halved", saw 2 "no
+      better", final 4) and only the last is a result; three were recorded as
+      conclusions and all three were wrong. A running experiment has no verdict
+      until it stops.
+      race carries NO pressure clause (gated on >1 in flight), so its reclaims
+      happened with nothing else running: the LEASE is the operative limit, and
+      capping only makes the step wait longer for a slot -- more exposure, not
+      less.
+      Original framing, kept for the diagnosis path:
+
+- [x] [WAIT-AGENT] Capped-width self-test RUNNING (monitor bq7tfrdz1), the
       end-to-end proof the -v fix failed to deliver.
       ANSWERED already: dispatch width is RALPH_MAX_PARALLEL, and unset means
       UNBOUNDED -- supervisorMaxParallel returns 0, the semaphore is nil.
@@ -799,7 +829,8 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
       makes the assertion follow a rename. A reviewer analyzing a file in
       isolation cannot see its package.
 
-- [ ] A RECLAIMED TASK GETS A FRESH RETRY BUDGET, and the row hides it.
+- [x] SHIPPED as PR 327 (attempt accounting) + PR 328 (the policy decision).
+      A RECLAIMED TASK GETS A FRESH RETRY BUDGET, and the row hides it.
       Found by chasing two steps that failed `interactive_prompt` while their
       acceptance commands pass by hand -- the event history is what actually
       explained it, not the category:
