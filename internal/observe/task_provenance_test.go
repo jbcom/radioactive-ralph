@@ -137,3 +137,26 @@ func TestPartitionLabelsNumberInDisplayOrder(t *testing.T) {
 		}
 	}
 }
+
+// TestWorkerSuffixKeepsIdsDistinguishable pins the property the abbreviation
+// exists for, and that a first attempt destroyed.
+//
+// Worker ids share a constant head, so truncating from the FRONT rendered every
+// row as "worker-…" -- correlating nothing, which is the marker's only job.
+// Caught by reading the rendered output; no width assertion would have noticed,
+// since the broken version was exactly as narrow as the working one.
+func TestWorkerSuffixKeepsIdsDistinguishable(t *testing.T) {
+	// Real ids from store.CreateWorker are uuid-like with a longer shared
+	// prefix than "worker-". A first version of this test used ids that
+	// diverged at rune 8 and PASSED against front-truncation -- weaker than the
+	// defect it claimed to guard.
+	a := WorkerSuffix("worker-session-01-7f3a2b1c", 8)
+	b := WorkerSuffix("worker-session-01-9e8d7c6b", 8)
+	if a == b {
+		t.Fatalf("two different workers both render as %q; the marker cannot "+
+			"correlate rows if every id abbreviates identically", a)
+	}
+	if short := WorkerSuffix("w-1", 8); short != "w-1" {
+		t.Errorf("an id shorter than the limit was altered: %q", short)
+	}
+}

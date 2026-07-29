@@ -75,3 +75,49 @@ func TestMesoShowsBlockedReasonAndPartition(t *testing.T) {
 			"case and marking them buries the real fan-out groups:\n%s", got)
 	}
 }
+
+// findWrappedLabel returns the first Label containing want whose Wrapping is
+// enabled, or nil.
+func findWrappedLabel(obj fyne.CanvasObject, want string) *widget.Label {
+	switch o := obj.(type) {
+	case *widget.Label:
+		if strings.Contains(o.Text, want) && o.Wrapping != fyne.TextWrapOff {
+			return o
+		}
+	case *fyne.Container:
+		for _, c := range o.Objects {
+			if l := findWrappedLabel(c, want); l != nil {
+				return l
+			}
+		}
+	case *container.Scroll:
+		return findWrappedLabel(o.Content, want)
+	}
+	return nil
+}
+
+// TestMesoBlockedReasonIsReachable pins the STRUCTURE, not just the presence of
+// the text -- a review caught that the two are different.
+//
+// The remediation first shipped as another cell in the task's HBox. The body
+// sits in a VERTICAL-only scroll (newUI builds NewVScroll), so at the default
+// window width the end of a long sentence was clipped with no way to scroll to
+// it: the operator could see a block existed but not what to do about it. The
+// text-presence assertion above passed the whole time.
+func TestMesoBlockedReasonIsReachable(t *testing.T) {
+	f := newFakeController()
+	u := newTestUI(t, f)
+	u.render(snapshot{level: levelMeso, selectedPlan: "p1", tasks: []observe.Task{{
+		PlanID: "p1", ID: "task-a", Status: "blocked_capability",
+		Blocked: &observe.BlockedSummary{
+			Category: observe.BlockedCapability,
+			Summary:  "the bound provider does not satisfy this task's requirements; bind a provider that does",
+		},
+	}}})
+
+	if findWrappedLabel(u.root, "bind a provider that does") == nil {
+		t.Error("the remediation is not in a wrapping label; inside the task row " +
+			"it is clipped at the window edge under a vertical-only scroll, so " +
+			"the operator cannot read the action they need")
+	}
+}

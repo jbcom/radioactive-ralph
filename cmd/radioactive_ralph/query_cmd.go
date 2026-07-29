@@ -276,6 +276,14 @@ func writeTaskLines(out io.Writer, page observe.TaskPage) error {
 	labels := observe.PartitionLabels(page.Items)
 	for _, task := range page.Items {
 		line := fmt.Sprintf("  %-16s %-24s", task.ID, task.Status)
+		// Which worker currently HOLDS the task, which is a different question
+		// from which partition it shares: two tasks can sit in one ready
+		// partition and still be claimed by different workers. Abbreviated to the
+		// distinguishing tail exactly as the meso view does -- the guide promises
+		// the same markers, and shipping a subset made that promise false.
+		if id := task.ClaimedByWorkerID; id != "" {
+			line += " w:" + observe.WorkerSuffix(id, 8)
+		}
 		if name := task.ProvenanceLabel(); name != "" {
 			line += " via=" + name
 		}

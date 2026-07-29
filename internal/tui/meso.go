@@ -7,21 +7,6 @@ import (
 	"github.com/jbcom/radioactive-ralph/internal/observe"
 )
 
-// workerSuffix abbreviates a worker id to its LAST limit runes, marking the cut
-// so it never reads as a whole id.
-//
-// The tail, because that is where ids differ: generated worker ids share a
-// constant head, so a leading truncation renders every row identically and
-// destroys the only thing this marker is for -- telling at a glance that two
-// tasks are held by the same worker.
-func workerSuffix(id string, limit int) string {
-	r := []rune(id)
-	if len(r) <= limit {
-		return id
-	}
-	return "…" + string(r[len(r)-limit:])
-}
-
 // renderMeso renders the drill-into-a-plan view (spec §7 "meso"): the
 // selected plan's tasks grouped by their parallel_group/sequence_ordinal
 // structure, their statuses, and the worker hierarchy implied by which
@@ -61,7 +46,7 @@ func renderMeso(m Model) string {
 				// this: ids share a constant "worker-" head, so a leading
 				// truncation printed "worker-…" on every row and correlated
 				// nothing, which is the one job this marker has.
-				worker = styleMuted.Render(" w:" + workerSuffix(t.ClaimedByWorkerID, 8))
+				worker = styleMuted.Render(" w:" + observe.WorkerSuffix(t.ClaimedByWorkerID, 8))
 			}
 			// Which provider actually ran this task. The worker id cannot answer
 			// that once the work is over: worker= is a live claim, and the reaper

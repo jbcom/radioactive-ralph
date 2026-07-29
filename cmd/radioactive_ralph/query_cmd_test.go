@@ -481,3 +481,45 @@ func TestRunStatusQueryExplainsBlockedTasks(t *testing.T) {
 		}
 	}
 }
+
+// TestRunStatusQueryShowsWorkerClaim closes a doc/behaviour mismatch a review
+// caught: the guide promises the CLI uses the meso view's markers, and the
+// first version shipped a subset with no w: marker at all.
+//
+// The claim answers a DIFFERENT question from the partition: two tasks can sit
+// in one ready partition and still be held by different workers, so the
+// partition label cannot substitute for it.
+func TestRunStatusQueryShowsWorkerClaim(t *testing.T) {
+	reply := querySnapshotFixture(1)
+	reply.Tasks = observe.TaskPage{Items: []observe.Task{
+		{
+			PlanID: "plan-1", ID: "task-a", Status: "running",
+			ClaimedByWorkerID: "worker-session-01-7f3a2b1c", PartitionOrdinal: "aaaa",
+		},
+		{
+			PlanID: "plan-1", ID: "task-b", Status: "running",
+			ClaimedByWorkerID: "worker-session-01-9e8d7c6b", PartitionOrdinal: "aaaa",
+		},
+		{PlanID: "plan-1", ID: "task-c", Status: "ready"},
+	}}
+
+	var out bytes.Buffer
+	if err := runStatusQueryWith(
+		context.Background(), &out, &fakeObserveClient{snapshot: reply},
+		ipc.ObserveSnapshotArgs{ProjectID: "project-1"}, false, false,
+	); err != nil {
+		t.Fatalf("runStatusQueryWith: %v", err)
+	}
+	got := out.String()
+
+	if !strings.Contains(got, "w:…7f3a2b1c") || !strings.Contains(got, "w:…9e8d7c6b") {
+		t.Errorf("worker claims missing or not distinguishable; two tasks sharing "+
+			"a partition can still be held by different workers:\n%s", got)
+	}
+	// An unclaimed task must not gain an empty marker.
+	for _, line := range strings.Split(strings.TrimRight(got, "\n"), "\n") {
+		if strings.Contains(line, "task-c") && strings.Contains(line, "w:") {
+			t.Errorf("an unclaimed task rendered a worker marker: %q", line)
+		}
+	}
+}
