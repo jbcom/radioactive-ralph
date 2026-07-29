@@ -526,6 +526,11 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
 
 ## Rolling improvement queue (directive 0 appends here)
 
+- [ ] [WAIT] Land the 1 open PR: #321 (fold three overlapping AGENTS.md rules
+      into one organized by layer -- check, setup, threshold). Auto-merge
+      ARMED, no failing checks. Hash-prefixed deliberately: guard 9 extracts
+      `#[0-9]{3}` from THIS line.
+
 - [x] #320 MERGED. Absence assertions must prove presence first -- the third
       distinct form of one mistake this session (a grep matching nothing, a
       timing bound measuring runner speed, a fixture creating nothing). The
