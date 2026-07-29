@@ -859,7 +859,14 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
       real read of it. Do not mistake a green run for having verified the
       diagnostic.
 
-- [ ] unit-orch fails `interactive_prompt` INTERMITTENTLY -- failed twice, then
+- [ ] [WAIT] unit-orch is INTERMITTENT and currently PASSING, so there is
+      nothing to act on until it fails again. Not closed: an intermittent bug
+      that stops reproducing is hidden, not fixed, and the decision log (wired
+      in 336) has never actually captured one -- the run that would have
+      exercised it came back fully green.
+      When it next fails, read the worker.decision_log event FIRST. That is the
+      artifact this whole thread lacked.
+      Detail: unit-orch fails `interactive_prompt` INTERMITTENTLY -- failed twice, then
       PASSED on the third clean-tree run (verified by reading the store
       directly; see the surface problem below). So it is flaky, not
       deterministic, and an earlier revision of this item calling it
@@ -876,7 +883,12 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
       makes that MORE valuable, not less: it cannot be reproduced on demand, so
       the record has to be captured when it happens.
 
-- [ ] `status` CANNOT SHOW A RECENT RUN once the task page saturates, and the
+- [x] FIXED in PR 340: `status --plan <id>` returns a run's full task list
+      regardless of history depth. Verified against the live saturated page --
+      unscoped showed 0 of 12 rows, scoped returned all 12 -- and used to read
+      the fully green run above. SnapshotQuery already carried PlanID and
+      `messages` already had the flag; only `status` did not.
+      Original finding: `status` CANNOT SHOW A RECENT RUN once the task page saturates, and the
       advice I wrote for it does not work. Verified this pass: a completed
       12-task run displayed 6 rows; there is no `--plan` filter on `status`
       (only --task-after/--task-after-plan cursors), and cursoring cannot
