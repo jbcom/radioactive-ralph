@@ -688,22 +688,41 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
       reaches --json but never the human line would leave the CLI's default
       output less informative than its own JSON.
 
-- [ ] A lint finding for a file that does not exist should fail LOUDLY, not
-      quietly waste a turn. The stale-cache episode cost a full diagnosis
-      cycle and produced a four-file phantom "fix" before anyone noticed the
-      paths pointed outside the repo -- and the agent doing that was behaving
-      correctly given what it was told.
-      The self-test cannot currently tell a real lint failure from a cache
-      artifact, and neither can a provider turn. Make the acceptance side
-      detect it: a reported finding whose path does not resolve inside the
-      project is not a finding, it is a stale index.
-      Verify by reverting: plant a finding for a deleted path and the step
-      must fail naming the phantom path, not hand it to an agent to "fix".
-      Reasoning to preserve -- the failure was not that the agent was wrong,
-      it was that an IMPOSSIBLE task is indistinguishable from a hard one.
-      That is the same shape as the never-block invariant (a blocked turn
-      surfaces as a failed task with a named category), so the fix should
-      name a category too rather than merely erroring.
+- [x] DONE. Acceptance failures now name findings whose paths are not on disk,
+      pointing at the tool cache as the likely cause.
+      REPORTS rather than suppresses, deliberately: the command still failed
+      and the step still fails. Turning a red step green on a heuristic would
+      be far worse than the ambiguity being fixed -- a mis-parse would hide
+      real findings. This only explains a failure that was happening anyway.
+      THE LESSON, which is this session's recurring shape one more time: my
+      first version skipped RELATIVE paths, reasoning they resolve against the
+      tool's working directory. But checkCommandExitsZero sets cmd.Dir itself,
+      so that directory is known -- and golangci-lint reports the real
+      stale-cache paths relatively ("../.worktrees/..."). So the detector
+      missed the exact output it was written for while PASSING against my
+      synthetic absolute-path fixture: a check that works only on its own test
+      data. Caught by running it against the REAL captured output instead of
+      trusting the fixture. Detecting 2 of 3 real paths is what exposed it.
+      Both directions proven by reverting; a companion test asserts a failure
+      whose paths all exist is left untouched.
+
+- [ ] The `race` step still loses its claim under dispatch, and now we know
+      the -v fix cannot help it. The confirming run reproduced reclaim_count=2
+      WITH `-v` in place, exactly as the codex reviewer predicted: under Codex
+      dispatch the watchdog sees the outer `codex exec --json` stream, where a
+      command's stdout arrives on ONE item.completed event when the command
+      finishes, so a 138s test is silent to the lease either way.
+      The guide now says to raise stall_timeout for that binding, but nothing
+      DOES it -- the self-test still runs the race step against the 3m default
+      and will keep burning two claims every run.
+      Decide and implement: either a per-binding stall_timeout the self-test
+      sets for its own dispatch, or split the race step so no single command
+      outlives the lease. Prefer the split if it keeps coverage whole -- it
+      removes the silence rather than tolerating it, and the guide already
+      argues that is the better fix WHEN the silence is removable.
+      Verify by reverting: the step must complete with reclaim_count=0 on a
+      dispatched run, which is the only proof that survives the fact that it
+      passes standalone in 138s today.
 
 - [x] CONFIRMING SELF-TEST RUN validated the stale-cache diagnosis. The whole
       point of re-running: `lint-internal` had failed with interactive_prompt,
