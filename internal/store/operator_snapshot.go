@@ -756,6 +756,16 @@ func readOperatorTasks(
 		         -- merely unfinished is NOT traversed: that chain still clears
 		         -- itself, and following it would mark healthy in-flight work as
 		         -- dead.
+		         -- Terminates by VISITED-NODE tracking, not a depth cap. UNION
+		         -- (not UNION ALL) discards rows already produced, so each task
+		         -- is expanded once and a cycle cannot loop forever -- bounded by
+		         -- the number of tasks in the plan rather than a magic number.
+		         --
+		         -- A cap was the first attempt and it silently recreated the very
+		         -- bug this projection fixes, just past its threshold: plan
+		         -- import turns an ordered group into a 1:1 dependency chain with
+		         -- no depth limit of its own, so an ordinary long ordered list
+		         -- reached it and its deepest tasks read as healthy again.
 		         WITH RECURSIVE dead(id, depth) AS (
 		           SELECT d.depends_on, 1
 		             FROM task_deps d
@@ -764,7 +774,7 @@ func readOperatorTasks(
 		           SELECT d.depends_on, dead.depth + 1
 		             FROM task_deps d
 		             JOIN dead ON d.task_id = dead.id
-		            WHERE d.plan_id = t.plan_id AND dead.depth < 64
+		            WHERE d.plan_id = t.plan_id
 		         )
 		         SELECT dead.id FROM dead
 		          JOIN tasks tdep ON tdep.plan_id = t.plan_id AND tdep.id = dead.id
