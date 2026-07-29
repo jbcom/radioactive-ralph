@@ -872,8 +872,22 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
       that stops reproducing is hidden, not fixed, and the decision log (wired
       in 336) has never actually captured one -- the run that would have
       exercised it came back fully green.
-      When it next fails, read the worker.decision_log event FIRST. That is the
-      artifact this whole thread lacked.
+      FIRST REAL CAPTURE (run 133200, task unit-provider): the decision log
+      WORKS. The failure produced a worker.decision_log event:
+        {"summary":"- turn ended interactive_prompt: provider requested
+         interactive input\n- turn ended interactive_prompt: ...\n"}
+      Two lines, one per attempt. So #336 is verified against a real failure,
+      not just its unit tests.
+      TWO THINGS LEARNED, both worth keeping:
+      1. My check was WRONG, not the feature. I counted FILES under
+         workers/ and saw 0 -- but AbsorbDecisionLog consumes the file into an
+         event, so counting files afterwards measures nothing. The EVENT is the
+         durable artifact. I nearly filed a working feature as broken.
+      2. The record does not answer the question. It says the provider
+         requested input; it does not say WHAT it asked for. That is Ralph's
+         own classification, which is what I wired -- the agent-authored side
+         needs the prompt to carry a log path and worker id, which it still
+         does not. So the next step is that, not another theory.
       Detail: unit-orch fails `interactive_prompt` INTERMITTENTLY -- failed twice, then
       PASSED on the third clean-tree run (verified by reading the store
       directly; see the surface problem below). So it is flaky, not
