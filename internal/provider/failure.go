@@ -15,8 +15,26 @@ const (
 	FailureProcessCleanup FailureCategory = "process_cleanup"
 	// FailureOutputLimit means a bounded output/evidence ceiling was crossed.
 	FailureOutputLimit FailureCategory = "output_limit"
-	// FailureInteractivePrompt means the CLI requested operator input.
+	// FailureInteractivePrompt means the CLI requested operator input of an
+	// unrecognised shape. The three kind-specific codes below are preferred
+	// when the prompt classifier recognises one, because they carry the only
+	// thing an operator can act on: WHICH response the block needs.
+	//
+	// These are CATEGORIES rather than summary text on purpose. The operator
+	// projection rebuilds a failure from the category alone
+	// (observe.failureForEvent), so a specialised summary never crosses -- only
+	// a new constant does.
 	FailureInteractivePrompt FailureCategory = "interactive_prompt"
+	// FailureInteractivePromptPermission means the provider asked to be ALLOWED
+	// to act. Usually answered by a write-path or binding grant, not a
+	// keystroke.
+	FailureInteractivePromptPermission FailureCategory = "interactive_prompt_permission"
+	// FailureInteractivePromptConfirm means a yes/no on an action the CLI
+	// already intended. Usually answered by a flag that suppresses the prompt.
+	FailureInteractivePromptConfirm FailureCategory = "interactive_prompt_confirm"
+	// FailureInteractivePromptClarification means an open question about the
+	// task. The step's scoped context was insufficient, so the PLAN needs work.
+	FailureInteractivePromptClarification FailureCategory = "interactive_prompt_clarification"
 	// FailureStall means the renewable progress lease expired.
 	FailureStall FailureCategory = "stall_timeout"
 	// FailureTurnDeadline means the absolute turn deadline expired.
@@ -70,6 +88,14 @@ func (f Failure) Retryable() bool {
 		FailureProviderRejected,
 		// The CLI is asking for an operator, not for another turn.
 		FailureInteractivePrompt,
+		// The kind-specific prompt codes are non-retryable for the same reason
+		// as the generic one: the CLI is asking for an operator, not another
+		// turn. Omitting them here would make a CLASSIFIED prompt retry three
+		// times where an unclassified one fails immediately -- a worse outcome
+		// for the better-diagnosed case.
+		FailureInteractivePromptPermission,
+		FailureInteractivePromptConfirm,
+		FailureInteractivePromptClarification,
 		// The same turn will cross the same ceiling.
 		FailureOutputLimit,
 		// Ralph could not prove process convergence; retrying compounds it.
@@ -114,7 +140,8 @@ func ClassifyFailure(err error) Failure {
 	var blocked *BlockedError
 	if errors.As(err, &blocked) {
 		if blocked.Reason == BlockReasonPrompt {
-			return Failure{Category: FailureInteractivePrompt, Summary: "provider requested interactive input", Cause: err}
+			category, summary := promptBlockFailure(blocked.Kind)
+			return Failure{Category: category, Summary: summary, Cause: err}
 		}
 		return Failure{Category: FailureStall, Summary: "provider made no progress before its stall timeout", Cause: err}
 	}
@@ -158,5 +185,32 @@ func ClassifyFailure(err error) Failure {
 		return Failure{Category: FailureProviderRejected, Summary: "provider reported an unsuccessful turn", Cause: err}
 	default:
 		return Failure{Category: FailureRuntime, Summary: "provider execution failed", Cause: err}
+	}
+}
+
+// promptBlockFailure names WHAT an interactive block wanted, from the closed
+// prompt taxonomy. Every branch returns a fixed constant -- no provider text --
+// so this stays inside the content-safety boundary while telling an operator
+// which response the block actually needs.
+//
+// The three kinds want different things, which is the whole reason to
+// distinguish them: a permission request usually wants a policy change, a
+// confirmation usually wants a flag, and a clarification means the step's
+// scoped context was insufficient -- the plan needs work, not the config.
+func promptBlockFailure(kind PromptKind) (FailureCategory, string) {
+	switch kind {
+	case PromptKindPermission:
+		return FailureInteractivePromptPermission,
+			"provider requested permission to act (usually a write-path or binding grant, not a keystroke)"
+	case PromptKindConfirm:
+		return FailureInteractivePromptConfirm,
+			"provider requested confirmation of an action it already intended (usually suppressible with a flag)"
+	case PromptKindClarification:
+		return FailureInteractivePromptClarification,
+			"provider requested clarification about the task (the step's scoped context was insufficient)"
+	default:
+		// Unclassified: keep the original category and wording rather than
+		// inventing a kind.
+		return FailureInteractivePrompt, "provider requested interactive input"
 	}
 }
