@@ -3,6 +3,7 @@
 package provider
 
 import (
+	"fmt"
 	"os"
 
 	"golang.org/x/sys/unix"
@@ -20,6 +21,9 @@ func openAuthoritativeResultFile(path string) (*os.File, error) {
 	)
 	if err != nil {
 		return nil, err
+	}
+	if fd < 0 {
+		return nil, fmt.Errorf("provider: open %s returned invalid file descriptor %d", path, fd)
 	}
 	return os.NewFile(uintptr(fd), path), nil
 }

@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"math"
 	"os"
 	"syscall"
 
@@ -32,16 +33,17 @@ func newInterruptiblePTY(
 	terminal <-chan struct{},
 	onWriteBlock func(),
 ) (interruptiblePTY, error) {
-	fd := int(file.Fd())
-	if fd < 0 || fd > int(^uint32(0)>>1) {
+	rawFD := file.Fd()
+	if rawFD > math.MaxInt32 {
 		return nil, errors.New("agent: pty file descriptor is outside poll range")
 	}
+	fd := int(rawFD)
 	if err := syscall.SetNonblock(fd, true); err != nil {
 		return nil, err
 	}
 	return &nonblockingPTY{
 		fd:           fd,
-		pollFD:       int32(fd), //nolint:gosec // range checked immediately above
+		pollFD:       int32(rawFD),
 		readStop:     readStop,
 		terminal:     terminal,
 		onWriteBlock: onWriteBlock,

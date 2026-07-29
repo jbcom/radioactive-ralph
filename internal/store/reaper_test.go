@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -322,5 +323,111 @@ func TestReclaimStaleRequeuesOrphanedTask(t *testing.T) {
 	}
 	if got.ReclaimCount != 1 {
 		t.Errorf("reclaim_count = %d, want 1", got.ReclaimCount)
+	}
+
+	// The event must name THIS branch, not merely some branch. The first
+	// implementation derived the reason in the UPDATE's RETURNING clause, which
+	// evaluates against the POST-update row where claimed_by_worker_id has just
+	// been nulled -- so every reclaim, stale-heartbeat ones included, was
+	// labelled 'orphaned_claim'. A test asserting only that a reason exists, or
+	// only checking the stale-heartbeat case, would have passed against that.
+	events, err := s.ListProjectEvents(ctx, projectID, 50)
+	if err != nil {
+		t.Fatalf("ListProjectEvents: %v", err)
+	}
+	var payload string
+	for _, e := range events {
+		if e.Kind == "task.reclaimed" {
+			payload = e.PayloadJSON
+			break
+		}
+	}
+	if payload == "" {
+		t.Fatal("no task.reclaimed event for an orphaned claim")
+	}
+	if !strings.Contains(payload, "orphaned_claim") {
+		t.Errorf("orphaned-claim payload = %q, want it to name orphaned_claim -- "+
+			"the two branches must not collapse into one label", payload)
+	}
+}
+
+// TestReclaimStaleEmitsPerTaskEvent covers the operator question a bare
+// reclaim_count cannot answer: WHICH task was reclaimed, and why.
+//
+// The reaper previously logged one summary row per pass ({"reclaimed":N}),
+// which tells an operator that something was requeued but not what. A task
+// showing reclaim_count=2 was therefore indistinguishable from a task whose
+// worker crashed twice, and the only way to learn more was to read watchdog
+// source -- which is exactly how the `race` step's two reclaims were
+// diagnosed by hand.
+//
+// It also distinguishes the two reclaim BRANCHES, which are already distinct
+// in the SQL but collapsed into one counter: a stale heartbeat (the worker
+// went away) versus an orphaned claim (the worker row is already gone).
+func TestReclaimStaleEmitsPerTaskEvent(t *testing.T) {
+	ctx := context.Background()
+	clock := clockwork.NewFakeClockAt(mustParseTime(t, "2026-07-16T00:00:00Z"))
+	s := openTestStoreWithClock(t, clock)
+
+	projectID := mustCreateProject(t, s, "reaper-event-project")
+	planID := mustCreatePlan(t, s, projectID, "reaper-event-plan")
+	if err := s.CreateTask(ctx, CreateTaskOpts{PlanID: planID, ID: "slow", Description: "a long quiet step"}); err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+
+	sessionID, err := s.CreateSession(ctx, SessionOpts{Role: "supervisor", PID: 1, PIDStartTime: "t0"})
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	workerID, err := s.CreateWorker(ctx, WorkerOpts{
+		SessionID: sessionID, Provider: "codex", SubprocessPID: 100, SubprocessStartTime: "t0",
+	})
+	if err != nil {
+		t.Fatalf("CreateWorker: %v", err)
+	}
+	if _, err := s.ClaimNextReady(ctx, planID, sessionID, workerID); err != nil {
+		t.Fatalf("ClaimNextReady: %v", err)
+	}
+
+	clock.Advance(10 * time.Minute)
+	reclaimed, err := s.ReclaimStale(ctx, 5*time.Minute)
+	if err != nil {
+		t.Fatalf("ReclaimStale: %v", err)
+	}
+	if reclaimed != 1 {
+		t.Fatalf("ReclaimStale reclaimed = %d, want 1", reclaimed)
+	}
+
+	events, err := s.ListProjectEvents(ctx, projectID, 50)
+	if err != nil {
+		t.Fatalf("ListProjectEvents: %v", err)
+	}
+	var found *Event
+	for i := range events {
+		if events[i].Kind == "task.reclaimed" {
+			found = &events[i]
+			break
+		}
+	}
+	if found == nil {
+		kinds := make([]string, 0, len(events))
+		for _, e := range events {
+			kinds = append(kinds, e.Kind)
+		}
+		t.Fatalf("no task.reclaimed event; a summary-only row cannot tell an "+
+			"operator WHICH task was requeued. kinds=%v", kinds)
+	}
+	if found.TaskID != "slow" {
+		t.Errorf("task.reclaimed TaskID = %q, want %q -- an event that does not "+
+			"name its task is no better than the summary row it replaced",
+			found.TaskID, "slow")
+	}
+	if found.PlanID != planID {
+		t.Errorf("task.reclaimed PlanID = %q, want %q", found.PlanID, planID)
+	}
+	if !strings.Contains(found.PayloadJSON, "stale_heartbeat") {
+		t.Errorf("task.reclaimed payload = %q, want it to name the stale_heartbeat "+
+			"reason -- the two reclaim branches are distinct in the SQL and must "+
+			"stay distinguishable to an operator", found.PayloadJSON)
 	}
 }
