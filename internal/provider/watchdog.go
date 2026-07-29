@@ -70,9 +70,17 @@ var DefaultPromptPatterns = []*regexp.Regexp{
 	regexp.MustCompile(`(?i)\[y/n\]`),
 	regexp.MustCompile(`(?i)continue\?`),
 	regexp.MustCompile(`(?i)proceed\?`),
-	regexp.MustCompile(`(?i)permission`),
-	regexp.MustCompile(`(?i)approve`),
-	regexp.MustCompile(`(?i)allow this`),
+	// These three name an ASKED question, not a word mentioned. A bare
+	// `permission` matched "permission denied" -- ERROR TEXT -- so an ordinary
+	// failure was killed as a blocked turn and reported as interactive_prompt
+	// while the CLI waited for nobody.
+	//
+	// The asymmetry justifies erring toward a miss: a false NEGATIVE stalls one
+	// turn until the lease expires; a false POSITIVE kills a WORKING turn and
+	// misdirects the diagnosis -- which it did, for an entire investigation.
+	regexp.MustCompile(`(?i)(needs?|asking for|requesting|grant)\s+permission|permission\s+to\s+\w+\?`),
+	regexp.MustCompile(`(?i)\bapprove\s+(this|that|the)\b|do you approve`),
+	regexp.MustCompile(`(?i)allow this\b.*\?|allow this\??$`),
 	regexp.MustCompile(`(?i)do you want to`),
 	regexp.MustCompile(`(?i)waiting for`),
 	regexp.MustCompile(`(?i)press enter`),
@@ -82,7 +90,12 @@ var DefaultPromptPatterns = []*regexp.Regexp{
 	//
 	// Anchored to a question word at line start and requiring a "?", so it
 	// matches a question ASKED rather than any sentence mentioning one.
-	regexp.MustCompile(`(?im)^\s*(which|what|where|how|who|should i)\b[^?]*\?`),
+	// A clarification is a question the agent asks about ITS OWN next action, so
+	// it requires a first-person modal -- "should I", "do we" -- not merely a
+	// question word and a "?". The looser version matched "What's new?" and
+	// "What went wrong?", which providers print as banners: the same
+	// false-positive class as the bare `permission` above.
+	regexp.MustCompile(`(?im)^\s*(which|what|where|who|how)\b[^?]*\b(should|do|would|shall)\s+(i|we)\b[^?]*\?`),
 }
 
 // DefaultWatchdogConfig returns a WatchdogConfig seeded with
