@@ -131,7 +131,18 @@ for arg in "$@"; do
   previous="$arg"
 done
 printf '%s' '{"outcome":"done","summary":"large event consumed","evidence":[]}' > "$out"
-python3 -c 'import sys; sys.stdout.write("{\"type\":\"item.completed\",\"item\":{\"type\":\"command_execution\",\"aggregated_output\":\"" + "\\n" * (1 << 20) + "\"}}\\n"); sys.stdout.flush()'
+# Emit the opening bytes from /bin/sh BEFORE paying python3 interpreter
+# startup. The stall clock starts at the first byte of provider output, and
+# this test sets DefaultStallTimeout = 2s -- so with the whole line produced
+# by python3, exec-to-first-byte INCLUDED interpreter startup and the test
+# was measuring python3 launch latency, which it never intended to measure.
+# It false-stalled under parallel load:
+#   "agent blocked (killed by watchdog): no output before stall timeout"
+# in a test whose entire purpose is proving a large event does NOT stall.
+# The event emitted is byte-for-byte identical; only the ORDER changed.
+printf '%s' '{"type":"item.completed","item":{"type":"command_execution","aggregated_output":"'
+python3 -c 'import sys; sys.stdout.write("\\n" * (1 << 20)); sys.stdout.flush()'
+printf '%s\n' '"}}'
 `)
 	originalStall := DefaultStallTimeout
 	DefaultStallTimeout = 2 * time.Second
