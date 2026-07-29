@@ -135,45 +135,49 @@ produces running workers, fan-out partitions, and real provenance at once.
   proceeds phase-by-phase per the implementation plan).
 - **A check that finds nothing to check must FAIL, not pass.** Silent no-op and
   genuine success print identically, so a green result proves nothing about
-  whether anything was examined. Observed four times in one session:
-  - `go test -run <name>` with a typo'd name printed `ok` for ZERO tests, and
-    was briefly accepted as a passing negative proof.
-  - `verify-repo-claims.sh` guard 9 reported "no merged PRs listed as open"
-    twice while matching nothing — once because the list used bare numbers with
-    no `#` tokens to extract, once because the label read "open PR" and the
-    pattern required "open PRs".
-  - guard 8's item count went to zero when the checkbox pattern stopped
-    matching, printing "0 open items" — which reads as an empty queue.
-  - a shell loop echoed "pushed" after a rejected push, because the `echo` ran
-    unconditionally.
+  whether anything was examined. This is the most repeated mistake in this
+  repo's history, and it recurs because it wears a different costume at each
+  layer.
 
-  Both verifier guards now fail loudly on an empty match. When writing a check,
-  ask what it prints if its input format changes — if that output is
-  indistinguishable from success, the check is decorative.
+  **The check itself.** `go test -run <typo>` printed `ok` for ZERO tests.
+  `verify-repo-claims.sh` guard 9 reported "no merged PRs listed as open" twice
+  while matching nothing -- once because the list used bare numbers with no `#`
+  to extract, once because the label read "open PR" and the pattern required
+  "open PRs". Guard 8's count went to zero when its checkbox pattern stopped
+  matching, printing "0 open items", which reads as an empty queue. A shell loop
+  echoed "pushed" after a REJECTED push, because the `echo` ran unconditionally.
+  Both verifier guards now fail loudly on an empty match.
 
-  The rule applies to the VERIFICATION of a check too. Confirming the above,
-  a first attempt to break guard 8 rewrote only top-level `- [ ]` and left one
+  **The check's SETUP.** A DeletePlan test asserted no orphaned `events`
+  remained, but its fixture never ran a task, so the plan had no events -- the
+  assertion passed while the delete really did leave every row behind (2 before,
+  2 after). An absence assertion must first prove PRESENCE and fail if the
+  pre-state is empty.
+
+  **The check's THRESHOLD.** Three timing bounds for one guard failed three
+  ways: 2s absolute passed locally at 26ms and failed CI at 2.074s; a "doubling
+  costs <= 8x" ratio PASSED against the restored quadratic code (both shapes are
+  super-linear, 6.6x vs 3.3x, and runner noise cannot separate them); 500ms
+  absolute failed CI at 2.15s -- the FIXED code on the runner was slower than
+  the QUADRATIC code on the dev machine, so no absolute threshold distinguishes
+  the shapes across hardware. Assert algorithmic SHAPE instead: `EXPLAIN QUERY
+  PLAN` shows a `MATERIALIZE`d CTE versus a `CORRELATED SCALAR SUBQUERY`,
+  identically on every machine. Name the query as a constant so a test can
+  EXPLAIN it.
+
+  When writing a check, ask what it prints if its input format changes. If that
+  output is indistinguishable from success, the check is decorative.
+
+  **The rule applies to the check's own code, and to how you verify it.** A
+  first attempt to break guard 8 rewrote only top-level `- [ ]` and left an
   indented sub-item, so the count was 1 rather than 0 and the guard correctly
-  stayed quiet — which looked like the guard failing to fire. The test was
-  incomplete, not the guard. A negative result is only evidence once the setup
-  is confirmed to produce the condition being tested.
-- **Assert algorithmic SHAPE, not wall-clock.** Three timing bounds for one
-  guard failed three different ways before the structural version worked:
-  - 2s absolute: passed locally at 26ms, FAILED CI at 2.074s.
-  - "doubling costs <= 8x": PASSED against the restored quadratic code. Both
-    shapes were super-linear (6.6x per doubling vs 3.3x) and runner noise
-    cannot separate those.
-  - 500ms absolute: FAILED CI at 2.15s. That number is the lesson -- the FIXED
-    code on CI was slower than the QUADRATIC code on the dev machine, so NO
-    absolute threshold distinguishes the shapes across hardware.
-
-  `EXPLAIN QUERY PLAN` does: a `MATERIALIZE`d CTE is computed once, a per-row
-  walk shows up as a `CORRELATED SCALAR SUBQUERY`. Identical on every machine.
-  Name the query as a constant so a test can EXPLAIN it.
-  Whatever form the guard takes, restore the defect and watch it FAIL first --
-  a threshold tuned only against the fixed code cannot tell "fast" from
-  "running on a fast machine", and two of the three above passed happily
-  against the very regression they existed to catch.
+  stayed quiet -- which LOOKED like the guard failing to fire. The test was
+  incomplete, not the guard. Separately, a tracked-edit guard shipped three bugs
+  in a row -- an undefined variable borrowed from another script, a baseline
+  captured after staging, a comparison blind to an already-dirty file -- each
+  found by exercising it rather than reading it. A guard is code: restore the
+  defect and watch it FAIL before trusting it. A negative result is evidence
+  only once the setup is confirmed to produce the condition being tested.
 - **A new task field is not shipped until every surface renders it.** The
   observe DTO feeds three renderers (TUI meso, GUI meso, CLI `status`), and
   landing a field in one is the most repeated mistake in this repo's history --
@@ -188,15 +192,6 @@ produces running workers, fan-out partitions, and real provenance at once.
 - **Prove a fix by reverting it.** A test that passes after a change may have
   passed before it. Re-apply the defect and confirm the named test fails for
   the stated reason; if it does not, the test is not testing the fix.
-- **An absence assertion must first prove presence.** `count == 0` after a
-  delete passes identically whether the cleanup worked or the fixture never
-  created the row. That is not hypothetical: a DeletePlan test asserted no
-  orphaned `events` remained, its fixture never ran a task, and the plan
-  therefore had no events -- so the assertion passed while the delete really
-  did leave every event row behind (2 before, 2 after, caught in review).
-  Assert the pre-state is non-zero and FAIL if it is not, so the check cannot
-  go hollow when a fixture changes. Same rule as "a check that finds nothing
-  must fail", applied to the setup rather than the check.
 - **Docs claims need the same proof as code claims — EACH of them.** A guide
   written this session asserted four mechanisms that do not exist: that a
   contained turn sets HOME/TMPDIR under the containment root (nothing in
