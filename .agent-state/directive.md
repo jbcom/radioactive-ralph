@@ -756,9 +756,25 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
       subcommand beside `plan import`/`plan ls`.
       Verify by reverting: an operator must be able to remove an old run and see
       the task page stop reporting has_more.
-      Worth a SWEEP while there: two unwired subsystems in one session (this and
-      the decision log) suggests checking every exported store method for zero
-      production callers.
+      SWEEP DONE (this pass): 75 exported *Store methods, 17 with NO production
+      caller. They split into two kinds, and the distinction is what makes the
+      list actionable:
+        SUPERSEDED (a live replacement carries the traffic) -- delete these:
+          ClaimNextReady -> ClaimTask
+          CreatePlan / AddDep -> createPlanOn, via ImportPlan
+          MarkFailed -> MarkFailedWithPayload
+          HeartbeatWorker -> HeartbeatWorkerAndSession
+          ReadOperatorTaskDetail -> ListOperatorTaskDescriptions
+        UNWIRED (needed, nothing reaches it) -- wire these:
+          DeletePlan (this item), Backup, SetProjectConfig, ReserveTaskInput /
+          ReserveTaskOutput, the calibration trio, ListTaskEvents, MaxEventID,
+          CountRunningWorkers, ListTaskGroupPaths, TeamRollups
+      CAUTION for whoever picks this up: my first calibration of the sweep was
+      WRONG. I assumed ClaimNextReady and CreatePlan must be live because
+      dispatch cannot work without them, and treated a zero count as proof the
+      grep was broken. Dispatch uses ClaimTask and createPlanOn instead -- the
+      grep was right and my assumption was not. Check the replacement before
+      concluding either way.
 
 - [ ] unit-orch fails `interactive_prompt` on a step with nothing to ask about,
       reproducible across three clean-tree runs. Closed by evidence, so do not
