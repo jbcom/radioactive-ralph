@@ -53,8 +53,9 @@ type Task struct {
 	UpdatedAt         time.Time
 }
 
-// AttemptCount is how many turns this task has actually been given: retries it
-// used up plus claims a reaper took back.
+// AttemptCount is how many claims this task has been GIVEN: retries it used up,
+// plus claims a reaper took back, plus the one it currently holds or finished
+// on -- neither counter includes the claim in hand.
 //
 // It is DERIVED rather than a fourth stored counter, so it cannot drift from
 // the two numbers it summarizes.
@@ -73,7 +74,10 @@ type Task struct {
 // worker died before the task got a fair turn -- and today's generosity is a
 // side effect of the reaper not knowing about retries rather than a decision.
 // This makes the truth visible without silently changing that policy.
-func (t Task) AttemptCount() int { return t.RetryCount + t.ReclaimCount }
+// The +1 was missing at first, so a task with 1 retry and 2 reclaims reported
+// three claims when it had had four, and a task succeeding on its FIRST claim
+// reported zero -- a count no reader would recognise.
+func (t Task) AttemptCount() int { return t.RetryCount + t.ReclaimCount + 1 }
 
 // EventPayload keeps event payloads structured so the CLI, TUI, and tests
 // can reason about approvals, handoffs, retries, and provider context

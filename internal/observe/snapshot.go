@@ -464,6 +464,33 @@ func WorkerSuffix(id string, limit int) string {
 	return "…" + string(r[len(r)-limit:])
 }
 
+// AttemptLabel renders how many claims a task has been given, or "" when the
+// number says nothing worth a marker.
+//
+// It lives here for the same reason PartitionLabels does: this is display
+// POLICY, and the first version duplicated it across the CLI, TUI, and GUI --
+// three copies of an arithmetic rule that a reviewer correctly flagged as
+// certain to drift.
+//
+// THE ARITHMETIC. RetryCount counts claims that ended in a requeued failure;
+// ReclaimCount counts claims the reaper took back. Neither counts the claim the
+// task is holding NOW, nor the one it finished on. So the claims a task has
+// received is retries + reclaims + 1 while it is running or terminal on the
+// current claim. Summing only the two counters -- the first version -- reported
+// three claims for a task that had had four, and reported ZERO for a task
+// succeeding on its first claim, which is not a count anyone would recognise.
+//
+// THE VISIBILITY GATE. Empty unless the task actually lost a claim, because on
+// a healthy task "1 attempt" is true of every row and marks nothing. A reader
+// scanning for trouble wants the rows where a turn was taken away.
+func AttemptLabel(t Task) string {
+	lost := t.RetryCount + t.ReclaimCount
+	if lost == 0 {
+		return ""
+	}
+	return fmt.Sprintf("%d attempts", lost+1)
+}
+
 // PartitionLabels assigns each MULTI-TASK ready partition a short display label
 // ("p1", "p2", ...) keyed by partition ordinal, in the order the tasks are
 // given. Tasks whose partition holds only one task get no entry, so a caller
@@ -1118,7 +1145,11 @@ func taskFromStore(item store.OperatorTask) (Task, error) {
 				// task reclaimed twice reports retry_count 0 while its event
 				// log shows the claims. Published so every consumer gets the
 				// same answer instead of each rediscovering the relationship.
-				"attempt_count": item.RetryCount + item.ReclaimCount,
+				// Claims the task has been GIVEN, which is retries + reclaims
+				// PLUS the current/final claim -- neither counter includes the
+				// claim in hand. Summing only the two reported 0 for a task
+				// succeeding on its first claim.
+				"attempt_count": item.RetryCount + item.ReclaimCount + 1,
 			},
 		},
 	}

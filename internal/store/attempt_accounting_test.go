@@ -69,8 +69,9 @@ func TestAttemptCountSurvivesAReclaim(t *testing.T) {
 	}
 	// The task has been CLAIMED twice and given up both times. An operator
 	// reading the row must be able to tell that from the row.
-	if got.AttemptCount() != 2 {
-		t.Errorf("attempt_count = %d after 2 claimed-and-reclaimed turns, want 2.\n"+
+	if got.AttemptCount() != 3 {
+		t.Errorf("attempt_count = %d after 2 claimed-and-reclaimed turns, want 3 "+
+			"(two lost claims plus the one it holds now).\n"+
 			"retry_count alone reports %d, because the reaper requeues without "+
 			"incrementing it -- so a task that burned real turns reads as "+
 			"untouched, and the row disagrees with its own event history",
