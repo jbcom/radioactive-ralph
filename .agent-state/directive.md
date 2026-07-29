@@ -536,8 +536,12 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
       Those three declare after:[build] and can NEVER run, but they report a
       bare `pending` -- byte-identical to a task that simply has not started.
       An operator cannot tell a permanently-stuck plan from a slow one.
-      The data exists (the store queries task_deps in 6 places) and observe
-      exposes it in ZERO. This is the same shape as the Blocked field: "why is
+      The data exists (6 task_deps queries across claim.go, tasks.go,
+      ready_partition.go, and operator_snapshot.go) and observe exposes it in
+      ZERO. Note the last one: the snapshot query ALREADY walks task_deps for
+      the readiness gate #306 added -- it just collapses the walk to a boolean
+      and throws the edge away. Naming the blocking dependency is a smaller
+      change than it looks, not a new join. This is the same shape as the Blocked field: "why is
       this stalled?" is answerable only from raw SQLite, the access the
       dumb-client boundary exists to remove.
       Design constraint, decided and recorded rather than discovered later: do
