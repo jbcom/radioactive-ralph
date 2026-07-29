@@ -526,10 +526,26 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
 
 ## Rolling improvement queue (directive 0 appends here)
 
-- [ ] [WAIT] Land the 1 open PR: #315 (behavioural test for the self-test's
-      tracked-edit guard -- CI shellchecked the script, which proves it parses,
-      not that the guard fires). Auto-merge ARMED, no failing checks.
-      Hash-prefixed deliberately: guard 9 extracts `#[0-9]{3}` from THIS line.
+- [x] DONE 2026-07-29: the tracked-edit guard only ran on the SUCCESS path.
+      `set -e` plus a failing import (no supervisor, bad plan, slug conflict)
+      exits before report() is reached -- and a run that died partway is
+      exactly the one likely to leave a half-finished worker edit behind, with
+      nobody told. Found by running the script end to end rather than trusting
+      the isolated test, which passed throughout.
+      Fixed with an EXIT trap. The first attempt silently did nothing: the trap
+      referenced report_tracked_edits, declared 18 lines LATER, so bash called
+      an undefined function. Moved the definition above the trap.
+      Two of my own test setups were also wrong before the real defect showed:
+      editing the victim file BEFORE the run (so it was captured into the
+      baseline), then racing a 1s background edit against an import that fails
+      in under a second. Check 5 is deterministic -- a fake binary that edits a
+      tracked file and exits nonzero.
+
+- [x] #315 MERGED. The tracked-edit guard now has a behavioural test (4 checks,
+      run from a scratch git repo, sourcing the real functions). It found TWO
+      blind spots in the guard along the way, both from asking "which state
+      does the test never put it in": an already-dirty file, then a STAGED
+      edit -- the state one keystroke from committed.
 
 - [x] DONE 2026-07-29: the tracked-edit guard had NO test. CI shellchecked
       scripts/self-test.sh, which proves it parses, not that the guard fires --
