@@ -91,9 +91,20 @@ Running the turn unconfined would hand the operator the opposite of what the
 config asked for, with no error and no event — and in a mixed pool, turns would
 alternate between confined and unconfined with nothing distinguishing them.
 
-To run codex or opencode on a project, set `contain_provider_writes = false`
-for it. The flag is unset-means-capable so a NEW provider fails loudly rather
-than quietly skipping the boundary.
+Codex and opencode are both **containable** — each declares the write path it
+needs (`~/.codex`, `~/.local/share/opencode`), so neither requires disabling the
+boundary. An earlier revision of this guide said to set
+`contain_provider_writes = false` for them, from an investigation that
+concluded codex needed a write "the profile cannot enumerate". Bisecting
+properly found the write IS enumerable; see
+`TestCodexIsContainableWithItsDeclaredPath`.
+
+That advice is worth flagging rather than quietly deleting: it told operators to
+turn OFF a security boundary that was working, which is the most expensive
+direction for stale documentation to be wrong in.
+
+The flag is unset-means-capable so a NEW provider fails loudly rather than
+quietly skipping the boundary.
 
 Containment is **opt-in per `agent.Start`** via `ContainmentRoot`, not derived
 from `Dir`. Where a process starts is not the same claim as the only place it
