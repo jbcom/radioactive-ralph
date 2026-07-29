@@ -526,6 +526,11 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
 
 ## Rolling improvement queue (directive 0 appends here)
 
+- [ ] [WAIT] Land the 1 open PR: #316 (tracked-edit guard runs from an EXIT
+      trap, so a run that FAILS still reports the worker edits it left behind).
+      Auto-merge ARMED, no failing checks. Hash-prefixed deliberately: guard 9
+      extracts `#[0-9]{3}` from THIS line.
+
 - [x] DONE 2026-07-29: the tracked-edit guard only ran on the SUCCESS path.
       `set -e` plus a failing import (no supervisor, bad plan, slug conflict)
       exits before report() is reached -- and a run that died partway is
