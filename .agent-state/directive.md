@@ -558,6 +558,15 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
       slug appears in its own report.
       Accumulation is allowed to become noise. It must not become a report that
       omits its own subject.
+      CORRECTION, after a review pushed on it: "let it page" is NOT durable.
+      MaxOperatorPageLimit is 200 and that is a hard ceiling, so at ~12 tasks
+      per run this buys roughly 16 more runs, not indefinite headroom. What
+      makes it acceptable in the meantime is that truncation is LOUD -- status
+      prints "… more tasks available; showing the first bounded page" -- so the
+      surface degrades into a visible short page rather than a silent omission.
+      A delete path is therefore not optional, only not-yet-urgent. Whoever
+      takes it: the operator plan query has no status filter, so archiving does
+      nothing; it has to remove rows.
 
 - [x] #317 MERGED (docs/guides/self-test.md, plus the rule that docs claims
       need the same proof as code claims -- four invented mechanisms in that
