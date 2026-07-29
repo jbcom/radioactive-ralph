@@ -1001,78 +1001,41 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
       If either fails, containment stays closed and the actual category names
       which unrelated fix applies.
 
-- [ ] [WAIT] unit-orch is INTERMITTENT and currently PASSING, so there is
-      READ THE WORKER PROSE FIRST when it next fails -- that is where the
-      evidence is, and it is not in the failure event. Every orch
-      task.failed_terminal payload is exactly 89 bytes: the fixed constant
-      {"reason":"provider requested interactive input","failure_category":
-      "interactive_prompt"} and nothing else. The content-safety boundary is
-      working as designed (only closed-set constants cross), but it means the
-      failure event alone can never diagnose an orch block. The worker.completed
-      event for the SAME task carries the prose.
-      ONE SUCH RECORD, run 053739, read in full:
-        "Acceptance is not satisfied in this worker environment.
-         internal/observe: PASS, internal/plan: PASS,
-         internal/orch: FAIL -- three tests reach agent.Start() and receive
-         `operation not permitted`. Independent probe confirmed the sandbox
-         blocks PTY creation: `script: openpty: Operation not permitted`.
-         The exact command also cannot create its default /tmp/go-build
-         directory here. No source files were changed."
-      So on that run the tests did not fail on their merits -- the worker could
-      not create a pty or write /tmp at all.
-      SCOPE, measured rather than assumed: exactly ONE orch task and ONE
-      provider task in the whole store mention openpty or "operation not
-      permitted". This is a rare environment failure, NOT the systemic cause of
-      the 8 orch interactive_prompt blocks. Do not generalise it -- my first
-      read of this record did, and a distinct-task count corrected it.
-      TWO THINGS RULED OUT for that record: neither the current (356) nor the
-      pre-356 bare patterns match any line of that prose, so the block was NOT
-      the detector misfiring on this text. The prompt came from some other line
-      of provider output not preserved in the store.
-      ALSO NOTE exit_code:0 in worker.completed does NOT mean the acceptance
-      passed. a2a.Evidence documents ExitCode as ADVISORY ONLY -- the
-      orchestrator re-runs the real check and never trusts it. In this very
-      record the worker reported exit_code 0 while its own prose said
-      "internal/orch: FAIL". ~90 tasks in the store pair exit_code 0 with an
-      interactive_prompt failure; that is the design working, not a bug.
-      nothing to act on until it fails again. Not closed: an intermittent bug
-      that stops reproducing is hidden, not fixed, and the decision log (wired
-      in 336) has never actually captured one -- the run that would have
-      exercised it came back fully green.
-      When it next fails, read the worker.decision_log event FIRST. That is the
-      artifact this whole thread lacked.
-      NARROWED, not ruled out. Compared the three runs by reclaim_count --
-        091609: unit-orch FAILED, 11 reclaims
-        105206: unit-orch FAILED,  0 reclaims
-        112828: unit-orch passed,  0 reclaims
-      That kills "contention is the SOLE trigger" and "it only happens under
-      heavy load". It does NOT rule contention out as a cofactor, and my first
-      write-up said it did -- a reviewer caught the reasoning error.
-      THE MEASUREMENT WAS WRONG FOR THE CLAIM: reclaim_count only increments on
-      a stale heartbeat or an orphaned claim (reaper.go). The plan makes NINE
-      steps ready at once after `build`, so nine processes can saturate CPU and
-      I/O with reclaim_count staying at 0. "0 reclaims" means no worker died --
-      it does not mean the machine was idle.
-      So contention remains a live cofactor and needs a real measure (concurrent
-      claims at failure time, or wall-clock of the turn) rather than a proxy
-      that answers a different question. The two failures still share something
-      the pass does not; the decision log is the next read.
-      Detail: unit-orch fails `interactive_prompt` INTERMITTENTLY -- failed twice, then
-      PASSED on the third clean-tree run (verified by reading the store
-      directly; see the surface problem below). So it is flaky, not
-      deterministic, and an earlier revision of this item calling it
-      "reproducible" was wrong. Closed by evidence, do not
-      re-litigate: not a timeout (acceptance passes by hand in 11.6s), not a
-      retry bug (one claim then terminal -- interactive_prompt is deliberately
-      non-retryable, "the CLI is asking for an operator, not another turn"),
-      not the stale-linter-cache story (nothing is failing for it to fix).
-      The decision log is WIRED as of PR 336 (merged): Ralph records its own
-      classification at all four failure sites and absorbs it into a
-      worker.decision_log event. So the next unit-orch failure should finally
-      produce something readable -- that is the next read, and the first time
-      this question has had an artifact to answer it. An intermittent failure
-      makes that MORE valuable, not less: it cannot be reproduced on demand, so
-      the record has to be captured when it happens.
+- [x] unit-orch was NEVER A TEST FAILURE. Answered by evidence shape, not by
+      catching it in the act -- read a2a_messages for every failed orch task:
+        8 of 8 constant-only ("output":"provider requested interactive input")
+        0 of 8 with real test output, ever
+      A constant-only record means the provider was killed BEFORE producing
+      output, so there was nothing wrong with internal/orch to find. Compare
+      unit-provider over the same runs: 7 real-output, 5 constant-only -- and
+      its real failures were the PTY false-leak bug fixed in 364.
+      THAT IS WHY THIS ITEM NEVER RESOLVED. It was framed as "an intermittent
+      bug that stops reproducing is hidden, not fixed", which assumed a test
+      defect. The signal was in the SHAPE of the evidence, and the shape says
+      watchdog every time. The prompt-detector false positive (356) is the
+      known producer of exactly this shape.
+      NOT CLAIMED: that 356 fixed all eight. Those runs predate it and their
+      matched lines were never preserved, so the specific trigger for each is
+      unrecoverable. What IS established: none of them was internal/orch
+      failing its tests.
+      IF IT RECURS with 356 shipped, the first read is the evidence shape --
+      constant-only means look at the watchdog, real output means a genuine
+      test failure and a different investigation.
+
+      WHERE THE EVIDENCE IS, corrected: a2a_messages, NOT worker.completed.
+      worker.completed is written by store.MarkDone only AFTER verification
+      succeeds, so a failed task has none -- verified: 0 such events across all
+      failed tasks, versus 60 a2a_messages rows. An earlier version of this
+      entry said worker.completed and was wrong; a reviewer on 367 caught it.
+      Join on the FULL key (plan_id, id): self-test plans reuse task ids across
+      runs, so t.id = m.task_id alone can return another run's row.
+      ONE ENVIRONMENT FAILURE, run 053739, worth remembering as a shape but NOT
+      generalised: a worker reported internal/observe PASS, internal/plan PASS,
+      internal/orch FAIL because three tests reached agent.Start() and got
+      `operation not permitted`, with a probe confirming the sandbox blocked
+      pty creation. Measured scope: exactly ONE orch task and ONE provider task
+      in the entire store mention openpty. My first read generalised it; a
+      distinct-task count corrected that.
 
 - [x] FIXED in PR 340: `status --plan <id>` returns a run's full task list
       regardless of history depth. Verified against the live saturated page --
