@@ -16,6 +16,25 @@ import (
 	"github.com/jbcom/radioactive-ralph/internal/store"
 )
 
+// guiWaitBudget is the deadline for every POSITIVE wait in this file -- "did the
+// window open", "did Run return", "did the first frame paint".
+//
+// It is deliberately far larger than the work these waits observe, because the
+// assertion is "does this EVER happen", not "does it happen within N". No
+// product requirement says the first frame lands in 3s, and a headless CI
+// runner is slower and noisier than any dev machine.
+//
+// The former 3s value failed TestRun_StartsAndStopsCleanly on ubuntu-latest
+// while passing 3/3 locally -- the tell that a threshold is measuring runner
+// speed rather than correctness. A hang still fails here, just later, and a
+// test that needs 30s to report a real hang beats one that reports a phantom
+// hang on a busy runner.
+//
+// NOT used for negative assertions ("this must NOT complete yet"), where a
+// short timeout IS the assertion; the one such wait in this file keeps its own
+// deliberately-brief budget.
+const guiWaitBudget = 30 * time.Second
+
 type blockingStatusController struct {
 	*fakeController
 	statusStarted chan struct{}
@@ -160,13 +179,13 @@ func newTrayLifecycleHarness(t *testing.T) *trayLifecycleHarness {
 
 	select {
 	case h.menu = <-app.menuSet:
-	case <-time.After(3 * time.Second):
+	case <-time.After(guiWaitBudget):
 		h.release()
 		t.Fatal("desktop app did not receive a system tray menu")
 	}
 	select {
 	case <-windowRunning:
-	case <-time.After(3 * time.Second):
+	case <-time.After(guiWaitBudget):
 		h.release()
 		t.Fatal("forced real-driver window path did not start")
 	}
@@ -176,7 +195,7 @@ func newTrayLifecycleHarness(t *testing.T) *trayLifecycleHarness {
 		h.release()
 		select {
 		case <-h.runDone:
-		case <-time.After(3 * time.Second):
+		case <-time.After(guiWaitBudget):
 			t.Error("tray lifecycle harness did not stop")
 		}
 	})
@@ -188,7 +207,7 @@ func (h *trayLifecycleHarness) drain(t *testing.T) {
 	h.beginDrainOnce.Do(func() { close(h.beginDriverDrain) })
 	select {
 	case <-h.driverDrained:
-	case <-time.After(3 * time.Second):
+	case <-time.After(guiWaitBudget):
 		t.Fatal("forced driver did not reach its internally-drained state")
 	}
 }
@@ -205,7 +224,7 @@ func (h *trayLifecycleHarness) wait(t *testing.T) {
 		if h.runErr != nil {
 			t.Fatalf("Run returned error: %v", h.runErr)
 		}
-	case <-time.After(3 * time.Second):
+	case <-time.After(guiWaitBudget):
 		t.Fatal("Run did not return")
 	}
 }
@@ -242,11 +261,22 @@ func TestRun_StartsAndStopsCleanly(t *testing.T) {
 	// test.NewApp creates a dummy window before Run starts, so AllWindows()>0
 	// does not prove our UI opened or painted. Wait for the explicit post-render
 	// signal from Run's actual initial frame.
+	//
+	// The budget is deliberately far larger than the work. This test asserts
+	// "does it EVER paint", not "does it paint within N" -- there is no product
+	// requirement that the first frame land in 3s, and a headless CI runner is
+	// slower and noisier than any dev machine. The former 3s deadline failed on
+	// ubuntu-latest while passing 3/3 locally, which is the tell: the threshold
+	// was measuring runner speed rather than correctness.
+	//
+	// A hang still fails, just later -- and a test that takes 30s to report a
+	// real hang is strictly better than one that reports a phantom one on a busy
+	// runner. See AGENTS.md on thresholds that measure the machine.
 	select {
 	case <-painted:
-	case <-time.After(3 * time.Second):
+	case <-time.After(guiWaitBudget):
 		cancel()
-		t.Fatal("GUI initial frame never rendered")
+		t.Fatal("GUI initial frame never rendered within guiWaitBudget; Run is hung, not merely slow")
 	}
 
 	// Cancel and confirm Run returns (its goroutines exit on ctx.Done).
@@ -256,7 +286,7 @@ func TestRun_StartsAndStopsCleanly(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Run returned error: %v", err)
 		}
-	case <-time.After(3 * time.Second):
+	case <-time.After(guiWaitBudget):
 		t.Fatal("Run did not return within 3s of context cancel")
 	}
 }
@@ -292,7 +322,7 @@ func TestLifecycleGroup_ClosesAdmissionAndWaitsForRunningWork(t *testing.T) {
 	close(release)
 	select {
 	case <-waited:
-	case <-time.After(3 * time.Second):
+	case <-time.After(guiWaitBudget):
 		t.Fatal("lifecycle group did not finish after running work completed")
 	}
 }
@@ -343,7 +373,7 @@ func TestRefreshNow_SerializesPaints(t *testing.T) {
 	}()
 	select {
 	case <-firstEntered:
-	case <-time.After(3 * time.Second):
+	case <-time.After(guiWaitBudget):
 		close(releaseFirst)
 		t.Fatal("first refresh never entered paint")
 	}
@@ -359,7 +389,7 @@ func TestRefreshNow_SerializesPaints(t *testing.T) {
 	// the second is therefore deterministically waiting to acquire it.
 	select {
 	case <-bothAttempted:
-	case <-time.After(3 * time.Second):
+	case <-time.After(guiWaitBudget):
 		close(releaseFirst)
 		t.Fatal("both refreshes did not attempt to paint")
 	}
@@ -377,7 +407,7 @@ func TestRefreshNow_SerializesPaints(t *testing.T) {
 	} {
 		select {
 		case <-done:
-		case <-time.After(3 * time.Second):
+		case <-time.After(guiWaitBudget):
 			t.Fatalf("%s refresh did not finish", name)
 		}
 	}
@@ -399,7 +429,7 @@ func TestPaintPump_WaitsForLiveRunLoopTick(t *testing.T) {
 
 	select {
 	case <-queued:
-	case <-time.After(3 * time.Second):
+	case <-time.After(guiWaitBudget):
 		t.Fatal("paint was not queued")
 	}
 	select {
@@ -414,7 +444,7 @@ func TestPaintPump_WaitsForLiveRunLoopTick(t *testing.T) {
 		if !acknowledged {
 			t.Fatal("run-loop paint was not acknowledged")
 		}
-	case <-time.After(3 * time.Second):
+	case <-time.After(guiWaitBudget):
 		t.Fatal("paint dispatch did not complete after run-loop tick")
 	}
 	if !painted.Load() {
@@ -427,7 +457,7 @@ func TestPaintPump_WaitsForLiveRunLoopTick(t *testing.T) {
 	}()
 	select {
 	case <-queued:
-	case <-time.After(3 * time.Second):
+	case <-time.After(guiWaitBudget):
 		t.Fatal("second paint was not queued")
 	}
 	pump.Stop()
@@ -436,7 +466,7 @@ func TestPaintPump_WaitsForLiveRunLoopTick(t *testing.T) {
 		if acknowledged {
 			t.Fatal("stopped pump reported an unexecuted paint as completed")
 		}
-	case <-time.After(3 * time.Second):
+	case <-time.After(guiWaitBudget):
 		t.Fatal("stopped pump did not release queued paint")
 	}
 	if painted.Load() {
@@ -589,14 +619,14 @@ func TestRun_RealLifecycleCancelsBeforeQuit(t *testing.T) {
 
 	select {
 	case <-windowRunning:
-	case <-time.After(3 * time.Second):
+	case <-time.After(guiWaitBudget):
 		cancelParent()
 		t.Fatal("forced real-driver window path did not start")
 	}
 
 	select {
 	case <-paintQueued:
-	case <-time.After(3 * time.Second):
+	case <-time.After(guiWaitBudget):
 		cancelParent()
 		t.Fatal("initial paint was not queued for the live run loop")
 	}
@@ -616,7 +646,7 @@ func TestRun_RealLifecycleCancelsBeforeQuit(t *testing.T) {
 	tick()
 	select {
 	case <-painted:
-	case <-time.After(3 * time.Second):
+	case <-time.After(guiWaitBudget):
 		cancelParent()
 		t.Fatal("executed paint callback did not acknowledge a complete frame")
 	}
@@ -624,7 +654,7 @@ func TestRun_RealLifecycleCancelsBeforeQuit(t *testing.T) {
 	cancelParent()
 	select {
 	case <-quitRequested:
-	case <-time.After(3 * time.Second):
+	case <-time.After(guiWaitBudget):
 		t.Fatal("external cancellation was not published to the UI loop")
 	}
 	select {
@@ -641,7 +671,7 @@ func TestRun_RealLifecycleCancelsBeforeQuit(t *testing.T) {
 		if !visible {
 			t.Fatal("quit was requested before the UI context was cancelled")
 		}
-	case <-time.After(3 * time.Second):
+	case <-time.After(guiWaitBudget):
 		t.Fatal("external cancellation did not request GUI teardown")
 	}
 	select {
@@ -649,7 +679,7 @@ func TestRun_RealLifecycleCancelsBeforeQuit(t *testing.T) {
 		if !onTick {
 			t.Fatal("App.Quit did not run inside the live UI-loop callback")
 		}
-	case <-time.After(3 * time.Second):
+	case <-time.After(guiWaitBudget):
 		t.Fatal("App.Quit execution was not observed")
 	}
 	select {
@@ -657,7 +687,7 @@ func TestRun_RealLifecycleCancelsBeforeQuit(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Run returned error: %v", err)
 		}
-	case <-time.After(3 * time.Second):
+	case <-time.After(guiWaitBudget):
 		t.Fatal("Run did not return after the forced window exited")
 	}
 	tick()
@@ -718,31 +748,31 @@ func TestRun_DirectDriverDrainNeverPaintsOffMain(t *testing.T) {
 
 	select {
 	case <-driverRunning:
-	case <-time.After(3 * time.Second):
+	case <-time.After(guiWaitBudget):
 		t.Fatal("forced driver did not start")
 	}
 	select {
 	case <-paintQueued:
-	case <-time.After(3 * time.Second):
+	case <-time.After(guiWaitBudget):
 		t.Fatal("initial paint was not queued")
 	}
 	tick()
 	select {
 	case <-painted:
-	case <-time.After(3 * time.Second):
+	case <-time.After(guiWaitBudget):
 		t.Fatal("live driver tick did not paint the initial frame")
 	}
 	var uiCtx context.Context
 	select {
 	case uiCtx = <-f.statusCtx:
-	case <-time.After(3 * time.Second):
+	case <-time.After(guiWaitBudget):
 		t.Fatal("initial gather did not expose its UI context")
 	}
 
 	f.refreshEvent <- struct{}{}
 	select {
 	case <-f.lateGatherStarted:
-	case <-time.After(3 * time.Second):
+	case <-time.After(guiWaitBudget):
 		t.Fatal("event refresh did not enter its blocked gather")
 	}
 
@@ -752,7 +782,7 @@ func TestRun_DirectDriverDrainNeverPaintsOffMain(t *testing.T) {
 	close(beginDriverDrain)
 	select {
 	case <-driverDrained:
-	case <-time.After(3 * time.Second):
+	case <-time.After(guiWaitBudget):
 		t.Fatal("forced driver did not reach its internally-drained state")
 	}
 	select {
@@ -763,7 +793,7 @@ func TestRun_DirectDriverDrainNeverPaintsOffMain(t *testing.T) {
 	cancelParent()
 	select {
 	case <-quitRequested:
-	case <-time.After(3 * time.Second):
+	case <-time.After(guiWaitBudget):
 		t.Fatal("post-drain parent cancellation was not published")
 	}
 	select {
@@ -779,7 +809,7 @@ func TestRun_DirectDriverDrainNeverPaintsOffMain(t *testing.T) {
 	close(f.lateGatherReleased)
 	select {
 	case <-paintQueued:
-	case <-time.After(3 * time.Second):
+	case <-time.After(guiWaitBudget):
 		t.Fatal("post-drain gather did not enqueue into Ralph's paint pump")
 	}
 	select {
@@ -796,7 +826,7 @@ func TestRun_DirectDriverDrainNeverPaintsOffMain(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Run returned error: %v", err)
 		}
-	case <-time.After(3 * time.Second):
+	case <-time.After(guiWaitBudget):
 		t.Fatal("Run did not cancel the queued paint after direct driver drain")
 	}
 	select {
@@ -865,13 +895,13 @@ func TestRun_ParentTickWinnerDoesNotBlockConcurrentTrayQuit(t *testing.T) {
 	var menu *fyne.Menu
 	select {
 	case menu = <-a.menuSet:
-	case <-time.After(3 * time.Second):
+	case <-time.After(guiWaitBudget):
 		cancelParent()
 		t.Fatal("desktop app did not receive a system tray menu")
 	}
 	select {
 	case <-windowRunning:
-	case <-time.After(3 * time.Second):
+	case <-time.After(guiWaitBudget):
 		cancelParent()
 		t.Fatal("forced real-driver window path did not start")
 	}
@@ -889,7 +919,7 @@ func TestRun_ParentTickWinnerDoesNotBlockConcurrentTrayQuit(t *testing.T) {
 	cancelParent()
 	select {
 	case <-quitRequested:
-	case <-time.After(3 * time.Second):
+	case <-time.After(guiWaitBudget):
 		t.Fatal("parent-cancel watcher did not publish a UI-loop quit request")
 	}
 	select {
@@ -905,7 +935,7 @@ func TestRun_ParentTickWinnerDoesNotBlockConcurrentTrayQuit(t *testing.T) {
 	}()
 	select {
 	case <-quitEntered:
-	case <-time.After(3 * time.Second):
+	case <-time.After(guiWaitBudget):
 		t.Fatal("UI-loop tick did not consume the parent quit request")
 	}
 
@@ -924,7 +954,7 @@ func TestRun_ParentTickWinnerDoesNotBlockConcurrentTrayQuit(t *testing.T) {
 	close(releaseQuit)
 	select {
 	case <-tickDone:
-	case <-time.After(3 * time.Second):
+	case <-time.After(guiWaitBudget):
 		t.Fatal("winning UI-loop quit did not return")
 	}
 	select {
@@ -932,7 +962,7 @@ func TestRun_ParentTickWinnerDoesNotBlockConcurrentTrayQuit(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Run returned error: %v", err)
 		}
-	case <-time.After(3 * time.Second):
+	case <-time.After(guiWaitBudget):
 		t.Fatal("Run did not return after App.Quit completed")
 	}
 }
@@ -983,13 +1013,13 @@ func TestRun_TrayRequestWinnerDoesNotAdmitLaterParentQuit(t *testing.T) {
 	var menu *fyne.Menu
 	select {
 	case menu = <-a.menuSet:
-	case <-time.After(3 * time.Second):
+	case <-time.After(guiWaitBudget):
 		cancelParent()
 		t.Fatal("desktop app did not receive a system tray menu")
 	}
 	select {
 	case <-windowRunning:
-	case <-time.After(3 * time.Second):
+	case <-time.After(guiWaitBudget):
 		cancelParent()
 		t.Fatal("forced real-driver window path did not start")
 	}
@@ -1006,7 +1036,7 @@ func TestRun_TrayRequestWinnerDoesNotAdmitLaterParentQuit(t *testing.T) {
 	}
 	select {
 	case <-quitRequested:
-	case <-time.After(3 * time.Second):
+	case <-time.After(guiWaitBudget):
 		t.Fatal("tray callback did not publish a quit request")
 	}
 	select {
@@ -1022,7 +1052,7 @@ func TestRun_TrayRequestWinnerDoesNotAdmitLaterParentQuit(t *testing.T) {
 	}()
 	select {
 	case <-quitEntered:
-	case <-time.After(3 * time.Second):
+	case <-time.After(guiWaitBudget):
 		close(releaseQuit)
 		t.Fatal("live UI-loop tick did not consume the tray quit request")
 	}
@@ -1042,7 +1072,7 @@ func TestRun_TrayRequestWinnerDoesNotAdmitLaterParentQuit(t *testing.T) {
 	close(releaseQuit)
 	select {
 	case <-tickDone:
-	case <-time.After(3 * time.Second):
+	case <-time.After(guiWaitBudget):
 		t.Fatal("winning UI-loop quit did not return")
 	}
 	select {
@@ -1050,7 +1080,7 @@ func TestRun_TrayRequestWinnerDoesNotAdmitLaterParentQuit(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Run returned error: %v", err)
 		}
-	case <-time.After(3 * time.Second):
+	case <-time.After(guiWaitBudget):
 		t.Fatal("Run did not return after tray App.Quit completed")
 	}
 	select {
@@ -1085,7 +1115,7 @@ func TestRun_WaitsForInitialRefreshBeforeReturn(t *testing.T) {
 
 	select {
 	case <-f.statusStarted:
-	case <-time.After(3 * time.Second):
+	case <-time.After(guiWaitBudget):
 		cancel()
 		close(f.statusRelease)
 		t.Fatal("initial GUI refresh never reached Status")
@@ -1106,7 +1136,7 @@ func TestRun_WaitsForInitialRefreshBeforeReturn(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Run returned error: %v", err)
 		}
-	case <-time.After(3 * time.Second):
+	case <-time.After(guiWaitBudget):
 		t.Fatal("Run did not return after its initial refresh completed")
 	}
 }
@@ -1190,7 +1220,7 @@ func TestRunAttach_ReconnectsAfterStreamEnds(t *testing.T) {
 
 	// Poll until Attach has been called several times (proving the re-dial loop),
 	// then cancel and confirm runAttach returns.
-	deadline := time.After(3 * time.Second)
+	deadline := time.After(guiWaitBudget)
 	for f.attachCount.Load() < 3 {
 		select {
 		case <-deadline:
@@ -1202,7 +1232,7 @@ func TestRunAttach_ReconnectsAfterStreamEnds(t *testing.T) {
 	cancel()
 	select {
 	case <-done:
-	case <-time.After(3 * time.Second):
+	case <-time.After(guiWaitBudget):
 		t.Fatal("runAttach did not return after ctx cancel")
 	}
 }
