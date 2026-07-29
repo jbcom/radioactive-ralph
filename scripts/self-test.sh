@@ -140,7 +140,12 @@ echo "self-test: importing $PLAN as run $RUN_ID"
 "$BIN" plan import "$TMP_PLAN"
 
 report() {
-  "$BIN" status
+  # Same page bound the watch loop uses. Each run adds a plan, so on the default
+  # 50-plan page the FINAL report is the first thing to stop showing the run you
+  # just started -- silently, since a short page looks identical to a small
+  # project. Accumulation is allowed to become noise; it must not become a
+  # report that omits its own subject.
+  "$BIN" status --plan-limit 200 --task-limit 200
 }
 
 

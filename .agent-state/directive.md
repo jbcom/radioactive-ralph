@@ -526,7 +526,7 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
 
 ## Rolling improvement queue (directive 0 appends here)
 
-- [ ] GENERATED 2026-07-29: self-test runs ACCUMULATE, one plan per invocation.
+- [x] DONE 2026-07-29 (#318): self-test runs ACCUMULATE, one plan per invocation.
       Nine runs in a single session took this project to 11 plans / 110 tasks.
       Nothing is degraded yet (`status` returns in ~57ms and the plan page is
       not full), so this is a real trend rather than a live defect -- worth
@@ -545,6 +545,14 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
       into noise rather than into a wrong answer.
       (b) is defensible: a wrong answer was the original bug, and noise is not
       that. Prefer it until someone actually trips the limit.
+      CHOSE (b) and shipped the one thing it needs: report() was still using
+      the DEFAULT 50-plan page while the watch loop paged to 200, so the final
+      report would be the first thing to stop showing the run it had just
+      started -- silently, since a short page looks identical to a small
+      project. Both paths now page to 200. Verified by name: the newest run's
+      slug appears in its own report.
+      Accumulation is allowed to become noise. It must not become a report that
+      omits its own subject.
 
 - [x] #317 MERGED (docs/guides/self-test.md, plus the rule that docs claims
       need the same proof as code claims -- four invented mechanisms in that
