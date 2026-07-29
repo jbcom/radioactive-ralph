@@ -76,8 +76,13 @@ func TestClassifiedPromptReachesTheFailureSummary(t *testing.T) {
 		{PromptKindClarification, "clarification"},
 	} {
 		f := ClassifyFailure(&BlockedError{Reason: BlockReasonPrompt, Kind: tc.kind})
-		if f.Category != FailureInteractivePrompt {
-			t.Errorf("kind %q gave category %q, want interactive_prompt", tc.kind, f.Category)
+		// A distinct CATEGORY, not just a distinct summary. The operator
+		// projection rebuilds a failure from the category alone
+		// (observe.failureForEvent), so a specialised summary never crosses --
+		// which is how the first version of this reached no operator at all.
+		if f.Category == FailureInteractivePrompt {
+			t.Errorf("kind %q kept the generic category; the projection would "+
+				"render it identically to an unclassified prompt", tc.kind)
 		}
 		if !strings.Contains(f.Summary, tc.want) {
 			t.Errorf("kind %q summary = %q, want it to name the %s so an operator "+
@@ -90,5 +95,42 @@ func TestClassifiedPromptReachesTheFailureSummary(t *testing.T) {
 	f := ClassifyFailure(&BlockedError{Reason: BlockReasonPrompt})
 	if !strings.Contains(f.Summary, "interactive input") {
 		t.Errorf("unclassified summary = %q, want the original generic wording", f.Summary)
+	}
+}
+
+// TestClarificationIsReachableFromTheDetector closes the gap between a kind
+// that CAN be classified and one that can actually occur.
+//
+// ClassifyPromptKind recognised open questions, but agent.Watch only calls it
+// after one of DefaultPromptPatterns matches -- and none of them matched
+// "Which database should I target?". So the clarification branch was
+// classifiable and unreachable: a taxonomy entry nothing could produce.
+func TestClarificationIsReachableFromTheDetector(t *testing.T) {
+	const line = "Which database should I target?"
+	var detected bool
+	for _, re := range DefaultPromptPatterns {
+		if re.MatchString(line) {
+			detected = true
+			break
+		}
+	}
+	if !detected {
+		t.Fatalf("no DefaultPromptPatterns entry matches %q, so the watchdog "+
+			"never emits a Prompt signal for it and the clarification kind can "+
+			"never be produced", line)
+	}
+	if got := ClassifyPromptKind(line); got != PromptKindClarification {
+		t.Errorf("ClassifyPromptKind(%q) = %q, want clarification", line, got)
+	}
+
+	// Prose that merely CONTAINS a question word must not trip the detector --
+	// a false prompt kills a healthy turn.
+	for _, benign := range []string{"Running: what a great build", "how-to guide written"} {
+		for _, re := range DefaultPromptPatterns {
+			if re.MatchString(benign) {
+				t.Errorf("%q matched a prompt pattern; a false positive kills a "+
+					"turn that was working", benign)
+			}
+		}
 	}
 }
