@@ -874,6 +874,16 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
       exercised it came back fully green.
       When it next fails, read the worker.decision_log event FIRST. That is the
       artifact this whole thread lacked.
+      RULED OUT this pass, so nobody re-derives it: CONTENTION is not the
+      trigger. Compared the three runs --
+        091609: unit-orch FAILED, 11 reclaims (heavy contention)
+        105206: unit-orch FAILED,  0 reclaims (none)
+        112828: unit-orch passed,  0 reclaims
+      A failure with zero reclaims kills the "it only happens under load"
+      theory, which was the obvious next guess after the race-step work. The
+      two failures share something the pass does not, and I do not know what it
+      is -- that is the honest state, and it is why the decision log matters
+      rather than a fourth theory.
       Detail: unit-orch fails `interactive_prompt` INTERMITTENTLY -- failed twice, then
       PASSED on the third clean-tree run (verified by reading the store
       directly; see the surface problem below). So it is flaky, not
