@@ -344,6 +344,12 @@ func writeTaskLines(out io.Writer, page observe.TaskPage, events observe.EventPa
 		// explanation belongs beside it in every state it can appear.
 		if task.ReclaimCount > 0 && task.ReclaimReason != "" {
 			line += fmt.Sprintf(" — reclaimed %dx: %s", task.ReclaimCount, task.ReclaimReason)
+			// Only when work was genuinely in flight. A reclaim on an otherwise
+			// idle machine has nothing to blame the load for, and a marker on
+			// every row is noise that trains the reader to skip the column.
+			if task.ReclaimConcurrentClaims > 1 {
+				line += fmt.Sprintf(" (%d claims in flight)", task.ReclaimConcurrentClaims)
+			}
 		}
 		// The status column is padded so the marker columns align, which leaves
 		// trailing spaces on any row whose markers are all absent -- an unrun

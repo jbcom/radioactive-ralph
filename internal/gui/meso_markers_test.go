@@ -218,7 +218,7 @@ func TestMacroFlagsAPlanWithNoRunnableWork(t *testing.T) {
 // looks, so a running task legitimately shows its reclaim history.
 func TestMesoShowsReclaimReason(t *testing.T) {
 	got := mesoText(t, []observe.Task{
-		{PlanID: "p1", ID: "race", Status: "running", ReclaimCount: 2, ReclaimReason: "stale_heartbeat"},
+		{PlanID: "p1", ID: "race", Status: "running", ReclaimCount: 2, ReclaimReason: "stale_heartbeat", ReclaimConcurrentClaims: 6},
 		{PlanID: "p1", ID: "build", Status: "done"},
 	})
 	if !strings.Contains(got, "reclaimed 2x") {
@@ -229,5 +229,8 @@ func TestMesoShowsReclaimReason(t *testing.T) {
 	}
 	if strings.Count(got, "reclaimed") != 1 {
 		t.Errorf("a task that was never reclaimed carries a reclaim marker:\n%s", got)
+	}
+	if !strings.Contains(got, "6 claims in flight") {
+		t.Errorf("a reclaim under load does not name the load:\n%s", got)
 	}
 }

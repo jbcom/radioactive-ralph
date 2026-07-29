@@ -315,7 +315,7 @@ func TestMesoShowsReclaimReason(t *testing.T) {
 	m.lvl = levelMeso
 	m.selectedPlan = f.plans[0]
 	m.snap.tasks = []observe.Task{
-		{ID: "race", PlanID: "plan-1", Status: "running", ReclaimCount: 2, ReclaimReason: "stale_heartbeat"},
+		{ID: "race", PlanID: "plan-1", Status: "running", ReclaimCount: 2, ReclaimReason: "stale_heartbeat", ReclaimConcurrentClaims: 6},
 		{ID: "build", PlanID: "plan-1", Status: "done"},
 	}
 	out := m.View()
@@ -328,5 +328,35 @@ func TestMesoShowsReclaimReason(t *testing.T) {
 	}
 	if strings.Count(out, "reclaimed") != 1 {
 		t.Errorf("a task never reclaimed carries a reclaim marker:\n%s", out)
+	}
+	if !strings.Contains(out, "6 claims in flight") {
+		t.Errorf("a reclaim under load does not name the load:\n%s", out)
+	}
+}
+
+// TestMesoOmitsPressureOnAnIdleReclaim is the other half of the pressure
+// marker. A reclaim on an otherwise idle machine has no load to blame, so
+// naming one would be actively wrong -- and a marker on every row is noise that
+// trains the reader to skip the column, which costs more than it gives.
+//
+// concurrent_claims is 1 here: the reclaimed task's OWN claim. That is the
+// value a real single-worker reclaim records, so a naive `> 0` gate would print
+// "(1 claims in flight)" on every reclaim ever.
+func TestMesoOmitsPressureOnAnIdleReclaim(t *testing.T) {
+	f := testFake()
+	m := newTestModel(t, f)
+	m.lvl = levelMeso
+	m.selectedPlan = f.plans[0]
+	m.snap.tasks = []observe.Task{
+		{ID: "solo", PlanID: "plan-1", Status: "pending", ReclaimCount: 1,
+			ReclaimReason: "stale_heartbeat", ReclaimConcurrentClaims: 1},
+	}
+	out := m.View()
+
+	if !strings.Contains(out, "reclaimed 1x") {
+		t.Fatalf("the reclaim itself is not reported:\n%s", out)
+	}
+	if strings.Contains(out, "in flight") {
+		t.Errorf("an idle reclaim blamed concurrency:\n%s", out)
 	}
 }

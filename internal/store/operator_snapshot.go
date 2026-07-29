@@ -206,6 +206,16 @@ type OperatorTask struct {
 	// terminal state of its own to hang the reason on.
 	ReclaimReason string `json:"reclaim_reason,omitempty"`
 
+	// ReclaimConcurrentClaims is how many tasks were claimed at the moment of
+	// the most recent reclaim. Zero when the task was never reclaimed.
+	//
+	// It exists because a correct reason can still point at the wrong suspect.
+	// The reclaims that prompted all of this were never a worker fault: parallel
+	// steps starve each other, and 30s of work became 138s under load against a
+	// 180s lease. "stale_heartbeat" is TRUE and sends the reader to inspect the
+	// worker, when the answer is that six other steps were running.
+	ReclaimConcurrentClaims int `json:"reclaim_concurrent_claims,omitempty"`
+
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 }
@@ -836,9 +846,10 @@ const operatorTasksQuery = `
 		-- task within one second tie, and the tie-break would be arbitrary --
 		-- picking the OLDER reason exactly when reclaims are rapid, which is the
 		-- case an operator is most likely to be looking at.
-		last_reclaim(plan_id, task_id, reason) AS (
+		last_reclaim(plan_id, task_id, reason, concurrent_claims) AS (
 		  SELECT e.plan_id, e.task_id,
-		         COALESCE(json_extract(e.payload_json, '$.reason'), '')
+		         COALESCE(json_extract(e.payload_json, '$.reason'), ''),
+		         COALESCE(json_extract(e.payload_json, '$.concurrent_claims'), 0)
 		    FROM events e
 		   WHERE e.kind = 'task.reclaimed'
 		     AND e.id = (
@@ -857,6 +868,7 @@ const operatorTasksQuery = `
 		       COALESCE(m.group_path, ''), COALESCE(m.metadata_json, ''),
 		       COALESCE(t.failure_category, ''),
 		       COALESCE(lr.reason, ''),
+		       COALESCE(lr.concurrent_claims, 0),
 		       -- Does this task belong to a partition an operator can act on?
 		       --
 		       -- A RUNNING task always does: it was claimed AS a partition member,
@@ -957,6 +969,7 @@ func readOperatorTasks(
 			&metadataJSON,
 			&task.FailureCategory,
 			&task.ReclaimReason,
+			&task.ReclaimConcurrentClaims,
 			&partitioned,
 			&task.BlockedByTaskID,
 			&createdRaw,

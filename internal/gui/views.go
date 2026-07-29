@@ -329,8 +329,13 @@ func (u *ui) buildMeso(s snapshot) {
 		// again by the time anyone looks, while the count stays on the row in
 		// every state.
 		if t.ReclaimCount > 0 && t.ReclaimReason != "" {
+			pressure := ""
+			// Only when work was genuinely in flight; see the CLI/TUI note.
+			if t.ReclaimConcurrentClaims > 1 {
+				pressure = fmt.Sprintf(" (%d claims in flight)", t.ReclaimConcurrentClaims)
+			}
 			again := widget.NewLabel(fmt.Sprintf(
-				"    ↳ reclaimed %dx: %s", t.ReclaimCount, t.ReclaimReason))
+				"    ↳ reclaimed %dx: %s%s", t.ReclaimCount, t.ReclaimReason, pressure))
 			again.Wrapping = fyne.TextWrapWord
 			u.body.Add(again)
 		}

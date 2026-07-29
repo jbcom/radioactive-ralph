@@ -21,11 +21,12 @@ func TestStatusRendersReclaimReason(t *testing.T) {
 	reply := querySnapshotFixture(1)
 	reply.Tasks.Items = []observe.Task{
 		{
-			PlanID:        "plan-1",
-			ID:            "race",
-			Status:        "running",
-			ReclaimCount:  2,
-			ReclaimReason: "stale_heartbeat",
+			PlanID:                  "plan-1",
+			ID:                      "race",
+			Status:                  "running",
+			ReclaimCount:            2,
+			ReclaimReason:           "stale_heartbeat",
+			ReclaimConcurrentClaims: 6,
 		},
 		{
 			PlanID: "plan-1",
@@ -63,6 +64,11 @@ func TestStatusRendersReclaimReason(t *testing.T) {
 	if !strings.Contains(raceLine, "stale_heartbeat") {
 		t.Errorf("reclaimed row = %q, want it to name the reason -- a bare count "+
 			"is the ambiguity this exists to remove", raceLine)
+	}
+	// The load is the actual suspect. "stale_heartbeat" is true and still sends
+	// the reader to inspect the worker when six other steps were starving it.
+	if !strings.Contains(raceLine, "6 claims in flight") {
+		t.Errorf("reclaimed row = %q, want it to name the concurrency pressure", raceLine)
 	}
 
 	// A task that was never reclaimed must stay clean: a marker on every row is

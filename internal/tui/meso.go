@@ -96,8 +96,15 @@ func renderMeso(m Model) string {
 			// answer -- 2 reads the same whether a worker crashed twice or two
 			// turns were killed for producing no output.
 			if t.ReclaimCount > 0 && t.ReclaimReason != "" {
+				pressure := ""
+				// Only when work was genuinely in flight: a reclaim on an idle
+				// machine has no load to blame, and a marker on every row is
+				// noise that trains the reader to skip the column.
+				if t.ReclaimConcurrentClaims > 1 {
+					pressure = fmt.Sprintf(" (%d claims in flight)", t.ReclaimConcurrentClaims)
+				}
 				b.WriteString(styleMuted.Render(fmt.Sprintf(
-					"               ↳ reclaimed %dx: %s", t.ReclaimCount, t.ReclaimReason)))
+					"               ↳ reclaimed %dx: %s%s", t.ReclaimCount, t.ReclaimReason, pressure)))
 				b.WriteString("\n")
 			}
 			// A dependency that can never be satisfied. Its own line for the
