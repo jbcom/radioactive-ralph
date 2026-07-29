@@ -64,7 +64,21 @@ jobs:
       - name: Install Claude Code CLI
         run: npm install -g @anthropic-ai/claude-code@2.1.220
       - name: go mod download
-        run: go mod download
+        # Retry: a transient proxy.golang.org / sum.golang.org failure is not a
+        # build failure. Both were observed on the same afternoon, on PRs that
+        # changed only a test fake and only a markdown file:
+        #   read "https://proxy.golang.org/...zip": stream error; INTERNAL_ERROR
+        #   verifying module: reading https://sum.golang.org/tile/...: stream error
+        # A bare `go mod download` turns either into a red check on a diff that
+        # cannot have caused it. Bounded at 3 attempts so a REAL resolution
+        # failure (a bad go.mod, a deleted module) still fails, just later.
+        run: |
+          for attempt in 1 2 3; do
+            if go mod download; then exit 0; fi
+            echo "go mod download failed (attempt $attempt/3)" >&2
+            [ "$attempt" -eq 3 ] && exit 1
+            sleep $((attempt * 10))
+          done
       - name: go test (Unix)
         if: runner.os != 'Windows'
         # -timeout explicitly, NOT the 10-minute default. Under -race the
@@ -333,7 +347,21 @@ jobs:
           go-version-file: go.mod
           cache: true
       - name: go mod download
-        run: go mod download
+        # Retry: a transient proxy.golang.org / sum.golang.org failure is not a
+        # build failure. Both were observed on the same afternoon, on PRs that
+        # changed only a test fake and only a markdown file:
+        #   read "https://proxy.golang.org/...zip": stream error; INTERNAL_ERROR
+        #   verifying module: reading https://sum.golang.org/tile/...: stream error
+        # A bare `go mod download` turns either into a red check on a diff that
+        # cannot have caused it. Bounded at 3 attempts so a REAL resolution
+        # failure (a bad go.mod, a deleted module) still fails, just later.
+        run: |
+          for attempt in 1 2 3; do
+            if go mod download; then exit 0; fi
+            echo "go mod download failed (attempt $attempt/3)" >&2
+            [ "$attempt" -eq 3 ] && exit 1
+            sleep $((attempt * 10))
+          done
       - name: Materialize the reference test-repo fixture
         run: |
           set -euo pipefail
@@ -388,7 +416,21 @@ jobs:
           sudo locale-gen en_US.UTF-8
           sudo update-locale
       - name: go mod download
-        run: go mod download
+        # Retry: a transient proxy.golang.org / sum.golang.org failure is not a
+        # build failure. Both were observed on the same afternoon, on PRs that
+        # changed only a test fake and only a markdown file:
+        #   read "https://proxy.golang.org/...zip": stream error; INTERNAL_ERROR
+        #   verifying module: reading https://sum.golang.org/tile/...: stream error
+        # A bare `go mod download` turns either into a red check on a diff that
+        # cannot have caused it. Bounded at 3 attempts so a REAL resolution
+        # failure (a bad go.mod, a deleted module) still fails, just later.
+        run: |
+          for attempt in 1 2 3; do
+            if go mod download; then exit 0; fi
+            echo "go mod download failed (attempt $attempt/3)" >&2
+            [ "$attempt" -eq 3 ] && exit 1
+            sleep $((attempt * 10))
+          done
       - name: Build GUI-enabled binary
         env:
           CGO_ENABLED: '1'
@@ -443,7 +485,21 @@ jobs:
           go-version-file: go.mod
           cache: true
       - name: go mod download
-        run: go mod download
+        # Retry: a transient proxy.golang.org / sum.golang.org failure is not a
+        # build failure. Both were observed on the same afternoon, on PRs that
+        # changed only a test fake and only a markdown file:
+        #   read "https://proxy.golang.org/...zip": stream error; INTERNAL_ERROR
+        #   verifying module: reading https://sum.golang.org/tile/...: stream error
+        # A bare `go mod download` turns either into a red check on a diff that
+        # cannot have caused it. Bounded at 3 attempts so a REAL resolution
+        # failure (a bad go.mod, a deleted module) still fails, just later.
+        run: |
+          for attempt in 1 2 3; do
+            if go mod download; then exit 0; fi
+            echo "go mod download failed (attempt $attempt/3)" >&2
+            [ "$attempt" -eq 3 ] && exit 1
+            sleep $((attempt * 10))
+          done
       - name: Cross-build module
         env:
           CGO_ENABLED: '0'
