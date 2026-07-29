@@ -108,6 +108,24 @@ Review those before committing. One run produced a plausible, compiling
 integer-overflow guard across four files for a lint error that — checked
 afterwards — did not reproduce.
 
+That run's root cause was found later, and it is worth knowing because it makes
+the edits look justified: **a stale linter cache invents work.**
+`golangci-lint run ./internal/...` reported 11 issues, every one of them in
+`../.worktrees/rr-sandbox/` — a sibling directory that is not a worktree of this
+repo, has no `go.work` entry, and whose files do not exist on disk. The findings
+came from golangci-lint's own cache. After `golangci-lint cache clean`, the same
+command reports `0 issues`.
+
+So the `lint-internal` step failed on phantom findings, and the provider turn did
+exactly what a diligent agent should: it tried to fix them, could not (the files
+are gone), and asked for interactive guidance — surfacing as
+`failure_category: interactive_prompt`. Both anomalies in that run trace to the
+one cause.
+
+A lint failure naming a path outside the repo is the tell. Check that the file
+exists before believing the finding, and clear the cache before concluding the
+code is at fault.
+
 ## Writing steps
 
 **Size each step to the provider turn deadline.** A step whose turn outlives the

@@ -539,6 +539,21 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
       The operator surface carried it end to end -- category on the row, no
       raw provider text, and the dependent steps naming their root blocker.
 
+      ROOT CAUSE FOUND LATER, and "no action needed" was premature -- the
+      HANDLING was correct, but the trigger was fixable. A STALE LINTER CACHE
+      invents work: `golangci-lint run ./internal/...` reported 11 issues, all
+      11 in `../.worktrees/rr-sandbox/` -- not a worktree of this repo, absent
+      from any go.work, files not on disk. After `golangci-lint cache clean`
+      the same command reports `0 issues`.
+      So the agent was asked to fix findings it COULD NOT fix (the files are
+      gone), tried, and asked for guidance. That is a diligent agent meeting an
+      impossible task, not a confused one.
+      This also explains the OTHER anomaly in the same run: the four-file
+      integer-overflow guard was written to satisfy PHANTOM lint errors. Both
+      anomalies, one cause.
+      The general tell: a lint failure naming a path outside the repo. Check
+      the file exists before believing the finding. Guide updated.
+
 - [x] #321 MERGED. Folded three overlapping AGENTS.md rules into one organized
       by layer -- check, setup, threshold. All PRs landed: open=0, queued=0.
 
