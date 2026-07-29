@@ -53,7 +53,14 @@ func renderMacro(m Model) string {
 		prog := m.snap.progress[p.ID]
 		progStr := styleMuted.Render(fmt.Sprintf("(%d/%d)", prog.Done, prog.Total))
 		statusStr := statusStyle(p.Status).Render(p.Status)
-		fmt.Fprintf(&b, "%s%-30s %-10s %s\n", marker, p.Title, statusStr, progStr)
+		// A plan that cannot advance says so. Without it, "active (0/5)" reads
+		// as work in progress when every task is failed or unreachable -- the
+		// plan-level form of the stale claim the task rows already fixed.
+		dead := ""
+		if p.NoRunnableWork {
+			dead = styleMuted.Render("  no runnable work")
+		}
+		fmt.Fprintf(&b, "%s%-30s %-10s %s%s\n", marker, p.Title, statusStr, progStr, dead)
 	}
 	if m.snap.plansHasMore {
 		b.WriteString(styleMuted.Render("(more plans available; showing first bounded page)"))

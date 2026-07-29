@@ -95,14 +95,24 @@ type OperatorStatusCount struct {
 // OperatorPlan is a safe plan projection. SourceMarkdown, TagsJSON, and
 // session information are intentionally absent.
 type OperatorPlan struct {
-	ID        string     `json:"id"`
-	Slug      string     `json:"slug"`
-	Title     string     `json:"title"`
-	Status    PlanStatus `json:"status"`
-	TaskDone  int        `json:"task_done"`
-	TaskTotal int        `json:"task_total"`
-	CreatedAt time.Time  `json:"created_at"`
-	UpdatedAt time.Time  `json:"updated_at"`
+	ID       string     `json:"id"`
+	Slug     string     `json:"slug"`
+	Title    string     `json:"title"`
+	Status   PlanStatus `json:"status"`
+	TaskDone int        `json:"task_done"`
+
+	// NoRunnableWork reports that no task in this plan can make progress: every
+	// one is finished, failed, or waiting on something already dead. DERIVED,
+	// never stored -- a read path must not mutate durable status, and a
+	// dispatcher that later requeues work would have to undo it.
+	//
+	// It exists because the plan row is the strongest form of a stale claim: a
+	// plan whose every task is dead still reads "active, 0 done", which an
+	// operator scanning a plan list takes for work in progress.
+	NoRunnableWork bool      `json:"no_runnable_work"`
+	TaskTotal      int       `json:"task_total"`
+	CreatedAt      time.Time `json:"created_at"`
+	UpdatedAt      time.Time `json:"updated_at"`
 }
 
 // OperatorPlanPage is one bounded, ID-ordered plan page.
@@ -645,6 +655,35 @@ func readOperatorPlans(
 		         END
 		       ),
 		       COUNT(t.id),
+		       -- Tasks that can still make progress: running now, or waiting on
+		       -- nothing that is already dead. Zero of these, with at least one
+		       -- task present, means the plan cannot advance no matter how long
+		       -- it is left -- while its status still reads 'active'.
+		       --
+		       -- Uses the SAME terminal-dependency walk the task rows use
+		       -- (UNION, so visited-node bounded), because a plan is dead
+		       -- exactly when every one of its tasks is, and a second definition
+		       -- of that would drift from the rows an operator sees underneath.
+		       SUM(
+		         CASE
+		           WHEN t.status IN ('done', 'skipped', 'decomposed', 'failed')
+		             THEN 0
+		           WHEN EXISTS (
+		             WITH RECURSIVE dead(id) AS (
+		               SELECT d.depends_on FROM task_deps d
+		                WHERE d.plan_id = t.plan_id AND d.task_id = t.id
+		               UNION
+		               SELECT d.depends_on FROM task_deps d
+		                 JOIN dead ON d.task_id = dead.id
+		                WHERE d.plan_id = t.plan_id
+		             )
+		             SELECT 1 FROM dead
+		              JOIN tasks x ON x.plan_id = t.plan_id AND x.id = dead.id
+		              WHERE x.status = 'failed'
+		           ) THEN 0
+		           ELSE 1
+		         END
+		       ),
 		       p.created_at, p.updated_at
 		FROM plans p
 		LEFT JOIN tasks t ON t.plan_id = p.id
@@ -664,6 +703,7 @@ func readOperatorPlans(
 	for rows.Next() {
 		var plan OperatorPlan
 		var createdRaw, updatedRaw string
+		var runnable int
 		if err := rows.Scan(
 			&plan.ID,
 			&plan.Slug,
@@ -671,6 +711,7 @@ func readOperatorPlans(
 			&plan.Status,
 			&plan.TaskDone,
 			&plan.TaskTotal,
+			&runnable,
 			&createdRaw,
 			&updatedRaw,
 		); err != nil {
@@ -684,6 +725,18 @@ func readOperatorPlans(
 		if err != nil {
 			return OperatorPlanPage{}, err
 		}
+		// TaskTotal > 0 keeps an EMPTY plan unflagged -- awaiting tasks, not
+		// dead, and a marker on every freshly-created plan is noise.
+		//
+		// It is BELT-AND-BRACES, and the measurement is worth recording: a
+		// LEFT JOIN with no tasks still yields one row whose t.status is NULL,
+		// and NULL IN (...) is not true, so the ELSE branch counts it and
+		// runnable comes back 1 rather than 0. The guard therefore never fires
+		// today. Kept because that behaviour is an artifact of the join shape,
+		// not something the CASE arms state, and a later rewrite (an inner join,
+		// a COALESCE, a different aggregate) would silently start flagging every
+		// empty plan.
+		plan.NoRunnableWork = plan.TaskTotal > 0 && runnable == 0
 		items = append(items, plan)
 	}
 	if err := rows.Err(); err != nil {

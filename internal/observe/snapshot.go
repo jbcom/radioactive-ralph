@@ -418,12 +418,22 @@ type StatusCount struct {
 
 // Plan is the safe plan projection. Source markdown and tags are absent.
 type Plan struct {
-	ID        string    `json:"id"`
-	Slug      string    `json:"slug"`
-	Title     string    `json:"title"`
-	Status    string    `json:"status"`
-	TaskDone  int       `json:"task_done"`
-	TaskTotal int       `json:"task_total"`
+	ID        string `json:"id"`
+	Slug      string `json:"slug"`
+	Title     string `json:"title"`
+	Status    string `json:"status"`
+	TaskDone  int    `json:"task_done"`
+	TaskTotal int    `json:"task_total"`
+
+	// NoRunnableWork reports that no task in this plan can make progress --
+	// every one is finished, failed, or waiting on something already dead.
+	//
+	// The plan row is the strongest form of a stale claim: without this, a plan
+	// whose every task is dead still reads "active, 0 done", which an operator
+	// scanning a plan list takes for work in progress. Derived per snapshot,
+	// never stored, so a dispatcher that requeues work has nothing to undo.
+	NoRunnableWork bool `json:"no_runnable_work,omitempty"`
+
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 }
@@ -1024,14 +1034,15 @@ func plansFromStore(page store.OperatorPlanPage) PlanPage {
 	}
 	for _, item := range page.Items {
 		out.Items = append(out.Items, Plan{
-			ID:        item.ID,
-			Slug:      item.Slug,
-			Title:     item.Title,
-			Status:    string(item.Status),
-			TaskDone:  item.TaskDone,
-			TaskTotal: item.TaskTotal,
-			CreatedAt: item.CreatedAt,
-			UpdatedAt: item.UpdatedAt,
+			ID:             item.ID,
+			Slug:           item.Slug,
+			Title:          item.Title,
+			Status:         string(item.Status),
+			TaskDone:       item.TaskDone,
+			TaskTotal:      item.TaskTotal,
+			NoRunnableWork: item.NoRunnableWork,
+			CreatedAt:      item.CreatedAt,
+			UpdatedAt:      item.UpdatedAt,
 		})
 	}
 	return out

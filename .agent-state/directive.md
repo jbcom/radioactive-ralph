@@ -526,10 +526,33 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
 
 ## Rolling improvement queue (directive 0 appends here)
 
-- [ ] [WAIT] Land the 1 open PR: #309 (follow the dependency chain to the ROOT
-      failure -- the one-hop limit the FOURTH dogfooding pass found). Auto-merge
-      ARMED. Hash-prefixed deliberately: guard 9 extracts `#[0-9]{3}` from THIS
-      line.
+- [x] DONE 2026-07-28 by a FIFTH dogfooding pass. With every task row now
+      telling the truth, the remaining lie was one level up: BOTH of Ralph's
+      own plans reported `status=active task_done=0` while every task in them
+      was failed or permanently unreachable. The plan row is the strongest form
+      of the stale claim -- an operator scanning a plan list reads "active, 0
+      done" as work in progress.
+      NoRunnableWork is DERIVED per snapshot, never stored: a read path must not
+      mutate durable status, and a dispatcher that later requeues work would
+      have to undo it. It reuses the SAME terminal-dependency walk the task rows
+      use, since a plan is dead exactly when all its tasks are.
+      TWO measurement lessons worth keeping:
+      - the empty-plan guard (TaskTotal > 0) never actually fires. A LEFT JOIN
+        over zero tasks still yields one row with t.status NULL, and NULL IN
+        (...) is not true, so the ELSE arm counts it and runnable comes back 1.
+        Kept as belt-and-braces with the measurement written down, and the test
+        asserts the OUTCOME so either mechanism changing is caught.
+      - my GUI edit silently did not apply (indentation mismatch in the
+        replacement). The build passed because nothing changed -- the exact
+        false confirmation this session keeps finding elsewhere. Caught only by
+        dumping the rendered widget tree.
+
+- [x] #309 MERGED. The transitive blocker walk, plus the review fix that
+      replaced its depth cap with visited-node tracking -- a cap does not bound
+      that bug, it RELOCATES it past the threshold, and plan import chains
+      ordered steps 1:1 with no depth limit so the threshold was reachable
+      normally. Cycle termination is now pinned by a test that forces a cycle
+      into task_deps directly rather than trusting AddDep's invariant.
 
 - [x] DONE 2026-07-28 by a FOURTH dogfooding pass, run against the merged main.
       The dead-plan marker looked one hop only, so on Ralph's own plan:
