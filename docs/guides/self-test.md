@@ -158,9 +158,35 @@ So `-v` changes what that one event contains, never when it arrives, and a
 The step still carries `-v`, which is worth having for the paths that can use
 it. But when a genuinely long command must run under a dispatching provider,
 the silence is STRUCTURAL and cannot be removed — raise `stall_timeout` for
-that binding instead (it is per-binding config, layered user then project, and
-bounded by `MaxStallTimeout`). Removing the silence is the better fix only when
-the silence is removable.
+that binding instead (Go duration string, default `3m`, hard maximum `1h`):
+
+```toml
+stall_timeout = "10m"
+```
+
+A running supervisor reads this from **stored** config, not from a file passed
+at self-test time: the headless supervisor has no `--config-file` to thread, so
+the value has to be in the DB layers before the run starts.
+
+Splitting the step was tried first and does not apply here, which is worth
+recording so nobody re-derives it. The `race` step's cost is not one slow test
+that could be peeled off: the `-race` compile is ~1s warm, and the run is spread
+across many tests whose slowest is 1.85s. There is no seam to split on.
+
+The timings are worth stating plainly, because the obvious theory is wrong.
+Measured on one machine: **30s warm, 62s cold-cache, 138s under concurrent
+load** — and the lease is 180s. Cold compilation is NOT what pushes this past
+the limit; a cold-but-idle run has ~2x headroom. The 138s figure that started
+this was measured while a full self-test was running on the same machine, which
+is exactly the condition a dispatched self-test creates for itself. Every step
+it runs in parallel makes this one slower.
+
+So the step is not slow, it is slow *when contended* — which is why it passes
+comfortably by hand and loses claims during a real run, and why no fixed
+threshold derived from a quiet machine would have predicted it.
+
+Remove the silence when a seam exists, raise the lease when it does not.
+Reaching for the lease first is how a real hang gets a longer rope.
 
 Only that ONE step is anywhere near the lease, which is worth knowing before
 changing anything globally. Every other step was measured: the unit suites and

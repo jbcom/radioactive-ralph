@@ -736,6 +736,11 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
       self-test reads the working tree. Worth noting because a failed step in
       a dogfood run is not automatically a product finding; check what changed
       under it first.)
+      TERMINAL: DEAD 8/12, lint-internal=done, race=done/2. Both predictions
+      settled: the stale-cache fix HELD (the step that died on
+      interactive_prompt now passes), and race still burned 2 reclaims WITH
+      `-v` in place, exactly as the codex reviewer said it would. A prediction
+      that survives and one that fails, from the same run.
 
       Historical note -- the `race` finding cost a
       real diagnosis (2 reclaims read as a stuck row) for a step that was
