@@ -804,9 +804,118 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
       yet the verdict -- race has not finished -- but the first phase that
       previously failed has now passed.
 
-- [ ] [WAIT] CAPPED-WIDTH EXPERIMENT CONCLUDED, but PR 329 is OPEN not merged
-      -- same premature-[x] error as the item above, found by the same review.
-      Closes when it merges. Result stands: Final: race reclaimed FOUR
+- [x] DONE and VERIFIED END TO END. PR 339 merged, and the delete deferred there
+      is now proven against a live supervisor:
+        200 task rows -> 194, has_more True -> False (page no longer saturated)
+        19 plans -> 18; the deleted plan returns not_found
+      So the retention primitive works through every layer it was missing:
+      store -> IPC -> supervisor -> CLI. The earlier "unknown command:
+      plan-delete" was a stale supervisor binary, not a wiring gap -- worth
+      noting because that error looked like a defect and was a restart.
+      Original framing: CmdPlanDelete through the client, server
+      dispatch, supervisor handler, and a `plan delete <id> --yes` subcommand.
+      End-to-end delete against a live supervisor is still unverified -- the
+      running one predates the binary and correctly answered "unknown command:
+      plan-delete", and a self-test run was in flight that a restart would have
+      killed. Verify after merge.
+      That work also exposed a REAL HAZARD worth remembering: ipc.DriveHandler
+      is an OPTIONAL interface detected by type assertion, so adding a method
+      silently removed EVERY drive command from the test fake -- plan-import,
+      task-approve, worker-kill -- with no compile error. The same slip against
+      the real Supervisor would have shipped and disabled the whole drive
+      surface at runtime. Now guarded by a compile-time assertion.
+      store.DeletePlan HAD NO CALLERS and no CLI surface. Second unwired
+      subsystem this session, in code I reviewed earlier without noticing.
+      Live consequence: the operator task page saturates at
+      MaxOperatorPageLimit (200) and each self-test run adds 12 tasks, so after
+      ~16 runs the newest run shows PARTIALLY -- observed 200 rows across 19
+      plans, current run contributing 6 of 12. Nothing can prune.
+      SWEEP DONE: 75 exported *Store methods, 17 with no production caller,
+      splitting into two kinds -- the distinction is what makes it actionable:
+        SUPERSEDED (a live replacement carries the traffic) -- DELETE:
+          ClaimNextReady->ClaimTask; CreatePlan/AddDep->createPlanOn via
+          ImportPlan; MarkFailed->MarkFailedWithPayload;
+          HeartbeatWorker->HeartbeatWorkerAndSession;
+          ReadOperatorTaskDetail->ListOperatorTaskDescriptions
+          SetProjectConfig -> ApplyProjectConfig (a one-line delegate; the
+            live path calls ApplyProjectConfig from supervisor/config.go and
+            vconfig/source.go)
+        UNWIRED (needed, nothing reaches it) -- WIRE:
+          DeletePlan, Backup, ReserveTaskInput/Output, the calibration trio,
+          ListTaskEvents, ListProjectEvents, ListMessages,
+          RecordTaskProviderSession, MaxEventID, CountRunningWorkers,
+          ListTaskGroupPaths, TeamRollups
+      The list was WRONG TWICE and a reviewer caught both: SetProjectConfig was
+      filed UNWIRED when it is a pure delegate, and ListProjectEvents,
+      ListMessages and RecordTaskProviderSession were omitted entirely -- my
+      first pass filtered out internal/store callers and I never re-ran the
+      classification after narrowing the query. Re-derive the list rather than
+      trusting this one.
+      CAUTION: my first calibration was WRONG. I assumed ClaimNextReady and
+      CreatePlan had to be live because dispatch cannot work without them, and
+      treated the zero count as proof the sweep was broken. Dispatch uses
+      ClaimTask and createPlanOn. Check the replacement before concluding.
+
+- [x] FIRST FULLY GREEN SELF-TEST: COMPLETE 12/12, zero reclaims, zero
+      failures, including unit-orch AND race. Read with the new
+      `status --plan` filter, which returned all 12 rows where the unscoped
+      page showed 0.
+      The acceptance-budget fix holds across a whole run, not just the one step
+      it was diagnosed on.
+      The decision log recorded NOTHING -- correctly, since nothing failed. So
+      that test is UNEXERCISED, not passed: the next failure is still the first
+      real read of it. Do not mistake a green run for having verified the
+      diagnostic.
+
+- [ ] [WAIT] unit-orch is INTERMITTENT and currently PASSING, so there is
+      nothing to act on until it fails again. Not closed: an intermittent bug
+      that stops reproducing is hidden, not fixed, and the decision log (wired
+      in 336) has never actually captured one -- the run that would have
+      exercised it came back fully green.
+      When it next fails, read the worker.decision_log event FIRST. That is the
+      artifact this whole thread lacked.
+      Detail: unit-orch fails `interactive_prompt` INTERMITTENTLY -- failed twice, then
+      PASSED on the third clean-tree run (verified by reading the store
+      directly; see the surface problem below). So it is flaky, not
+      deterministic, and an earlier revision of this item calling it
+      "reproducible" was wrong. Closed by evidence, do not
+      re-litigate: not a timeout (acceptance passes by hand in 11.6s), not a
+      retry bug (one claim then terminal -- interactive_prompt is deliberately
+      non-retryable, "the CLI is asking for an operator, not another turn"),
+      not the stale-linter-cache story (nothing is failing for it to fix).
+      The decision log is WIRED as of PR 336 (merged): Ralph records its own
+      classification at all four failure sites and absorbs it into a
+      worker.decision_log event. So the next unit-orch failure should finally
+      produce something readable -- that is the next read, and the first time
+      this question has had an artifact to answer it. An intermittent failure
+      makes that MORE valuable, not less: it cannot be reproduced on demand, so
+      the record has to be captured when it happens.
+
+- [x] FIXED in PR 340: `status --plan <id>` returns a run's full task list
+      regardless of history depth. Verified against the live saturated page --
+      unscoped showed 0 of 12 rows, scoped returned all 12 -- and used to read
+      the fully green run above. SnapshotQuery already carried PlanID and
+      `messages` already had the flag; only `status` did not.
+      Original finding: `status` CANNOT SHOW A RECENT RUN once the task page saturates, and the
+      advice I wrote for it does not work. Verified this pass: a completed
+      12-task run displayed 6 rows; there is no `--plan` filter on `status`
+      (only --task-after/--task-after-plan cursors), and cursoring cannot
+      isolate one plan because other plans' rows consume the page first. I had
+      to query SQLite directly to see the run's real state.
+      So the guide's "read this run by plan id" is the same defect as the
+      "radioactive_ralph plan delete" line it replaced: advice naming a
+      capability the CLI does not have. Both were written without trying them.
+      FIX: a plan filter on `status` (and the observe query behind it), so the
+      operator surface can answer "how did THIS run go" independent of history
+      depth. Pruning via DeletePlan helps but is not the same thing -- a filter
+      works even when history is legitimately deep.
+      Verify by reverting: with a filter, a saturated page must still show all
+      12 rows of one run; without it, 6.
+      Verify by reverting: a dispatched run must reach unit-orch=done. Its
+      command passes standalone, which has never predicted dispatched behaviour
+      anywhere in this investigation.
+
+- [x] CAPPED-WIDTH EXPERIMENT CONCLUDED; PR 329 MERGED. Result: Final: race reclaimed FOUR
       times under RALPH_MAX_PARALLEL=4, versus two unbounded -- capping made it
       WORSE. Four successive readings (predicted 0, saw 1 "halved", saw 2 "no
       better", final 4) and only the last is a result; three were recorded as
@@ -878,11 +987,11 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
       makes the assertion follow a rename. A reviewer analyzing a file in
       isolation cannot see its package.
 
-- [ ] [WAIT] PRs 327 (attempt accounting) + 328 (the policy decision) are OPEN,
-      not merged -- main still has RetryCount/ReclaimCount only and a reaper
-      that touches neither. Marked [x] prematurely on the theory that "shipped"
-      meant "PR opened"; a reviewer caught that this would make the loop skip
-      reconciling work still absent from main. Closes when both merge.
+- [x] PRs 327 (attempt accounting) + 328 (the policy decision) MERGED. main has
+      Task.AttemptCount, the reclaim-reason surface, and the retry-budget
+      policy. (Both were briefly marked [x] BEFORE merging -- a reviewer caught
+      that, and the label was restored until they landed. Kept as history: a
+      premature [x] tells the loop to skip reconciling work absent from main.)
       A RECLAIMED TASK GETS A FRESH RETRY BUDGET, and the row hides it.
       Found by chasing two steps that failed `interactive_prompt` while their
       acceptance commands pass by hand -- the event history is what actually
