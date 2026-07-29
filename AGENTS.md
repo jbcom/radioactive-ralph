@@ -192,6 +192,30 @@ produces running workers, fan-out partitions, and real provenance at once.
 - **Prove a fix by reverting it.** A test that passes after a change may have
   passed before it. Re-apply the defect and confirm the named test fails for
   the stated reason; if it does not, the test is not testing the fix.
+
+  **The revert is itself a check, so it needs the same scepticism.** Three
+  "negative proofs" in one session reported a clean PASS/FAIL while the
+  mutation had NOT been applied: a `/tmp` baseline overwritten by a later
+  step, a `grep` treating `*` in `30 * time.Second` as a glob, and a string
+  anchor that silently matched nothing. Each printed a confident result about
+  code that was never modified. Mutate by LINE NUMBER, print the mutated line
+  to confirm it landed, and confirm it still COMPILES -- a build error means
+  the test never ran at all.
+
+  **If reverting changes nothing, the branch may be unreachable.** A PTY
+  cleanup fix survived deleting the fix entirely, because on an idle host
+  `kern.proc.all` drops every member within one poll (2 members before the
+  kill; 0 at +0ms, +2ms, +20ms), so the guarded deadline branch never
+  executed. Documenting that gap in a comment is not closing it. Add a seam --
+  an injectable package-level var -- so the branch runs deterministically.
+  Writing the test that finally executed it found two further bugs in that
+  same fix, including a predicate that dropped a pid on ANY lookup error and
+  would have reported cleanup as clean while a worker kept running.
+
+  **One case matching N patterns proves none of them.** A prompt-detector
+  suite stayed green when a whole pattern was deleted, because every positive
+  example also matched two other patterns. Assert the isolation property
+  directly: each positive case must match exactly one pattern.
 - **Docs claims need the same proof as code claims — EACH of them.** A guide
   written this session asserted four mechanisms that do not exist: that a
   contained turn sets HOME/TMPDIR under the containment root (nothing in
