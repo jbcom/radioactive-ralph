@@ -244,6 +244,12 @@ func TestMesoShowsAttemptLabel(t *testing.T) {
 	if !strings.Contains(both, "4 attempts") {
 		t.Errorf("1 retry + 2 reclaims does not state its 4 claims:\n%s", both)
 	}
+	retriesOnly := mesoText(t, []observe.Task{
+		{PlanID: "p1", ID: "retried", Status: "running", RetryCount: 2},
+	})
+	if !strings.Contains(retriesOnly, "3 attempts") {
+		t.Errorf("a retry-only task shows no attempt label:\n%s", retriesOnly)
+	}
 	clean := mesoText(t, []observe.Task{{PlanID: "p1", ID: "fine", Status: "done"}})
 	if strings.Contains(clean, "attempts") {
 		t.Errorf("an untroubled task carries an attempt marker:\n%s", clean)

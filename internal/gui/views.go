@@ -334,14 +334,17 @@ func (u *ui) buildMeso(s snapshot) {
 			if t.ReclaimConcurrentClaims > 1 {
 				pressure = fmt.Sprintf(" (%d claims in flight)", t.ReclaimConcurrentClaims)
 			}
-			// Display policy lives in observe so all three renderers agree.
-			if label := observe.AttemptLabel(t); label != "" {
-				pressure += ", " + label
-			}
+
 			again := widget.NewLabel(fmt.Sprintf(
 				"    ↳ reclaimed %dx: %s%s", t.ReclaimCount, t.ReclaimReason, pressure))
 			again.Wrapping = fyne.TextWrapWord
 			u.body.Add(again)
+		}
+		// OUTSIDE the reclaim branch; see the CLI/TUI note.
+		if label := observe.AttemptLabel(t); label != "" {
+			att := widget.NewLabel("    ↳ " + label)
+			att.Wrapping = fyne.TextWrapWord
+			u.body.Add(att)
 		}
 		if t.BlockedByTaskID != "" {
 			dead := widget.NewLabel("    ↳ cannot run: " + t.BlockedByTaskID + " failed")

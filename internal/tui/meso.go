@@ -103,12 +103,15 @@ func renderMeso(m Model) string {
 				if t.ReclaimConcurrentClaims > 1 {
 					pressure = fmt.Sprintf(" (%d claims in flight)", t.ReclaimConcurrentClaims)
 				}
-				// Display policy lives in observe so all three renderers agree.
-				if label := observe.AttemptLabel(t); label != "" {
-					pressure += ", " + label
-				}
+
 				b.WriteString(styleMuted.Render(fmt.Sprintf(
 					"               ↳ reclaimed %dx: %s%s", t.ReclaimCount, t.ReclaimReason, pressure)))
+				b.WriteString("\n")
+			}
+			// OUTSIDE the reclaim branch: retries alone, or a reclaim with no
+			// recorded reason, still warrant the count.
+			if label := observe.AttemptLabel(t); label != "" {
+				b.WriteString(styleMuted.Render("               ↳ " + label))
 				b.WriteString("\n")
 			}
 			// A dependency that can never be satisfied. Its own line for the

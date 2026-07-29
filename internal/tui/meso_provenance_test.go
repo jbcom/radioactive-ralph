@@ -377,6 +377,15 @@ func TestMesoShowsAttemptLabel(t *testing.T) {
 		t.Errorf("1 retry + 2 reclaims does not state its 4 claims:\n%s", out)
 	}
 
+	// Retry-only: no reclaim clause to hang off, which is where the label was
+	// wrongly nested at first.
+	m.snap.tasks = []observe.Task{
+		{ID: "retried", PlanID: "plan-1", Status: "running", RetryCount: 2},
+	}
+	if out := m.View(); !strings.Contains(out, "3 attempts") {
+		t.Errorf("a retry-only task shows no attempt label:\n%s", out)
+	}
+
 	m.snap.tasks = []observe.Task{
 		{ID: "fine", PlanID: "plan-1", Status: "done"},
 	}
