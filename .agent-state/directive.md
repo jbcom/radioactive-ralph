@@ -799,7 +799,41 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
       makes the assertion follow a rename. A reviewer analyzing a file in
       isolation cannot see its package.
 
-- [ ] A RECLAIMED TASK GETS A FRESH RETRY BUDGET, and the row hides it.
+- [x] DONE (PR 327, un-hashed). Task.AttemptCount() = retry + reclaim, DERIVED
+      rather than a fourth stored counter so it cannot drift from its inputs.
+      Published in A2A metadata beside both, rendered on all three surfaces --
+      but ONLY when the task also retried, since with reclaims alone
+      "reclaimed Nx" already IS the attempt count and repeating it is noise:
+        flaky    running    — reclaimed 2x: stale_heartbeat, 3 attempts total
+      Deliberately NOT wired into the retry-budget check. Whether a reclaim
+      should consume budget is a POLICY question (arguably it should not -- the
+      worker died before the task got a fair turn), and today's generosity is a
+      side effect of the reaper not knowing about retries rather than a
+      decision. Making the truth visible and changing the policy are separate
+      changes; this is the first. Left as a live question, not resolved by
+      accident.
+- [ ] DECIDE the retry-budget policy 327 deliberately left open: should a
+      reclaim consume retry budget?
+      Today it does not, and that is an ACCIDENT -- the reaper simply never
+      learned about retries. The accident is probably the right behaviour (a
+      worker that died gave the task no turn at all, so charging it a retry
+      punishes the task for the machine's failure), but "probably right by
+      accident" is exactly the state that breaks silently later.
+      The live case that surfaced it: unit-provider was claimed 5 times across
+      2 reclaims and still hit "retry budget was exhausted", so the budget IS
+      reachable through reclaim churn -- the generosity is not unbounded, it
+      just isn't governed.
+      Decide it explicitly, write the WHY into decisions.ndjson, and make the
+      code state the choice rather than imply it. If the answer is "reclaims
+      are free", say so at the reaper with a test that a reclaimed task keeps
+      its budget; if it is "reclaims cost", the reaper increments and the
+      operator surface must show it.
+      Verify by reverting: whichever way, a test must fail if someone later
+      flips it -- today nothing does, which is the actual defect.
+
+      Original finding, kept because the diagnosis path matters:
+
+- [x] A RECLAIMED TASK GETS A FRESH RETRY BUDGET, and the row hides it.
       Found by chasing two steps that failed `interactive_prompt` while their
       acceptance commands pass by hand -- the event history is what actually
       explained it, not the category:
