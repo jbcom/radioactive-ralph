@@ -87,43 +87,47 @@ and it is why the page fills with nothing to do about it.
 A plan whose every task is finished, failed, or blocked also reports
 `no runnable work`, which distinguishes a dead plan from a slow one.
 
-## When a step fails, the failure event is not where the evidence is
+## When a step fails, read the evidence log, not the failure event
 
-This is the single most expensive thing to learn the hard way. A failed task's
-`task.failed_terminal` event carries a **fixed constant and nothing else** --
-every one is the same 89 bytes:
+A failed task's `task.failed_terminal` payload carries a **closed-set constant**,
+and for the most common case that is all it carries -- every generic
+`interactive_prompt` failure in this repo's store is the same 89 bytes:
 
 ```json
 {"reason":"provider requested interactive input","failure_category":"interactive_prompt"}
 ```
 
-That is the content-safety boundary working as designed: only a closed set of
-fixed constants crosses to operator surfaces, never provider prose. But it means
-the failure event **can never tell you why a step failed**. Reading it and
-concluding anything about the cause is how one wrong category cost four
-diagnostic runs.
+Other categories carry their own fixed summaries, so payload size varies (69
+bytes for a cancel, 157 for a permission block, and an acceptance rejection can
+be much larger because the acceptance output is not provider prose). What is
+constant is the *rule*: `provider.ClassifyFailure` emits a closed set of
+privacy-safe strings, never raw provider diagnostics. So a category tells you
+which KIND of failure happened and never why.
 
-The diagnosis lives in the `worker.completed` event for the *same task*, which
-carries the provider's own account of what it ran and what happened:
+**The evidence is in `a2a_messages`, not in `worker.completed`.** This matters
+because `worker.completed` is written by `store.MarkDone` -- only *after*
+verification succeeds -- so for an actually-failed step it does not exist.
+Submitted evidence is recorded before verification and survives a failure:
 
 ```sql
 -- macOS: ~/Library/Application Support/radioactive-ralph/ralph.db
-SELECT e.payload_json
-FROM events e
-JOIN tasks t ON t.id = e.task_id
+-- Join on the FULL task key: self-test plans reuse task ids across runs, so
+-- `t.id = m.task_id` alone can return another run's row.
+SELECT m.content_json
+FROM a2a_messages m
+JOIN tasks t ON t.id = m.task_id AND t.plan_id = m.plan_id
 JOIN plans p ON p.id = t.plan_id
 WHERE p.slug = '<your-run-slug>'
-  AND e.kind = 'worker.completed'
-  AND t.description LIKE '%<package you care about>%';
+  AND t.description LIKE '%<package you care about>%'
+ORDER BY m.id DESC;
 ```
 
-A real example from this repo's own runs, which no amount of staring at the
-failure event would have produced:
-
-> `internal/observe`: PASS, `internal/plan`: PASS, `internal/orch`: FAIL --
-> three tests reach `agent.Start()` and receive `operation not permitted`.
-> Independent probe confirmed the sandbox blocks PTY creation:
-> `script: openpty: Operation not permitted`.
+That returns the worker's own account of what it ran and what happened -- for
+example, one real record from this repo's runs reported `internal/observe` PASS,
+`internal/plan` PASS, and `internal/orch` FAIL because three tests reached
+`agent.Start()` and got `operation not permitted`, with an independent probe
+confirming the sandbox blocked pty creation (`script: openpty: Operation not
+permitted`). No failure event could have told you that.
 
 Two traps in that same record:
 
