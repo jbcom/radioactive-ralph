@@ -99,6 +99,30 @@ decomposition. The orchestrator (`internal/orch`) dispatches steps with
 plan-scoped context and **verifies completion against acceptance criteria** —
 completion is never agent-asserted and never inferred from termination.
 
+## Self-test (dogfooding)
+
+`scripts/self-test.sh` imports `docs/plans/self-test.md` into a running
+supervisor and has Ralph verify Ralph. Every step carries an inline
+`accept: <command>`, so the orchestrator RE-RUNS the check itself rather than
+accepting a worker's claim -- build, unit, race, lint, then e2e and the repo
+claim verifier, wired with `after:` edges so the three fast checks fan out in
+parallel once the build passes.
+
+Two things made the first attempt useless, both worth not repeating:
+
+- The plan lived in `.radioactive-ralph/plans/`, which is gitignored because
+  the product contract forbids committed repo state. A branch switch deleted
+  it. The plan is now a tracked SOURCE file under `docs/plans/`; the state it
+  produces still goes to the user-level DB, so the contract holds. A plan file
+  is an input like a Makefile, not runtime state.
+- No step carried an `accept:` marker, so every task was judgment-only --
+  accepted on non-empty evidence, failed on empty. Nothing was verified and the
+  whole plan died. A dogfooding plan without acceptance markers tests nothing.
+
+Reading `radioactive_ralph status` during a self-test run is also the fastest
+way to exercise the operator surface, because a live run is the only thing that
+produces running workers, fan-out partitions, and real provenance at once.
+
 ## Testing patterns
 
 - `go build ./...` must compile; `go test ./...` for the main pass;
