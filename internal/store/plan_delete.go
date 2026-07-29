@@ -30,6 +30,21 @@ func (s *Store) DeletePlan(ctx context.Context, planID string) error {
 	}
 	defer func() { _ = tx.Rollback() }()
 
+	// events FIRST, and explicitly. The events table carries plan_id/task_id as
+	// plain columns with NO foreign key to either (schema 0001), so the cascade
+	// below does not reach it: a review caught that a deleted plan left its
+	// event rows behind, verified at 2 before and 2 after.
+	//
+	// That matters more than the row count suggests. Events are the fastest
+	// growing table -- every claim, failure, and completion appends one -- so a
+	// prune that skips them reclaims almost nothing while reporting success,
+	// and the orphans stay reachable through project-scoped event queries,
+	// referring to a plan that no longer exists.
+	if _, err := tx.ExecContext(ctx,
+		`DELETE FROM events WHERE plan_id = ?`, planID); err != nil {
+		return fmt.Errorf("store: delete plan events: %w", err)
+	}
+
 	res, err := tx.ExecContext(ctx, `DELETE FROM plans WHERE id = ?`, planID)
 	if err != nil {
 		return fmt.Errorf("store: delete plan: %w", err)
