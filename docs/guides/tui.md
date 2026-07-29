@@ -58,6 +58,14 @@ group.)
 A task that has not been dispatched shows no `via=` at all — an unexecuted
 task must not read as though some provider owned it.
 
+A task that can never run adds a `↳ cannot run: <id> failed` line naming
+the dependency that killed it. Only **terminal** blockers appear: a
+dependency that is merely unfinished clears itself as upstream work
+completes, and flagging that would mark every healthy in-flight plan as
+blocked. A failed dependency never clears — nothing transitions out of
+`failed` — so without this line a dead plan is byte-identical to a slow
+one, every row reading a plain `pending`.
+
 A blocked task adds a `↳` continuation line carrying its remediation —
 the one status an operator cannot act on from the status string alone,
 since a blocked task and one waiting on a dependency both sit at zero

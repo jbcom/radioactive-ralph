@@ -300,6 +300,11 @@ func writeTaskLines(out io.Writer, page observe.TaskPage) error {
 		// Safe to print because Blocked is a CLASSIFICATION carrying static
 		// remediation text, deliberately not the stored reason string, which is
 		// error-derived and would leak free text across this boundary.
+		// Another task's failure makes this one unreachable -- distinct from
+		// Blocked, which is a configuration problem on this task itself.
+		if task.BlockedByTaskID != "" {
+			line += " — cannot run: " + task.BlockedByTaskID + " failed"
+		}
 		if task.Blocked != nil && task.Blocked.Summary != "" {
 			line += " — " + task.Blocked.Summary
 		}

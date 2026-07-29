@@ -550,6 +550,16 @@ type Task struct {
 	// "pinned to what?".
 	PartitionOrdinal string `json:"partition_ordinal,omitempty"`
 
+	// BlockedByTaskID names a dependency that can never be satisfied, empty
+	// otherwise -- the difference between a plan that is waiting and one that
+	// is dead. Without it a dependent behind a failed task renders as a plain
+	// "pending", byte-identical to one that simply has not started yet.
+	//
+	// Only terminal blockers appear here. A merely-incomplete dependency clears
+	// itself as upstream work finishes, so naming it would mark every healthy
+	// in-flight plan as blocked and the marker would stop being read.
+	BlockedByTaskID string `json:"blocked_by_task_id,omitempty"`
+
 	// Blocked classifies a fail-closed pre-dispatch block, nil when the task is
 	// not blocked.
 	//
@@ -1090,6 +1100,7 @@ func taskFromStore(item store.OperatorTask) (Task, error) {
 		AssignedEffort:             item.AssignedEffort,
 		AssignedIndependenceDomain: item.AssignedIndependenceDomain,
 		PartitionOrdinal:           item.PartitionOrdinal,
+		BlockedByTaskID:            item.BlockedByTaskID,
 
 		Blocked:   blockedSummaryFor(item.Status),
 		CreatedAt: item.CreatedAt,

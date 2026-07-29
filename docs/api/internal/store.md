@@ -542,7 +542,7 @@ type GraphTaskSpec struct {
 ```
 
 <a name="OperatorEvent"></a>
-## type [OperatorEvent](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/operator_snapshot.go#L198-L214>)
+## type [OperatorEvent](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/operator_snapshot.go#L211-L227>)
 
 OperatorEvent is safe event metadata. Raw payload, actor/provider output, and any IDs carried inside the payload are never selected.
 
@@ -567,7 +567,7 @@ type OperatorEvent struct {
 ```
 
 <a name="OperatorEventPage"></a>
-## type [OperatorEventPage](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/operator_snapshot.go#L218-L222>)
+## type [OperatorEventPage](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/operator_snapshot.go#L231-L235>)
 
 OperatorEventPage is one bounded newest\-first event page. NextBeforeID is a keyset cursor that continues toward older events.
 
@@ -721,7 +721,7 @@ type OperatorStatusCount struct {
 ```
 
 <a name="OperatorTask"></a>
-## type [OperatorTask](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/operator_snapshot.go#L117-L165>)
+## type [OperatorTask](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/operator_snapshot.go#L117-L178>)
 
 OperatorTask is safe task state. Description and AcceptanceJSON can contain source text, commands, or repository paths, so neither is projected.
 
@@ -772,6 +772,19 @@ type OperatorTask struct {
     // "same partition or not?" without answering "pinned to what?".
     PartitionOrdinal string `json:"partition_ordinal"`
 
+    // BlockedByTaskID names a dependency that will NEVER be satisfied, empty
+    // otherwise. It answers the one question a stalled plan raises that status
+    // alone cannot: is this waiting, or is it dead?
+    //
+    // Only TERMINAL blockers are named, and that word is load-bearing rather
+    // than descriptive: both readiness walks satisfy a dependency solely on
+    // done/skipped/decomposed, MarkFailedWithPayload retries by setting pending
+    // and lands on failed once retries are exhausted, and no transition leaves
+    // failed. So a dependent behind a failed task can never run, while one
+    // behind a merely-incomplete task clears itself -- naming the second would
+    // be noise on every healthy plan mid-flight.
+    BlockedByTaskID string `json:"blocked_by_task_id"`
+
     CreatedAt time.Time `json:"created_at"`
     UpdatedAt time.Time `json:"updated_at"`
 }
@@ -805,7 +818,7 @@ type OperatorTaskDetail struct {
 ```
 
 <a name="OperatorTaskPage"></a>
-## type [OperatorTaskPage](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/operator_snapshot.go#L168-L172>)
+## type [OperatorTaskPage](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/operator_snapshot.go#L181-L185>)
 
 OperatorTaskPage is one bounded, \(plan\_id, task\_id\)\-ordered task page.
 
@@ -818,7 +831,7 @@ type OperatorTaskPage struct {
 ```
 
 <a name="OperatorWorker"></a>
-## type [OperatorWorker](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/operator_snapshot.go#L178-L187>)
+## type [OperatorWorker](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/operator_snapshot.go#L191-L200>)
 
 OperatorWorker is one active Ralph\-managed worker. Ralph worker IDs are operator controls \(for example worker kill\), not provider\-session IDs. Claims contains every task claimed by the worker in this project, including native fan\-out claims beyond workers.current\_task\_id.
 
@@ -836,7 +849,7 @@ type OperatorWorker struct {
 ```
 
 <a name="OperatorWorkerClaim"></a>
-## type [OperatorWorkerClaim](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/operator_snapshot.go#L190-L194>)
+## type [OperatorWorkerClaim](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/operator_snapshot.go#L203-L207>)
 
 OperatorWorkerClaim is one project task held by an active worker.
 
@@ -1567,7 +1580,7 @@ func (s *Store) PutTaskMetadata(ctx context.Context, planID, taskID, groupPath, 
 PutTaskMetadata inserts the immutable half of a task's metadata row. Plan import owns this; provenance fields are filled in later by the dispatch path.
 
 <a name="Store.ReadOperatorSnapshot"></a>
-### func \(\*Store\) [ReadOperatorSnapshot](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/operator_snapshot.go#L232-L235>)
+### func \(\*Store\) [ReadOperatorSnapshot](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/operator_snapshot.go#L245-L248>)
 
 ```go
 func (s *Store) ReadOperatorSnapshot(ctx context.Context, q OperatorSnapshotQuery) (*OperatorSnapshot, error)
