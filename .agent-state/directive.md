@@ -867,6 +867,27 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
       real read of it. Do not mistake a green run for having verified the
       diagnostic.
 
+- [ ] The agent CANNOT write the decision log, and telling it to is worse than
+      silence. PR 344 tried to close the producer half by naming the path in
+      the scoped prompt. Withdrawn after review found three reasons it would
+      not work, one of them fatal:
+        - CONTAINMENT BLOCKS THE WRITE. Under provider write containment the
+          process may write only beneath projectDir plus its binding's STATIC
+          write paths (BindingWritePaths). The decision log lives under Ralph's
+          user-level state root, so it is not writable -- in the configuration
+          this project defaults to. The instruction would be unfollowable.
+        - the `workers` directory is not created before the path is advertised;
+          only WriteWorkerDecision mkdirs it, and that is Ralph's own call.
+        - fan-out turns would get no instruction at all: dispatchFanoutGroup
+          builds fanoutScopedContext, which has no such field.
+      So the agent-authored half needs a channel the agent can actually reach
+      under containment -- a path inside projectDir that Ralph collects, or an
+      explicit write-path grant for the log -- not a prompt line.
+      Ralph's OWN classification still works and is verified (336, 342); what
+      is missing remains WHAT the provider asked for, not THAT it asked.
+      Verify by reverting: whatever the channel, a CONTAINED turn must be able
+      to write it. That is the test 344 would have failed.
+
 - [ ] [WAIT] unit-orch is INTERMITTENT and currently PASSING, so there is
       nothing to act on until it fails again. Not closed: an intermittent bug
       that stops reproducing is hidden, not fixed, and the decision log (wired
