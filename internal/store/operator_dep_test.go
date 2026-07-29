@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 )
@@ -287,81 +288,67 @@ func TestTransitiveBlockerTerminatesOnACycle(t *testing.T) {
 	}
 }
 
-// TestSnapshotBlockerWalkIsNotPerTask guards the P1 a review caught: the first
-// blocker walk ran per TASK, re-deriving the same reachability for every row.
-// An imported ordered group is a 1:1 dependency chain, so cost grew
-// quadratically on exactly the long plans most likely to contain a dead
-// ancestor -- 1.3s for 300 tasks, on a query every TUI and GUI refresh runs.
-// Walking forward from failures once brought that to ~25ms.
+// TestSnapshotBlockerWalkIsMaterializedOnce guards the P1 a review caught: the
+// first blocker walk ran per TASK, re-deriving the same reachability for every
+// row. An imported ordered group is a 1:1 dependency chain, so cost grew
+// quadratically on the long plans most likely to contain a dead ancestor --
+// 1.3s for 300 tasks, on a query every TUI and GUI refresh runs.
 //
-// Getting this guard right took three attempts, and the failures are the
-// interesting part:
+// This asserts the SHAPE of the query plan, not wall-clock, after three timing
+// bounds failed in three different ways:
 //
-//  1. A 2s wall-clock bound PASSED locally at 26ms and FAILED on CI at 2.074s.
-//     It was measuring runner speed, not the property it claimed to protect.
-//  2. A "doubling cost <= 8x" ratio bound passed against the RESTORED
-//     quadratic code. Measured: the per-task walk scales 6.6x per doubling and
-//     the forward walk 3.3x -- the forward walk is not linear either, because a
-//     chain of n tasks has O(n^2) reachability pairs and the CTE materializes
-//     them. Runner noise cannot separate 3.3 from 6.6 reliably.
-//  3. What DOES separate them is absolute cost at a fixed size: 25ms vs 1.31s
-//     at n=300, a 50x gap. The bound below sits far above the fast path and far
-//     below the slow one, so it survives a slow runner and still fails loudly
-//     if the per-row walk returns.
-func TestSnapshotBlockerWalkIsNotPerTask(t *testing.T) {
-	const chain = 300
+//  1. 2s absolute: passed locally at 26ms, FAILED CI at 2.074s.
+//  2. "doubling costs <= 8x": PASSED against the restored quadratic code. Both
+//     shapes are super-linear (6.6x vs 3.3x per doubling) because a chain of n
+//     tasks has O(n^2) reachability pairs; runner noise cannot separate those.
+//  3. 500ms absolute: FAILED CI at 2.15s. That number is the lesson -- the
+//     FIXED code on CI is slower than the QUADRATIC code on a dev machine, so
+//     NO absolute threshold can distinguish the two shapes across hardware.
+//
+// EXPLAIN QUERY PLAN can. A materialized CTE is computed once; a per-row walk
+// appears as a CORRELATED SCALAR SUBQUERY. That distinction is exactly the
+// regression being guarded and is identical on every machine.
+func TestSnapshotBlockerWalkIsMaterializedOnce(t *testing.T) {
 	ctx := context.Background()
 	s := openTestStore(t)
-	projectID := mustCreateProject(t, s, "perf-per-task")
-	specs := []GraphTaskSpec{readySpec("t0", "0")}
-	for i := 1; i < chain; i++ {
-		specs = append(specs, readySpec(
-			fmt.Sprintf("t%d", i), "0", fmt.Sprintf("t%d", i-1)))
-	}
-	planID := seedReadyGraph(t, s, projectID, "long", specs)
-	sessionID, workerID := mustCreateSessionAndWorker(t, s, "1")
-	if _, err := s.ClaimTask(ctx, planID, "t0", sessionID, workerID); err != nil {
-		t.Fatalf("ClaimTask: %v", err)
-	}
-	if _, err := s.MarkFailed(ctx, planID, "t0", sessionID, "boom", 0); err != nil {
-		t.Fatalf("MarkFailed: %v", err)
-	}
 
-	q := OperatorSnapshotQuery{ProjectID: projectID, TaskLimit: 200}
-	if _, err := s.ReadOperatorSnapshot(ctx, q); err != nil {
-		t.Fatalf("warm snapshot: %v", err)
+	rows, err := s.DB().QueryContext(ctx,
+		"EXPLAIN QUERY PLAN "+operatorTasksQuery,
+		"p", "", "", "", "", "", "", "", "", 10)
+	if err != nil {
+		t.Fatalf("explain: %v", err)
 	}
-	best, blocked := time.Hour, 0
-	for i := 0; i < 3; i++ {
-		start := time.Now()
-		snap, err := s.ReadOperatorSnapshot(ctx, q)
-		if err != nil {
-			t.Fatalf("snapshot: %v", err)
-		}
-		if d := time.Since(start); d < best {
-			best = d
-		}
-		blocked = 0
-		for _, it := range snap.Tasks.Items {
-			if it.BlockedByTaskID != "" {
-				blocked++
-			}
-		}
-	}
+	defer func() { _ = rows.Close() }()
 
-	// "Fast" is meaningless if the query found nothing to do.
-	if blocked == 0 {
-		t.Fatal("no task reported a blocker; the timing below would be measuring " +
-			"a query that did no work")
+	var plan []string
+	for rows.Next() {
+		var id, parent, aux int
+		var detail string
+		if err := rows.Scan(&id, &parent, &aux, &detail); err != nil {
+			t.Fatalf("scan plan: %v", err)
+		}
+		plan = append(plan, detail)
 	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("iterate plan: %v", err)
+	}
+	if len(plan) == 0 {
+		t.Fatal("empty query plan; this test would assert nothing")
+	}
+	joined := strings.Join(plan, "\n")
 
-	// 25ms fast path, 1.31s slow path, measured on this machine. 500ms is 20x
-	// the fast path (ample for a loaded runner) and under half the slow one.
-	const budget = 500 * time.Millisecond
-	if best > budget {
-		t.Errorf("best of 3 snapshots over a %d-task chain took %v, over the %v "+
-			"budget; the blocker walk is being re-derived per task again "+
-			"(that shape measured 1.31s here)",
-			chain, best.Round(time.Millisecond), budget)
+	// The RECURSIVE walk specifically must be materialized. Other correlated
+	// scalar subqueries in this query are fine and expected -- the failure
+	// category and partition lookups are single indexed reads per row. What
+	// cannot be per-row is the transitive reachability walk, whose cost is
+	// proportional to the chain length rather than constant.
+	if !strings.Contains(joined, "MATERIALIZE") {
+		t.Errorf("no MATERIALIZE in the plan: the recursive blocker walk is being "+
+			"re-derived per row, which is the quadratic shape this guards "+
+			"against:\n%s", joined)
+	}
+	if strings.Contains(joined, "RECURSIVE STEP") &&
+		!strings.Contains(joined, "MATERIALIZE") {
+		t.Errorf("a recursive step runs outside a materialized CTE:\n%s", joined)
 	}
 }

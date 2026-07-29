@@ -773,14 +773,11 @@ func readOperatorPlans(
 	return page, nil
 }
 
-func readOperatorTasks(
-	ctx context.Context,
-	tx *sql.Tx,
-	projectID, planID, taskID string,
-	after OperatorTaskCursor,
-	limit int,
-) (OperatorTaskPage, error) {
-	rows, err := tx.QueryContext(ctx, `
+// operatorTasksQuery is named so a test can EXPLAIN it. The blocker walk must
+// stay a MATERIALIZED CTE computed once, never a correlated per-row subquery:
+// see TestSnapshotBlockerWalkIsMaterializedOnce for why that is asserted
+// structurally rather than with a timing bound.
+const operatorTasksQuery = `
 		-- Every task made unreachable by a failure, with the ROOT failure that
 		-- did it, computed ONCE for the whole project.
 		--
@@ -871,8 +868,17 @@ func readOperatorTasks(
 		    OR (t.plan_id = ? AND t.id > ?)
 		  )
 		ORDER BY t.plan_id, t.id
-		LIMIT ?
-	`,
+		LIMIT ?`
+
+func readOperatorTasks(
+	ctx context.Context,
+	tx *sql.Tx,
+	projectID, planID, taskID string,
+	after OperatorTaskCursor,
+	limit int,
+) (OperatorTaskPage, error) {
+	rows, err := tx.QueryContext(ctx, operatorTasksQuery,
+
 		projectID,
 		planID,
 		planID,
