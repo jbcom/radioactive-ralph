@@ -826,8 +826,11 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
       treated the zero count as proof the sweep was broken. Dispatch uses
       ClaimTask and createPlanOn. Check the replacement before concluding.
 
-- [ ] unit-orch fails `interactive_prompt` on a step with nothing to ask about,
-      reproducible across three clean-tree runs. Closed by evidence, do not
+- [ ] unit-orch fails `interactive_prompt` INTERMITTENTLY -- failed twice, then
+      PASSED on the third clean-tree run (verified by reading the store
+      directly; see the surface problem below). So it is flaky, not
+      deterministic, and an earlier revision of this item calling it
+      "reproducible" was wrong. Closed by evidence, do not
       re-litigate: not a timeout (acceptance passes by hand in 11.6s), not a
       retry bug (one claim then terminal -- interactive_prompt is deliberately
       non-retryable, "the CLI is asking for an operator, not another turn"),
@@ -836,7 +839,25 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
       classification at all four failure sites and absorbs it into a
       worker.decision_log event. So the next unit-orch failure should finally
       produce something readable -- that is the next read, and the first time
-      this question has had an artifact to answer it.
+      this question has had an artifact to answer it. An intermittent failure
+      makes that MORE valuable, not less: it cannot be reproduced on demand, so
+      the record has to be captured when it happens.
+
+- [ ] `status` CANNOT SHOW A RECENT RUN once the task page saturates, and the
+      advice I wrote for it does not work. Verified this pass: a completed
+      12-task run displayed 6 rows; there is no `--plan` filter on `status`
+      (only --task-after/--task-after-plan cursors), and cursoring cannot
+      isolate one plan because other plans' rows consume the page first. I had
+      to query SQLite directly to see the run's real state.
+      So the guide's "read this run by plan id" is the same defect as the
+      "radioactive_ralph plan delete" line it replaced: advice naming a
+      capability the CLI does not have. Both were written without trying them.
+      FIX: a plan filter on `status` (and the observe query behind it), so the
+      operator surface can answer "how did THIS run go" independent of history
+      depth. Pruning via DeletePlan helps but is not the same thing -- a filter
+      works even when history is legitimately deep.
+      Verify by reverting: with a filter, a saturated page must still show all
+      12 rows of one run; without it, 6.
       Verify by reverting: a dispatched run must reach unit-orch=done. Its
       command passes standalone, which has never predicted dispatched behaviour
       anywhere in this investigation.
