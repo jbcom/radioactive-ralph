@@ -45,3 +45,23 @@ func TestDecisionLogNeverTargetsTheRealStateRoot(t *testing.T) {
 			"diagnostic surface they would read", path, realRoot)
 	}
 }
+
+// TestDecisionLogRefusesEvenWithStateDirSet covers the ordering a reviewer
+// caught: the guard has to run BEFORE RALPH_STATE_DIR is honoured.
+//
+// `go test` inherits the operator's environment. A developer with
+// RALPH_STATE_DIR pointing at their live state would take the early return and
+// keep polluting it -- so the bug survived precisely in the configuration most
+// likely to have it, and the first regression test missed the case because it
+// never set the variable.
+func TestDecisionLogRefusesEvenWithStateDirSet(t *testing.T) {
+	t.Setenv("RALPH_STATE_DIR", "/tmp/some-operators-live-state")
+
+	o := New(newTestStore(t))
+	path, err := o.decisionLogPath("worker-x")
+	if err == nil {
+		t.Errorf("decisionLogPath returned %q with RALPH_STATE_DIR set; the guard "+
+			"runs after the env override, so a developer with that variable set "+
+			"keeps writing into whatever it points at", path)
+	}
+}

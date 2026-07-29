@@ -119,24 +119,17 @@ func (o *Orchestrator) decisionLogPath(workerID string) (string, error) {
 // directly, since xdg.StateRoot is repo/workspace-oriented and this needs
 // only the bare state root.
 func defaultDecisionLogRoot() (string, error) {
+	// The test guard runs FIRST, before RALPH_STATE_DIR is honoured. A reviewer
+	// caught the ordering: `go test` inherits an operator's environment, so a
+	// developer with RALPH_STATE_DIR set pointing at their live state would
+	// take the early return and keep polluting it -- the exact bug this guard
+	// exists to stop, surviving in the configuration most likely to have it.
+	if testing.Testing() {
+		return "", fmt.Errorf("orch: refusing a real state root under test; " +
+			"use WithDecisionLogRoot(t.TempDir())")
+	}
 	if override := os.Getenv("RALPH_STATE_DIR"); override != "" {
 		return filepath.Clean(override), nil
-	}
-	// REFUSE the real state root under a test binary.
-	//
-	// ~/.local/state/radioactive-ralph/workers accumulated 188 .decisions.md
-	// files written by `go test`: any Orchestrator built without
-	// WithDecisionLogRoot falls through here, and ten test call sites do. That
-	// litters an operator's live state AND salts the one diagnostic surface
-	// they would mine -- conclusions were nearly drawn about a production
-	// failure from files a test run had written.
-	//
-	// Detected from the binary name rather than a flag threaded through every
-	// constructor, because the property wanted is "no test may reach the real
-	// root", and a flag only covers the call sites someone remembers.
-	if testing.Testing() {
-		return "", fmt.Errorf("orch: refusing the real state root under test; " +
-			"use WithDecisionLogRoot(t.TempDir())")
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {
