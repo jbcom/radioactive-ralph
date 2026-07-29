@@ -25,20 +25,35 @@ func TestAttemptLabel(t *testing.T) {
 			want: "", // "1 attempt" is true of every healthy row and marks nothing.
 		},
 		{
-			name: "one requeued failure",
-			task: Task{RetryCount: 1},
+			name: "one requeued failure, re-claimed and running",
+			task: Task{Status: "running", RetryCount: 1},
 			want: "2 attempts",
 		},
 		{
-			name: "reclaims only",
-			task: Task{ReclaimCount: 2},
+			// THE REQUEUE WINDOW. MarkFailedWithPayload leaves a retried task
+			// `pending` with its claim CLEARED, so it holds nothing -- its claims
+			// are exactly the ones it lost. An unconditional +1 advertised three
+			// attempts after two, and that window stays visible while dispatch
+			// capacity is occupied.
+			name: "requeued but not yet re-claimed",
+			task: Task{Status: "pending", RetryCount: 2},
+			want: "2 attempts",
+		},
+		{
+			name: "finished on its claim",
+			task: Task{Status: "done", RetryCount: 1},
+			want: "2 attempts",
+		},
+		{
+			name: "reclaims only, running again",
+			task: Task{Status: "running", ReclaimCount: 2},
 			// "reclaimed 2x" says claims LOST; this says claims GIVEN. Different
 			// numbers, and the reader should not have to add them.
 			want: "3 attempts",
 		},
 		{
 			name: "both counters moved",
-			task: Task{RetryCount: 1, ReclaimCount: 2},
+			task: Task{Status: "running", RetryCount: 1, ReclaimCount: 2},
 			want: "4 attempts",
 		},
 	} {

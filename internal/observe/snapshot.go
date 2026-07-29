@@ -488,7 +488,21 @@ func AttemptLabel(t Task) string {
 	if lost == 0 {
 		return ""
 	}
-	return fmt.Sprintf("%d attempts", lost+1)
+	// The +1 is the claim IN HAND, so it only applies when there is one. A task
+	// that is running holds a claim; one that is done or failed finished on
+	// theirs. Everything else -- pending, ready, blocked -- was requeued and has
+	// not been picked up again, so its claims are exactly the ones it lost.
+	//
+	// Unconditional +1 was wrong for the requeue window: MarkFailedWithPayload
+	// leaves a retried task `pending` with its claim cleared, and the row then
+	// advertised three attempts after two. That window can stay visible for a
+	// while when dispatch capacity is occupied.
+	switch t.Status {
+	case "running", "done", "failed":
+		return fmt.Sprintf("%d attempts", lost+1)
+	default:
+		return fmt.Sprintf("%d attempts", lost)
+	}
 }
 
 // PartitionLabels assigns each MULTI-TASK ready partition a short display label
