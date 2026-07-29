@@ -27,6 +27,14 @@ const (
 	sessionCleanupBudget = 2 * time.Second
 )
 
+// cleanupBudget is sessionCleanupBudget, indirected so a test can force the
+// deadline branch. Without this seam the re-verification below is UNREACHABLE
+// in a unit test: on an idle machine `remaining` empties within one poll, so
+// a behavioural test passes with or without the fix and proves nothing.
+// Confirmed by mutation -- removing the re-check entirely left the
+// behavioural test green.
+var cleanupBudget = sessionCleanupBudget
+
 type darwinSessionMember struct {
 	pid       int
 	parentPID int
@@ -62,7 +70,7 @@ func cleanupOriginalProcessSession(
 	if effectiveUID < 0 {
 		return fmt.Errorf("agent: invalid effective UID %d", effectiveUID)
 	}
-	deadline := time.Now().Add(sessionCleanupBudget)
+	deadline := time.Now().Add(cleanupBudget)
 	for {
 		members, err := darwinSessionMembers(sessionID)
 		if err != nil {
@@ -110,6 +118,41 @@ func cleanupOriginalProcessSession(
 			return nil
 		}
 		if time.Now().After(deadline) {
+			// RE-VERIFY before claiming a leak. `remaining` is built from
+			// enumeration ALONE: a member in the already-signalled group is
+			// appended above and then `continue`d past every liveness check,
+			// so the only way a pid leaves this list is disappearing from a
+			// LATER kern.proc.all enumeration.
+			//
+			// That enumeration lags a completed reap under load. There is a
+			// window after the kernel kills a process, before it becomes a
+			// zombie, in which it still enumerates as live -- and
+			// darwinSessionMembers only filters darwinZombieState, so the
+			// window is not covered. At idle the reap lands within one 5ms
+			// pass and nothing is observed; under saturation the lag exceeds
+			// the whole budget.
+			//
+			// The result was a FALSE LEAK REPORT: cleanup had worked, the
+			// group SIGKILL had landed, and the turn still failed with
+			// "still has live members after cleanup". Worse, it wrapped
+			// ErrProcessSessionCleanup around an otherwise-correct result,
+			// breaking errors.Is sentinel comparisons for callers -- which is
+			// how it surfaced, as a prompt-detection test whose error string
+			// was correct but had cleanup noise appended.
+			//
+			// This cannot mask a real leak: a genuinely live in-session member
+			// still passes the re-check and is still reported.
+			live := remaining[:0]
+			for _, pid := range remaining {
+				if _, found, err := readDarwinSessionMember(pid); err == nil && found &&
+					currentSession(pid) == sessionID {
+					live = append(live, pid)
+				}
+			}
+			if len(live) == 0 {
+				return nil
+			}
+			remaining = live
 			break
 		}
 		time.Sleep(sessionCleanupInterval)
