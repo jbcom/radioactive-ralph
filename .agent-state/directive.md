@@ -804,9 +804,44 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
       yet the verdict -- race has not finished -- but the first phase that
       previously failed has now passed.
 
-- [ ] [WAIT] CAPPED-WIDTH EXPERIMENT CONCLUDED, but PR 329 is OPEN not merged
-      -- same premature-[x] error as the item above, found by the same review.
-      Closes when it merges. Result stands: Final: race reclaimed FOUR
+- [ ] store.DeletePlan HAS NO CALLERS and no CLI surface. Second unwired
+      subsystem this session, in code I reviewed earlier without noticing.
+      Live consequence: the operator task page saturates at
+      MaxOperatorPageLimit (200) and each self-test run adds 12 tasks, so after
+      ~16 runs the newest run shows PARTIALLY -- observed 200 rows across 19
+      plans, current run contributing 6 of 12. Nothing can prune.
+      SWEEP DONE: 75 exported *Store methods, 17 with no production caller,
+      splitting into two kinds -- the distinction is what makes it actionable:
+        SUPERSEDED (a live replacement carries the traffic) -- DELETE:
+          ClaimNextReady->ClaimTask; CreatePlan/AddDep->createPlanOn via
+          ImportPlan; MarkFailed->MarkFailedWithPayload;
+          HeartbeatWorker->HeartbeatWorkerAndSession;
+          ReadOperatorTaskDetail->ListOperatorTaskDescriptions
+        UNWIRED (needed, nothing reaches it) -- WIRE:
+          DeletePlan, Backup, SetProjectConfig, ReserveTaskInput/Output,
+          the calibration trio, ListTaskEvents, MaxEventID,
+          CountRunningWorkers, ListTaskGroupPaths, TeamRollups
+      CAUTION: my first calibration was WRONG. I assumed ClaimNextReady and
+      CreatePlan had to be live because dispatch cannot work without them, and
+      treated the zero count as proof the sweep was broken. Dispatch uses
+      ClaimTask and createPlanOn. Check the replacement before concluding.
+
+- [ ] unit-orch fails `interactive_prompt` on a step with nothing to ask about,
+      reproducible across three clean-tree runs. Closed by evidence, do not
+      re-litigate: not a timeout (acceptance passes by hand in 11.6s), not a
+      retry bug (one claim then terminal -- interactive_prompt is deliberately
+      non-retryable, "the CLI is asking for an operator, not another turn"),
+      not the stale-linter-cache story (nothing is failing for it to fix).
+      The decision log is WIRED as of PR 336 (merged): Ralph records its own
+      classification at all four failure sites and absorbs it into a
+      worker.decision_log event. So the next unit-orch failure should finally
+      produce something readable -- that is the next read, and the first time
+      this question has had an artifact to answer it.
+      Verify by reverting: a dispatched run must reach unit-orch=done. Its
+      command passes standalone, which has never predicted dispatched behaviour
+      anywhere in this investigation.
+
+- [x] CAPPED-WIDTH EXPERIMENT CONCLUDED; PR 329 MERGED. Result: Final: race reclaimed FOUR
       times under RALPH_MAX_PARALLEL=4, versus two unbounded -- capping made it
       WORSE. Four successive readings (predicted 0, saw 1 "halved", saw 2 "no
       better", final 4) and only the last is a result; three were recorded as
@@ -878,11 +913,11 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
       makes the assertion follow a rename. A reviewer analyzing a file in
       isolation cannot see its package.
 
-- [ ] [WAIT] PRs 327 (attempt accounting) + 328 (the policy decision) are OPEN,
-      not merged -- main still has RetryCount/ReclaimCount only and a reaper
-      that touches neither. Marked [x] prematurely on the theory that "shipped"
-      meant "PR opened"; a reviewer caught that this would make the loop skip
-      reconciling work still absent from main. Closes when both merge.
+- [x] PRs 327 (attempt accounting) + 328 (the policy decision) MERGED. main has
+      Task.AttemptCount, the reclaim-reason surface, and the retry-budget
+      policy. (Both were briefly marked [x] BEFORE merging -- a reviewer caught
+      that, and the label was restored until they landed. Kept as history: a
+      premature [x] tells the loop to skip reconciling work absent from main.)
       A RECLAIMED TASK GETS A FRESH RETRY BUDGET, and the row hides it.
       Found by chasing two steps that failed `interactive_prompt` while their
       acceptance commands pass by hand -- the event history is what actually
