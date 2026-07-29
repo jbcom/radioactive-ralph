@@ -526,6 +526,19 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
 
 ## Rolling improvement queue (directive 0 appends here)
 
+- [ ] GENERATED 2026-07-28 from a P2 review finding on the failure-reason work
+      (fixed its two siblings in the same PR; this one is genuinely bigger).
+      A failed task whose failure EVENT has aged out of the bounded
+      RecentEvents page (default 20) renders as a bare `failed` again. The
+      reason lives only in the event log, so a task can sit terminal
+      indefinitely while the evidence for WHY scrolls away.
+      Fix shape: project the current failure classification durably onto the
+      task row (a column + a write at MarkFailed time), rather than reading it
+      out of a page that other tasks can evict. That is a schema change, which
+      is why it was NOT smuggled into the rendering PR -- the limit is stated
+      in a comment on failureReasonsByTask so it cannot be mistaken for
+      complete coverage.
+
 - [ ] [WAIT] Land the 1 open PR: #308 (say why a failed task failed -- the gap
       the THIRD dogfooding pass found). Auto-merge ARMED. Hash-prefixed
       deliberately: guard 9 extracts `#[0-9]{3}` from THIS line.

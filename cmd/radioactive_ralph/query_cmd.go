@@ -314,7 +314,7 @@ func writeTaskLines(out io.Writer, page observe.TaskPage, events observe.EventPa
 		// "failed". The snapshot already carries the closed FailureSummary and
 		// the TUI has rendered it all along; without this the CLI human path
 		// stayed strictly less informative than its own --json.
-		if reason := reasons[task.ID]; reason != "" {
+		if reason := reasons[taskKey(task.PlanID, task.ID)]; reason != "" {
 			line += " — " + reason
 		}
 		// The status column is padded so the marker columns align, which leaves
@@ -338,8 +338,17 @@ func writeTaskLines(out io.Writer, page observe.TaskPage, events observe.EventPa
 	return nil
 }
 
-// failureReasonsByTask maps task id -> the newest failure summary for that
+// failureReasonsByTask maps (plan, task) -> the newest failure summary for that
 // task, from the event page the snapshot already returned.
+//
+// KNOWN LIMIT, stated rather than hidden: the event page is bounded (20 by
+// default), so a task whose failure event has been evicted by newer activity
+// renders as a bare "failed" again. That is a smaller surface than the bare
+// "failed" this replaced -- recent failures, the ones an operator is usually
+// asking about, are covered -- but it is not complete. Closing it properly
+// means projecting the current failure classification durably onto the task
+// row, which is a schema change and belongs in its own change, not smuggled
+// into a rendering fix.
 //
 // Newest wins because a task can fail, be requeued, and fail again: the
 // operator asks about the CURRENT state, and an older attempt's reason would
@@ -352,13 +361,34 @@ func writeTaskLines(out io.Writer, page observe.TaskPage, events observe.EventPa
 // CLI-local copy would drift from the TUI the first time either changed.
 func failureReasonsByTask(page observe.EventPage) map[string]string {
 	reasons := make(map[string]string)
+	seen := make(map[string]bool)
 	for _, ev := range page.Items {
-		if ev.TaskID == "" || ev.Failure == nil || ev.Failure.Summary == "" {
+		if ev.TaskID == "" {
 			continue
 		}
-		if _, seen := reasons[ev.TaskID]; !seen {
-			reasons[ev.TaskID] = ev.Failure.Summary
+		key := taskKey(ev.PlanID, ev.TaskID)
+		// FIRST event wins, failure or not. The page is newest-first, so the
+		// first entry for a task describes its CURRENT attempt. Skipping
+		// non-failure events instead would let an older failure outlive the
+		// retry that succeeded, rendering "done — task attempt failed and was
+		// requeued" -- a reason that describes a run already superseded.
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		if ev.Failure != nil && ev.Failure.Summary != "" {
+			reasons[key] = ev.Failure.Summary
 		}
 	}
 	return reasons
+}
+
+// taskKey composes the (plan, task) identity a task actually has. Task ids are
+// unique only WITHIN a plan -- tasks is PRIMARY KEY (plan_id, id), and
+// positional ids like "0.0" recur in every plan -- while `status` spans all of
+// a project's plans by default. Keying on the task id alone let one plan's
+// failure explain a same-named task in another, which is a confidently wrong
+// answer rather than a missing one.
+func taskKey(planID, taskID string) string {
+	return planID + "\x00" + taskID
 }

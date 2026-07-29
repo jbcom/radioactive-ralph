@@ -597,3 +597,45 @@ func TestRunStatusQueryExplainsWhyATaskFailed(t *testing.T) {
 		}
 	}
 }
+
+// TestFailureReasonsAreScopedToTheirPlan pins the composite key. Task ids are
+// unique only WITHIN a plan (tasks is PRIMARY KEY (plan_id, id)) and positional
+// ids like "0.0" recur in every plan, while `status` spans all plans by
+// default. Keying failures by task id alone lets one plan's failure explain a
+// same-named task in another -- a confidently wrong answer, worse than none.
+func TestFailureReasonsAreScopedToTheirPlan(t *testing.T) {
+	reasons := failureReasonsByTask(observe.EventPage{Items: []observe.Event{{
+		ID: 9, PlanID: "plan-a", TaskID: "0.0", Kind: "task.failed_terminal",
+		Failure: &observe.FailureSummary{
+			Category: observe.FailureTaskTerminal,
+			Summary:  "plan-a reason",
+		},
+	}}})
+	if got := reasons[taskKey("plan-b", "0.0")]; got != "" {
+		t.Errorf("plan-b's 0.0 inherited %q from plan-a; task ids are unique "+
+			"only within a plan", got)
+	}
+	if got := reasons[taskKey("plan-a", "0.0")]; got != "plan-a reason" {
+		t.Errorf("plan-a's own 0.0 lost its reason: %q", got)
+	}
+}
+
+// TestFailureReasonIsClearedByANewerSuccess covers the retry-then-succeed path.
+// A task can fail, be requeued, and succeed with BOTH events still in the page;
+// skipping the newer success because it carries no Failure left the older
+// reason attached, rendering "done — task attempt failed and was requeued".
+func TestFailureReasonIsClearedByANewerSuccess(t *testing.T) {
+	reasons := failureReasonsByTask(observe.EventPage{Items: []observe.Event{
+		// newest-first, as EventPage documents
+		{ID: 11, PlanID: "p", TaskID: "t", Kind: "worker.completed"},
+		{ID: 10, PlanID: "p", TaskID: "t", Kind: "task.failed",
+			Failure: &observe.FailureSummary{
+				Category: observe.FailureTaskAttempt,
+				Summary:  "task attempt failed and was requeued", Retryable: true,
+			}},
+	}})
+	if got := reasons[taskKey("p", "t")]; got != "" {
+		t.Errorf("a task whose newest event is a SUCCESS still reports %q; the "+
+			"retry succeeded and the row would read \"done — %s\"", got, got)
+	}
+}
