@@ -27,6 +27,12 @@ func TestPromptPatternsRejectErrorText(t *testing.T) {
 		// Neighbours in the same family.
 		"approved by the linter",
 		"the operation was not allowed this time",
+		// BANNERS AND DIAGNOSTICS. Providers print these; they are not
+		// questions the agent is waiting on, and killing a turn for one is the
+		// same false-positive class as the bare `permission`.
+		"What's new?",
+		"What went wrong?",
+		"How did that happen?",
 	}
 	for _, line := range mustNotMatch {
 		for _, re := range DefaultPromptPatterns {
@@ -40,12 +46,20 @@ func TestPromptPatternsRejectErrorText(t *testing.T) {
 
 	// Real prompts must still be caught: over-tightening trades one silent
 	// failure for another.
+	//
+	// Each case exercises exactly ONE pattern. The original permission example
+	// -- "Claude needs permission to edit main.go. Allow this? (y/n)" -- matched
+	// the permission pattern AND `allow this` AND `(y/n)`, so deleting the
+	// permission pattern outright would have left this test green. A positive
+	// case that several patterns satisfy proves nothing about any of them.
 	mustMatch := []string{
-		"Claude needs permission to edit main.go. Allow this? (y/n)",
+		"Claude needs permission to edit main.go",
 		"Do you want to proceed?",
 		"Overwrite existing file? [Y/n]",
 		"Press enter to continue",
 		"Which database should I target?",
+		"What should I do with the migration?",
+		"Where should we write the output?",
 	}
 	for _, line := range mustMatch {
 		var hit bool
@@ -58,6 +72,35 @@ func TestPromptPatternsRejectErrorText(t *testing.T) {
 		if !hit {
 			t.Errorf("%q matched NO prompt pattern; a real block would hang until "+
 				"the stall lease expires", line)
+		}
+	}
+}
+
+// TestEachPositiveCaseIsolatesOnePattern keeps the positive cases discriminating.
+//
+// A case matched by several patterns cannot prove any of them: the original
+// permission example matched the permission pattern, `allow this`, AND `(y/n)`,
+// so deleting permission detection outright left the suite green. This asserts
+// the property directly, since the overlap is easy to reintroduce by making an
+// example more realistic.
+func TestEachPositiveCaseIsolatesOnePattern(t *testing.T) {
+	for _, line := range []string{
+		"Claude needs permission to edit main.go",
+		"Do you want to overwrite it",
+		"Overwrite existing file? [Y/n]",
+		"Press enter to continue",
+		"Which database should I target?",
+	} {
+		var hits int
+		for _, re := range DefaultPromptPatterns {
+			if re.MatchString(line) {
+				hits++
+			}
+		}
+		if hits != 1 {
+			t.Errorf("%q matches %d patterns, want exactly 1; a case several "+
+				"patterns satisfy stays green when the one it was written for "+
+				"is deleted", line, hits)
 		}
 	}
 }
