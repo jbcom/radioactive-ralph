@@ -848,6 +848,17 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
       treated the zero count as proof the sweep was broken. Dispatch uses
       ClaimTask and createPlanOn. Check the replacement before concluding.
 
+- [x] FIRST FULLY GREEN SELF-TEST: COMPLETE 12/12, zero reclaims, zero
+      failures, including unit-orch AND race. Read with the new
+      `status --plan` filter, which returned all 12 rows where the unscoped
+      page showed 0.
+      The acceptance-budget fix holds across a whole run, not just the one step
+      it was diagnosed on.
+      The decision log recorded NOTHING -- correctly, since nothing failed. So
+      that test is UNEXERCISED, not passed: the next failure is still the first
+      real read of it. Do not mistake a green run for having verified the
+      diagnostic.
+
 - [ ] unit-orch fails `interactive_prompt` INTERMITTENTLY -- failed twice, then
       PASSED on the third clean-tree run (verified by reading the store
       directly; see the surface problem below). So it is flaky, not
