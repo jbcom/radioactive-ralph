@@ -76,6 +76,13 @@ var DefaultPromptPatterns = []*regexp.Regexp{
 	regexp.MustCompile(`(?i)do you want to`),
 	regexp.MustCompile(`(?i)waiting for`),
 	regexp.MustCompile(`(?i)press enter`),
+	// An OPEN QUESTION about the task. Without this the detector never fires on
+	// "Which database should I target?", so the clarification KIND was
+	// classifiable but unreachable -- a taxonomy branch nothing could produce.
+	//
+	// Anchored to a question word at line start and requiring a "?", so it
+	// matches a question ASKED rather than any sentence mentioning one.
+	regexp.MustCompile(`(?im)^\s*(which|what|where|how|who|should i)\b[^?]*\?`),
 }
 
 // DefaultWatchdogConfig returns a WatchdogConfig seeded with

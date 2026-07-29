@@ -695,12 +695,19 @@ const (
 	// Provider-cause categories, mirrored from provider.FailureCategory. They
 	// tell an operator WHICH remediation applies — re-authenticate, wait, or
 	// retry — rather than only that a turn failed.
-	FailureProviderAuth        FailureCategory = "provider_auth"
-	FailureProviderThrottled   FailureCategory = "provider_throttled"
-	FailureProviderUnavailable FailureCategory = "provider_unavailable"
-	FailureVerification        FailureCategory = "verification"
-	FailureDispatch            FailureCategory = "dispatch"
-	FailureAdmission           FailureCategory = "admission"
+	// Interactive-prompt KINDS, mirrored from provider.FailureCategory. Same
+	// rationale as the codes below: each names a different remediation, and
+	// without the split every interactive block looked alike while a
+	// permission grant, a flag, and a plan fix are not interchangeable.
+	FailureInteractivePromptPermission    FailureCategory = "interactive_prompt_permission"
+	FailureInteractivePromptConfirm       FailureCategory = "interactive_prompt_confirm"
+	FailureInteractivePromptClarification FailureCategory = "interactive_prompt_clarification"
+	FailureProviderAuth                   FailureCategory = "provider_auth"
+	FailureProviderThrottled              FailureCategory = "provider_throttled"
+	FailureProviderUnavailable            FailureCategory = "provider_unavailable"
+	FailureVerification                   FailureCategory = "verification"
+	FailureDispatch                       FailureCategory = "dispatch"
+	FailureAdmission                      FailureCategory = "admission"
 )
 
 // BlockedCategory is the closed set of fail-closed pre-dispatch blocks.
@@ -1367,6 +1374,24 @@ func failureForEvent(kind, providerCategory string) *FailureSummary {
 // turn that is never coming.
 func providerFailureSummary(category string) (FailureSummary, bool) {
 	switch category {
+	case string(FailureInteractivePromptPermission):
+		return FailureSummary{
+			Category:  FailureInteractivePromptPermission,
+			Summary:   "provider asked to be allowed to act; usually a write-path or binding grant, not a keystroke",
+			Retryable: false,
+		}, true
+	case string(FailureInteractivePromptConfirm):
+		return FailureSummary{
+			Category:  FailureInteractivePromptConfirm,
+			Summary:   "provider asked to confirm an action it already intended; usually suppressible with a flag",
+			Retryable: false,
+		}, true
+	case string(FailureInteractivePromptClarification):
+		return FailureSummary{
+			Category:  FailureInteractivePromptClarification,
+			Summary:   "provider asked a question about the task; the step's scoped context was insufficient",
+			Retryable: false,
+		}, true
 	case string(FailureProviderAuth):
 		return FailureSummary{
 			Category:  FailureProviderAuth,
