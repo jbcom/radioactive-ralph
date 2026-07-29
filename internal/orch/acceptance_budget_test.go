@@ -2,6 +2,7 @@ package orch
 
 import (
 	"context"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -211,5 +212,54 @@ func TestVerificationTimeoutNamesItself(t *testing.T) {
 	if !strings.Contains(msg, "200ms") {
 		t.Errorf("error = %q, want it to state the budget so a reader can size "+
 			"the problem rather than guess", msg)
+	}
+}
+
+// TestVerificationTimeoutNamesItselfWithTheRealChecker is the version that
+// matters, and the one whose absence let a broken fix pass.
+//
+// TestVerificationTimeoutNamesItself uses a fake checker returning ctx.Err(),
+// which made a beatErr-keyed branch look correct. The REAL checker does not
+// behave that way: checkCommandExitsZero turns any nonzero exit into
+// (false, reason, nil), including the kill exec.CommandContext delivers on
+// cancellation ("signal: killed"). So the branch never fired for an actual
+// `accept:` command, the task was charged a retry, and the timeout was reported
+// as an ordinary acceptance failure -- the exact ambiguity being removed.
+//
+// A fake that reports failures differently from the real thing tests the fake.
+func TestVerificationTimeoutNamesItselfWithTheRealChecker(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("posix shell command — skip on windows")
+	}
+	ctx := context.Background()
+	s := newTestStore(t)
+
+	// No WithAcceptanceChecker: this exercises mechanicalAcceptanceCheck, the
+	// checker dispatch actually uses.
+	o := New(s, WithVerificationBudget(300*time.Millisecond))
+
+	projectID := mustCreateTestProject(t, s, "realcheck-project")
+	planID := mustCreateTestPlan(t, s, projectID, "realcheck-plan", "Ship", "# Ship\n\n- do the thing\n")
+	if err := s.CreateTask(ctx, store.CreateTaskOpts{
+		PlanID: planID, ID: "0.0", Description: "do the thing",
+		AcceptanceJSON: `{"command":"sleep 30"}`,
+	}); err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+	sessionID, workerID := mustCreateSessionAndWorkerForTest(t, s)
+	if _, err := s.ClaimNextReady(ctx, planID, sessionID, workerID); err != nil {
+		t.Fatalf("ClaimNextReady: %v", err)
+	}
+
+	_, err := o.VerifyAndComplete(ctx, planID, "0.0",
+		a2a.Evidence{Ran: "sleep 30", ExitCode: 0, Output: "done"})
+	if err == nil {
+		t.Fatal("a real acceptance command killed by the budget reported no " +
+			"error; it was accepted or rejected on its own terms instead")
+	}
+	if !strings.Contains(err.Error(), "acceptance verification exceeded") {
+		t.Errorf("error = %q, want it to name the budget exhaustion. The real "+
+			"checker reports a context kill as `signal: killed` with a nil error, "+
+			"so a branch keyed on the checker's error never fires", err.Error())
 	}
 }
