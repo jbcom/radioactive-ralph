@@ -218,10 +218,18 @@ func (o *Orchestrator) absorbDecisionLogDetached(ctx context.Context, projectID,
 // The count is stated even when it is 1, so an absent number never has to be
 // read as "unknown" -- a diagnostic that omits its own null case forces the
 // reader back into guessing, which is the failure mode this exists to end.
-func failureDecisionLine(category, summary string, runningWorkers int) string {
-	noun := "workers running"
-	if runningWorkers == 1 {
-		noun = "worker running"
+func failureDecisionLine(category, summary string, runningWorkers int, countErr error) string {
+	load := fmt.Sprintf("%d workers running", runningWorkers)
+	switch {
+	case countErr != nil:
+		// NEVER report a confident 0 for a count that failed. A discarded error
+		// left `running == 0`, which reads as "the machine was idle" -- the
+		// exact false-confidence this line exists to prevent, since mistaking an
+		// unmeasured value for a measured one is what made reclaim_count look
+		// like evidence about contention.
+		load = "worker count unavailable"
+	case runningWorkers == 1:
+		load = "1 worker running"
 	}
-	return fmt.Sprintf("turn ended %s (%d %s): %s", category, runningWorkers, noun, summary)
+	return fmt.Sprintf("turn ended %s (%s): %s", category, load, summary)
 }

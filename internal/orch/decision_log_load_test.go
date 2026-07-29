@@ -1,6 +1,7 @@
 package orch
 
 import (
+	"errors"
 	"strings"
 	"testing"
 )
@@ -19,7 +20,7 @@ import (
 // confirmed or dismissed from the artifact -- only guessed at, which is how
 // this investigation already burned three wrong explanations.
 func TestFailureDecisionRecordsConcurrentLoad(t *testing.T) {
-	got := failureDecisionLine("interactive_prompt", "provider requested operator input", 9)
+	got := failureDecisionLine("interactive_prompt", "provider requested operator input", 9, nil)
 	if !strings.Contains(got, "interactive_prompt") {
 		t.Errorf("decision = %q, want the category", got)
 	}
@@ -32,8 +33,27 @@ func TestFailureDecisionRecordsConcurrentLoad(t *testing.T) {
 
 	// A solo failure must say so plainly rather than omitting the field, so an
 	// absent number never has to be read as "unknown".
-	solo := failureDecisionLine("interactive_prompt", "x", 1)
+	solo := failureDecisionLine("interactive_prompt", "x", 1, nil)
 	if !strings.Contains(solo, "1 worker running") {
 		t.Errorf("solo decision = %q, want it to state the count is 1", solo)
+	}
+}
+
+// TestFailureDecisionDistinguishesUnknownLoad keeps a failed measurement from
+// reading as a measured zero.
+//
+// The first version discarded CountRunningWorkers' error, so a count that
+// failed -- an expired context, a busy SQLite -- left running == 0 and wrote a
+// confident "0 workers running". That is the same false confidence that made
+// reclaim_count look like evidence about contention: an unmeasured value
+// presented as a measured one.
+func TestFailureDecisionDistinguishesUnknownLoad(t *testing.T) {
+	got := failureDecisionLine("stall_timeout", "no progress", 0, errors.New("db busy"))
+	if strings.Contains(got, "0 workers running") {
+		t.Errorf("decision = %q, want it NOT to claim zero load for a count that "+
+			"failed -- an unmeasured value must not read as a measured one", got)
+	}
+	if !strings.Contains(got, "unavailable") {
+		t.Errorf("decision = %q, want it to say the count is unavailable", got)
 	}
 }
