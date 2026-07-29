@@ -526,6 +526,11 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
 
 ## Rolling improvement queue (directive 0 appends here)
 
+- [ ] [WAIT] Land the 1 open PR: #315 (behavioural test for the self-test's
+      tracked-edit guard -- CI shellchecked the script, which proves it parses,
+      not that the guard fires). Auto-merge ARMED, no failing checks.
+      Hash-prefixed deliberately: guard 9 extracts `#[0-9]{3}` from THIS line.
+
 - [x] DONE 2026-07-29: the tracked-edit guard had NO test. CI shellchecked
       scripts/self-test.sh, which proves it parses, not that the guard fires --
       and three separate bugs had already shipped in it (an undefined
