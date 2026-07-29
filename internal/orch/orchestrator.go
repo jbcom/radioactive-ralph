@@ -569,6 +569,20 @@ type scopedContext struct {
 	GroupHeading string
 	StepText     string
 	StepDetail   string
+
+	// DecisionLogPath, when set, is where this worker may record decisions an
+	// operator would otherwise never see.
+	//
+	// Ralph writes its own classification on failure ("turn ended
+	// interactive_prompt: ..."), which says THAT a turn blocked but never WHAT
+	// it wanted -- and the agent is the only party that knows. Until this, the
+	// prompt carried no path and no worker id, so the agent-authored half of
+	// the decision log was unreachable and WriteWorkerDecision had exactly one
+	// caller: Ralph.
+	//
+	// Empty means say nothing. A dangling instruction the agent cannot follow
+	// is worse than no instruction.
+	DecisionLogPath string
 }
 
 // prompt renders the scoped context as the worker's user prompt.
@@ -580,6 +594,16 @@ func (c scopedContext) prompt() string {
 	if c.StepDetail != "" {
 		b.WriteString("\n\n")
 		b.WriteString(c.StepDetail)
+	}
+	if c.DecisionLogPath != "" {
+		// Appended AFTER the step so the task stays the first thing read. The
+		// wording asks only for what the operator surface cannot otherwise
+		// learn -- blocks and their reasons -- rather than inviting a running
+		// commentary that would bury the useful lines.
+		fmt.Fprintf(&b, "\n\nIf you block on something an operator must resolve, "+
+			"or make a decision a later step depends on, append one line to %s "+
+			"saying what and why. That file is the only way this reaches the "+
+			"operator; your output is not retained.", c.DecisionLogPath)
 	}
 	return b.String()
 }
@@ -1070,11 +1094,17 @@ func (o *Orchestrator) dispatchReadyStep(ctx context.Context, a dispatchStepArgs
 		return false, fmt.Errorf("orch: set worker task: %w", err)
 	}
 
+	// Tell the worker where it may record decisions. Best-effort: a path we
+	// cannot resolve simply means the prompt omits the instruction, which is
+	// correct -- a dangling path the agent cannot write to is worse than none.
+	decisionPath, _ := o.decisionLogPath(workerID)
+
 	scoped := scopedContext{
-		PlanTitle:    planTitle(a.parsedPlan, a.storeTitle),
-		GroupHeading: a.groupHeading,
-		StepText:     ds.step.Text,
-		StepDetail:   ds.step.Detail,
+		PlanTitle:       planTitle(a.parsedPlan, a.storeTitle),
+		GroupHeading:    a.groupHeading,
+		StepText:        ds.step.Text,
+		StepDetail:      ds.step.Detail,
+		DecisionLogPath: decisionPath,
 	}
 
 	// Launch the provider turn asynchronously: the claim above (fast store I/O)
