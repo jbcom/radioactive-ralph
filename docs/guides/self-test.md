@@ -87,6 +87,83 @@ and it is why the page fills with nothing to do about it.
 A plan whose every task is finished, failed, or blocked also reports
 `no runnable work`, which distinguishes a dead plan from a slow one.
 
+## When a step fails, read the evidence log, not the failure event
+
+A failed task's `task.failed_terminal` payload carries a **closed-set constant**,
+and for the most common case that is all it carries -- every generic
+`interactive_prompt` failure in this repo's store is the same 89 bytes:
+
+```json
+{"reason":"provider requested interactive input","failure_category":"interactive_prompt"}
+```
+
+Other categories carry their own fixed summaries, so payload size varies (69
+bytes for a cancel, 157 for a permission block, and an acceptance rejection can
+be much larger because the acceptance output is not provider prose). What is
+constant is the *rule*: `provider.ClassifyFailure` emits a closed set of
+privacy-safe strings, never raw provider diagnostics. So a category tells you
+which KIND of failure happened and never why.
+
+**The evidence is in `a2a_messages`, not in `worker.completed`.** This matters
+because `worker.completed` is written by `store.MarkDone` -- only *after*
+verification succeeds -- so for an actually-failed step it does not exist.
+Submitted evidence is recorded before verification and survives a failure:
+
+```sql
+-- macOS: ~/Library/Application Support/radioactive-ralph/ralph.db
+-- Join on the FULL task key: self-test plans reuse task ids across runs, so
+-- `t.id = m.task_id` alone can return another run's row.
+SELECT m.content_json
+FROM a2a_messages m
+JOIN tasks t ON t.id = m.task_id AND t.plan_id = m.plan_id
+JOIN plans p ON p.id = t.plan_id
+WHERE p.slug = '<your-run-slug>'
+  AND t.description LIKE '%<package you care about>%'
+ORDER BY m.id DESC;
+```
+
+**Sometimes there is nothing to read, and that is itself the finding.** Measured
+across this repo's failed tasks: 35 of 60 evidence messages carry real command
+output, 16 carry only the same closed-set constant the failure event has
+(`"output":"provider requested interactive input"`), and the rest are short.
+A constant-only record means the provider was killed BEFORE it produced output
+-- so the question is not "why did the tests fail" but "why was the turn
+killed with nothing to show", which points at the watchdog and its patterns
+rather than at the package under test.
+
+When the evidence is there, it returns the worker's own account of what it ran
+and what happened -- for
+example, one real record from this repo's runs reported `internal/observe` PASS,
+`internal/plan` PASS, and `internal/orch` FAIL because three tests reached
+`agent.Start()` and got `operation not permitted`, with an independent probe
+confirming the sandbox blocked pty creation (`script: openpty: Operation not
+permitted`). No failure event could have told you that.
+
+Two traps in that same record:
+
+- **`exit_code: 0` does not mean the acceptance passed.** `a2a.Evidence`
+  documents `ExitCode` as **advisory only** -- the orchestrator re-runs the real
+  check and never trusts it. In the record above the worker reported `0` while
+  its own prose said `FAIL`.
+- **A category is only as true as the pattern that assigned it.** Read the
+  category, then read what matched to earn it. A bare `permission` pattern once
+  matched `permission denied` in ordinary test output and labelled a red test an
+  interactive block.
+
+## A red check is often not your diff
+
+Three distinct infrastructure flakes hit this repo's CI in a single day, none of
+them caused by the change under test. Read the log before assuming otherwise:
+
+- `hdiutil: create failed - Resource busy` -- a stale DMG device left attached
+  by a previous job on a reused macOS runner.
+- `sum.golang.org ... stream error; INTERNAL_ERROR` -- the Go checksum database
+  dropping a connection mid-download.
+- `no output before stall timeout` in `internal/provider` -- exec-to-first-byte
+  latency under heavy parallelism, not a logic bug. Do not "fix" these by
+  widening `StallTimeout` or reducing parallelism; find what is paying startup
+  cost inside the stall window.
+
 ## A run modifies your working tree
 
 Two things worth knowing before starting one.
