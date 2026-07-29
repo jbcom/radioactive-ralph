@@ -2,6 +2,7 @@ package orch
 
 import (
 	"errors"
+	"os"
 	"strings"
 	"testing"
 )
@@ -55,5 +56,39 @@ func TestFailureDecisionDistinguishesUnknownLoad(t *testing.T) {
 	}
 	if !strings.Contains(got, "unavailable") {
 		t.Errorf("decision = %q, want it to say the count is unavailable", got)
+	}
+}
+
+// TestOneFailureWritesOneDecisionLine guards a duplicate that shipped twice.
+//
+// Each dispatch path had TWO `if runErr != nil` branches, and both wrote a
+// decision line for the SAME failure -- so one non-retryable failure produced
+// two identical lines, which an earlier revision of the directive read as two
+// attempts. Worse, each branch sampled the worker count separately, so the two
+// lines could disagree about the load for one event.
+//
+// I fixed the per-step path and left the fan-out path standing; a reviewer
+// caught that. Hence a check that counts BOTH rather than trusting either.
+//
+// Asserted at the source: a behavioural test needs a live provider turn, and
+// the failure mode is a second call that is individually correct.
+func TestOneFailureWritesOneDecisionLine(t *testing.T) {
+	src, err := os.ReadFile("orchestrator.go")
+	if err != nil {
+		t.Fatalf("read orchestrator.go: %v", err)
+	}
+	var code strings.Builder
+	for _, line := range strings.Split(string(src), "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "//") {
+			continue
+		}
+		code.WriteString(line)
+		code.WriteString("\n")
+	}
+	// One per dispatch path: the per-step worker and the fan-out group.
+	if n := strings.Count(code.String(), "o.WriteWorkerDecision(workerID"); n != 2 {
+		t.Errorf("found %d decision writes, want exactly 2 (per-step and "+
+			"fan-out). A third means one failure records itself twice, with two "+
+			"independently sampled loads that can disagree", n)
 	}
 }

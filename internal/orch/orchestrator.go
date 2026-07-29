@@ -2569,15 +2569,10 @@ func (o *Orchestrator) runFanoutGroup(ctx context.Context, projectID, projectDir
 		// ends interactive_prompt or stall_timeout leaves nothing else readable
 		// -- `messages` withholds content by contract -- so without this line a
 		// failed turn is still undiagnosable from the operator surface.
-		// The concurrent worker count is captured HERE, at failure time. It
-		// cannot be recovered afterwards -- the reaper deletes worker rows --
-		// and reclaim_count is not a substitute: it increments only on a stale
-		// heartbeat or an orphaned claim, so a saturated machine can leave it
-		// at zero. Comparing runs by it produced a confident "no contention"
-		// for a run that may well have been loaded.
-		running, countErr := o.store.CountRunningWorkers(persistCtx)
-		_ = o.WriteWorkerDecision(workerID,
-			failureDecisionLine(string(failure.Category), failure.Summary, running, countErr))
+		// NOT re-sampled and NOT re-written here: the blocked-turn branch above
+		// already recorded this same failure. Two samples also disagreed when a
+		// worker finished between them, so one failure produced two lines
+		// claiming different loads. Same double-write as the per-step path.
 		for _, ds := range claimed {
 			// Benign if the reaper already reclaimed/reassigned this task —
 			// don't stomp the new owner (see MarkFailed's owner guard).
