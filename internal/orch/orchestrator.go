@@ -2099,8 +2099,15 @@ func (o *Orchestrator) dispatchWorker(ctx context.Context, projectID, projectDir
 		// ends interactive_prompt or stall_timeout leaves nothing else readable
 		// -- `messages` withholds content by contract -- so without this line a
 		// failed turn is still undiagnosable from the operator surface.
-		_ = o.WriteWorkerDecision(workerID, fmt.Sprintf(
-			"turn ended %s: %s", failure.Category, failure.Summary))
+		// The concurrent worker count is captured HERE, at failure time. It
+		// cannot be recovered afterwards -- the reaper deletes worker rows --
+		// and reclaim_count is not a substitute: it increments only on a stale
+		// heartbeat or an orphaned claim, so a saturated machine can leave it
+		// at zero. Comparing runs by it produced a confident "no contention"
+		// for a run that may well have been loaded.
+		running, _ := o.store.CountRunningWorkers(persistCtx)
+		_ = o.WriteWorkerDecision(workerID,
+			failureDecisionLine(string(failure.Category), failure.Summary, running))
 		ev.ExitCode = 1
 		ev.Output = failure.Summary
 		ev.FailureCategory = string(failure.Category)
@@ -2134,8 +2141,15 @@ func (o *Orchestrator) dispatchWorker(ctx context.Context, projectID, projectDir
 		// ends interactive_prompt or stall_timeout leaves nothing else readable
 		// -- `messages` withholds content by contract -- so without this line a
 		// failed turn is still undiagnosable from the operator surface.
-		_ = o.WriteWorkerDecision(workerID, fmt.Sprintf(
-			"turn ended %s: %s", failure.Category, failure.Summary))
+		// The concurrent worker count is captured HERE, at failure time. It
+		// cannot be recovered afterwards -- the reaper deletes worker rows --
+		// and reclaim_count is not a substitute: it increments only on a stale
+		// heartbeat or an orphaned claim, so a saturated machine can leave it
+		// at zero. Comparing runs by it produced a confident "no contention"
+		// for a run that may well have been loaded.
+		running, _ := o.store.CountRunningWorkers(persistCtx)
+		_ = o.WriteWorkerDecision(workerID,
+			failureDecisionLine(string(failure.Category), failure.Summary, running))
 		// Honor the classification's retry policy. A terminal category yields a
 		// budget of ZERO, so an invalid credential or a rejected request fails
 		// now instead of launching three more turns that cannot succeed and
@@ -2510,8 +2524,15 @@ func (o *Orchestrator) runFanoutGroup(ctx context.Context, projectID, projectDir
 		// ends interactive_prompt or stall_timeout leaves nothing else readable
 		// -- `messages` withholds content by contract -- so without this line a
 		// failed turn is still undiagnosable from the operator surface.
-		_ = o.WriteWorkerDecision(workerID, fmt.Sprintf(
-			"turn ended %s: %s", failure.Category, failure.Summary))
+		// The concurrent worker count is captured HERE, at failure time. It
+		// cannot be recovered afterwards -- the reaper deletes worker rows --
+		// and reclaim_count is not a substitute: it increments only on a stale
+		// heartbeat or an orphaned claim, so a saturated machine can leave it
+		// at zero. Comparing runs by it produced a confident "no contention"
+		// for a run that may well have been loaded.
+		running, _ := o.store.CountRunningWorkers(persistCtx)
+		_ = o.WriteWorkerDecision(workerID,
+			failureDecisionLine(string(failure.Category), failure.Summary, running))
 		ev.ExitCode = 1
 		ev.Output = failure.Summary
 		ev.FailureCategory = string(failure.Category)
@@ -2547,8 +2568,15 @@ func (o *Orchestrator) runFanoutGroup(ctx context.Context, projectID, projectDir
 		// ends interactive_prompt or stall_timeout leaves nothing else readable
 		// -- `messages` withholds content by contract -- so without this line a
 		// failed turn is still undiagnosable from the operator surface.
-		_ = o.WriteWorkerDecision(workerID, fmt.Sprintf(
-			"turn ended %s: %s", failure.Category, failure.Summary))
+		// The concurrent worker count is captured HERE, at failure time. It
+		// cannot be recovered afterwards -- the reaper deletes worker rows --
+		// and reclaim_count is not a substitute: it increments only on a stale
+		// heartbeat or an orphaned claim, so a saturated machine can leave it
+		// at zero. Comparing runs by it produced a confident "no contention"
+		// for a run that may well have been loaded.
+		running, _ := o.store.CountRunningWorkers(persistCtx)
+		_ = o.WriteWorkerDecision(workerID,
+			failureDecisionLine(string(failure.Category), failure.Summary, running))
 		for _, ds := range claimed {
 			// Benign if the reaper already reclaimed/reassigned this task —
 			// don't stomp the new owner (see MarkFailed's owner guard).
