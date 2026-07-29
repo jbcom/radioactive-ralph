@@ -896,6 +896,25 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
       write paths are per-binding and static (BindingWritePaths), so the
       candidate is a path codex needs that the binding does not grant.
 
+- [ ] CODEX RUNS CONTAINED, and I recorded the opposite. A reviewer caught it:
+      defaultCodexProvider leaves SupportsContainment UNSET, and
+      supportsContainment treats unset as CAPABLE (binding.go:144-146). I read
+      the doc comment above it -- "SupportsContainment: FALSE, verified
+      2026-07-28" -- and never checked the struct beneath, which sets no such
+      field.
+      That reverses the permission conclusion. Codex IS confined, with only
+      ~/.codex writable, so a DENIED WRITE is back on the table as the trigger
+      for interactive_prompt_permission -- the possibility I ruled out.
+      AND THE CODE CONTRADICTS ITSELF, which is the more valuable finding: the
+      comment documents a verified containment failure ("dies in 0.5s with
+      Operation not permitted... there is no narrow subpath to add") while the
+      config leaves containment ON. One of the two is wrong, and either way an
+      operator reading that comment is misled.
+      Resolve BOTH: decide whether codex should be confined, make the struct
+      say so, and either keep the comment as history or delete it.
+      Verify by reverting: BindingSupportsContainment(codex) must return what
+      the comment claims, or the comment must change.
+
 - [ ] [WAIT] unit-orch is INTERMITTENT and currently PASSING, so there is
       nothing to act on until it fails again. Not closed: an intermittent bug
       that stops reproducing is hidden, not fixed, and the decision log (wired
