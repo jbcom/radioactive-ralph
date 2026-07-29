@@ -874,16 +874,22 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
       exercised it came back fully green.
       When it next fails, read the worker.decision_log event FIRST. That is the
       artifact this whole thread lacked.
-      RULED OUT this pass, so nobody re-derives it: CONTENTION is not the
-      trigger. Compared the three runs --
-        091609: unit-orch FAILED, 11 reclaims (heavy contention)
-        105206: unit-orch FAILED,  0 reclaims (none)
+      NARROWED, not ruled out. Compared the three runs by reclaim_count --
+        091609: unit-orch FAILED, 11 reclaims
+        105206: unit-orch FAILED,  0 reclaims
         112828: unit-orch passed,  0 reclaims
-      A failure with zero reclaims kills the "it only happens under load"
-      theory, which was the obvious next guess after the race-step work. The
-      two failures share something the pass does not, and I do not know what it
-      is -- that is the honest state, and it is why the decision log matters
-      rather than a fourth theory.
+      That kills "contention is the SOLE trigger" and "it only happens under
+      heavy load". It does NOT rule contention out as a cofactor, and my first
+      write-up said it did -- a reviewer caught the reasoning error.
+      THE MEASUREMENT WAS WRONG FOR THE CLAIM: reclaim_count only increments on
+      a stale heartbeat or an orphaned claim (reaper.go). The plan makes NINE
+      steps ready at once after `build`, so nine processes can saturate CPU and
+      I/O with reclaim_count staying at 0. "0 reclaims" means no worker died --
+      it does not mean the machine was idle.
+      So contention remains a live cofactor and needs a real measure (concurrent
+      claims at failure time, or wall-clock of the turn) rather than a proxy
+      that answers a different question. The two failures still share something
+      the pass does not; the decision log is the next read.
       Detail: unit-orch fails `interactive_prompt` INTERMITTENTLY -- failed twice, then
       PASSED on the third clean-tree run (verified by reading the store
       directly; see the surface problem below). So it is flaky, not
