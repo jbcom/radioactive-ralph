@@ -188,31 +188,69 @@ threshold derived from a quiet machine would have predicted it.
 Remove the silence when a seam exists, raise the lease when it does not.
 Reaching for the lease first is how a real hang gets a longer rope.
 
-**Capping the width does not fix this.** The prediction was that it would, so
-it was measured. With `RALPH_MAX_PARALLEL=4` the `race` step still reclaimed
-twice — the same count as unbounded. Captured from `radioactive_ralph status`:
+**Capping the width made it worse.** The prediction was that it would fix this,
+so it was measured. With `RALPH_MAX_PARALLEL=4` the `race` step reclaimed **four**
+times, against two when unbounded. Captured from `radioactive_ralph status`:
 
 ```
-  race             running                  w:…06d1b6c6 via=codex — reclaimed 2x: stale_heartbeat
+  race             running                  w:…124303ac via=codex — reclaimed 4x: stale_heartbeat
   unit-provider    failed                   via=codex — task retry budget was exhausted — reclaimed 2x: stale_heartbeat (3 claims in flight)
 ```
 
-The absent pressure clause on the `race` row is the finding, not a rendering
-gap. It is omitted when fewer than two claims were in flight, so `race`'s most
-recent reclaim happened while **nothing else was running**. Contention cannot
-explain that one.
+The absent pressure clause on the `race` row is the strongest single piece of
+evidence, but it is narrower than it looks: the row carries only the NEWEST
+reclaim's conditions (`operatorTasksQuery` selects it with `MAX(id)`), while
+`reclaimed 4x` is cumulative. So it establishes that reclaim #4 happened with
+nothing else in flight — it says nothing about the first three.
 
-So the lease, not the load, is the operative limit for a step like this: a 138s
-command that prints nothing cannot survive a 180s renewable lease reliably, even
-alone on the machine. Capping the width reduces the pressure on its *neighbours*
-— `unit-provider` shows its reclaims happened at 3 in flight — but it does not
-make a silent step visible.
+That one data point is still decisive, because a single reclaim under zero
+contention is enough to rule contention out as a NECESSARY cause. It is not
+enough to rule it out as a contributor, and the earlier reclaims may well have
+had company.
 
-Worth stating plainly because the tidy version ("cap the width and the reclaims
-go away") is what a partial reading of the same run suggested, and it is wrong.
-The distinguishing evidence is the in-flight count on each reclaim: without it,
-both rows read as "still flaky" and there is no way to tell the neighbour effect
-from the root cause.
+**It is not the lease either.** That was the next wrong answer, and the fact that
+kills it is one function away: `runWithHeartbeat` beats every 20s *independently
+of provider output*, against a 90s stale window. A stalled turn keeps beating, so
+a watchdog kill cannot produce a reclaim at all.
+
+What actually happens:
+
+- the heartbeat goroutine stops the instant the turn's `fn` returns
+- the post-run path — **including acceptance verification** — then runs under
+  `persistCtx`, a **30-second** budget
+- this step's acceptance command is `go test -race -v ./internal/store/`, which
+  takes 30s warm and 138s under load
+
+It cannot fit. `persistCtx` expires, the task is never marked, and it sits
+`running` with a dead heartbeat until the reaper takes it at 90s. So the reclaims
+are a step whose *work already succeeded* being requeued because verifying it
+outlived a budget sized for store writes.
+
+That explains what neither earlier theory could: why capping made it worse (a
+busier machine makes acceptance slower, so blowing 30s becomes more certain), and
+why it reclaims with nothing else running.
+
+Capping also cannot add reclaim exposure by making a step wait for a slot:
+`dispatchReadySteps` acquires the slot BEFORE claiming, and `ReclaimStale` only
+requeues tasks already in `running`, so a candidate waiting on a full semaphore
+is not eligible. All exposure is inside the turn, once the claim is held.
+
+The honest reading is that this experiment produced four successive readings and
+three successive WRONG EXPLANATIONS. The readings: predicted 0, saw 1 and wrote
+"halved", saw 2 and wrote "no better", finished at 4+. The explanations: silence
+under load, then the lease, then — only after a reviewer pointed at the heartbeat
+interval — the acceptance budget.
+
+Two lessons, and the second is the expensive one. A running experiment has no
+verdict until it stops. And a mechanism that *explains* the observation is not
+therefore the mechanism: the lease story fit every number I had, and was still
+wrong, because I never checked whether a stalled turn actually stops
+heartbeating. Fitting the data is necessary, not sufficient.
+
+What made the difference legible is the in-flight count on each reclaim. Without
+it, both rows read as "still flaky" with no way to separate a neighbour effect
+from a root cause — `unit-provider`'s reclaims genuinely happened under load,
+`race`'s did not.
 
 **Nobody chose the width.** Dispatch concurrency is `RALPH_MAX_PARALLEL`, and
 when it is unset the supervisor is *unbounded* — `supervisorMaxParallel` returns
