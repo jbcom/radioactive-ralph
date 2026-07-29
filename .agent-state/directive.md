@@ -541,10 +541,9 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
       Verify first that archived plans drop out of the operator snapshot --
       if they do not, archiving buys nothing and the fix is a real delete path.
 
-- [ ] [WAIT] Land the 1 open PR: #317 (docs/guides/self-test.md -- the harness
-      was documented nowhere a newcomer would look). Auto-merge ARMED, no
-      failing checks. Hash-prefixed deliberately: guard 9 extracts `#[0-9]{3}`
-      from THIS line.
+- [x] #317 MERGED (docs/guides/self-test.md, plus the rule that docs claims
+      need the same proof as code claims -- four invented mechanisms in that
+      guide were caught by review after I reported it verified).
 
 - [x] DONE 2026-07-29: the self-test was documented NOWHERE a newcomer would
       look -- not the README, not any guide, only the plan file and AGENTS.md,
