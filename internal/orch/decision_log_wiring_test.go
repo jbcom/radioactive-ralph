@@ -46,8 +46,20 @@ func TestDecisionLogIsWiredIntoDispatch(t *testing.T) {
 		code.WriteString("\n")
 	}
 
-	if !strings.Contains(code.String(), "AbsorbDecisionLog(") {
-		t.Error("dispatch never calls AbsorbDecisionLog; a worker's decisions " +
+	dispatch := code.String()
+
+	// BOTH SIDES. The first version checked only the consumer, and a reviewer
+	// caught that wiring absorption alone reads a file nothing writes -- the
+	// same "correct thing nothing calls" defect, one layer over. A subsystem is
+	// wired when something produces AND something consumes.
+	if !strings.Contains(dispatch, "WriteWorkerDecision(") {
+		t.Error("dispatch never calls WriteWorkerDecision; absorption then reads " +
+			"a file that is never written, so the subsystem stays inert while " +
+			"looking wired")
+	}
+	if !strings.Contains(dispatch, "absorbDecisionLogDetached(") &&
+		!strings.Contains(dispatch, "AbsorbDecisionLog(") {
+		t.Error("dispatch never absorbs the decision log; a worker's decisions " +
 			"are written to a file nothing ever reads, so a failed turn leaves " +
 			"no readable record of what it decided")
 	}

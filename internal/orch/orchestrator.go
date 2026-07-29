@@ -2091,6 +2091,16 @@ func (o *Orchestrator) dispatchWorker(ctx context.Context, projectID, projectDir
 	}
 	if runErr != nil {
 		failure := provider.ClassifyFailure(runErr)
+		// RECORD WHY, before the worker is released. This is the producer side:
+		// wiring only AbsorbDecisionLog would have read a file nothing writes,
+		// which is the same "correct thing nothing calls" defect being fixed.
+		//
+		// Ralph's own classification is the decision worth keeping. A turn that
+		// ends interactive_prompt or stall_timeout leaves nothing else readable
+		// -- `messages` withholds content by contract -- so without this line a
+		// failed turn is still undiagnosable from the operator surface.
+		_ = o.WriteWorkerDecision(workerID, fmt.Sprintf(
+			"turn ended %s: %s", failure.Category, failure.Summary))
 		ev.ExitCode = 1
 		ev.Output = failure.Summary
 		ev.FailureCategory = string(failure.Category)
@@ -2116,6 +2126,16 @@ func (o *Orchestrator) dispatchWorker(ctx context.Context, projectID, projectDir
 		// mid-run and possibly reassigned the task) is benign — the current
 		// owner keeps its work; we just release this now-defunct worker.
 		failure := provider.ClassifyFailure(runErr)
+		// RECORD WHY, before the worker is released. This is the producer side:
+		// wiring only AbsorbDecisionLog would have read a file nothing writes,
+		// which is the same "correct thing nothing calls" defect being fixed.
+		//
+		// Ralph's own classification is the decision worth keeping. A turn that
+		// ends interactive_prompt or stall_timeout leaves nothing else readable
+		// -- `messages` withholds content by contract -- so without this line a
+		// failed turn is still undiagnosable from the operator surface.
+		_ = o.WriteWorkerDecision(workerID, fmt.Sprintf(
+			"turn ended %s: %s", failure.Category, failure.Summary))
 		// Honor the classification's retry policy. A terminal category yields a
 		// budget of ZERO, so an invalid credential or a rejected request fails
 		// now instead of launching three more turns that cannot succeed and
@@ -2134,7 +2154,12 @@ func (o *Orchestrator) dispatchWorker(ctx context.Context, projectID, projectDir
 		// what it decided: `messages` withholds content by contract, and the log
 		// file was never written. Best-effort: a diagnostic that fails must not
 		// fail the turn.
-		_ = o.AbsorbDecisionLog(persistCtx, projectID, planID, ds.task.ID, workerID)
+		//
+		// A FRESH budget, not persistCtx: verification detaches and may run for
+		// minutes, so persistCtx is often already expired here. Since the error
+		// is deliberately ignored, an expired context drops the event in
+		// silence -- the diagnostic would look wired and produce nothing.
+		_ = o.absorbDecisionLogDetached(ctx, projectID, planID, ds.task.ID, workerID)
 		_ = o.store.ClearWorkerTask(persistCtx, workerID, "crashed")
 		return nil
 	}
@@ -2142,9 +2167,16 @@ func (o *Orchestrator) dispatchWorker(ctx context.Context, projectID, projectDir
 	// Attribute the evidence to the session that PRODUCED it. Letting
 	// verification read the current owner instead means a worker the reaper
 	// already replaced can overwrite its replacement's attempt (#248).
-	if _, err := o.VerifyAndCompleteAs(persistCtx, planID, ds.task.ID, sessionID, ev); err != nil {
-		return fmt.Errorf("orch: verify and complete: %w", err)
-	}
+	// Capture the error rather than returning on it: a verification REJECTION is
+	// one of the three lifecycle ends AbsorbDecisionLog's doc names, and
+	// returning early skipped both the absorb and the worker release below --
+	// leaking the worker row on exactly the path most worth diagnosing.
+	verifyErr := func() error {
+		if _, err := o.VerifyAndCompleteAs(persistCtx, planID, ds.task.ID, sessionID, ev); err != nil {
+			return fmt.Errorf("orch: verify and complete: %w", err)
+		}
+		return nil
+	}()
 	// Fold this worker's decision log into a store event before releasing it.
 	//
 	// AbsorbDecisionLog's own doc says to call it "once per worker lifecycle
@@ -2154,9 +2186,11 @@ func (o *Orchestrator) dispatchWorker(ctx context.Context, projectID, projectDir
 	// what it decided: `messages` withholds content by contract, and the log
 	// file was never written. Best-effort: a diagnostic that fails must not
 	// fail the turn.
-	_ = o.AbsorbDecisionLog(persistCtx, projectID, planID, ds.task.ID, workerID)
+	//
+	// A FRESH budget, not persistCtx: see the note on the failure path above.
+	_ = o.absorbDecisionLogDetached(ctx, projectID, planID, ds.task.ID, workerID)
 	_ = o.store.ClearWorkerTask(persistCtx, workerID, "idle")
-	return nil
+	return verifyErr
 }
 
 // dispatchFanoutGroup delegates an entire ready parallel step-group to ONE
@@ -2468,6 +2502,16 @@ func (o *Orchestrator) runFanoutGroup(ctx context.Context, projectID, projectDir
 	}
 	if runErr != nil {
 		failure := provider.ClassifyFailure(runErr)
+		// RECORD WHY, before the worker is released. This is the producer side:
+		// wiring only AbsorbDecisionLog would have read a file nothing writes,
+		// which is the same "correct thing nothing calls" defect being fixed.
+		//
+		// Ralph's own classification is the decision worth keeping. A turn that
+		// ends interactive_prompt or stall_timeout leaves nothing else readable
+		// -- `messages` withholds content by contract -- so without this line a
+		// failed turn is still undiagnosable from the operator surface.
+		_ = o.WriteWorkerDecision(workerID, fmt.Sprintf(
+			"turn ended %s: %s", failure.Category, failure.Summary))
 		ev.ExitCode = 1
 		ev.Output = failure.Summary
 		ev.FailureCategory = string(failure.Category)
@@ -2495,6 +2539,16 @@ func (o *Orchestrator) runFanoutGroup(ctx context.Context, projectID, projectDir
 
 	if runErr != nil {
 		failure := provider.ClassifyFailure(runErr)
+		// RECORD WHY, before the worker is released. This is the producer side:
+		// wiring only AbsorbDecisionLog would have read a file nothing writes,
+		// which is the same "correct thing nothing calls" defect being fixed.
+		//
+		// Ralph's own classification is the decision worth keeping. A turn that
+		// ends interactive_prompt or stall_timeout leaves nothing else readable
+		// -- `messages` withholds content by contract -- so without this line a
+		// failed turn is still undiagnosable from the operator surface.
+		_ = o.WriteWorkerDecision(workerID, fmt.Sprintf(
+			"turn ended %s: %s", failure.Category, failure.Summary))
 		for _, ds := range claimed {
 			// Benign if the reaper already reclaimed/reassigned this task —
 			// don't stomp the new owner (see MarkFailed's owner guard).
@@ -2513,7 +2567,12 @@ func (o *Orchestrator) runFanoutGroup(ctx context.Context, projectID, projectDir
 		// what it decided: `messages` withholds content by contract, and the log
 		// file was never written. Best-effort: a diagnostic that fails must not
 		// fail the turn.
-		_ = o.AbsorbDecisionLog(persistCtx, projectID, planID, fanoutLogTaskID(claimed), workerID)
+		//
+		// A FRESH budget, not persistCtx: verification detaches and may run for
+		// minutes, so persistCtx is often already expired here. Since the error
+		// is deliberately ignored, an expired context drops the event in
+		// silence -- the diagnostic would look wired and produce nothing.
+		_ = o.absorbDecisionLogDetached(ctx, projectID, planID, fanoutLogTaskID(claimed), workerID)
 		_ = o.store.ClearWorkerTask(persistCtx, workerID, "crashed")
 		return nil
 	}
@@ -2560,7 +2619,9 @@ func (o *Orchestrator) runFanoutGroup(ctx context.Context, projectID, projectDir
 	// what it decided: `messages` withholds content by contract, and the log
 	// file was never written. Best-effort: a diagnostic that fails must not
 	// fail the turn.
-	_ = o.AbsorbDecisionLog(persistCtx, projectID, planID, fanoutLogTaskID(claimed), workerID)
+	//
+	// A FRESH budget, not persistCtx: see the note on the failure path above.
+	_ = o.absorbDecisionLogDetached(ctx, projectID, planID, fanoutLogTaskID(claimed), workerID)
 	_ = o.store.ClearWorkerTask(persistCtx, workerID, "idle")
 	return verifyErr
 }
