@@ -643,10 +643,39 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
          COMPLETE) is the honest outcome: lint-internal failed, so claims and
          e2e stayed correctly blocked and the plan reports no runnable work.
 
-- [ ] The stall lease is invisible until it bites. NOT gated on the `-v` fix
-      (PR 322, deliberately un-hashed: this item is the independent
-      OBSERVABILITY follow-up that finding exposed, not a wait on that PR).
-      The `race` finding cost a
+- [x] DONE. Reclaim reasons are durable now (PR 322, un-hashed deliberately:
+      guard 9 reads hashes as open-PR citations).
+      The reason was never MISSING -- it was computed and then DROPPED.
+      ClassifyFailure already turns a stall into FailureStall, but the
+      orchestrator writes it via MarkFailedWithPayload, which returns
+      ErrTaskNotOwnedRunning once the reaper has reclaimed the task, and that
+      error is deliberately swallowed as benign. So exactly when a reclaim
+      happens, the category is discarded a few lines from where reclaim_count
+      is incremented. Finding that changed the fix: it is a plumbing gap, not a
+      missing classifier.
+      The reaper now emits one task.reclaimed event per task with plan_id,
+      task_id, count, and the branch that fired -- stale_heartbeat vs
+      orphaned_claim, already distinct in the SQL and previously collapsed.
+      TWO lessons worth keeping:
+        - A comment claimed UPDATE...RETURNING was not portable on the pinned
+          modernc driver, so the code settled for a summary row. Re-tested on
+          v1.54.0: it works. Verify a constraint before designing around it.
+        - My first version derived the reason IN the RETURNING clause, which
+          evaluates against the POST-update row where claimed_by_worker_id has
+          just been nulled -- labelling every reclaim orphaned_claim. The test
+          caught it. A test asserting merely that "a reason exists" would have
+          passed; asserting the SPECIFIC branch is what caught it.
+      Both fixes carry negative proofs.
+
+- [ ] The stall lease is still invisible in the OPERATOR SURFACE. The reclaim
+      reason is now durable in the events stream, but `status` still shows a
+      bare reclaim_count on the task row -- so the fast read is still "why is
+      this number 2?" and the answer lives one query away.
+      Surface the latest reclaim reason on the task row itself, the way
+      failure_category already rides along for failed tasks.
+      Verify by reverting: with it, a reclaimed row names its cause inline;
+      without it, the operator is back to correlating events by hand.
+      Historical note -- the `race` finding cost a
       real diagnosis (2 reclaims read as a stuck row) for a step that was
       merely quiet, and NOTHING in the operator surface said so: the row shows
       reclaim_count, but not WHY the claim was lost. A stall-killed turn and a
