@@ -84,6 +84,7 @@ The schema is embedded under schema/\*.sql and applied in lexical order by Migra
   - [func \(s \*Store\) CreateTask\(ctx context.Context, o CreateTaskOpts\) error](<#Store.CreateTask>)
   - [func \(s \*Store\) CreateWorker\(ctx context.Context, o WorkerOpts\) \(string, error\)](<#Store.CreateWorker>)
   - [func \(s \*Store\) DB\(\) \*sql.DB](<#Store.DB>)
+  - [func \(s \*Store\) DeletePlan\(ctx context.Context, planID string\) error](<#Store.DeletePlan>)
   - [func \(s \*Store\) Emit\(ctx context.Context, o EmitOpts\) error](<#Store.Emit>)
   - [func \(s \*Store\) EventsAfter\(ctx context.Context, projectID string, afterID int64, limit int\) \(\[\]Event, error\)](<#Store.EventsAfter>)
   - [func \(s \*Store\) GetCalibrationByAlias\(ctx context.Context, alias string\) \(ProviderCalibration, error\)](<#Store.GetCalibrationByAlias>)
@@ -1288,6 +1289,21 @@ func (s *Store) DB() *sql.DB
 ```
 
 DB returns the underlying \*sql.DB for callers that need raw access. Business\-logic callers should use Store's typed methods instead.
+
+<a name="Store.DeletePlan"></a>
+### func \(\*Store\) [DeletePlan](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/plan_delete.go#L26>)
+
+```go
+func (s *Store) DeletePlan(ctx context.Context, planID string) error
+```
+
+DeletePlan removes a plan and everything hanging off it.
+
+It exists for retention, not for correcting mistakes mid\-flight: each self\-test run imports a plan under a unique slug — deliberately, since that is what stopped the run reporting a previous run's result — and those accumulate. The operator page limit is a hard 200, so paging defers the problem by roughly sixteen runs rather than solving it, and archiving cannot help at all: the operator plan query filters on project and cursor only, with no status predicate, so an archived plan still occupies a page slot.
+
+One statement is enough because every dependent table cascades through tasks and the store enables foreign\_keys per connection \(see store.go\). The transaction is still here so a future non\-cascading table cannot leave a half\-deleted plan behind.
+
+Deliberately NOT filtered by plan status. A caller pruning old runs knows which ids it wants; refusing to delete an active plan would push that policy into the store, where it cannot see whether the plan is still wanted.
 
 <a name="Store.Emit"></a>
 ### func \(\*Store\) [Emit](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/events.go#L38>)

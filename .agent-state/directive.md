@@ -526,10 +526,33 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
 
 ## Rolling improvement queue (directive 0 appends here)
 
-- [ ] [WAIT] Land the 1 open PR: #318 (self-test run accumulation recorded, and
-      report() now pages like the watch loop so a run never omits itself).
-      Auto-merge ARMED, no failing checks. Hash-prefixed deliberately: guard 9
-      extracts `#[0-9]{3}` from THIS line.
+- [ ] [WAIT] Land the 1 open PR: #319 (store.DeletePlan -- the retention
+      primitive, with the CLI surface deliberately scoped out). Auto-merge
+      ARMED, no failing checks. Hash-prefixed deliberately: guard 9 extracts
+      `#[0-9]{3}` from THIS line.
+
+- [x] DONE 2026-07-29: store.DeletePlan -- the retention primitive the
+      accumulation analysis said was eventually required. Verified before
+      writing it that the cascade would actually fire: every dependent table
+      cascades through tasks, and store.go enables foreign_keys per connection.
+      Tests pin the parts worth doubting: the deleted plan leaves the operator
+      snapshot (removal that leaves the row visible buys nothing over
+      archiving), a NEIGHBOURING plan survives, no orphan tasks or task_deps
+      remain, and an unknown id ERRORS rather than reporting success -- a prune
+      that accepts a typo is worse than one that fails.
+
+- [x] DECIDED 2026-07-29 (not pending work -- a recorded scope boundary): no
+      CLI surface for delete. That
+      needs a new IPC command, a supervisor handler, and a drive-API method,
+      which is a much larger change than ~16 runs of headroom justifies today.
+      The store primitive is the load-bearing half; wiring it up is mechanical
+      once someone actually needs to prune. Do NOT solve accumulation by
+      reverting unique slugs -- that is what stopped the self-test reporting
+      stale results.
+
+- [x] #318 MERGED (report() pages like the watch loop, so a run never omits
+      its own rows; accumulation analysis corrected -- paging defers rather
+      than solves, and a delete path is eventually required).
 
 - [x] DONE 2026-07-29 (#318): self-test runs ACCUMULATE, one plan per invocation.
       Nine runs in a single session took this project to 11 plans / 110 tasks.
