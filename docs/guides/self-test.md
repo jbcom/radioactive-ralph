@@ -122,7 +122,17 @@ WHERE p.slug = '<your-run-slug>'
 ORDER BY m.id DESC;
 ```
 
-That returns the worker's own account of what it ran and what happened -- for
+**Sometimes there is nothing to read, and that is itself the finding.** Measured
+across this repo's failed tasks: 35 of 60 evidence messages carry real command
+output, 16 carry only the same closed-set constant the failure event has
+(`"output":"provider requested interactive input"`), and the rest are short.
+A constant-only record means the provider was killed BEFORE it produced output
+-- so the question is not "why did the tests fail" but "why was the turn
+killed with nothing to show", which points at the watchdog and its patterns
+rather than at the package under test.
+
+When the evidence is there, it returns the worker's own account of what it ran
+and what happened -- for
 example, one real record from this repo's runs reported `internal/observe` PASS,
 `internal/plan` PASS, and `internal/orch` FAIL because three tests reached
 `agent.Start()` and got `operation not permitted`, with an independent probe
