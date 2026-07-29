@@ -743,7 +743,8 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
       file says "a field is not shipped until each renderer shows it". Not
       repeating that two commits later.
 
-- [x] VERIFIED END TO END (11:2x). race reached done with reclaim_count=0, and
+- [x] VERIFIED END TO END. Run terminal at 9/12, DEAD only because unit-orch
+      failed (correctly blocking claims + e2e). race reached done with reclaim_count=0, and
       EVERY task in the run shows 0 reclaims. Prior runs: 2 unbounded, 6 capped.
       This is the proof that -v, capping, and stall_timeout all failed to
       produce -- each passed its unit tests and changed nothing on a dispatched
