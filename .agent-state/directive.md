@@ -526,7 +526,29 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
 
 ## Rolling improvement queue (directive 0 appends here)
 
-- [ ] [WAIT] Land the 1 open PR: #305 (CLI task table + blocked-reason in all
+- [x] #305 MERGED (CLI task table + blocked-reason in all three views + meso
+      row width + GUI worker-claim parity).
+
+- [ ] [WAIT] Land the 1 open PR: #306 (partition ordinal gated on
+      dispatchability -- the bug DOGFOODING found). Auto-merge ARMED.
+      Hash-prefixed deliberately: guard 9 extracts `#[0-9]{3}` from THIS line.
+
+- [x] DOGFOODING DONE 2026-07-28 -- and it paid for itself immediately.
+      Authored .radioactive-ralph/plans/observe-surface-followups.md, imported
+      it, ran a real supervisor, and read Ralph's own state through the CLI
+      table built this session. Two things came out of it:
+        * the importer REJECTED my first draft with a precise message
+          (narrative paragraph before the list) -- the validator working.
+        * `status` showed `build` sharing a partition marker with the three
+          tasks declaring after:[build]. Real bug in MY projection: the ordinal
+          was computed for every task with no readiness filter, so it
+          advertised a grouping dispatch would never perform. Fixed in #306.
+      The lesson is the one worth keeping: the agreement test written to catch
+      exactly this passed the whole time, because every task in its fixture was
+      independently ready and agreement held VACUOUSLY. Running the real system
+      on real input found in one command what the test could not.
+      (Superseded, kept for the record:) old #305 line follows.
+- [x] SUPERSEDED: Land the 1 open PR: #305 (CLI task table + blocked-reason in all
       three views + meso row width). Auto-merge ARMED, both Codex threads
       resolved, no failing checks -- it is working through the merge queue,
       which is remote state I already triggered. A Monitor is watching it.
