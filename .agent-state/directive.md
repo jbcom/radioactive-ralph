@@ -526,6 +526,28 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
 
 ## Rolling improvement queue (directive 0 appends here)
 
+- [ ] GENERATED 2026-07-28 by a SECOND dogfooding pass (the first found the
+      partition bug in #306). Reading `status` on a plan whose first task
+      FAILED shows the gap plainly:
+        build   failed    via=codex
+        claims  pending
+        e2e     pending
+        race    pending
+      Those three declare after:[build] and can NEVER run, but they report a
+      bare `pending` -- byte-identical to a task that simply has not started.
+      An operator cannot tell a permanently-stuck plan from a slow one.
+      The data exists (the store queries task_deps in 6 places) and observe
+      exposes it in ZERO. This is the same shape as the Blocked field: "why is
+      this stalled?" is answerable only from raw SQLite, the access the
+      dumb-client boundary exists to remove.
+      Design constraint, decided and recorded rather than discovered later: do
+      NOT project raw edges as a task list -- that is a DAG dump, not an
+      answer. Project the ANSWER: for a task that cannot run, name the
+      unsatisfied dependency and whether it is merely incomplete (will clear)
+      or terminal (failed/abandoned -- will not). The second case is the one
+      worth surfacing loudly; it is a dead plan wearing a `pending` badge.
+      Gate: land #306 first, since it touches the same projection.
+
 - [x] #305 MERGED (CLI task table + blocked-reason in all three views + meso
       row width + GUI worker-claim parity).
 
