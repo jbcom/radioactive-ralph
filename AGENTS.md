@@ -133,6 +133,20 @@ completion is never agent-asserted and never inferred from termination.
   stayed quiet — which looked like the guard failing to fire. The test was
   incomplete, not the guard. A negative result is only evidence once the setup
   is confirmed to produce the condition being tested.
+- **A performance guard must be shown to FAIL against the slow shape.** This is
+  the "check that finds nothing must fail" rule applied to timing, and it was
+  violated twice in a row on one PR before being caught:
+  - a 2s wall-clock bound passed locally at 26ms and failed CI at 2.074s -- it
+    measured runner speed, not the property it claimed to protect.
+  - a "doubling costs <= 8x" ratio bound then PASSED against the restored
+    quadratic code. Both shapes were super-linear (6.6x per doubling vs 3.3x),
+    and runner noise cannot separate those.
+  What worked was absolute cost at a fixed size, where the two shapes differ by
+  50x (25ms vs 1.31s at n=300), with the budget set an order of magnitude above
+  the fast path and well below the slow one.
+  Before trusting a timing assertion, restore the defect and watch it fail. A
+  threshold tuned only against the FIXED code cannot distinguish "fast" from
+  "running on a fast machine".
 - **A new task field is not shipped until every surface renders it.** The
   observe DTO feeds three renderers (TUI meso, GUI meso, CLI `status`), and
   landing a field in one is the most repeated mistake in this repo's history --
