@@ -188,26 +188,31 @@ threshold derived from a quiet machine would have predicted it.
 Remove the silence when a seam exists, raise the lease when it does not.
 Reaching for the lease first is how a real hang gets a longer rope.
 
-**Capping the width helps, but does not finish the job.** Measured, because the
-prediction was that it would: with `RALPH_MAX_PARALLEL=4`, the `race` step's
-reclaims went from 2 to 1 — halved, not eliminated — and `unit-provider`, which
-had never reclaimed before, took 2. The reclaim rows name their own conditions:
+**Capping the width does not fix this.** The prediction was that it would, so
+it was measured. With `RALPH_MAX_PARALLEL=4` the `race` step still reclaimed
+twice — the same count as unbounded. Captured from `radioactive_ralph status`:
 
 ```
-race           reclaims=1  reason=stale_heartbeat  inflight=4
-unit-provider  reclaims=2  reason=stale_heartbeat  inflight=3
+  race             running                  w:…06d1b6c6 via=codex — reclaimed 2x: stale_heartbeat
+  unit-provider    failed                   via=codex — task retry budget was exhausted — reclaimed 2x: stale_heartbeat (3 claims in flight)
 ```
 
-Four concurrent test workers on 16 cores still starve a 138s silent step. So
-contention is a real *contributor*, not the whole cause, and the two levers are
-not alternatives: when the silence is structural **and** the load is shared, a
-cap alone is not sufficient and `stall_timeout` still has to move.
+The absent pressure clause on the `race` row is the finding, not a rendering
+gap. It is omitted when fewer than two claims were in flight, so `race`'s most
+recent reclaim happened while **nothing else was running**. Contention cannot
+explain that one.
 
-Worth stating plainly because the tidy version — "cap the width and the reclaims
-go away" — is what the first run seemed to show, and is wrong. Without
-`inflight` on the row this would have read as "still flaky" rather than "reduced
-by half under a measurable load", which is the difference between a partial fix
-and no fix.
+So the lease, not the load, is the operative limit for a step like this: a 138s
+command that prints nothing cannot survive a 180s renewable lease reliably, even
+alone on the machine. Capping the width reduces the pressure on its *neighbours*
+— `unit-provider` shows its reclaims happened at 3 in flight — but it does not
+make a silent step visible.
+
+Worth stating plainly because the tidy version ("cap the width and the reclaims
+go away") is what a partial reading of the same run suggested, and it is wrong.
+The distinguishing evidence is the in-flight count on each reclaim: without it,
+both rows read as "still flaky" and there is no way to tell the neighbour effect
+from the root cause.
 
 **Nobody chose the width.** Dispatch concurrency is `RALPH_MAX_PARALLEL`, and
 when it is unset the supervisor is *unbounded* — `supervisorMaxParallel` returns
