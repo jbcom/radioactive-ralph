@@ -28,6 +28,11 @@ type Signal struct {
 	// byte slice; Watch neither converts nor copies arbitrary provider output.
 	// Prompt, Stall, and Exited signals are content-free.
 	Line []byte
+	// PromptKind is the caller-classified kind of an interactive prompt,
+	// present only for Prompt and only when ClassifyPrompt is configured. It is
+	// the caller's own constant -- never a slice of the matched line -- so it
+	// can cross to operator surfaces where the line itself cannot.
+	PromptKind string
 	// Discarded marks Line as a bounded prefix of a record drained under
 	// DiscardOversizeOutput. It is for provider framing only and was not
 	// retained as ordinary pane output.
@@ -38,6 +43,17 @@ type Signal struct {
 type WatchdogConfig struct {
 	StallTimeout   time.Duration
 	PromptPatterns []*regexp.Regexp
+
+	// ClassifyPrompt, when set, maps the matched line to a caller-owned KIND
+	// carried on the Prompt signal. Optional: nil means the signal carries no
+	// kind, exactly as before.
+	//
+	// The classifier lives with the CALLER because the taxonomy is the
+	// caller's -- internal/provider owns it, and provider imports agent, so it
+	// cannot be resolved here. Only the caller's constant travels back; the
+	// matched line never leaves this loop, which is what keeps provider text
+	// off downstream surfaces.
+	ClassifyPrompt func(line []byte) string
 
 	// SkipPromptMatchOnJSONLines, when true, suppresses prompt-pattern
 	// matching for any output line that is a valid JSON value. Stream-json
@@ -115,7 +131,7 @@ func Watch(ctx context.Context, a *Agent, cfg WatchdogConfig) <-chan Signal {
 					break
 				}
 				if re.Match(line) {
-					emit(Signal{Kind: Prompt})
+					emit(Signal{Kind: Prompt, PromptKind: cfg.promptKind(line)})
 					matched = true
 					break
 				}
@@ -196,4 +212,16 @@ func Watch(ctx context.Context, a *Agent, cfg WatchdogConfig) <-chan Signal {
 		}
 	}()
 	return out
+}
+
+// promptKind applies the caller's classifier, or returns "" when none is set.
+//
+// Extracted from Watch's match loop: inlining the nil check pushed Watch past
+// the cyclomatic-complexity gate, and a branch that exists only to guard an
+// optional hook is exactly the kind worth naming rather than nesting.
+func (c WatchdogConfig) promptKind(line []byte) string {
+	if c.ClassifyPrompt == nil {
+		return ""
+	}
+	return c.ClassifyPrompt(line)
 }

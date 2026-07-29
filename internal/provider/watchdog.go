@@ -32,6 +32,11 @@ const (
 // errors.Is(err, ErrAgentBlocked) compatibility.
 type BlockedError struct {
 	Reason BlockReason
+	// Kind is the closed-taxonomy kind of an interactive prompt, empty for any
+	// other reason. It answers "what was it asking for" without carrying the
+	// prompt text, which the content-safety boundary keeps off operator
+	// surfaces.
+	Kind PromptKind
 }
 
 func (e *BlockedError) Error() string {
@@ -84,6 +89,7 @@ func DefaultWatchdogConfig() agent.WatchdogConfig {
 	return agent.WatchdogConfig{
 		StallTimeout:   DefaultStallTimeout,
 		PromptPatterns: DefaultPromptPatterns,
+		ClassifyPrompt: classifyPromptLine,
 	}
 }
 
@@ -100,6 +106,7 @@ func StreamJSONWatchdogConfig() agent.WatchdogConfig {
 	return agent.WatchdogConfig{
 		StallTimeout:               DefaultStallTimeout,
 		PromptPatterns:             DefaultPromptPatterns,
+		ClassifyPrompt:             classifyPromptLine,
 		SkipPromptMatchOnJSONLines: true,
 	}
 }
@@ -242,7 +249,7 @@ func superviseAgentWithCallbacks(
 			}
 			switch sig.Kind {
 			case agent.Prompt, agent.Stall:
-				return terminate(&BlockedError{Reason: blockReason(sig)})
+				return terminate(&BlockedError{Reason: blockReason(sig), Kind: PromptKind(sig.PromptKind)})
 			case agent.Progress:
 				callback := onLine
 				if sig.Discarded {

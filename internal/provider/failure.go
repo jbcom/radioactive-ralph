@@ -114,7 +114,11 @@ func ClassifyFailure(err error) Failure {
 	var blocked *BlockedError
 	if errors.As(err, &blocked) {
 		if blocked.Reason == BlockReasonPrompt {
-			return Failure{Category: FailureInteractivePrompt, Summary: "provider requested interactive input", Cause: err}
+			return Failure{
+				Category: FailureInteractivePrompt,
+				Summary:  promptBlockSummary(blocked.Kind),
+				Cause:    err,
+			}
 		}
 		return Failure{Category: FailureStall, Summary: "provider made no progress before its stall timeout", Cause: err}
 	}
@@ -158,5 +162,28 @@ func ClassifyFailure(err error) Failure {
 		return Failure{Category: FailureProviderRejected, Summary: "provider reported an unsuccessful turn", Cause: err}
 	default:
 		return Failure{Category: FailureRuntime, Summary: "provider execution failed", Cause: err}
+	}
+}
+
+// promptBlockSummary names WHAT an interactive block wanted, from the closed
+// prompt taxonomy. Every branch returns a fixed constant -- no provider text --
+// so this stays inside the content-safety boundary while telling an operator
+// which response the block actually needs.
+//
+// The three kinds want different things, which is the whole reason to
+// distinguish them: a permission request usually wants a policy change, a
+// confirmation usually wants a flag, and a clarification means the step's
+// scoped context was insufficient -- the plan needs work, not the config.
+func promptBlockSummary(kind PromptKind) string {
+	switch kind {
+	case PromptKindPermission:
+		return "provider requested permission to act (usually a write-path or binding grant, not a keystroke)"
+	case PromptKindConfirm:
+		return "provider requested confirmation of an action it already intended (usually suppressible with a flag)"
+	case PromptKindClarification:
+		return "provider requested clarification about the task (the step's scoped context was insufficient)"
+	default:
+		// Unclassified: keep the original wording rather than inventing a kind.
+		return "provider requested interactive input"
 	}
 }
