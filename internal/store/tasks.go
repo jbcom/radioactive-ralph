@@ -69,6 +69,23 @@ type Task struct {
 // running (holds a claim) or done/failed (finished on one). Nothing in
 // production calls AttemptCount directly today; AttemptLabel is the surface.
 //
+// APPLYING STATUS FIXES THE OVERCOUNT, NOT THE UNDERCOUNT, and neither
+// function can fix the second one. THREE PATHS CLEAR A CLAIM WITHOUT
+// INCREMENTING EITHER COUNTER -- ReleaseClaim (tasks.go), MarkBlocked
+// (task_metadata.go), and ReclaimWorker (workers.go) -- so a task that was
+// claimed and then released, blocked, or had its worker reclaimed has had a
+// go that neither counter records. After such an exit AttemptLabel renders ""
+// while both counters are zero, and undercounts by one per untracked exit
+// afterwards.
+//
+// So neither number is the count of claims EVER GIVEN; both are derived from
+// the two counters that happen to be incremented, and those cover the
+// retry and reaper paths only. Do not present either as authoritative
+// attempt accounting -- the task's event log is the only complete record.
+// Closing the gap means incrementing on those three paths (a schema-level
+// policy decision about what counts as a spent attempt), not adjusting the
+// arithmetic here.
+//
 // It is DERIVED rather than a fourth stored counter, so it cannot drift from
 // the two numbers it summarizes.
 //
