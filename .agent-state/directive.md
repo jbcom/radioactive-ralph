@@ -725,19 +725,36 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
       thread), now documented with the checked duration shape and bounds.
       Cost of nearly shipping the tidy story: one command.
 
-- [ ] The self-test contends with itself and nothing says so. The race
-      finding's real cause is that parallel steps starve each other -- 30s of
-      work becomes 138s -- yet an operator reading a reclaimed row sees only
-      `reclaimed 2x: stale_heartbeat`, which is TRUE and still points at the
-      wrong suspect. Nothing in the surface says "you were running 6 other
-      steps".
-      Surface concurrency pressure at the moment of the reclaim: how many
-      workers were active when the claim was lost. That converts "why did my
-      worker die?" into "the machine was saturated", which is the actual
-      answer and the one no amount of staring at the task row yields.
-      Verify by reverting: a reclaim under load must name the load; a reclaim
-      on an idle machine must not, or the marker becomes noise on every row
-      and stops being read.
+- [x] DONE. A reclaim now names the load that caused it, on all four surfaces
+      in one commit:
+        race    running    — reclaimed 2x: stale_heartbeat (6 claims in flight)
+      concurrent_claims is captured BEFORE the UPDATE releases the claims --
+      afterwards it is unrecoverable, since step 2 deletes the workers. Same
+      pre-capture discipline the reason needed, for the same reason.
+      Gated on `> 1`, not `> 0`, and the difference is load-bearing: a solo
+      reclaim records 1 (the task's OWN claim), so `> 0` would print
+      "(1 claims in flight)" on every reclaim ever. The idle-case test is what
+      catches that -- a detector that always fires passes every presence check.
+      The store test asserts the exact value (3), not mere presence, for the
+      same reason.
+      ALL FOUR SURFACES IN ONE COMMIT, deliberately: the previous change in
+      this branch shipped ReclaimReason to store/observe/CLI and left both
+      views blind until a reviewer caught it -- on the very change whose test
+      file says "a field is not shipped until each renderer shows it". Not
+      repeating that two commits later.
+
+- [ ] The self-test's own concurrency is unbounded and undocumented. Now that
+      a reclaim NAMES the load, the obvious next question is what the right
+      load is -- and nothing anywhere says. The plan declares dependencies but
+      no width; the supervisor dispatches whatever is ready.
+      That is why `race` loses claims: not because 6 parallel steps is wrong
+      in general, but because nobody chose 6. Find the actual dispatch width
+      and decide whether the self-test should cap its own, then WRITE DOWN the
+      number and why.
+      Verify by reverting: with a cap, the race step should stop losing claims
+      on a dispatched run; without one, it keeps burning two. That is the same
+      end-to-end proof the -v fix failed to satisfy, so it is the only one
+      worth accepting here.
 
 - [x] CONFIRMING SELF-TEST RUN validated the stale-cache diagnosis. The whole
       point of re-running: `lint-internal` had failed with interactive_prompt,
