@@ -867,7 +867,13 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
       real read of it. Do not mistake a green run for having verified the
       diagnostic.
 
-- [ ] [WAIT] Prompt-kind taxonomy in PR 347 (open). When it lands, the NEXT
+- [x] Prompt-kind taxonomy MERGED (347), and it immediately found something
+      the categories were built to find -- see the detector item below. The
+      permission kind does NOT mean "a denied write": that reading sent me into
+      a containment investigation that a stale comment had already corrupted.
+      It means the CLI printed something shaped like a permission request, and
+      the first question is whether it was a request at all.
+      Original framing: When it landed, the NEXT
       interactive_prompt failure should report a KIND rather than the generic
       category, and that changes what the unit-orch item can conclude:
         interactive_prompt_permission    -> a write-path or binding grant
@@ -895,6 +901,36 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
       NEXT: find which write the provider is being denied. The containment
       write paths are per-binding and static (BindingWritePaths), so the
       candidate is a path codex needs that the binding does not grant.
+
+- [ ] THE PROMPT DETECTOR MATCHED ERROR TEXT. A bare `(?i)permission` matched
+      "permission denied", so ordinary failures were killed as blocked turns
+      and reported as interactive_prompt while the CLI waited for nobody.
+      Tightened in PR 356, along with the open-question pattern from 347 which
+      had the SAME defect -- it matched "What's new?" and "What went wrong?",
+      banners providers print.
+      This predates the taxonomy; classifying the KIND is what made it legible.
+      NOT CONFIRMED as the cause of the unit-provider blocks: I have not seen
+      the line codex printed. A run built with 356 where unit-provider reaches
+      done is the proof, and this thread has already produced several theories
+      that fit the evidence and were wrong.
+      RETRACTED, so the next pass does not repeat it: "codex runs uncontained,
+      so a denied write cannot be the cause" is FALSE, and so is its opposite.
+      TestCodexIsContainableWithItsDeclaredPath settles it -- codex IS
+      containable with ~/.codex declared. A stale comment claiming otherwise
+      cost two wrong conclusions in opposite directions; fixed in PR 355.
+
+- [ ] TESTS WRITE INTO THE OPERATOR'S LIVE STATE DIRECTORY.
+      ~/.local/state/radioactive-ralph/workers held 188 .decisions.md files
+      written by `go test`: any Orchestrator built without WithDecisionLogRoot
+      falls through to the real XDG root, and ten test call sites do.
+      It litters live state AND salts the one diagnostic surface an operator
+      would mine -- I nearly drew conclusions about a production failure from
+      files my own test run wrote.
+      Fixed in PR 353 by refusing the real root under a test binary, which is
+      the narrow version: production still falls through to the XDG root, since
+      that IS its intended destination and dispatch deliberately ignores
+      WriteWorkerDecision errors -- rejecting every non-temp path would make
+      real diagnostics silently disappear.
 
 - [ ] [WAIT] unit-orch is INTERMITTENT and currently PASSING, so there is
       nothing to act on until it fails again. Not closed: an intermittent bug
