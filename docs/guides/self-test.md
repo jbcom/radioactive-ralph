@@ -208,20 +208,44 @@ contention is enough to rule contention out as a NECESSARY cause. It is not
 enough to rule it out as a contributor, and the earlier reclaims may well have
 had company.
 
-So the lease, not the load, is the operative limit for a step like this: a 138s
-command that prints nothing cannot survive a 180s renewable lease reliably, even
-alone on the machine. Capping the width lengthens the overall run without
-protecting this step — but NOT because waiting for a slot risks a reclaim. It
-cannot: `dispatchReadySteps` acquires a dispatch slot BEFORE claiming the task,
-and `ReclaimStale` only requeues tasks already in `running`, so a candidate
-waiting on a full semaphore is simply not eligible. The exposure is entirely
-within the turn, once the claim is held.
+**It is not the lease either.** That was the next wrong answer, and the fact that
+kills it is one function away: `runWithHeartbeat` beats every 20s *independently
+of provider output*, against a 90s stale window. A stalled turn keeps beating, so
+a watchdog kill cannot produce a reclaim at all.
 
-The honest reading is that this experiment produced FOUR successive answers, and
-only the last is a result: predicted 0, read 1 mid-run and wrote "halved", read 2
-and wrote "no better", finished at 4. Each intermediate reading was recorded as a
-conclusion and each was wrong. A running experiment has no verdict until it
-stops.
+What actually happens:
+
+- the heartbeat goroutine stops the instant the turn's `fn` returns
+- the post-run path — **including acceptance verification** — then runs under
+  `persistCtx`, a **30-second** budget
+- this step's acceptance command is `go test -race -v ./internal/store/`, which
+  takes 30s warm and 138s under load
+
+It cannot fit. `persistCtx` expires, the task is never marked, and it sits
+`running` with a dead heartbeat until the reaper takes it at 90s. So the reclaims
+are a step whose *work already succeeded* being requeued because verifying it
+outlived a budget sized for store writes.
+
+That explains what neither earlier theory could: why capping made it worse (a
+busier machine makes acceptance slower, so blowing 30s becomes more certain), and
+why it reclaims with nothing else running.
+
+Capping also cannot add reclaim exposure by making a step wait for a slot:
+`dispatchReadySteps` acquires the slot BEFORE claiming, and `ReclaimStale` only
+requeues tasks already in `running`, so a candidate waiting on a full semaphore
+is not eligible. All exposure is inside the turn, once the claim is held.
+
+The honest reading is that this experiment produced four successive readings and
+three successive WRONG EXPLANATIONS. The readings: predicted 0, saw 1 and wrote
+"halved", saw 2 and wrote "no better", finished at 4+. The explanations: silence
+under load, then the lease, then — only after a reviewer pointed at the heartbeat
+interval — the acceptance budget.
+
+Two lessons, and the second is the expensive one. A running experiment has no
+verdict until it stops. And a mechanism that *explains* the observation is not
+therefore the mechanism: the lease story fit every number I had, and was still
+wrong, because I never checked whether a stalled turn actually stops
+heartbeating. Fitting the data is necessary, not sufficient.
 
 What made the difference legible is the in-flight count on each reclaim. Without
 it, both rows read as "still flaky" with no way to separate a neighbour effect
