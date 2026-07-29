@@ -314,7 +314,30 @@ func (o *Orchestrator) VerifyAndCompleteAs(
 		ok, reason, checkErr = o.acceptanceCheck(verifyCtx, dir, task.AcceptanceJSON, ev)
 		return checkErr
 	})
+	// Budget exhaustion is detected from the CONTEXT, not from the checker's
+	// error, because the real checker does not report one.
+	// checkCommandExitsZero turns any nonzero exit into (false, reason, nil) --
+	// including the kill exec.CommandContext delivers on cancellation, which
+	// arrives as "signal: killed". So keying this branch on beatErr made it
+	// inert for every actual `accept:` command: the task was charged a retry and
+	// reported as an ordinary acceptance failure, which is precisely the
+	// ambiguity this exists to remove. The first version passed its test only
+	// because the fake checker returned ctx.Err() directly.
+	if verifyCtx.Err() != nil && errors.Is(verifyCtx.Err(), context.DeadlineExceeded) {
+		return false, fmt.Errorf(
+			"orch: acceptance verification exceeded its %s budget for task %s/%s; "+
+				"the command may be slow rather than failing -- time it directly, "+
+				"and note this budget is separate from the provider stall lease: %w",
+			o.effectiveVerificationBudget(), planID, taskID, verifyCtx.Err())
+	}
 	if beatErr != nil {
+		if errors.Is(beatErr, context.DeadlineExceeded) {
+			return false, fmt.Errorf(
+				"orch: acceptance verification exceeded its %s budget for task %s/%s; "+
+					"the command may be slow rather than failing -- time it directly, "+
+					"and note this budget is separate from the provider stall lease: %w",
+				o.effectiveVerificationBudget(), planID, taskID, beatErr)
+		}
 		return false, fmt.Errorf("orch: run acceptance check: %w", beatErr)
 	}
 
