@@ -42,6 +42,43 @@ func TestReclaimDoesNotConsumeRetryBudget(t *testing.T) {
 	if err := s.CreateTask(ctx, CreateTaskOpts{PlanID: planID, ID: "slow", Description: "a step whose workers keep dying"}); err != nil {
 		t.Fatalf("CreateTask: %v", err)
 	}
+	// FIRST: a real provider failure, so retry_count is NONZERO before any
+	// reclaim happens.
+	//
+	// Starting from zero would make this a weaker test than it looks. Asserting
+	// "still 0" catches an implementation that INCREMENTS on reclaim, but an
+	// implementation that RESETS prior retries would pass it just as happily --
+	// while destroying the very bound that makes this policy safe. The claim is
+	// that real failures stay counted while reclaims are free; proving that
+	// needs a real failure on the books first.
+	seedSession, err := s.CreateSession(ctx, SessionOpts{Role: "supervisor", PID: 99, PIDStartTime: "t0"})
+	if err != nil {
+		t.Fatalf("CreateSession (seed): %v", err)
+	}
+	seedWorker, err := s.CreateWorker(ctx, WorkerOpts{
+		SessionID: seedSession, Provider: "codex", SubprocessPID: 99, SubprocessStartTime: "t0",
+	})
+	if err != nil {
+		t.Fatalf("CreateWorker (seed): %v", err)
+	}
+	if _, err := s.ClaimNextReady(ctx, planID, seedSession, seedWorker); err != nil {
+		t.Fatalf("ClaimNextReady (seed): %v", err)
+	}
+	retried, err := s.MarkFailedWithPayload(ctx, planID, "slow", seedSession,
+		EventPayload{Reason: "provider failed", FailureCategory: "provider_error"}, 3)
+	if err != nil {
+		t.Fatalf("MarkFailedWithPayload (seed): %v", err)
+	}
+	if !retried {
+		t.Fatal("seed failure did not requeue; the fixture never established a retry")
+	}
+	if seeded, err := s.GetTask(ctx, planID, "slow"); err != nil {
+		t.Fatalf("GetTask (seed): %v", err)
+	} else if seeded.RetryCount != 1 {
+		t.Fatalf("retry_count = %d after one provider failure, want 1 -- the "+
+			"pre-state this test depends on was never established", seeded.RetryCount)
+	}
+
 	// Three worker deaths -- one MORE than a default budget of 3 would tolerate
 	// if reclaims were charged as retries.
 	//
@@ -78,8 +115,9 @@ func TestReclaimDoesNotConsumeRetryBudget(t *testing.T) {
 	if got.ReclaimCount != 3 {
 		t.Fatalf("reclaim_count = %d, want 3 (fixture did not reclaim three times)", got.ReclaimCount)
 	}
-	if got.RetryCount != 0 {
-		t.Errorf("retry_count = %d after three RECLAIMS, want 0.\n"+
+	if got.RetryCount != 1 {
+		t.Errorf("retry_count = %d after three RECLAIMS, want 1 (the seeded "+
+			"provider failure, preserved and neither incremented nor cleared).\n"+
 			"A reclaim means the worker died before the task got a turn; the "+
 			"retry budget exists for provider failures that produced a verdict. "+
 			"Charging reclaims makes a task fail terminally for its host's "+
