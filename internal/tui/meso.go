@@ -38,7 +38,15 @@ func renderMeso(m Model) string {
 			statusStr := statusStyle(t.Status).Render(t.Status)
 			worker := ""
 			if t.ClaimedByWorkerID != "" {
-				worker = styleMuted.Render(" worker=" + t.ClaimedByWorkerID)
+				// Abbreviated because the worker id is a CONTROL handle -- kill
+				// takes it from micro -- not something an operator reads off a scan
+				// line, and at full length it was the widest marker on the row.
+				//
+				// The SUFFIX, not the prefix. Reading the rendered output caught
+				// this: ids share a constant "worker-" head, so a leading
+				// truncation printed "worker-…" on every row and correlated
+				// nothing, which is the one job this marker has.
+				worker = styleMuted.Render(" w:" + observe.WorkerSuffix(t.ClaimedByWorkerID, 8))
 			}
 			// Which provider actually ran this task. The worker id cannot answer
 			// that once the work is over: worker= is a live claim, and the reaper
@@ -53,8 +61,28 @@ func renderMeso(m Model) string {
 			if label := partitionLabels[t.PartitionOrdinal]; label != "" {
 				part = styleMuted.Render(" " + label)
 			}
+			// The description prints in FULL. Truncating it was the first attempt
+			// at fitting the width and it was wrong: a live E2E test drives the
+			// real TUI and asserts an ordinary 40-character task description is
+			// visible at meso, which a 24-rune cap silently clipped. That test was
+			// right -- the description is what an operator reads to identify a
+			// task, so the markers around it are what must give way, not it.
 			fmt.Fprintf(&b, "%s%-12s %-24s %s%s%s%s\n",
 				marker, t.ID, statusStr, m.snap.descriptions[t.ID], worker, via, part)
+			// Why a blocked task is stalled -- the one status an operator cannot
+			// act on from the status string alone, since a blocked task and one
+			// waiting on a dependency both sit at zero progress and only one
+			// clears itself. Blocked carries a fixed classification and static
+			// remediation, never the stored error string.
+			//
+			// On its OWN line, because inline it pushed the worst-case row past
+			// 200 columns: it wrapped on any normal terminal, and the wrap landed
+			// mid-sentence so the partition marker and the reason scattered across
+			// lines. Measured, not guessed -- the row is ~60 columns without it.
+			if t.Blocked != nil && t.Blocked.Summary != "" {
+				b.WriteString(styleMuted.Render("               ↳ " + t.Blocked.Summary))
+				b.WriteString("\n")
+			}
 			row++
 		}
 	}

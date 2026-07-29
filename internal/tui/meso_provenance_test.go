@@ -105,3 +105,98 @@ func TestMesoOmitsPartitionMarkerWithoutOrdinals(t *testing.T) {
 			"absent metadata is not evidence of a shared partition:\n%s", out)
 	}
 }
+
+// TestMesoExplainsBlockedTasks closes the same gap a code review found in the
+// CLI: a blocked task rendered as a bare status string, which is the one status
+// an operator cannot act on without more. A blocked task and one waiting on a
+// dependency both sit at zero progress; only one clears itself.
+func TestMesoExplainsBlockedTasks(t *testing.T) {
+	f := testFake()
+	m := newTestModel(t, f)
+	m.lvl = levelMeso
+	m.selectedPlan = f.plans[0]
+	m.snap.tasks = []observe.Task{
+		{
+			ID: "task-1", PlanID: "plan-1", Status: "blocked_capability",
+			Blocked: &observe.BlockedSummary{
+				Category: observe.BlockedCapability,
+				Summary:  "bind a provider that does",
+			},
+		},
+		{ID: "task-2", PlanID: "plan-1", Status: "ready"},
+	}
+	out := m.View()
+
+	if !strings.Contains(out, "bind a provider that does") {
+		t.Errorf("blocked task shows no remediation, so the operator cannot tell "+
+			"whether it self-clears or needs them to act:\n%s", out)
+	}
+	for _, line := range strings.Split(out, "\n") {
+		if strings.Contains(line, "task-2") && strings.Contains(line, "—") {
+			t.Errorf("an unblocked task rendered a blocked-reason separator: %q", line)
+		}
+	}
+}
+
+// visibleWidth is the rune count with ANSI styling removed -- what the terminal
+// actually has to fit.
+func visibleWidth(line string) int {
+	var b strings.Builder
+	inEscape := false
+	for _, r := range line {
+		switch {
+		case r == 0x1b:
+			inEscape = true
+		case inEscape:
+			if r == 'm' {
+				inEscape = false
+			}
+		default:
+			b.WriteRune(r)
+		}
+	}
+	return len([]rune(b.String()))
+}
+
+// TestMesoRowsFitAConventionalTerminal pins a defect found by MEASURING the
+// rendered output rather than trusting the tests: with every marker present and
+// a blocked reason inline, the worst-case row was 215 columns. It wrapped on any
+// normal terminal, and because the wrap landed mid-sentence the partition marker
+// and the remediation scattered across lines -- unreadable exactly when the
+// operator most needs to read it.
+//
+// The reason now renders on its own continuation line. 120 columns is the bound:
+// comfortably past the 80-column default, well inside a maximized modern
+// terminal, and tight enough to catch a marker that grows without anyone noticing.
+func TestMesoRowsFitAConventionalTerminal(t *testing.T) {
+	f := testFake()
+	m := newTestModel(t, f)
+	m.lvl = levelMeso
+	m.selectedPlan = f.plans[0]
+	m.snap.tasks = []observe.Task{{
+		ID: "implement-provider-x", PlanID: "plan-1", Status: "blocked_capability",
+		ClaimedByWorkerID: "worker-7f3a2b1c", PartitionOrdinal: "aaaa",
+		AssignedAlias: "primary-opus",
+		Blocked: &observe.BlockedSummary{
+			Category: observe.BlockedCapability,
+			Summary:  "the bound provider does not satisfy this task's requirements; bind a provider that does",
+		},
+	}, {
+		ID: "peer", PlanID: "plan-1", Status: "running",
+		PartitionOrdinal: "aaaa", AssignedAlias: "primary-opus",
+	}}
+	m.snap.descriptions = map[string]string{
+		"implement-provider-x": "wire up the frobnicator end to end",
+	}
+
+	for _, line := range strings.Split(m.View(), "\n") {
+		if w := visibleWidth(line); w > 120 {
+			t.Errorf("row is %d columns and will wrap mid-content:\n%s", w, line)
+		}
+	}
+	// Fitting must not have been achieved by dropping the reason.
+	if !strings.Contains(m.View(), "bind a provider that does") {
+		t.Error("the remediation vanished; fitting the width must not cost the " +
+			"information the line exists to carry")
+	}
+}

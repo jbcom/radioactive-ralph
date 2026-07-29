@@ -526,8 +526,44 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
 
 ## Rolling improvement queue (directive 0 appends here)
 
-- [ ] GENERATED 2026-07-28 by forward-exploring the observe surface just
-      shipped (#304). Verified against the code before writing down, not
+- [ ] [WAIT] Land the 1 open PR: #305 (CLI task table + blocked-reason in all
+      three views + meso row width). Auto-merge ARMED, both Codex threads
+      resolved, no failing checks -- it is working through the merge queue,
+      which is remote state I already triggered. A Monitor is watching it.
+      Hash-prefixed deliberately: guard 9 extracts `#[0-9]{3}` tokens from
+      THIS line.
+
+- [x] #304 MERGED (per-task provenance + ready-partition identity over the
+      observe surface). Both halves of the observe item landed with it.
+
+- [x] UNSTACKED 2026-07-28: rebased `feat/cli-task-table` onto the merged main.
+      It WAS genuinely stacked -- verified by cherry-picking onto origin/main
+      and watching the build fail on PartitionLabels/ProvenanceLabel/
+      PartitionOrdinal, all introduced by #304 -- so it could not have opened as
+      an independent PR. The rebase dropped 5 commits already squash-merged;
+      each skip was confirmed content-on-main FIRST (a past rebase silently ate
+      two of my own commits by skipping without checking).
+
+- [x] DONE 2026-07-28: UI/UX pass on the meso views. The suspicion was right --
+      every flaw was invisible to a green suite and obvious in the rendered
+      output. Both questions it posed had a defect behind them:
+        * TUI width: the worst-case row was 215 columns and wrapped
+          mid-sentence. Now ~104 (block reason on a continuation line, worker
+          id abbreviated to its distinguishing TAIL -- a first pass truncated
+          the head and made every row read "worker-…").
+        * GUI clipping: Codex caught it before I did. The remediation was an
+          HBox cell under a VERTICAL-only scroll, so it clipped at the window
+          edge with no way to reach it. Now its own wrapping row.
+      Dumping the GUI widget tree then found a THIRD thing neither question
+      asked about: the GUI omitted the worker claim entirely while the TUI and
+      CLI both showed it, so one task read differently per surface. Fixed;
+      all three now render w: / via / pN identically.
+      Method note: the first dump walked only Button and Label and reported the
+      row as having no status at all -- the chip is a canvas.Text. Reading raw
+      output only helps if the reader sees everything the operator does.
+
+- [x] GENERATED 2026-07-28 by forward-exploring the observe surface just
+      shipped (#304); both findings resolved in that PR. Verified against the code before writing down, not
       inferred:
       * The full consumer chain WAS checked and is sound: IPC uses type
         ALIASES (`type ObserveSnapshotReply = observe.Snapshot`,
@@ -541,6 +577,17 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
         read what the snapshot now carries. Decide whether the CLI should grow a
         task table; if yes it must honour the same rules the UIs do (omit absent
         provenance, label only partitions of 2+, never print the raw ordinal).
+      DECIDED + DONE 2026-07-28 (same PR): yes, the CLI grows a task table.
+      `status` now prints one line per task under the summary, reusing
+      observe.PartitionLabels and Task.ProvenanceLabel rather than
+      re-implementing the rules -- a CLI with its own copy would be a third
+      dialect drifting from the TUI and GUI. A truncated page says so, since a
+      bounded list that looks complete reads as "the rest finished".
+      LESSON, and the reason to always read the actual output: the tests passed
+      while every unrun task carried TRAILING WHITESPACE, because the status
+      column is padded for marker alignment and unrun tasks have no markers.
+      No assertion covered it -- reading the real bytes did. Trimmed, and pinned
+      by TestRunStatusQueryTaskLinesHaveNoTrailingSpace.
 
 - [x] DONE 2026-07-28 (same PR): folded the duplicated partition-labelling loop
       into observe.PartitionLabels. I had written the SAME display policy twice

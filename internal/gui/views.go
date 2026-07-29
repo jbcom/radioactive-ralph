@@ -278,6 +278,14 @@ func (u *ui) buildMeso(s snapshot) {
 		// a provider into it would make the same task read differently before
 		// and after it runs. Omitted entirely when unrecorded, so an
 		// undispatched task never displays a provider it did not use.
+		// Which worker HOLDS the task, a different question from which partition
+		// it shares: two tasks can sit in one ready partition and still be
+		// claimed by different workers. The TUI and CLI both show this; the GUI
+		// omitting it made the same task read differently depending on which
+		// surface an operator opened.
+		if id := t.ClaimedByWorkerID; id != "" {
+			row.Add(widget.NewLabel("w:" + observe.WorkerSuffix(id, 8)))
+		}
 		if name := t.ProvenanceLabel(); name != "" {
 			row.Add(widget.NewLabel("via " + name))
 		}
@@ -290,6 +298,21 @@ func (u *ui) buildMeso(s snapshot) {
 			}))
 		}
 		u.body.Add(row)
+		// The remediation for a blocked task -- the one status an operator cannot
+		// act on from the status chip alone. Static classification text, never
+		// the stored error string.
+		//
+		// Its OWN row with Wrapping enabled, not another HBox cell. Inside the
+		// row it was a long non-wrapping label in a horizontal box under a
+		// VERTICAL-only scroll (newUI builds NewVScroll), so at the default
+		// window width the end of the sentence was clipped with no way to scroll
+		// to it -- the configuration action the operator needs, unreachable. The
+		// TUI puts it on a continuation line for the same reason.
+		if t.Blocked != nil && t.Blocked.Summary != "" {
+			reason := widget.NewLabel("    ↳ " + t.Blocked.Summary)
+			reason.Wrapping = fyne.TextWrapWord
+			u.body.Add(reason)
+		}
 	}
 	if s.tasksHasMore {
 		u.body.Add(widget.NewLabel(

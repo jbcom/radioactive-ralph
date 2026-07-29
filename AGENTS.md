@@ -136,6 +136,32 @@ completion is never agent-asserted and never inferred from termination.
 - **Prove a fix by reverting it.** A test that passes after a change may have
   passed before it. Re-apply the defect and confirm the named test fails for
   the stated reason; if it does not, the test is not testing the fix.
+- **Read the output the user gets, not the assertions about it.** Assertions
+  test what you thought to check; a rendered view or printed line has
+  properties nobody wrote an assertion for. Four defects in one session were
+  invisible to a fully green suite and obvious on sight:
+  - every unrun task in `status` carried TRAILING WHITESPACE, because the
+    status column is padded for marker alignment and an unrun task has no
+    markers to fill it.
+  - the widest meso row was 215 columns. It wrapped on any terminal, and the
+    wrap landed mid-sentence so the markers scattered.
+  - abbreviating a worker id from the FRONT rendered every row `worker-…`;
+    ids share a constant head, so the marker correlated nothing. No width
+    assertion could catch it — the broken version was exactly as narrow.
+  - the GUI's blocked-reason and partition markers had NO test at all: the
+    fake controller deals in `store.Task`, so `Blocked` was never populated
+    on the one path that renders it, and the markers could have been deleted
+    with the suite still green.
+
+  Dump the real bytes (`t.Logf` the rendered view, `cat -A` the CLI output)
+  and look. Two corollaries, both learned the hard way here:
+  - **the dump must show everything the operator sees.** A first widget walker
+    covered `Button` and `Label` but not `canvas.Text`, and reported a row as
+    having no status at all. The walker was wrong, not the view.
+  - **when a fix and a test disagree, check which one is right.** Truncating
+    descriptions to fit the width broke a live E2E test asserting an ordinary
+    40-character description is visible. The test was right; the fix was
+    wrong, and the markers — not the description — had to give way.
 
 ## Adding a command / provider / package
 

@@ -435,6 +435,25 @@ type PlanPage struct {
 	NextAfterID string `json:"next_after_id,omitempty"`
 }
 
+// WorkerSuffix abbreviates a worker id to its LAST limit runes, marking the cut
+// so it never reads as a whole id.
+//
+// The tail, because that is where ids differ: they share a constant head, so a
+// leading truncation renders every row identically and destroys the only thing
+// this marker is for -- telling at a glance that two tasks are held by the same
+// worker. Which is a distinct question from sharing a ready partition: two
+// tasks can sit in one partition and still be claimed by different workers.
+//
+// Here rather than in a renderer because the TUI and the CLI both show it, and
+// the guide promises they use the same markers.
+func WorkerSuffix(id string, limit int) string {
+	r := []rune(id)
+	if len(r) <= limit {
+		return id
+	}
+	return "…" + string(r[len(r)-limit:])
+}
+
 // PartitionLabels assigns each MULTI-TASK ready partition a short display label
 // ("p1", "p2", ...) keyed by partition ordinal, in the order the tasks are
 // given. Tasks whose partition holds only one task get no entry, so a caller
