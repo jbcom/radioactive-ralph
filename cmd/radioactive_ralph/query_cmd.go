@@ -67,6 +67,18 @@ func newStatusCmd() *cobra.Command {
 		false,
 		"exit nonzero if any active worker remains",
 	)
+	// Scope to ONE plan. Without this, a project with history cannot show a
+	// recent run at all: task rows are capped at MaxOperatorPageLimit across
+	// every plan, so a completed 12-task run displayed 6 rows -- and neither
+	// cursor could recover the rest, because other plans' rows consume the page
+	// first. `messages` already had this flag; `status`, where it matters most,
+	// did not.
+	cmd.Flags().StringVar(
+		&query.PlanID,
+		"plan",
+		"",
+		"limit plans and tasks to this plan id",
+	)
 	cmd.Flags().IntVar(&query.PlanLimit, "plan-limit", 0, "plan page size")
 	cmd.Flags().StringVar(
 		&query.PlanAfterID,
