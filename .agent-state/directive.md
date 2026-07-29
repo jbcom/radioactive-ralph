@@ -743,7 +743,45 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
       file says "a field is not shipped until each renderer shows it". Not
       repeating that two commits later.
 
-- [ ] [WAIT] FIXED in PR 331, awaiting merge. REAL ROOT CAUSE, and every earlier story was wrong. A reviewer pointed
+- [ ] store.DeletePlan HAS NO CALLERS and no CLI surface -- the second unwired
+      subsystem found this session, in code I reviewed earlier without noticing.
+      Concrete consequence, hit live: the operator task page saturates at
+      MaxOperatorPageLimit (200), and every self-test run adds 12 tasks, so
+      after ~16 runs the newest run is shown PARTIALLY. Observed 200 rows across
+      19 plans with the current run contributing 6 of its 12. Nothing can prune,
+      so the page stays full.
+      DeletePlan itself is done and tested (it deletes events explicitly first,
+      since events.plan_id has no FK). Missing is everything that REACHES it: an
+      IPC command beside CmdPlanImport/CmdPlanSetStatus, and a `plan delete`
+      subcommand beside `plan import`/`plan ls`.
+      Verify by reverting: an operator must be able to remove an old run and see
+      the task page stop reporting has_more.
+      Worth a SWEEP while there: two unwired subsystems in one session (this and
+      the decision log) suggests checking every exported store method for zero
+      production callers.
+
+- [ ] unit-orch fails `interactive_prompt` on a step with nothing to ask about,
+      reproducible across three clean-tree runs. Closed by evidence, so do not
+      re-litigate: not a timeout (acceptance passes by hand in 11.6s, inside
+      every budget), not a retry bug (one claim then terminal, because
+      interactive_prompt is deliberately non-retryable -- "the CLI is asking for
+      an operator, not for another turn"), not the stale-linter-cache story
+      (nothing is failing for it to fix).
+      The decision log is now wired (PR 336) and SHOULD finally answer what the
+      turn asked for -- that is the next read, on the next failure.
+      Verify by reverting: a dispatched run must reach unit-orch=done. Its
+      command already passes standalone, which has never predicted dispatched
+      behaviour anywhere in this investigation.
+
+- [x] VERIFIED END TO END. PR 331 merged; a dispatched run reached race=done
+      with reclaim_count=0 and ZERO reclaims across every task, against 2
+      unbounded and 6 under a cap previously. That is the proof -v, capping and
+      stall_timeout all failed to produce -- each passed its unit tests and
+      changed nothing on a real run.
+      Four explanations were needed (silence under load, the progress lease,
+      dispatch contention, then the acceptance budget) and the first three ALL
+      FIT THE DATA. The survivor is the one whose fix changed behaviour.
+      REAL ROOT CAUSE, and every earlier story was wrong. A reviewer pointed
       out the fact that breaks them all: runWithHeartbeat beats every 20s
       INDEPENDENTLY of provider output, against a 90s stale window. A stalled
       turn keeps beating, so the watchdog killing a silent turn can never
@@ -784,7 +822,7 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
       previous "fixes" (-v, capping, raising stall_timeout) all targeted
       mechanisms that were not the cause.
 
-- [ ] [WAIT] CAPPED-WIDTH EXPERIMENT CONCLUDED, but PR 329 is OPEN not merged
+- [x] CAPPED-WIDTH EXPERIMENT CONCLUDED; PR 329 MERGED.
       -- same premature-[x] error as the item above, found by the same review.
       Closes when it merges. Result stands: Final: race reclaimed FOUR
       times under RALPH_MAX_PARALLEL=4, versus two unbounded -- capping made it
@@ -858,7 +896,7 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
       makes the assertion follow a rename. A reviewer analyzing a file in
       isolation cannot see its package.
 
-- [ ] [WAIT] PRs 327 (attempt accounting) + 328 (the policy decision) are OPEN,
+- [x] PRs 327 (attempt accounting) + 328 (the policy decision) MERGED.
       not merged -- main still has RetryCount/ReclaimCount only and a reaper
       that touches neither. Marked [x] prematurely on the theory that "shipped"
       meant "PR opened"; a reviewer caught that this would make the loop skip
