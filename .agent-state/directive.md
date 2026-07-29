@@ -765,13 +765,82 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
       MECHANISM CONFIRMED mid-run, independent of the outcome: with the cap at
       4, SEVEN tasks were dependency-eligible and exactly FOUR ran. The cap is
       genuinely binding, not coincidental -- unbounded, all eleven would have
-      dispatched at once. Zero reclaims on any task so far, and `race` is now
-      QUEUED behind the cap rather than competing for CPU, which is precisely
-      the behaviour change under test.
+      dispatched at once.
+      RESULT: MY PREDICTION WAS WRONG, and I recorded a WRONG CORRECTION first.
+      Predicted reclaim_count=0 under a cap. Mid-run I saw race at 1 reclaim,
+      wrote "capping HALVED it", and shipped that. Then race hit 2 -- the same
+      count as unbounded. Reading a running experiment at one moment and
+      writing the trend as a conclusion is its own error, distinct from the
+      original wrong prediction.
+      FINAL, from captured `status` output rather than paraphrase:
+        race           running  — reclaimed 2x: stale_heartbeat
+        unit-provider  failed   — ... — reclaimed 2x: stale_heartbeat (3 claims in flight)
+      The MISSING pressure clause on race is the actual finding. It is gated on
+      >1 in flight, so race's latest reclaim happened with NOTHING ELSE
+      RUNNING. Contention cannot explain that one.
+      Correct conclusion: for a step like this the LEASE is the operative
+      limit, not the load. A 138s silent command cannot reliably survive a 180s
+      renewable lease even alone on the machine. Capping helps its NEIGHBOURS
+      (unit-provider reclaimed at 3 in flight) but does not make a silent step
+      visible.
+      A reviewer also caught that I FABRICATED the earlier evidence block --
+      `reclaims=1 reason=... inflight=4` is emitted by no renderer; it was my
+      paraphrase of JSON field names presented as captured output. Fixed with
+      real output. Same defect as every other one this session: I wrote what
+      the surface would plausibly say instead of running it and reading it.
       Also shipped from this finding (PR 324, un-hashed): --supervisor help now
       names RALPH_MAX_PARALLEL and says the unset default is UNBOUNDED. It was
       documented only in docs/design/, and an operator debugging a reclaimed
       task reads --help.
+      Two bot findings on 324 were FALSE POSITIVES (maxParallelEnv "undefined"
+      -- it is declared in the same package, go vet is clean, CI compiled it on
+      every platform). Countered rather than accepted: the suggested literal
+      would have made the test WEAKER, since referencing the constant is what
+      makes the assertion follow a rename. A reviewer analyzing a file in
+      isolation cannot see its package.
+
+- [ ] A RECLAIMED TASK GETS A FRESH RETRY BUDGET, and the row hides it.
+      Found by chasing two steps that failed `interactive_prompt` while their
+      acceptance commands pass by hand -- the event history is what actually
+      explained it, not the category:
+        08:30 claimed / 08:35 claimed / 08:43 failed_terminal (budget exhausted)
+        09:23 claimed / 09:37 RECLAIMED / 09:38 claimed / 09:46 RECLAIMED
+        09:46 claimed / 09:49 failed_terminal (budget exhausted)
+      FIVE claims, TWO reclaims -- and `retry_count` reads 0.
+      Mechanism, verified in code not inferred: the reaper (reaper.go) never
+      touches retry_count; only MarkFailed does (tasks.go:630). And requeue
+      deliberately CLEARS failure_category, so a task that fails, requeues, and
+      later exhausts its budget shows whichever category the FINAL attempt had
+      -- which is why the row said interactive_prompt while the terminal event
+      said "retry budget was exhausted". The row and the event disagreed and
+      the event was right.
+      Two distinct problems, and they want different fixes:
+      (a) TRUTHFULNESS -- retry_count=0 on a task attempted five times is a
+          number that means something other than what it says. Either count
+          reclaimed attempts or rename what the column reports.
+      (b) POLICY -- should a reclaim restore the full budget? Arguably yes (the
+          worker died, the task never got its turn) but ONLY if that is
+          deliberate. Right now it is a side effect of the reaper not knowing
+          about retries, which is not the same as a decision.
+      Verify by reverting: a task reclaimed N times must show an attempt count
+      an operator can reconcile with its event history. Today those two sources
+      disagree, and only the event log is correct.
+      NOT the earlier stale-cache story: nothing is failing for these agents to
+      try to fix, and their criteria pass right now.
+
+- [x] GUI FLAKE FIXED (PR 325, un-hashed). Chasing a red check on the
+      release-please PR found a fixed 3-SECOND deadline for a headless GUI to
+      paint its first frame: failed on ubuntu-latest, passed 3/3 locally.
+      The release PR's diff is manifest + CHANGELOG only -- no Go code -- so it
+      could not have caused the failure it was blocking. Worth checking BEFORE
+      assuming a red check belongs to the PR it appears on.
+      Same defect this session keeps finding, now in a fourth place: a
+      threshold measuring the MACHINE rather than the code. Fixed all 39
+      positive waits, not just the failing one -- 38 siblings carried the
+      identical flaw waiting their turn. The two NEGATIVE assertions keep
+      their 50ms budgets, where the short timeout IS the assertion and raising
+      it would silently weaken the test into always passing.
+      Proven load-bearing by shrinking the constant to 1ns.
 
 - [x] CONFIRMING SELF-TEST RUN validated the stale-cache diagnosis. The whole
       point of re-running: `lint-internal` had failed with interactive_prompt,

@@ -188,6 +188,32 @@ threshold derived from a quiet machine would have predicted it.
 Remove the silence when a seam exists, raise the lease when it does not.
 Reaching for the lease first is how a real hang gets a longer rope.
 
+**Capping the width does not fix this.** The prediction was that it would, so
+it was measured. With `RALPH_MAX_PARALLEL=4` the `race` step still reclaimed
+twice — the same count as unbounded. Captured from `radioactive_ralph status`:
+
+```
+  race             running                  w:…06d1b6c6 via=codex — reclaimed 2x: stale_heartbeat
+  unit-provider    failed                   via=codex — task retry budget was exhausted — reclaimed 2x: stale_heartbeat (3 claims in flight)
+```
+
+The absent pressure clause on the `race` row is the finding, not a rendering
+gap. It is omitted when fewer than two claims were in flight, so `race`'s most
+recent reclaim happened while **nothing else was running**. Contention cannot
+explain that one.
+
+So the lease, not the load, is the operative limit for a step like this: a 138s
+command that prints nothing cannot survive a 180s renewable lease reliably, even
+alone on the machine. Capping the width reduces the pressure on its *neighbours*
+— `unit-provider` shows its reclaims happened at 3 in flight — but it does not
+make a silent step visible.
+
+Worth stating plainly because the tidy version ("cap the width and the reclaims
+go away") is what a partial reading of the same run suggested, and it is wrong.
+The distinguishing evidence is the in-flight count on each reclaim: without it,
+both rows read as "still flaky" and there is no way to tell the neighbour effect
+from the root cause.
+
 **Nobody chose the width.** Dispatch concurrency is `RALPH_MAX_PARALLEL`, and
 when it is unset the supervisor is *unbounded* — `supervisorMaxParallel` returns
 0 and the semaphore is nil. That is the state a self-test runs in by default, so
