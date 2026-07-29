@@ -910,8 +910,21 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
       settled, and every later pass inherited it as a premise instead of a
       claim. Category first, THEN what matched to earn it.
       NEXT: no containment work. The open proof is a run built with 356 where
-      unit-provider reaches `done`; if it blocks again, the category is real
-      and the write-path question reopens on evidence rather than on this.
+      unit-provider reaches `done`.
+      A BLOCK IS NOT THE COUNTER-PROOF, and the gate is deliberately narrow
+      because a loose one is how this entry went wrong the first time. The run
+      can block for reasons that say nothing about containment --
+      interactive_prompt_confirm, interactive_prompt_clarification, a stall, or
+      a turn timeout. Reopening the write-path question on any of those repeats
+      the original error: treating a block as evidence for a specific cause.
+      REOPEN ONLY IF BOTH HOLD:
+        1. the category is again interactive_prompt_permission, AND
+        2. the LINE THAT MATCHED is quoted here and is a real question rather
+           than error text like "permission denied".
+      Condition 2 is not ceremony -- it is the whole bug. The first time, the
+      category alone was taken as the finding, and no one read what matched.
+      If either fails, containment stays closed and the actual category names
+      which unrelated fix applies.
 
 - [ ] [WAIT] unit-orch is INTERMITTENT and currently PASSING, so there is
       nothing to act on until it fails again. Not closed: an intermittent bug
