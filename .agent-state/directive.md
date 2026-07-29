@@ -910,8 +910,19 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
       Operation not permitted... there is no narrow subpath to add") while the
       config leaves containment ON. One of the two is wrong, and either way an
       operator reading that comment is misled.
+      TRACED TO THE END, because I got this wrong twice: the project config has
+      NO contain_provider_writes key, which I first read as "containment off".
+      It is not -- storeContainmentResolver documents "absent means on" and
+      fails CLOSED (returns true) on a config read error. So containment IS
+      requested, codex IS confined, and only ~/.codex is writable.
+      A DENIED WRITE is therefore a live candidate for the permission prompts,
+      and the earlier "codex runs uncontained so nothing denies it" step is
+      retracted.
       Resolve BOTH: decide whether codex should be confined, make the struct
-      say so, and either keep the comment as history or delete it.
+      say so, and either keep the comment as history or delete it. The comment
+      claims containment was VERIFIED to fail ("no narrow subpath to add") --
+      if that is still true, every codex turn on this project is being confined
+      into a configuration the comment says cannot work.
       Verify by reverting: BindingSupportsContainment(codex) must return what
       the comment claims, or the comment must change.
 
