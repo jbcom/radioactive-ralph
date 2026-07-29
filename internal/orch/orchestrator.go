@@ -2125,6 +2125,16 @@ func (o *Orchestrator) dispatchWorker(ctx context.Context, projectID, projectDir
 		}, failure.RetryBudget(defaultTurnRetries)); err != nil && !errors.Is(err, store.ErrTaskNotOwnedRunning) {
 			return fmt.Errorf("orch: mark failed after run error: %w", err)
 		}
+		// Fold this worker's decision log into a store event before releasing it.
+		//
+		// AbsorbDecisionLog's own doc says to call it "once per worker lifecycle
+		// end (normal completion, verification rejection, or kill+reclaim)", and
+		// until now nothing did -- the whole subsystem was implemented, tested,
+		// and never invoked. A failed turn therefore left NO readable record of
+		// what it decided: `messages` withholds content by contract, and the log
+		// file was never written. Best-effort: a diagnostic that fails must not
+		// fail the turn.
+		_ = o.AbsorbDecisionLog(persistCtx, projectID, planID, ds.task.ID, workerID)
 		_ = o.store.ClearWorkerTask(persistCtx, workerID, "crashed")
 		return nil
 	}
@@ -2135,6 +2145,16 @@ func (o *Orchestrator) dispatchWorker(ctx context.Context, projectID, projectDir
 	if _, err := o.VerifyAndCompleteAs(persistCtx, planID, ds.task.ID, sessionID, ev); err != nil {
 		return fmt.Errorf("orch: verify and complete: %w", err)
 	}
+	// Fold this worker's decision log into a store event before releasing it.
+	//
+	// AbsorbDecisionLog's own doc says to call it "once per worker lifecycle
+	// end (normal completion, verification rejection, or kill+reclaim)", and
+	// until now nothing did -- the whole subsystem was implemented, tested,
+	// and never invoked. A failed turn therefore left NO readable record of
+	// what it decided: `messages` withholds content by contract, and the log
+	// file was never written. Best-effort: a diagnostic that fails must not
+	// fail the turn.
+	_ = o.AbsorbDecisionLog(persistCtx, projectID, planID, ds.task.ID, workerID)
 	_ = o.store.ClearWorkerTask(persistCtx, workerID, "idle")
 	return nil
 }
@@ -2484,6 +2504,16 @@ func (o *Orchestrator) runFanoutGroup(ctx context.Context, projectID, projectDir
 				return fmt.Errorf("orch: mark failed after run error: %w", err)
 			}
 		}
+		// Fold this worker's decision log into a store event before releasing it.
+		//
+		// AbsorbDecisionLog's own doc says to call it "once per worker lifecycle
+		// end (normal completion, verification rejection, or kill+reclaim)", and
+		// until now nothing did -- the whole subsystem was implemented, tested,
+		// and never invoked. A failed turn therefore left NO readable record of
+		// what it decided: `messages` withholds content by contract, and the log
+		// file was never written. Best-effort: a diagnostic that fails must not
+		// fail the turn.
+		_ = o.AbsorbDecisionLog(persistCtx, projectID, planID, fanoutLogTaskID(claimed), workerID)
 		_ = o.store.ClearWorkerTask(persistCtx, workerID, "crashed")
 		return nil
 	}
@@ -2521,8 +2551,29 @@ func (o *Orchestrator) runFanoutGroup(ctx context.Context, projectID, projectDir
 			verifyErr = fmt.Errorf("orch: verify and complete %s: %w", ds.task.ID, err)
 		}
 	}
+	// Fold this worker's decision log into a store event before releasing it.
+	//
+	// AbsorbDecisionLog's own doc says to call it "once per worker lifecycle
+	// end (normal completion, verification rejection, or kill+reclaim)", and
+	// until now nothing did -- the whole subsystem was implemented, tested,
+	// and never invoked. A failed turn therefore left NO readable record of
+	// what it decided: `messages` withholds content by contract, and the log
+	// file was never written. Best-effort: a diagnostic that fails must not
+	// fail the turn.
+	_ = o.AbsorbDecisionLog(persistCtx, projectID, planID, fanoutLogTaskID(claimed), workerID)
 	_ = o.store.ClearWorkerTask(persistCtx, workerID, "idle")
 	return verifyErr
+}
+
+// fanoutLogTaskID names the task a coalesced group's decision log is attributed
+// to. The log is per-WORKER and one worker owns the whole group, so there is no
+// per-task split to make; the group's first task is the stable choice, and the
+// event still carries the plan so an operator can find it.
+func fanoutLogTaskID(claimed []*dispatchedStep) string {
+	if len(claimed) == 0 {
+		return ""
+	}
+	return claimed[0].task.ID
 }
 
 // releaseClaimedTasks requeues tasks a fan-out worker had already claimed
