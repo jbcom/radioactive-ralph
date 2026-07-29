@@ -160,3 +160,22 @@ func TestWorkerSuffixKeepsIdsDistinguishable(t *testing.T) {
 		t.Errorf("an id shorter than the limit was altered: %q", short)
 	}
 }
+
+// TestTaskProjectsBlockedByTaskID covers the store->observe hop for the
+// terminal-blocker field, the same hop that silently dropped provenance and
+// the partition ordinal in earlier passes. The store computing it and the
+// projection copying it are separate edits.
+func TestTaskProjectsBlockedByTaskID(t *testing.T) {
+	got, err := taskFromStore(store.OperatorTask{
+		PlanID: "plan-1", ID: "race", Status: store.TaskStatusPending,
+		BlockedByTaskID: "build",
+	})
+	if err != nil {
+		t.Fatalf("taskFromStore: %v", err)
+	}
+	if got.BlockedByTaskID != "build" {
+		t.Errorf("BlockedByTaskID = %q, want \"build\": the store computes it but "+
+			"the projection drops it, so a dead plan still reads as pending",
+			got.BlockedByTaskID)
+	}
+}

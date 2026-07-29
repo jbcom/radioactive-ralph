@@ -150,3 +150,21 @@ func TestMesoShowsWorkerClaim(t *testing.T) {
 		t.Errorf("an unclaimed task gained a worker marker:\n%s", got)
 	}
 }
+
+// TestMesoNamesATerminallyBlockedDependency covers the GUI's dead-plan marker.
+// It is a wrapping row for the same reason the block remediation is: inside
+// the task HBox, under a vertical-only scroll, a long line is clipped with no
+// way to reach it.
+func TestMesoNamesATerminallyBlockedDependency(t *testing.T) {
+	got := mesoText(t, []observe.Task{
+		{PlanID: "p1", ID: "build", Status: "failed"},
+		{PlanID: "p1", ID: "race", Status: "pending", BlockedByTaskID: "build"},
+		{PlanID: "p1", ID: "solo", Status: "pending"},
+	})
+	if !strings.Contains(got, "cannot run: build failed") {
+		t.Errorf("a task that can never run renders as plain pending:\n%s", got)
+	}
+	if strings.Count(got, "cannot run") != 1 {
+		t.Errorf("the marker appeared on a task with no failed dependency:\n%s", got)
+	}
+}

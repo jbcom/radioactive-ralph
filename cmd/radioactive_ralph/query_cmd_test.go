@@ -523,3 +523,31 @@ func TestRunStatusQueryShowsWorkerClaim(t *testing.T) {
 		}
 	}
 }
+
+// TestRunStatusQueryNamesATerminallyBlockedDependency covers the CLI's
+// dead-plan marker. This is the surface the gap was FOUND on -- a dogfooding
+// `status` call showed three tasks behind a failed build as bare `pending`.
+func TestRunStatusQueryNamesATerminallyBlockedDependency(t *testing.T) {
+	reply := querySnapshotFixture(1)
+	reply.Tasks = observe.TaskPage{Items: []observe.Task{
+		{PlanID: "plan-1", ID: "build", Status: "failed"},
+		{PlanID: "plan-1", ID: "race", Status: "pending", BlockedByTaskID: "build"},
+		{PlanID: "plan-1", ID: "solo", Status: "pending"},
+	}}
+
+	var out bytes.Buffer
+	if err := runStatusQueryWith(
+		context.Background(), &out, &fakeObserveClient{snapshot: reply},
+		ipc.ObserveSnapshotArgs{ProjectID: "project-1"}, false, false,
+	); err != nil {
+		t.Fatalf("runStatusQueryWith: %v", err)
+	}
+	got := out.String()
+
+	if !strings.Contains(got, "cannot run: build failed") {
+		t.Errorf("a task that can never run renders as plain pending:\n%s", got)
+	}
+	if strings.Count(got, "cannot run") != 1 {
+		t.Errorf("the marker appeared on a task with no failed dependency:\n%s", got)
+	}
+}

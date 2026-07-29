@@ -160,6 +160,19 @@ type OperatorTask struct {
 	// "same partition or not?" without answering "pinned to what?".
 	PartitionOrdinal string `json:"partition_ordinal"`
 
+	// BlockedByTaskID names a dependency that will NEVER be satisfied, empty
+	// otherwise. It answers the one question a stalled plan raises that status
+	// alone cannot: is this waiting, or is it dead?
+	//
+	// Only TERMINAL blockers are named, and that word is load-bearing rather
+	// than descriptive: both readiness walks satisfy a dependency solely on
+	// done/skipped/decomposed, MarkFailedWithPayload retries by setting pending
+	// and lands on failed once retries are exhausted, and no transition leaves
+	// failed. So a dependent behind a failed task can never run, while one
+	// behind a merely-incomplete task clears itself -- naming the second would
+	// be noise on every healthy plan mid-flight.
+	BlockedByTaskID string `json:"blocked_by_task_id"`
+
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 }
@@ -716,6 +729,21 @@ func readOperatorTasks(
 		                AND d.task_id = t.id
 		                AND tdep.status NOT IN ('done', 'skipped', 'decomposed')
 		            ))) AS partitioned,
+		       -- A dependency that can never be satisfied, or '' when none.
+		       -- Deliberately NOT every unsatisfied dependency: an incomplete one
+		       -- clears itself as upstream work finishes, so naming it would put
+		       -- a scary marker on every healthy plan mid-flight. A failed one
+		       -- never clears (nothing transitions out of 'failed'), which is
+		       -- what makes the dependent's plain 'pending' badge a lie.
+		       COALESCE((
+		         SELECT d.depends_on FROM task_deps d
+		          JOIN tasks tdep ON tdep.plan_id = d.plan_id AND tdep.id = d.depends_on
+		         WHERE d.plan_id = t.plan_id
+		           AND d.task_id = t.id
+		           AND tdep.status = 'failed'
+		         ORDER BY d.depends_on
+		         LIMIT 1
+		       ), '') AS blocked_by,
 		       t.created_at, t.updated_at
 		FROM tasks t
 		JOIN plans p ON p.id = t.plan_id
@@ -776,6 +804,7 @@ func readOperatorTasks(
 			&groupPath,
 			&metadataJSON,
 			&partitioned,
+			&task.BlockedByTaskID,
 			&createdRaw,
 			&updatedRaw,
 		); err != nil {

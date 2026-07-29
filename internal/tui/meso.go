@@ -79,6 +79,16 @@ func renderMeso(m Model) string {
 			// 200 columns: it wrapped on any normal terminal, and the wrap landed
 			// mid-sentence so the partition marker and the reason scattered across
 			// lines. Measured, not guessed -- the row is ~60 columns without it.
+			// A dependency that can never be satisfied. Its own line for the
+			// same reason as the block remediation: inline it pushes the row
+			// past a terminal's width. Distinct from Blocked -- that is a
+			// pre-dispatch configuration problem on THIS task, this is another
+			// task's failure making this one unreachable.
+			if t.BlockedByTaskID != "" {
+				b.WriteString(styleMuted.Render(
+					"               ↳ cannot run: " + t.BlockedByTaskID + " failed"))
+				b.WriteString("\n")
+			}
 			if t.Blocked != nil && t.Blocked.Summary != "" {
 				b.WriteString(styleMuted.Render("               ↳ " + t.Blocked.Summary))
 				b.WriteString("\n")

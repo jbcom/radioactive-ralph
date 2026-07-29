@@ -228,3 +228,28 @@ func TestMesoLabelsRunningFanoutPartition(t *testing.T) {
 			"cannot tell one turn from two independent workers:\n%s", out)
 	}
 }
+
+// TestMesoNamesATerminallyBlockedDependency covers the rendered path for the
+// dead-plan marker. The store computing it is necessary but not sufficient --
+// this repo has already shipped markers that existed in the DTO and never
+// reached a view.
+func TestMesoNamesATerminallyBlockedDependency(t *testing.T) {
+	f := testFake()
+	m := newTestModel(t, f)
+	m.lvl = levelMeso
+	m.selectedPlan = f.plans[0]
+	m.snap.tasks = []observe.Task{
+		{ID: "build", PlanID: "plan-1", Status: "failed"},
+		{ID: "race", PlanID: "plan-1", Status: "pending", BlockedByTaskID: "build"},
+		{ID: "solo", PlanID: "plan-1", Status: "pending"},
+	}
+	out := m.View()
+
+	if !strings.Contains(out, "cannot run: build failed") {
+		t.Errorf("a task that can never run renders as plain pending:\n%s", out)
+	}
+	// A task with no terminal blocker must not gain the marker.
+	if strings.Count(out, "cannot run") != 1 {
+		t.Errorf("the marker appeared on a task with no failed dependency:\n%s", out)
+	}
+}

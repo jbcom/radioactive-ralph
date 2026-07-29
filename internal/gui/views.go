@@ -308,6 +308,11 @@ func (u *ui) buildMeso(s snapshot) {
 		// window width the end of the sentence was clipped with no way to scroll
 		// to it -- the configuration action the operator needs, unreachable. The
 		// TUI puts it on a continuation line for the same reason.
+		if t.BlockedByTaskID != "" {
+			dead := widget.NewLabel("    ↳ cannot run: " + t.BlockedByTaskID + " failed")
+			dead.Wrapping = fyne.TextWrapWord
+			u.body.Add(dead)
+		}
 		if t.Blocked != nil && t.Blocked.Summary != "" {
 			reason := widget.NewLabel("    ↳ " + t.Blocked.Summary)
 			reason.Wrapping = fyne.TextWrapWord
