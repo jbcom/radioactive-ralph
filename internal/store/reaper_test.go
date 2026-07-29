@@ -431,3 +431,72 @@ func TestReclaimStaleEmitsPerTaskEvent(t *testing.T) {
 			"stay distinguishable to an operator", found.PayloadJSON)
 	}
 }
+
+// TestReclaimEventRecordsConcurrencyPressure surfaces the cause a correct
+// reason still points away from.
+//
+// The `race` step's reclaims were never a worker problem: parallel steps starve
+// each other, and 30s of work becomes 138s under load. An operator reading
+// `reclaimed 2x: stale_heartbeat` gets something TRUE that still points at the
+// wrong suspect -- nothing says "you were running six other steps at the time".
+//
+// Recorded at reclaim time rather than derived later, because by the time
+// anyone reads the row the workers are gone and the pressure is unrecoverable.
+func TestReclaimEventRecordsConcurrencyPressure(t *testing.T) {
+	ctx := context.Background()
+	clock := clockwork.NewFakeClockAt(mustParseTime(t, "2026-07-16T00:00:00Z"))
+	s := openTestStoreWithClock(t, clock)
+
+	projectID := mustCreateProject(t, s, "pressure-project")
+	planID := mustCreatePlan(t, s, projectID, "pressure-plan")
+	for _, id := range []string{"a", "b", "c"} {
+		if err := s.CreateTask(ctx, CreateTaskOpts{PlanID: planID, ID: id, Description: id}); err != nil {
+			t.Fatalf("CreateTask %s: %v", id, err)
+		}
+	}
+
+	sessionID, err := s.CreateSession(ctx, SessionOpts{Role: "supervisor", PID: 1, PIDStartTime: "t0"})
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	// THREE workers claiming concurrently: the shape that starves a long quiet
+	// step. All three go stale together, as they would if the machine were
+	// saturated rather than one worker having crashed.
+	for i, id := range []string{"a", "b", "c"} {
+		workerID, err := s.CreateWorker(ctx, WorkerOpts{
+			SessionID: sessionID, Provider: "codex", SubprocessPID: 100 + i, SubprocessStartTime: "t0",
+		})
+		if err != nil {
+			t.Fatalf("CreateWorker %s: %v", id, err)
+		}
+		if _, err := s.ClaimNextReady(ctx, planID, sessionID, workerID); err != nil {
+			t.Fatalf("ClaimNextReady %s: %v", id, err)
+		}
+	}
+
+	clock.Advance(10 * time.Minute)
+	if _, err := s.ReclaimStale(ctx, 5*time.Minute); err != nil {
+		t.Fatalf("ReclaimStale: %v", err)
+	}
+
+	events, err := s.ListProjectEvents(ctx, projectID, 50)
+	if err != nil {
+		t.Fatalf("ListProjectEvents: %v", err)
+	}
+	var payload string
+	for _, e := range events {
+		if e.Kind == "task.reclaimed" {
+			payload = e.PayloadJSON
+			break
+		}
+	}
+	if payload == "" {
+		t.Fatal("no task.reclaimed event")
+	}
+	if !strings.Contains(payload, `"concurrent_claims":3`) {
+		t.Errorf("payload = %q, want concurrent_claims:3 -- the THREE in-flight "+
+			"claims are the point. A field that records 1 (or the post-update 0) "+
+			"would satisfy a mere presence check while measuring nothing, which "+
+			"is the defect shape this whole session keeps finding", payload)
+	}
+}
