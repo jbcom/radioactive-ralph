@@ -74,9 +74,10 @@ type Task struct {
 // INCREMENTING EITHER COUNTER -- ReleaseClaim (tasks.go), MarkBlocked
 // (task_metadata.go), and ReclaimWorker (workers.go) -- so a task that was
 // claimed and then released, blocked, or had its worker reclaimed has had a
-// go that neither counter records. After such an exit AttemptLabel renders ""
-// while both counters are zero, and undercounts by one per untracked exit
-// afterwards.
+// go that neither counter records. If it is the FIRST such exit both counters
+// are still zero, so AttemptLabel renders "" -- the task looks untouched. On a
+// task that already has retries or reclaims the label still renders, just low:
+// one short per untracked exit.
 //
 // So neither number is the count of claims EVER GIVEN; both are derived from
 // the two counters that happen to be incremented, and those cover the
