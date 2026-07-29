@@ -896,6 +896,48 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
       write paths are per-binding and static (BindingWritePaths), so the
       candidate is a path codex needs that the binding does not grant.
 
+- [ ] TESTS WRITE INTO THE OPERATOR'S LIVE STATE DIRECTORY. Found while
+      chasing the decision log: ~/.local/state/radioactive-ralph/workers holds
+      188 .decisions.md files that are NOT from dispatch -- their timestamps
+      match my `go test` invocations and the per-category counts are uniform
+      (22 each across four unrelated categories), the signature of fixtures.
+      Cause: tests exercising WriteWorkerDecision without WithDecisionLogRoot
+      fall through to defaultDecisionLogRoot, the REAL XDG state root.
+      Two harms, the second worse: it litters live state, and it salts the one
+      diagnostic surface an operator would mine -- I nearly drew conclusions
+      about unit-orch from files my own test run wrote.
+      FIX: make the default unreachable from tests (require an explicit root,
+      or fail closed when the path is not under a t.TempDir).
+      Verify by reverting: after `go test ./...`, the real workers directory
+      must be unchanged.
+
+- [ ] THE PROMPT DETECTOR MATCHED ERROR TEXT, and it probably explains the
+      whole interactive_prompt history. Chain, each step verified:
+        - the taxonomy classified a real block as interactive_prompt_PERMISSION
+        - codex is SupportsContainment:FALSE, so it runs UNCONTAINED and Ralph
+          denies it nothing (binding.go:215-231)
+        - codexArgs passes --dangerously-bypass-approvals-and-sandbox
+          unconditionally (codex.go:190), so codex should never ask either
+        - which left the pattern: a bare `(?i)permission` matches "permission
+          denied" -- ERROR TEXT, not a question.
+      So ordinary failures were killed as blocked turns. PREDATES the taxonomy;
+      naming the kind is only what made it legible. Tightened in PR 350.
+      NOT YET CONFIRMED: I have not SEEN the line codex printed. This thread
+      has already produced four theories that fit the evidence and were wrong,
+      so a run built with 350 where unit-provider reaches done is the proof.
+
+- [ ] The agent CANNOT write the decision log under containment, and the goal
+      was partly wrong anyway. PR 344 tried to name the log path in the prompt;
+      withdrawn after review found containment permits writes only beneath
+      projectDir plus static binding write paths, so a contained turn cannot
+      write Ralph's user-level state root. A project-local file is also out --
+      it leaves untracked state in the checkout, against "one user-level SQLite
+      DB, clean repos" (AGENTS.md 42).
+      And "surface WHAT the provider asked" is barred outright: only a CLOSED
+      SET of fixed constants crosses to operator surfaces, never provider prose
+      (operator_snapshot.go:262-268). The shippable version was a finer
+      TAXONOMY, which is what PR 347 delivers.
+
 - [ ] [WAIT] unit-orch is INTERMITTENT and currently PASSING, so there is
       nothing to act on until it fails again. Not closed: an intermittent bug
       that stops reproducing is hidden, not fixed, and the decision log (wired
