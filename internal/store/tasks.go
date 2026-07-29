@@ -53,6 +53,28 @@ type Task struct {
 	UpdatedAt         time.Time
 }
 
+// AttemptCount is how many turns this task has actually been given: retries it
+// used up plus claims a reaper took back.
+//
+// It is DERIVED rather than a fourth stored counter, so it cannot drift from
+// the two numbers it summarizes.
+//
+// It exists because neither counter alone answers "how many goes has this
+// had?", and reading only retry_count actively misleads. Observed on a live
+// self-test run, a task's history was claimed / claimed / failed_terminal /
+// claimed / reclaimed / claimed / reclaimed / claimed / failed_terminal --
+// five claims, two reclaims -- while retry_count read 0 throughout. The reaper
+// requeues without touching retry_count (only MarkFailed increments it), so a
+// task that burned real turns reads as untouched and the row disagrees with its
+// own event log.
+//
+// Deliberately NOT wired into the retry-budget check. Whether a reclaim should
+// consume budget is a policy question -- arguably it should not, since the
+// worker died before the task got a fair turn -- and today's generosity is a
+// side effect of the reaper not knowing about retries rather than a decision.
+// This makes the truth visible without silently changing that policy.
+func (t Task) AttemptCount() int { return t.RetryCount + t.ReclaimCount }
+
 // EventPayload keeps event payloads structured so the CLI, TUI, and tests
 // can reason about approvals, handoffs, retries, and provider context
 // without string scraping.

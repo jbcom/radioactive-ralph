@@ -360,3 +360,32 @@ func TestMesoOmitsPressureOnAnIdleReclaim(t *testing.T) {
 		t.Errorf("an idle reclaim blamed concurrency:\n%s", out)
 	}
 }
+
+// TestMesoShowsAttemptTotalWhenBothCountersMoved covers the case neither
+// counter states alone.
+//
+// retry_count and reclaim_count accumulate independently -- a reclaim never
+// resets retry_count -- so a task carrying both has an attempt count the row
+// cannot otherwise convey. With reclaims only, "reclaimed Nx" already IS that
+// count, and repeating it would be noise.
+func TestMesoShowsAttemptTotalWhenBothCountersMoved(t *testing.T) {
+	f := testFake()
+	m := newTestModel(t, f)
+	m.lvl = levelMeso
+	m.selectedPlan = f.plans[0]
+	m.snap.tasks = []observe.Task{
+		{ID: "flaky", PlanID: "plan-1", Status: "running", ReclaimCount: 2,
+			ReclaimReason: "stale_heartbeat", RetryCount: 1},
+	}
+	if out := m.View(); !strings.Contains(out, "3 attempts total") {
+		t.Errorf("1 retry + 2 reclaims does not state its 3 attempts:\n%s", out)
+	}
+
+	m.snap.tasks = []observe.Task{
+		{ID: "reaped", PlanID: "plan-1", Status: "running", ReclaimCount: 2,
+			ReclaimReason: "stale_heartbeat"},
+	}
+	if out := m.View(); strings.Contains(out, "attempts total") {
+		t.Errorf("no retries, yet the row repeats a count it already gives:\n%s", out)
+	}
+}

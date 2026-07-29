@@ -79,3 +79,44 @@ func TestStatusRendersReclaimReason(t *testing.T) {
 		}
 	}
 }
+
+// TestStatusRendersAttemptTotalOnlyWithRetries pins when the total is worth
+// printing.
+//
+// retry_count and reclaim_count accumulate INDEPENDENTLY -- a reclaim never
+// resets retry_count -- so a task carrying both has an attempt count neither
+// number states. That is the case an operator cannot reconstruct from the row.
+//
+// With no retries, "reclaimed Nx" already IS the attempt count, and repeating
+// it as ", 2 attempts total" is noise on a row that already said 2.
+func TestStatusRendersAttemptTotalOnlyWithRetries(t *testing.T) {
+	render := func(t *testing.T, task observe.Task) string {
+		t.Helper()
+		reply := querySnapshotFixture(1)
+		reply.Tasks.Items = []observe.Task{task}
+		var out bytes.Buffer
+		if err := runStatusQueryWith(
+			context.Background(), &out, &fakeObserveClient{snapshot: reply},
+			ipc.ObserveSnapshotArgs{ProjectID: "project-1"}, false, false,
+		); err != nil {
+			t.Fatalf("runStatusQueryWith: %v", err)
+		}
+		return out.String()
+	}
+
+	both := render(t, observe.Task{
+		PlanID: "plan-1", ID: "flaky", Status: "running",
+		ReclaimCount: 2, ReclaimReason: "stale_heartbeat", RetryCount: 1,
+	})
+	if !strings.Contains(both, "3 attempts total") {
+		t.Errorf("a task with 1 retry AND 2 reclaims does not state its 3 attempts:\n%s", both)
+	}
+
+	reclaimsOnly := render(t, observe.Task{
+		PlanID: "plan-1", ID: "reaped", Status: "running",
+		ReclaimCount: 2, ReclaimReason: "stale_heartbeat",
+	})
+	if strings.Contains(reclaimsOnly, "attempts total") {
+		t.Errorf("a task with no retries repeats a count its row already gives:\n%s", reclaimsOnly)
+	}
+}

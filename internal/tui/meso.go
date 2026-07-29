@@ -103,6 +103,13 @@ func renderMeso(m Model) string {
 				if t.ReclaimConcurrentClaims > 1 {
 					pressure = fmt.Sprintf(" (%d claims in flight)", t.ReclaimConcurrentClaims)
 				}
+				// Only when the task ALSO retried: the counters accumulate
+				// independently (a reclaim never resets retry_count), so
+				// neither states the total. With no retries, "reclaimed Nx"
+				// already IS the attempt count.
+				if t.RetryCount > 0 {
+					pressure += fmt.Sprintf(", %d attempts total", t.RetryCount+t.ReclaimCount)
+				}
 				b.WriteString(styleMuted.Render(fmt.Sprintf(
 					"               ↳ reclaimed %dx: %s%s", t.ReclaimCount, t.ReclaimReason, pressure)))
 				b.WriteString("\n")
