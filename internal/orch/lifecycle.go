@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"testing"
 	"time"
 
 	"github.com/jbcom/radioactive-ralph/internal/agent"
@@ -120,6 +121,22 @@ func (o *Orchestrator) decisionLogPath(workerID string) (string, error) {
 func defaultDecisionLogRoot() (string, error) {
 	if override := os.Getenv("RALPH_STATE_DIR"); override != "" {
 		return filepath.Clean(override), nil
+	}
+	// REFUSE the real state root under a test binary.
+	//
+	// ~/.local/state/radioactive-ralph/workers accumulated 188 .decisions.md
+	// files written by `go test`: any Orchestrator built without
+	// WithDecisionLogRoot falls through here, and ten test call sites do. That
+	// litters an operator's live state AND salts the one diagnostic surface
+	// they would mine -- conclusions were nearly drawn about a production
+	// failure from files a test run had written.
+	//
+	// Detected from the binary name rather than a flag threaded through every
+	// constructor, because the property wanted is "no test may reach the real
+	// root", and a flag only covers the call sites someone remembers.
+	if testing.Testing() {
+		return "", fmt.Errorf("orch: refusing the real state root under test; " +
+			"use WithDecisionLogRoot(t.TempDir())")
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {
