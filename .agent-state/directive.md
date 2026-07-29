@@ -793,9 +793,12 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
       conclusions and all three were wrong. A running experiment has no verdict
       until it stops.
       race carries NO pressure clause (gated on >1 in flight), so its reclaims
-      happened with nothing else running: the LEASE is the operative limit, and
-      capping only makes the step wait longer for a slot -- more exposure, not
-      less.
+      happened with nothing else running. SUPERSEDED: this said the LEASE was
+      the operative limit; it is not, and the root-cause item above has the
+      real answer (acceptance verification charged to a 30s store-write
+      budget). Capping also cannot add reclaim exposure by making a step wait
+      -- the slot is acquired BEFORE the claim, and only `running` tasks are
+      reclaimable.
       Original framing, kept for the diagnosis path:
 
 - [x] [WAIT-AGENT] Capped-width self-test RUNNING (monitor bq7tfrdz1), the
@@ -833,7 +836,8 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
       The MISSING pressure clause on race is the actual finding. It is gated on
       >1 in flight, so race's latest reclaim happened with NOTHING ELSE
       RUNNING. Contention cannot explain that one.
-      Correct conclusion: for a step like this the LEASE is the operative
+      SUPERSEDED -- see the root-cause item above. Left for the diagnosis
+      trail, not as a conclusion. What this said: for a step like this the LEASE is the operative
       limit, not the load. A 138s silent command cannot reliably survive a 180s
       renewable lease even alone on the machine. Capping helps its NEIGHBOURS
       (unit-provider reclaimed at 3 in flight) but does not make a silent step
