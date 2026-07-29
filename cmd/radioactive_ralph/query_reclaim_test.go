@@ -79,3 +79,53 @@ func TestStatusRendersReclaimReason(t *testing.T) {
 		}
 	}
 }
+
+// TestStatusRendersAttemptLabel pins the display policy in observe.AttemptLabel.
+//
+// The label states claims the task was GIVEN, which is lost claims plus the one
+// in hand. "reclaimed 2x" says how many were taken AWAY -- a different number,
+// and not one a reader should have to add to.
+//
+// Empty when nothing was lost: on a healthy task "1 attempt" is true of every
+// row and marks nothing, so it would be noise on exactly the rows with no
+// trouble to find.
+func TestStatusRendersAttemptLabel(t *testing.T) {
+	render := func(t *testing.T, task observe.Task) string {
+		t.Helper()
+		reply := querySnapshotFixture(1)
+		reply.Tasks.Items = []observe.Task{task}
+		var out bytes.Buffer
+		if err := runStatusQueryWith(
+			context.Background(), &out, &fakeObserveClient{snapshot: reply},
+			ipc.ObserveSnapshotArgs{ProjectID: "project-1"}, false, false,
+		); err != nil {
+			t.Fatalf("runStatusQueryWith: %v", err)
+		}
+		return out.String()
+	}
+
+	// 1 retry + 2 reclaims = three lost claims, plus the one it holds = 4.
+	both := render(t, observe.Task{
+		PlanID: "plan-1", ID: "flaky", Status: "running",
+		ReclaimCount: 2, ReclaimReason: "stale_heartbeat", RetryCount: 1,
+	})
+	if !strings.Contains(both, "4 attempts") {
+		t.Errorf("1 retry + 2 reclaims does not state its 4 claims:\n%s", both)
+	}
+
+	// Reclaims alone still get a label: "reclaimed 2x" is claims LOST, not
+	// claims given, so the reader would otherwise have to do the arithmetic.
+	reclaimsOnly := render(t, observe.Task{
+		PlanID: "plan-1", ID: "reaped", Status: "running",
+		ReclaimCount: 2, ReclaimReason: "stale_heartbeat",
+	})
+	if !strings.Contains(reclaimsOnly, "3 attempts") {
+		t.Errorf("2 reclaims does not state its 3 claims:\n%s", reclaimsOnly)
+	}
+
+	// A healthy task gets nothing: "1 attempt" on every row marks nothing.
+	clean := render(t, observe.Task{PlanID: "plan-1", ID: "fine", Status: "done"})
+	if strings.Contains(clean, "attempts") {
+		t.Errorf("an untroubled task carries an attempt marker:\n%s", clean)
+	}
+}

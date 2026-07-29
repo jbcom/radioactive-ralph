@@ -350,6 +350,11 @@ func writeTaskLines(out io.Writer, page observe.TaskPage, events observe.EventPa
 			if task.ReclaimConcurrentClaims > 1 {
 				line += fmt.Sprintf(" (%d claims in flight)", task.ReclaimConcurrentClaims)
 			}
+			// Display policy lives in observe so all three renderers agree; see
+			// observe.AttemptLabel for the arithmetic and the visibility gate.
+			if label := observe.AttemptLabel(task); label != "" {
+				line += ", " + label
+			}
 		}
 		// The status column is padded so the marker columns align, which leaves
 		// trailing spaces on any row whose markers are all absent -- an unrun

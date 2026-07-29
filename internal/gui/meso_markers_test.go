@@ -234,3 +234,18 @@ func TestMesoShowsReclaimReason(t *testing.T) {
 		t.Errorf("a reclaim under load does not name the load:\n%s", got)
 	}
 }
+
+// TestMesoShowsAttemptLabel mirrors the CLI and TUI.
+func TestMesoShowsAttemptLabel(t *testing.T) {
+	both := mesoText(t, []observe.Task{
+		{PlanID: "p1", ID: "flaky", Status: "running", ReclaimCount: 2,
+			ReclaimReason: "stale_heartbeat", RetryCount: 1},
+	})
+	if !strings.Contains(both, "4 attempts") {
+		t.Errorf("1 retry + 2 reclaims does not state its 4 claims:\n%s", both)
+	}
+	clean := mesoText(t, []observe.Task{{PlanID: "p1", ID: "fine", Status: "done"}})
+	if strings.Contains(clean, "attempts") {
+		t.Errorf("an untroubled task carries an attempt marker:\n%s", clean)
+	}
+}

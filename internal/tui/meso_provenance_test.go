@@ -360,3 +360,27 @@ func TestMesoOmitsPressureOnAnIdleReclaim(t *testing.T) {
 		t.Errorf("an idle reclaim blamed concurrency:\n%s", out)
 	}
 }
+
+// TestMesoShowsAttemptLabel mirrors the CLI and GUI: claims GIVEN, not claims
+// lost, and nothing at all on a task that never lost one.
+func TestMesoShowsAttemptLabel(t *testing.T) {
+	f := testFake()
+	m := newTestModel(t, f)
+	m.lvl = levelMeso
+	m.selectedPlan = f.plans[0]
+
+	m.snap.tasks = []observe.Task{
+		{ID: "flaky", PlanID: "plan-1", Status: "running", ReclaimCount: 2,
+			ReclaimReason: "stale_heartbeat", RetryCount: 1},
+	}
+	if out := m.View(); !strings.Contains(out, "4 attempts") {
+		t.Errorf("1 retry + 2 reclaims does not state its 4 claims:\n%s", out)
+	}
+
+	m.snap.tasks = []observe.Task{
+		{ID: "fine", PlanID: "plan-1", Status: "done"},
+	}
+	if out := m.View(); strings.Contains(out, "attempts") {
+		t.Errorf("an untroubled task carries an attempt marker:\n%s", out)
+	}
+}

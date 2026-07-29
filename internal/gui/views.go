@@ -334,6 +334,10 @@ func (u *ui) buildMeso(s snapshot) {
 			if t.ReclaimConcurrentClaims > 1 {
 				pressure = fmt.Sprintf(" (%d claims in flight)", t.ReclaimConcurrentClaims)
 			}
+			// Display policy lives in observe so all three renderers agree.
+			if label := observe.AttemptLabel(t); label != "" {
+				pressure += ", " + label
+			}
 			again := widget.NewLabel(fmt.Sprintf(
 				"    ↳ reclaimed %dx: %s%s", t.ReclaimCount, t.ReclaimReason, pressure))
 			again.Wrapping = fyne.TextWrapWord
