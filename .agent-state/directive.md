@@ -526,10 +526,29 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
 
 ## Rolling improvement queue (directive 0 appends here)
 
-- [ ] [WAIT] Land the 1 open PR: #320 (absence assertions must prove presence
-      first -- audit + rule, from the vacuous fixture the #319 review exposed).
-      Auto-merge ARMED, no failing checks. Hash-prefixed deliberately: guard 9
-      extracts `#[0-9]{3}` from THIS line.
+- [x] OBSERVED 2026-07-29, no action needed -- the control invariant caught in
+      the wild. A self-test step (`lint-internal`) failed with
+      `failure_category: interactive_prompt`: the provider asked for
+      interactive input, the watchdog classified it (BlockReasonPrompt,
+      watchdog.go:26) and killed the turn, and the TASK failed rather than the
+      system blocking. That is the never-block guarantee working, observed on a
+      live run rather than in a test.
+      Recorded because the first read of a `failed` task is usually "product
+      bug". Here the failure IS the product working: a blocked turn that
+      surfaces as a failed task with a named category is the designed outcome.
+      The operator surface carried it end to end -- category on the row, no
+      raw provider text, and the dependent steps naming their root blocker.
+
+- [ ] [WAIT] Land the 1 open PR: #321 (fold three overlapping AGENTS.md rules
+      into one organized by layer -- check, setup, threshold). Auto-merge
+      ARMED, no failing checks. Hash-prefixed deliberately: guard 9 extracts
+      `#[0-9]{3}` from THIS line.
+
+- [x] #320 MERGED. Absence assertions must prove presence first -- the third
+      distinct form of one mistake this session (a grep matching nothing, a
+      timing bound measuring runner speed, a fixture creating nothing). The
+      audit also found the closest analogue was NOT broken, which is why it was
+      checked rather than "fixed".
 
 - [x] #319 MERGED. store.DeletePlan, and a review caught that it left EVENTS
       behind -- that table carries plan_id with no FK, so the cascade missed

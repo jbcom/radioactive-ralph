@@ -120,14 +120,18 @@ func (f *fakeHandler) HandleAttach(ctx context.Context, args AttachArgs, emit fu
 
 // shortTempDir returns a short-path temp directory. macOS Unix sockets
 // have a 104-byte path limit and the default t.TempDir() under
-// /var/folders/... can exceed that, so we use /tmp/ipc-<suffix> instead.
+// /var/folders/... can exceed that, so we prefer /tmp/ipc-<suffix>. A
+// contained worker may deliberately make /tmp unavailable, though, in which
+// case the configured temp root is the only writable choice.
 func shortTempDir(t *testing.T) string {
 	t.Helper()
-	base := os.TempDir()
 	if runtime.GOOS == "darwin" {
-		base = "/tmp"
+		if dir, err := os.MkdirTemp("/tmp", "ipct-*"); err == nil {
+			t.Cleanup(func() { _ = os.RemoveAll(dir) })
+			return dir
+		}
 	}
-	dir, err := os.MkdirTemp(base, "ipct-*")
+	dir, err := os.MkdirTemp("", "ipct-*")
 	if err != nil {
 		t.Fatalf("mkdir tmp: %v", err)
 	}
