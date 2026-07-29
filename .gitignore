@@ -81,3 +81,7 @@ fyne-cross/
 .agent-state/digest.md
 .agent-state/cursor.md
 .agent-state/batch.json
+
+# Ralph runtime state is user-level (XDG state root), never repo-committed.
+# AGENTS.md: "There is NO committed repo state -- no .radioactive-ralph/ dir."
+.radioactive-ralph/
