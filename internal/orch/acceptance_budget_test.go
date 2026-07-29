@@ -263,3 +263,38 @@ func TestVerificationTimeoutNamesItselfWithTheRealChecker(t *testing.T) {
 			"so a branch keyed on the checker's error never fires", err.Error())
 	}
 }
+
+// TestShippedBudgetDefaultsStayApart pins the two SHIPPED constants, which
+// nothing else in this file does. Every other guard here injects its own budget
+// via WithVerificationBudget, so they prove the MECHANISM -- a budget is
+// honoured, a timeout names itself -- while leaving the production defaults
+// free to be anything at all. Collapsing verificationBudget back to 30s, the
+// exact regression #331 fixed, kept this whole suite green.
+//
+// The relationship is the invariant, not the numbers. persistBudget is sized
+// for store writes; verificationBudget bounds an operator-authored command that
+// may legitimately run for minutes. A live self-test had a step taking 30s warm
+// and 138s under load, so a verification budget anywhere near the persist
+// budget reproduces the original bug: persistCtx expires mid-verification, the
+// task is never marked, its heartbeat is already dead, and the reaper requeues
+// work that had ALREADY SUCCEEDED.
+func TestShippedBudgetDefaultsStayApart(t *testing.T) {
+	if persistBudget != 30*time.Second {
+		t.Errorf("persistBudget = %v, want 30s: it bounds STORE WRITES; "+
+			"growing it to cover slow verification is what #331 undid", persistBudget)
+	}
+	if verificationBudget != 10*time.Minute {
+		t.Errorf("verificationBudget = %v, want 10m", verificationBudget)
+	}
+	// The load-bearing part. 138s was observed; a budget that cannot clear it
+	// by a wide margin loses tasks that actually succeeded.
+	if verificationBudget < 8*persistBudget {
+		t.Errorf("verificationBudget (%v) must exceed persistBudget (%v) by a "+
+			"wide margin -- acceptance re-runs the step's command and cannot be "+
+			"charged to a store-write deadline", verificationBudget, persistBudget)
+	}
+	if verificationBudget <= 138*time.Second {
+		t.Errorf("verificationBudget (%v) does not clear the 138s command "+
+			"observed under load in the run that motivated #331", verificationBudget)
+	}
+}

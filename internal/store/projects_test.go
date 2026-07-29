@@ -161,6 +161,10 @@ func TestAddProjectIdentifiersIdempotent(t *testing.T) {
 func TestFingerprintsNonGitDir(t *testing.T) {
 	ctx := context.Background()
 	dir := t.TempDir()
+	// Temp directories may live under the project checkout in contained
+	// worker and acceptance runs. Prevent Git from discovering that parent
+	// repository so this fixture remains genuinely non-Git.
+	t.Setenv("GIT_CEILING_DIRECTORIES", filepath.Dir(dir))
 
 	fps, err := Fingerprints(ctx, dir)
 	if err != nil {
