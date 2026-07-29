@@ -124,10 +124,10 @@ func (s *Store) ReclaimStale(ctx context.Context, staleAfter time.Duration) (rec
 	// gone and the workers are deleted by step 2).
 	//
 	// This is the suspect a correct reason still points away from. The `race`
-	// step's reclaims were never a worker fault: parallel steps starve each
-	// other, and 30s of work becomes 138s under load against a 180s lease. An
-	// operator reading "reclaimed 2x: stale_heartbeat" gets something TRUE that
-	// sends them looking at the worker, when the answer is that six other steps
+	// step's reclaims were never a worker fault: a 138s silent command cannot
+	// reliably survive a 180s renewable lease, and concurrent steps make it
+	// worse. An operator reading "reclaimed 2x: stale_heartbeat" gets something
+	// TRUE that sends them looking at the worker, when the answer is other steps
 	// were running. A dispatched self-test creates that contention for itself.
 	var concurrentClaims int
 	if err := tx.QueryRowContext(ctx, `
@@ -136,6 +136,18 @@ func (s *Store) ReclaimStale(ctx context.Context, staleAfter time.Duration) (rec
 		return 0, fmt.Errorf("store: count concurrent claims: %w", err)
 	}
 
+	// retry_count is deliberately NOT incremented here, and its absence is a
+	// DECISION rather than an oversight (2026-07-29, decisions.ndjson).
+	//
+	// defaultTurnRetries bounds RETRYABLE PROVIDER FAILURES: the provider ran,
+	// produced a verdict, and the verdict was worth another attempt. A reclaim
+	// means the worker died -- the task never got a turn and never produced a
+	// verdict at all. Charging it a retry would spend budget reserved for "the
+	// provider tried and failed" on "the machine failed", terminating a task for
+	// its host's problem and making one number mean two different things.
+	//
+	// Adding `retry_count = retry_count + 1` here looks like an obvious
+	// omission. TestReclaimDoesNotConsumeRetryBudget fails if you do.
 	rows, err := tx.QueryContext(ctx, `
 		UPDATE tasks
 		SET status = 'pending',
