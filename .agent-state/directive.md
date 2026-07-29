@@ -534,12 +534,17 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
       The unique-slug design is deliberate and should NOT be reverted: it is
       what stopped the self-test reporting stale results, which was a genuine
       false-green. The question is retention, not uniqueness.
-      Options: a `--prune` flag on scripts/self-test.sh that archives
-      prove-the-build-is-sound-* plans older than the last N; or have the script
-      archive its predecessor on import. PlanStatusArchived already exists
-      (store/plans.go) and nothing sets it, so the status is available.
-      Verify first that archived plans drop out of the operator snapshot --
-      if they do not, archiving buys nothing and the fix is a real delete path.
+      ARCHIVING IS A DEAD END, checked before proposing it: the operator plan
+      query filters only on project id and the keyset cursor -- there is NO
+      status filter, so an archived plan still fills a page slot. Setting
+      PlanStatusArchived would change a label and nothing else.
+      So the real options are: (a) a delete path for old self-test runs, which
+      is durable state removal and wants its own design; or (b) leave the runs
+      and let `status` page -- the script already passes --plan-limit 200 and
+      fails loudly if its own run is missing, so the operator surface degrades
+      into noise rather than into a wrong answer.
+      (b) is defensible: a wrong answer was the original bug, and noise is not
+      that. Prefer it until someone actually trips the limit.
 
 - [x] #317 MERGED (docs/guides/self-test.md, plus the rule that docs claims
       need the same proof as code claims -- four invented mechanisms in that
