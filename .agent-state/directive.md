@@ -526,6 +526,11 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
 
 ## Rolling improvement queue (directive 0 appends here)
 
+- [ ] [WAIT] Land the 1 open PR: #311 (a real self-test -- scripts/self-test.sh
+      plus docs/plans/self-test.md, with acceptance markers the orchestrator
+      re-runs). Auto-merge ARMED. Hash-prefixed deliberately: guard 9 extracts
+      `#[0-9]{3}` from THIS line.
+
 - [x] DONE 2026-07-28: a REAL self-test. `scripts/self-test.sh` imports
       `docs/plans/self-test.md` and has Ralph verify Ralph. Two things had made
       every earlier dogfooding attempt useless, neither in the code under test:
