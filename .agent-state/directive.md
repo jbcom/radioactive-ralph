@@ -783,6 +783,11 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
       reclaim_count=0. Nothing short of that has settled this yet -- three
       previous "fixes" (-v, capping, raising stall_timeout) all targeted
       mechanisms that were not the cause.
+      INTERIM (10:59): build reached done with reclaims=0 after a ~7min turn,
+      and the run is at 1/12 with 4 in flight and ZERO reclaims across every
+      task. Under the old code this is the phase where they accumulated. Not
+      yet the verdict -- race has not finished -- but the first phase that
+      previously failed has now passed.
 
 - [ ] [WAIT] CAPPED-WIDTH EXPERIMENT CONCLUDED, but PR 329 is OPEN not merged
       -- same premature-[x] error as the item above, found by the same review.
