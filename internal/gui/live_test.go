@@ -87,7 +87,7 @@ func TestLiveController_ReadAndDriveRoundTrip(t *testing.T) {
 	cancel()
 	select {
 	case <-done:
-	case <-time.After(3 * time.Second):
-		t.Fatal("supervisor did not exit within 3s")
+	case <-time.After(guiWaitBudget):
+		t.Fatal("supervisor did not exit within guiWaitBudget; it is hung, not merely slow")
 	}
 }
