@@ -105,3 +105,42 @@ func TestEmptyPlanIsNotFlaggedAsDead(t *testing.T) {
 			"awaiting tasks, not dead, and flagging it marks every new plan")
 	}
 }
+
+// TestCompletedPlanIsNotFlaggedAsStuck closes a P2 review finding on my own
+// signal: `runnable == 0` is also true of a plan that SUCCEEDED. Every task
+// done means nothing left to run, so a finished plan was flagged "no runnable
+// work" in all three renderers -- which reads as a failure on work that went
+// perfectly.
+//
+// Exhaustion by success and exhaustion by failure are different states, and
+// only the second is worth warning about.
+func TestCompletedPlanIsNotFlaggedAsStuck(t *testing.T) {
+	ctx := context.Background()
+	s := openTestStore(t)
+	projectID := mustCreateProject(t, s, "plan-health-done")
+	planID := seedReadyGraph(t, s, projectID, "finished", []GraphTaskSpec{
+		readySpec("a", "0"),
+	})
+	sessionID, workerID := mustCreateSessionAndWorker(t, s, "1")
+	if _, err := s.ClaimTask(ctx, planID, "a", sessionID, workerID); err != nil {
+		t.Fatalf("ClaimTask: %v", err)
+	}
+	if _, err := s.MarkDone(ctx, planID, "a", sessionID, "{}"); err != nil {
+		t.Fatalf("MarkDone: %v", err)
+	}
+
+	snap, err := s.ReadOperatorSnapshot(ctx, OperatorSnapshotQuery{ProjectID: projectID})
+	if err != nil {
+		t.Fatalf("snapshot: %v", err)
+	}
+	if len(snap.Plans.Items) != 1 {
+		t.Fatalf("got %d plan(s), want 1", len(snap.Plans.Items))
+	}
+	if snap.Plans.Items[0].NoRunnableWork {
+		t.Errorf("a plan whose every task is DONE was flagged as stuck "+
+			"(status=%q done=%d/%d); exhaustion by success is not exhaustion by "+
+			"failure, and warning on it puts a red mark on work that went "+
+			"perfectly", snap.Plans.Items[0].Status,
+			snap.Plans.Items[0].TaskDone, snap.Plans.Items[0].TaskTotal)
+	}
+}

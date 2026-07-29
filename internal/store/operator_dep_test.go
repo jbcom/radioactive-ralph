@@ -286,3 +286,60 @@ func TestTransitiveBlockerTerminatesOnACycle(t *testing.T) {
 			"tracking must terminate without a depth cap")
 	}
 }
+
+// TestSnapshotStaysFastOnALongChain guards the P1 a review caught: the first
+// blocker walk ran per TASK, re-deriving the same reachability for every row.
+// An imported ordered group is a 1:1 dependency chain, so cost grew
+// quadratically on exactly the long plans most likely to contain a dead
+// ancestor -- measured at 1.3s for 300 tasks, on a query every TUI and GUI
+// refresh runs.
+//
+// Walking FORWARD from failures once brought that to ~26ms. The bound here is
+// deliberately loose (2s): this is a guard against reintroducing quadratic
+// behaviour, not a benchmark, and a tight threshold would flake on a loaded CI
+// runner and get deleted.
+func TestSnapshotStaysFastOnALongChain(t *testing.T) {
+	ctx := context.Background()
+	s := openTestStore(t)
+	projectID := mustCreateProject(t, s, "perf-chain")
+	const chain = 300
+	specs := []GraphTaskSpec{readySpec("t0", "0")}
+	for i := 1; i < chain; i++ {
+		specs = append(specs, readySpec(
+			fmt.Sprintf("t%d", i), "0", fmt.Sprintf("t%d", i-1)))
+	}
+	planID := seedReadyGraph(t, s, projectID, "long", specs)
+	sessionID, workerID := mustCreateSessionAndWorker(t, s, "1")
+	if _, err := s.ClaimTask(ctx, planID, "t0", sessionID, workerID); err != nil {
+		t.Fatalf("ClaimTask: %v", err)
+	}
+	if _, err := s.MarkFailed(ctx, planID, "t0", sessionID, "boom", 0); err != nil {
+		t.Fatalf("MarkFailed: %v", err)
+	}
+
+	start := time.Now()
+	snap, err := s.ReadOperatorSnapshot(ctx, OperatorSnapshotQuery{
+		ProjectID: projectID, TaskLimit: 200,
+	})
+	if err != nil {
+		t.Fatalf("snapshot: %v", err)
+	}
+	elapsed := time.Since(start)
+
+	// The work must still be CORRECT, or "fast" is meaningless.
+	blocked := 0
+	for _, it := range snap.Tasks.Items {
+		if it.BlockedByTaskID != "" {
+			blocked++
+		}
+	}
+	if blocked == 0 {
+		t.Fatal("no task reported a blocker; the timing below would be measuring " +
+			"a query that found nothing")
+	}
+	if elapsed > 2*time.Second {
+		t.Errorf("snapshot over a %d-task chain took %v; the per-task blocker "+
+			"walk is quadratic and this is the shape that exposes it",
+			chain, elapsed.Round(time.Millisecond))
+	}
+}
