@@ -867,6 +867,31 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
       real read of it. Do not mistake a green run for having verified the
       diagnostic.
 
+- [ ] THE PROMPT DETECTOR MATCHES ERROR TEXT, not just prompts -- and that
+      probably explains the whole interactive_prompt history.
+      Chain, each step verified:
+        - the taxonomy classified a real block as interactive_prompt_PERMISSION
+        - so I looked for a denied write, and found codex is
+          SupportsContainment:FALSE -- it runs UNCONTAINED, so Ralph denies it
+          nothing (binding.go:215-231)
+        - and codexArgs unconditionally passes
+          `--dangerously-bypass-approvals-and-sandbox` (codex.go:190), so codex
+          should never ask for approval either
+        - which leaves the pattern. DefaultPromptPatterns contains a bare
+          `(?i)permission`, and it matches "permission denied" and "you do not
+          have permission to write" -- ERROR TEXT, not a question.
+      So an ordinary failure gets killed as a blocked turn and reported as
+      interactive_prompt: the CLI was never waiting for anybody.
+      This PREDATES the taxonomy; naming the kind is only what made it legible.
+      It also reframes the earlier readings -- "the agent asked for input" may
+      have been "the agent printed an error containing the word permission".
+      FIX: the prompt patterns must match an ASKED question, not a word.
+      `permission` / `approve` / `allow this` need the same treatment the
+      open-question pattern got -- anchoring, or a trailing `?`, or proximity
+      to a y/n affordance.
+      Verify by reverting: "permission denied" must NOT be detected as a
+      prompt, while "Claude needs permission to edit main.go" still is.
+
 - [ ] [WAIT] unit-orch is INTERMITTENT and currently PASSING, so there is
       nothing to act on until it fails again. Not closed: an intermittent bug
       that stops reproducing is hidden, not fixed, and the decision log (wired
