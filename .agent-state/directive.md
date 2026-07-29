@@ -920,8 +920,23 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
       blocks twice as often as provider. The entry was built on a single data
       point treated as a pattern, and the package it pointed at is not even the
       one that blocks most.
-      NEXT: no containment work. The open proof is a run built with 356 where
-      unit-provider reaches `done`.
+      CONFIRMED 2026-07-29 on run 152155, built with 356. The prediction was
+      that a real block would stop being MISCATEGORISED, not that the step
+      would go green -- and that is what happened:
+        091609  failed  interactive_prompt
+        133200  failed  interactive_prompt
+        142624  failed  interactive_prompt_permission   <- sent me to containment
+        152155  failed  NONE                            <- with 356
+      Same underlying red test in every case. The category is now honest.
+      AND THE ACTUAL BUG, which the false category hid for four runs, was in
+      the failure payload the whole time -- one query into the events table:
+        TestCodexRunnerTurnFailedTerminatesEndlessTail
+        agent: PTY process group 59054 still has live members after cleanup
+      Process-session cleanup leaves a live child in the PTY process group, so
+      the turn reports a cleanup error instead of ErrCodexTurnFailed. It does
+      NOT reproduce in isolation (-count=8 -race passes); it needs the nine
+      concurrent steps the self-test dispatches after `build`.
+      NEXT: fix the PTY cleanup race. No containment work.
       A BLOCK IS NOT THE COUNTER-PROOF, and the gate is deliberately narrow
       because a loose one is how this entry went wrong the first time. The run
       can block for reasons that say nothing about containment --
