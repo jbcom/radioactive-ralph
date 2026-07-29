@@ -49,23 +49,26 @@ fi
 # only run once is one nobody runs. Treat that specific conflict as "already
 # imported, report on the existing run" rather than an error, while any OTHER
 # import failure still stops the script.
-echo "self-test: importing $PLAN"
-# Match THIS plan's slug, not any "already exists" text. A bare substring match
-# swallowed unrelated conflicts (a duplicate task id, a colliding reservation)
-# and reported them as a completed import -- the failure mode this whole session
-# has been about: an error path whose output is indistinguishable from success.
-SLUG="prove-the-build-is-sound"
-if ! out=$("$BIN" plan import "$PLAN" 2>&1); then
-  if printf '%s' "$out" | grep -q "plan with slug already exists" &&
-     printf '%s' "$out" | grep -q "$SLUG"; then
-    echo "self-test: $SLUG already imported; reporting on the existing run"
-  else
-    printf '%s\n' "$out" >&2
-    exit 1
-  fi
-else
-  printf '%s\n' "$out"
-fi
+# Each run imports under a UNIQUE title, hence a unique slug.
+#
+# The first version treated a duplicate-slug conflict as "already imported" and
+# reported on the existing run. That was wrong, and the review that flagged it
+# was right: the stored plan keeps whatever steps it had at first import, so a
+# re-run after changing the plan OR the code reports a STALE result. Verified
+# after this landed -- the stored plan still had 6 tasks while the file defined
+# 12, and none of the new step ids existed. A self-test that reports green for
+# code it never ran is the worst possible outcome for this script.
+#
+# The tracked plan is never modified: only the H1 title is rewritten, into a
+# temp copy. Old runs stay in the DB as history, and the operator surface marks
+# them "no runnable work" so a stale plan is visibly distinct from a live one.
+RUN_ID="$(date -u +%Y%m%d-%H%M%S)"
+TMP_PLAN="$(mktemp -t ralph-self-test-XXXXXX).md"
+trap 'rm -f "$TMP_PLAN"' EXIT
+sed "1s|^# .*|# Prove the build is sound ($RUN_ID)|" "$PLAN" > "$TMP_PLAN"
+
+echo "self-test: importing $PLAN as run $RUN_ID"
+"$BIN" plan import "$TMP_PLAN"
 
 report() {
   "$BIN" status
@@ -87,14 +90,14 @@ fi
 for _ in $(seq 1 90); do
   sleep 20
   snapshot=$("$BIN" status --json 2>/dev/null) || continue
-  state=$(printf '%s' "$snapshot" | python3 -c '
-import json,sys
+  state=$(printf '%s' "$snapshot" | RUN_SLUG="prove-the-build-is-sound-$RUN_ID" python3 -c '
+import json,os,sys
 try:
     d = json.load(sys.stdin)
 except Exception:
     sys.exit()
 for p in d.get("plans", {}).get("items", []):
-    if p.get("slug") == "prove-the-build-is-sound":
+    if p.get("slug", "").startswith("prove-the-build-is-sound"):
         done, total = p.get("task_done", 0), p.get("task_total", 0)
         if p.get("no_runnable_work"):
             print(f"DEAD {done}/{total}")
