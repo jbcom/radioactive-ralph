@@ -50,9 +50,15 @@ fi
 # imported, report on the existing run" rather than an error, while any OTHER
 # import failure still stops the script.
 echo "self-test: importing $PLAN"
+# Match THIS plan's slug, not any "already exists" text. A bare substring match
+# swallowed unrelated conflicts (a duplicate task id, a colliding reservation)
+# and reported them as a completed import -- the failure mode this whole session
+# has been about: an error path whose output is indistinguishable from success.
+SLUG="prove-the-build-is-sound"
 if ! out=$("$BIN" plan import "$PLAN" 2>&1); then
-  if printf '%s' "$out" | grep -q "already exists"; then
-    echo "self-test: plan already imported; reporting on the existing run"
+  if printf '%s' "$out" | grep -q "plan with slug already exists" &&
+     printf '%s' "$out" | grep -q "$SLUG"; then
+    echo "self-test: $SLUG already imported; reporting on the existing run"
   else
     printf '%s\n' "$out" >&2
     exit 1
@@ -71,17 +77,38 @@ if [ "${1:-}" != "--watch" ]; then
   exit 0
 fi
 
-# Follow until the plan either completes or goes dead. Both are terminal and
-# both are answers -- "dead" is a real result, not a failure of the harness.
-for _ in $(seq 1 60); do
+# Follow until the plan reaches a TERMINAL state, which is either outcome:
+# every step done, or the plan dead because a step failed.
+#
+# The first version broke as soon as the plan's warning line appeared -- but
+# writePlanWarnings emits that line ONLY when the plan is dead, so a successful
+# run never matched and sat through every poll before reporting. Watching for
+# one outcome and calling it "terminal" is how a watcher hangs on success.
+for _ in $(seq 1 90); do
   sleep 20
-  line=$("$BIN" status 2>/dev/null | grep -E "^  plan prove-the-build-is-sound" || true)
-  if [ -n "$line" ]; then
-    echo "$line"
-    break
-  fi
-  "$BIN" status 2>/dev/null | grep -E "^  (build|unit|race|lint|e2e|claims) " || true
-  echo "---"
+  snapshot=$("$BIN" status --json 2>/dev/null) || continue
+  state=$(printf '%s' "$snapshot" | python3 -c '
+import json,sys
+try:
+    d = json.load(sys.stdin)
+except Exception:
+    sys.exit()
+for p in d.get("plans", {}).get("items", []):
+    if p.get("slug") == "prove-the-build-is-sound":
+        done, total = p.get("task_done", 0), p.get("task_total", 0)
+        if p.get("no_runnable_work"):
+            print(f"DEAD {done}/{total}")
+        elif total and done >= total:
+            print(f"COMPLETE {done}/{total}")
+        else:
+            print(f"RUNNING {done}/{total}")
+' 2>/dev/null)
+  [ -z "$state" ] && continue
+  echo "self-test: $state"
+  case "$state" in
+    COMPLETE*) echo "self-test: every step verified"; break ;;
+    DEAD*)     echo "self-test: a step failed terminally — see the rows below"; break ;;
+  esac
 done
 
 echo

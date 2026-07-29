@@ -56,9 +56,9 @@
 
 10. lint the command packages `accept: golangci-lint run ./cmd/...`
 
-   ```ralph-task
-   {"id": "lint-cmd", "after": ["build"]}
-   ```
+    ```ralph-task
+    {"id": "lint-cmd", "after": ["build"]}
+    ```
 
 Every step carries an inline `accept:` command, so completion is re-verified by
 the orchestrator rather than accepted on worker evidence. A step without one is
