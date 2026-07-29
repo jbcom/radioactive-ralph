@@ -804,7 +804,19 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
       yet the verdict -- race has not finished -- but the first phase that
       previously failed has now passed.
 
-- [ ] store.DeletePlan HAS NO CALLERS and no CLI surface. Second unwired
+- [ ] [WAIT] FIXED in PR 339 (open): CmdPlanDelete through the client, server
+      dispatch, supervisor handler, and a `plan delete <id> --yes` subcommand.
+      End-to-end delete against a live supervisor is still unverified -- the
+      running one predates the binary and correctly answered "unknown command:
+      plan-delete", and a self-test run was in flight that a restart would have
+      killed. Verify after merge.
+      That work also exposed a REAL HAZARD worth remembering: ipc.DriveHandler
+      is an OPTIONAL interface detected by type assertion, so adding a method
+      silently removed EVERY drive command from the test fake -- plan-import,
+      task-approve, worker-kill -- with no compile error. The same slip against
+      the real Supervisor would have shipped and disabled the whole drive
+      surface at runtime. Now guarded by a compile-time assertion.
+      store.DeletePlan HAD NO CALLERS and no CLI surface. Second unwired
       subsystem this session, in code I reviewed earlier without noticing.
       Live consequence: the operator task page saturates at
       MaxOperatorPageLimit (200) and each self-test run adds 12 tasks, so after
