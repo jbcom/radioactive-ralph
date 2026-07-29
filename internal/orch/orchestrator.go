@@ -71,6 +71,8 @@ type Orchestrator struct {
 	stallTimeout    time.Duration
 	spendCapUSD     map[string]float64 // provider name -> cap; 0/absent = uncapped
 	acceptanceCheck AcceptanceChecker
+	persistBudget   time.Duration
+	verifyBudget    time.Duration
 
 	// containProviderWrites confines each provider turn to writing beneath the
 	// project directory, enforced by the kernel (internal/contain).
@@ -281,6 +283,26 @@ func (o *Orchestrator) resolveContainment(
 // window.
 const workerHeartbeatInterval = 20 * time.Second
 
+// persistBudget bounds the post-run STORE WRITES -- usage accounting, evidence,
+// mark-done/failed, worker release. It is detached from the supervisor's run
+// context so a nearly-complete turn still records its result during shutdown.
+//
+// It is sized for database writes, which is why acceptance verification must
+// NOT be charged to it: verification RE-RUNS the step's acceptance command, and
+// a real plan's command can be a test suite. A live self-test had a step whose
+// command took 30s warm and 138s under load against this 30s bound. It could
+// not fit, persistCtx expired, the task was never marked, and it sat 'running'
+// with a dead heartbeat -- the heartbeat goroutine stops the instant the turn
+// returns -- until the reaper requeued work that had already succeeded. Six
+// times in one run.
+const persistBudget = 30 * time.Second
+
+// verificationBudget bounds acceptance verification, which is a different kind
+// of work: an operator-authored command that may legitimately run for minutes.
+// It is deliberately generous. Verification that takes too long should fail on
+// its own terms, not by silently losing the task to a store-write deadline.
+const verificationBudget = 10 * time.Minute
+
 // defaultTurnRetries is how many times a RETRYABLE provider failure is
 // re-dispatched before the task fails terminally. A non-retryable failure gets
 // zero regardless — see provider.Failure.RetryBudget.
@@ -299,6 +321,29 @@ const defaultTurnRetries = 3
 // errors are ignored — a missed beat is self-correcting on the next tick, and a
 // heartbeat failure must never fail the turn.
 func (o *Orchestrator) runWithHeartbeat(hbCtx context.Context, workerID string, fn func() (provider.Result, error)) (provider.Result, error) {
+	var out provider.Result
+	err := o.beatWhile(hbCtx, workerID, func() error {
+		var runErr error
+		out, runErr = fn()
+		return runErr
+	})
+	return out, err
+}
+
+// beatWhile keeps workerID's heartbeat alive for the duration of fn.
+//
+// Extracted from runWithHeartbeat because ACCEPTANCE VERIFICATION needs the
+// same protection and did not have it. The heartbeat stopped the instant the
+// provider turn returned, while verification -- which re-runs the step's
+// acceptance command, potentially a multi-minute test suite -- ran afterwards
+// with nothing beating. The reaper then reclaimed at 90s and the owner-guarded
+// MarkDone became a benign no-op, so successful work was silently requeued.
+//
+// Giving verification a longer budget without this made that WORSE, not better:
+// a 10-minute verification window with a 90-second stale threshold guarantees
+// the reclaim it was meant to prevent. The budget and the heartbeat have to move
+// together.
+func (o *Orchestrator) beatWhile(hbCtx context.Context, workerID string, fn func() error) error {
 	interval := workerHeartbeatInterval
 	if o.heartbeatInterval > 0 {
 		interval = o.heartbeatInterval // test override
@@ -443,6 +488,41 @@ func WithSpendCap(providerName string, capUSD float64) Option {
 // VerifyAndComplete. Primarily for tests.
 func WithAcceptanceChecker(c AcceptanceChecker) Option {
 	return func(o *Orchestrator) { o.acceptanceCheck = c }
+}
+
+// effectivePersistBudget is the configured store-write budget, or the default.
+func (o *Orchestrator) effectivePersistBudget() time.Duration {
+	if o.persistBudget > 0 {
+		return o.persistBudget
+	}
+	return persistBudget
+}
+
+// effectiveVerificationBudget is the configured acceptance-verification budget,
+// or the default.
+func (o *Orchestrator) effectiveVerificationBudget() time.Duration {
+	if o.verifyBudget > 0 {
+		return o.verifyBudget
+	}
+	return verificationBudget
+}
+
+// WithVerificationBudget overrides how long acceptance verification may run.
+// Primarily for tests, which cannot wait out the real one.
+func WithVerificationBudget(d time.Duration) Option {
+	return func(o *Orchestrator) { o.verifyBudget = d }
+}
+
+// WithHeartbeatInterval overrides how often a running worker's heartbeat is
+// refreshed. Primarily for tests, which cannot wait out the real 20s.
+func WithHeartbeatInterval(d time.Duration) Option {
+	return func(o *Orchestrator) { o.heartbeatInterval = d }
+}
+
+// WithPersistBudget overrides the post-run store-write budget. Primarily for
+// tests, which cannot wait out the real one.
+func WithPersistBudget(d time.Duration) Option {
+	return func(o *Orchestrator) { o.persistBudget = d }
 }
 
 // WithDecisionLogRoot overrides the XDG-ish root directory used for
@@ -1072,7 +1152,7 @@ func (o *Orchestrator) recoverDispatchPanic(ctx context.Context, projectID, plan
 	// Detach + bound the writes: the panic may be unwinding during shutdown,
 	// and we must not lose the record or leave the claim wedged on a cancelled
 	// ctx.
-	persistCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+	persistCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), o.effectivePersistBudget())
 	defer cancel()
 	_ = o.store.Emit(persistCtx, store.EmitOpts{
 		ProjectID: projectID,
@@ -1992,7 +2072,7 @@ func (o *Orchestrator) dispatchWorker(ctx context.Context, projectID, projectDir
 	// verified, or a nearly-complete turn is silently lost on shutdown and its
 	// task stuck 'running'. persistCtx is detached from ctx's cancellation with a
 	// bounded timeout so these writes land even as ctx is being torn down.
-	persistCtx, persistCancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+	persistCtx, persistCancel := context.WithTimeout(context.WithoutCancel(ctx), o.effectivePersistBudget())
 	defer persistCancel()
 
 	// Spend is real the moment tokens were billed, independent of whether
@@ -2291,7 +2371,7 @@ func (o *Orchestrator) runFanoutGroup(ctx context.Context, projectID, projectDir
 		// Released through the same path a run error uses, including its owner
 		// guard: if the reaper already reclaimed a task, MarkFailed must not
 		// stomp the new owner.
-		releaseCtx, releaseCancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+		releaseCtx, releaseCancel := context.WithTimeout(context.WithoutCancel(ctx), o.effectivePersistBudget())
 		defer releaseCancel()
 		failure := provider.ClassifyFailure(cerr)
 		for _, ds := range claimed {
@@ -2352,7 +2432,7 @@ func (o *Orchestrator) runFanoutGroup(ctx context.Context, projectID, projectDir
 	// cancellation, bounded timeout) so a nearly-complete fan-out turn's evidence
 	// + verification still land even as the supervisor tears ctx down. See the
 	// same note in dispatchWorker.
-	persistCtx, persistCancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+	persistCtx, persistCancel := context.WithTimeout(context.WithoutCancel(ctx), o.effectivePersistBudget())
 	defer persistCancel()
 
 	// Spend is real the moment tokens were billed, independent of
@@ -2420,9 +2500,24 @@ func (o *Orchestrator) runFanoutGroup(ctx context.Context, projectID, projectDir
 	// and keep going, then always release the worker.
 	var verifyErr error
 	for _, ds := range claimed {
+		// A FRESH budget per task, not one shared across the group.
+		//
+		// VerifyAndCompleteAs detaches its own acceptance check, but only AFTER
+		// its initial GetTask/projectDirFor reads -- which still run on the
+		// caller's context. Handing every task the same persistCtx meant one slow
+		// verification could exhaust it, and every remaining task in the group
+		// then failed at GetTask with "context deadline exceeded" before its
+		// verification even started, staying 'running' until the reaper.
+		//
+		// Sequential verification of N tasks is legitimately N times one task's
+		// work, so a budget sized for one cannot bound the loop.
+		taskCtx, cancelTask := context.WithTimeout(
+			context.WithoutCancel(ctx), o.effectivePersistBudget())
 		// Same reason as the per-step path: the reporting session, not whoever
 		// owns the task by the time verification runs.
-		if _, err := o.VerifyAndCompleteAs(persistCtx, planID, ds.task.ID, sessionID, ev); err != nil && verifyErr == nil {
+		_, err := o.VerifyAndCompleteAs(taskCtx, planID, ds.task.ID, sessionID, ev)
+		cancelTask()
+		if err != nil && verifyErr == nil {
 			verifyErr = fmt.Errorf("orch: verify and complete %s: %w", ds.task.ID, err)
 		}
 	}

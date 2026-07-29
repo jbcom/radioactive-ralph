@@ -163,7 +163,12 @@ func TestDispatchAttributesEvidenceToTheReportingSession(t *testing.T) {
 				"by then, overwriting its replacement (#248)", trimmed)
 		}
 	}
-	if n := strings.Count(text, "o.VerifyAndCompleteAs(persistCtx"); n != 2 {
+	// Counted by CALL, not by the caller's variable name. The first version
+	// matched "o.VerifyAndCompleteAs(persistCtx" and broke the moment the
+	// fan-out loop switched to a per-task context -- a rename, with the property
+	// it guards untouched. A check keyed to an incidental identifier reports a
+	// problem that does not exist and hides the one it was written for.
+	if n := strings.Count(text, "o.VerifyAndCompleteAs("); n != 2 {
 		t.Errorf("found %d attributed verification calls, want 2 (per-step and "+
 			"fan-out); a new dispatch path may be unattributed", n)
 	}
