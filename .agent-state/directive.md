@@ -539,7 +539,6 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
       The operator surface carried it end to end -- category on the row, no
       raw provider text, and the dependent steps naming their root blocker.
 
-<<<<<<< HEAD
 - [x] #321 MERGED. Folded three overlapping AGENTS.md rules into one organized
       by layer -- check, setup, threshold. All PRs landed: open=0, queued=0.
 
