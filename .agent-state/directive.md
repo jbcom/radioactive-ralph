@@ -963,11 +963,24 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
       me: the `current != member` identity check fired ZERO times across 20/20
       reproductions, because `currentSession != sessionID` catches the
       reparent first. Recorded so nobody re-derives it.
-      HONEST LIMIT: the tests do NOT prove that fix. Three mutations survive
-      them, because on an idle host enumeration drops every member instantly
-      (0 at +0ms) so the deadline branch never runs, and a reaped pid returns
-      EIO which short-circuits the predicate. Reproducing the lag on demand
-      needs a syscall fake, which would prove nothing about the real code.
+      IT IS PROVEN NOW, but only after review pushed back. My first version
+      shipped with three surviving mutations and a comment ADMITTING the tests
+      proved nothing -- on an idle host enumeration drops every member
+      instantly (0 at +0ms), so the deadline branch never ran. Documenting a
+      gap is not closing it; a reviewer said so and was right.
+      The re-check now sits behind a reVerifyStillLive seam, so the branch is
+      reachable without a saturated machine, and both directions fail on
+      mutation: drop the EIO case -> stale-pid test FAILS; stop keeping live
+      pids -> fail-closed test FAILS.
+      WRITING THAT TEST FOUND TWO MORE BUGS IN MY OWN FIX:
+        1. the predicate was `err == nil && found`, so ANY lookup error
+           dropped the pid -- a transient EIO on a LIVE member would have
+           silently excluded it and reported cleanup as clean while the worker
+           kept running, inverting the never-block invariant.
+        2. SysctlKinfoProc returns EIO, not ESRCH, for a fully reaped pid, so
+           a strict fail-closed rule kept exactly the stale entries the fix
+           exists to drop. The false leak would still have been reported.
+      Both were invisible until a test actually executed the branch.
       SEPARATELY (365): TestReviewCodex0145MaxCommandEventDoesNotFalseStall
       was measuring python3 interpreter startup inside a 2s stall bound. First
       byte now comes from /bin/sh; the event is byte-identical (sha256
