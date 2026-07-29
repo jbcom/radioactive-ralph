@@ -909,8 +909,42 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
       output as a finding, wrote the finding into the durable queue as
       settled, and every later pass inherited it as a premise instead of a
       claim. Category first, THEN what matched to earn it.
-      NEXT: no containment work. The open proof is a run built with 356 where
-      unit-provider reaches `done`.
+      THE BASE RATE, read from the store across every run, which nobody had
+      looked at before deciding what these blocks were:
+        orch      interactive_prompt              8
+        provider  interactive_prompt              4
+        (unlabelled plan) interactive_prompt      3
+        provider  interactive_prompt_permission   1
+      So the permission category -- the ONE that sent two passes into
+      containment -- occurred EXACTLY ONCE out of sixteen blocks. The entry was
+      built on a single data point treated as a pattern.
+      ORCH BLOCKS 1.6x AS OFTEN AS PROVIDER: 8 orch versus 5 provider, which is
+      4 generic PLUS the 1 permission row. I first wrote "twice as often" by
+      dropping the permission row from the provider total -- omitting the very
+      observation whose significance the paragraph argues about. The same error
+      this entry documents, made while documenting it.
+      CONFIRMED 2026-07-29 on run 152155, built with 356. The prediction was
+      that a real block would stop being MISCATEGORISED, not that the step
+      would go green -- and that is what happened:
+        091609  failed  interactive_prompt
+        133200  failed  interactive_prompt
+        142624  failed  interactive_prompt_permission   <- sent me to containment
+        152155  failed  NONE                            <- with 356
+      Same underlying red test in every case. The category is now honest.
+      AND THE ACTUAL BUG, which the false category hid for four runs, was in
+      the failure payload the whole time -- one query into the events table:
+        TestCodexRunnerTurnFailedTerminatesEndlessTail
+        agent: PTY process group 59054 still has live members after cleanup
+      Process-session cleanup leaves a live child in the PTY process group, so
+      the turn reports a cleanup error instead of ErrCodexTurnFailed. It did
+      NOT reproduce in 8 isolated repetitions (-count=8 -race), nor at
+      -count=6 -p 4, and WAS observed under the nine-step dispatch the
+      self-test issues after `build`.
+      That is an OBSERVATION, not a threshold: no reduced-concurrency
+      experiment has been run, so "needs nine" is unproven and would
+      overconstrain the next attempt. The minimum reproducing load is
+      still UNKNOWN.
+      NEXT: fix the PTY cleanup race. No containment work.
       A BLOCK IS NOT THE COUNTER-PROOF, and the gate is deliberately narrow
       because a loose one is how this entry went wrong the first time. The run
       can block for reasons that say nothing about containment --
