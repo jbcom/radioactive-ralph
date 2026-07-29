@@ -526,6 +526,11 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
 
 ## Rolling improvement queue (directive 0 appends here)
 
+- [ ] [WAIT] Land the 1 open PR: #310 (flag a plan with no runnable work -- the
+      plan-level form of the stale claim, found by the FIFTH dogfooding pass).
+      Auto-merge ARMED. Hash-prefixed deliberately: guard 9 extracts
+      `#[0-9]{3}` from THIS line.
+
 - [x] DONE 2026-07-28 by a FIFTH dogfooding pass. With every task row now
       telling the truth, the remaining lie was one level up: BOTH of Ralph's
       own plans reported `status=active task_done=0` while every task in them
