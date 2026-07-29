@@ -601,6 +601,12 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
          This is the class of bug only a real run finds. Every unit test
          passes; the step itself passes in 138s standalone. It fails only when
          a long quiet command meets a watchdog under load.
+         TERMINAL VERDICT: DEAD 9/12, race=done reclaims=2. The step SURVIVED
+         and passed on its third claim, which confirms the diagnosis rather
+         than merely being consistent with it -- a genuinely broken step would
+         have exhausted its retry budget instead of completing. DEAD (not
+         COMPLETE) is the honest outcome: lint-internal failed, so claims and
+         e2e stayed correctly blocked and the plan reports no runnable work.
 
 - [ ] The stall lease is invisible until it bites. NOT gated on the `-v` fix
       (PR 322, deliberately un-hashed: this item is the independent
