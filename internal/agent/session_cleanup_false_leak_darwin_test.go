@@ -35,7 +35,10 @@ func TestCleanupDoesNotReportAReapedProcessAsLive(t *testing.T) {
 	// sh -> sleep, the exact shape the provider fakes use: the child inherits
 	// the leader's process group, which is precisely the member that takes the
 	// unchecked `continue` path.
-	if err := os.WriteFile(script, []byte("#!/bin/sh\nsleep 300\n"), 0o755); err != nil {
+	// `sleep 300 & wait`, not a bare `sleep 300`: as the shell's LAST command
+	// the latter can be exec-optimised into the shell process itself,
+	// collapsing the two-process tree this test needs.
+	if err := os.WriteFile(script, []byte("#!/bin/sh\nsleep 300 &\nwait\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 
@@ -49,11 +52,19 @@ func TestCleanupDoesNotReportAReapedProcessAsLive(t *testing.T) {
 
 	// Let the shell fork its sleep child into the session.
 	deadline := time.Now().Add(2 * time.Second)
+	sawTree := false
 	for time.Now().Before(deadline) {
 		if members, err := darwinSessionMembers(sessionID); err == nil && len(members) > 1 {
+			sawTree = true
 			break
 		}
 		time.Sleep(5 * time.Millisecond)
+	}
+	// Fail rather than proceed: without the child, this exercises a
+	// single-process session and silently stops testing what it claims to.
+	if !sawTree {
+		t.Fatalf("never observed a multi-member session for pid %d; the "+
+			"sh->sleep tree this test depends on was never established", pid)
 	}
 
 	// Kill the whole group, exactly as the cleanup path's caller does, so
@@ -61,8 +72,9 @@ func TestCleanupDoesNotReportAReapedProcessAsLive(t *testing.T) {
 	_ = syscall.Kill(-pid, syscall.SIGKILL)
 	_, _ = cmd.Process.Wait()
 
-	// HONEST SCOPE, stated because it would otherwise look like proof it is
-	// not: this test does NOT exercise the re-verification. Measured on an
+	// HONEST SCOPE: this test does NOT exercise the re-verification --
+	// TestDeadlineDropsAStaleEnumeratedPidButKeepsALiveOne below does, via the
+	// reVerifyStillLive seam, and it FAILS when the fix is removed. Measured on an
 	// idle host, kern.proc.all drops every member IMMEDIATELY after the group
 	// SIGKILL -- 2 members before, 0 at +0ms, +2ms and +20ms -- so `remaining`
 	// is empty, cleanup returns at the len(remaining)==0 check, and the
@@ -132,4 +144,40 @@ func TestReVerificationDropsAPidThatIsNoLongerInTheSession(t *testing.T) {
 			"(err=%v found=%v); cleanup would report it as a live leaked member",
 			dead, err, found)
 	}
+}
+
+// TestDeadlineDropsAStaleEnumeratedPidButKeepsALiveOne is the test the other
+// two could not be: it FAILS when the deadline re-check is removed.
+//
+// The seam is reVerifyStillLive. The behavioural test above cannot reach the
+// deadline branch at all -- on an idle host kern.proc.all drops every member
+// within one poll -- so this injects the lagging enumeration directly, which
+// is the only way to exercise the branch without a real saturated machine.
+func TestDeadlineDropsAStaleEnumeratedPidButKeepsALiveOne(t *testing.T) {
+	// A pid the kernel is finished with: exactly what a lagging enumeration
+	// keeps reporting after the reap.
+	done := exec.Command("/bin/sh", "-c", "exit 0")
+	if err := done.Run(); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	stale := done.Process.Pid
+
+	t.Run("stale pid is dropped, no leak reported", func(t *testing.T) {
+		got := reVerifyStillLive([]int{stale}, currentSession(os.Getpid()))
+		if len(got) != 0 {
+			t.Fatalf("re-verify kept %v for a reaped pid; cleanup would report "+
+				"a leak for a process the kernel has already finished with", got)
+		}
+	})
+
+	// FAIL CLOSED: a pid that is genuinely alive in this session must survive
+	// the re-check, or a real leaked worker would vanish from the report.
+	t.Run("live in-session pid is kept", func(t *testing.T) {
+		self := os.Getpid()
+		got := reVerifyStillLive([]int{self}, currentSession(self))
+		if len(got) != 1 || got[0] != self {
+			t.Fatalf("re-verify dropped a LIVE in-session pid (%d), got %v; a "+
+				"real leak would be silently reported as clean", self, got)
+		}
+	})
 }
