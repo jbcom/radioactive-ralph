@@ -88,3 +88,73 @@ func TestVerificationOutlivingThePersistBudgetStillMarksTheTask(t *testing.T) {
 			"not leave the task unmarked", got.Status)
 	}
 }
+
+// TestVerificationKeepsTheHeartbeatAlive is the other half, and without it the
+// budget fix makes things WORSE.
+//
+// The heartbeat goroutine stops the instant the provider turn returns.
+// Verification runs after that, so a long acceptance command previously ran
+// with nothing beating -- and giving it a 10-minute budget against a 90-second
+// stale threshold guarantees the reclaim it was meant to prevent. The reaper
+// requeues the task, the owner-guarded MarkDone becomes a benign no-op, and
+// successful work is silently lost.
+//
+// A reviewer caught this on the fix itself: the budget and the heartbeat have
+// to move together.
+//
+// Counts BEATS rather than comparing stored timestamps. last_heartbeat is
+// second-resolution, so a sub-second test cannot tell "never beat" from "beat
+// twice within one second" -- the first version asserted exactly that and
+// failed for a reason unrelated to the behaviour.
+func TestVerificationKeepsTheHeartbeatAlive(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+
+	slow := func(ctx context.Context, _ string, _ string, _ a2a.Evidence) (bool, string, error) {
+		select {
+		case <-time.After(2500 * time.Millisecond):
+			return true, "", nil
+		case <-ctx.Done():
+			return false, "", ctx.Err()
+		}
+	}
+	o := New(s, WithAcceptanceChecker(slow), WithHeartbeatInterval(200*time.Millisecond))
+
+	projectID := mustCreateTestProject(t, s, "beat-project")
+	planID := mustCreateTestPlan(t, s, projectID, "beat-plan", "Ship", "# Ship\n\n- do the thing\n")
+	if err := s.CreateTask(ctx, store.CreateTaskOpts{
+		PlanID: planID, ID: "0.0", Description: "do the thing",
+		AcceptanceJSON: `{"command":"exit 0"}`,
+	}); err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+	sessionID, workerID := mustCreateSessionAndWorkerForTest(t, s)
+	if _, err := s.ClaimNextReady(ctx, planID, sessionID, workerID); err != nil {
+		t.Fatalf("ClaimNextReady: %v", err)
+	}
+
+	var before string
+	if err := s.DB().QueryRowContext(ctx,
+		"SELECT last_heartbeat FROM workers WHERE id = ?", workerID).Scan(&before); err != nil {
+		t.Fatalf("read heartbeat: %v", err)
+	}
+
+	if _, err := o.VerifyAndComplete(ctx, planID, "0.0",
+		a2a.Evidence{Ran: "exit 0", ExitCode: 0, Output: "done"}); err != nil {
+		t.Fatalf("VerifyAndComplete: %v", err)
+	}
+
+	// 2.5s of verification, long enough for last_heartbeat's SECOND resolution
+	// to move. The first version ran 300ms and compared timestamps, which cannot
+	// distinguish "never beat" from "beat twice inside one second".
+	var after string
+	if err := s.DB().QueryRowContext(ctx,
+		"SELECT last_heartbeat FROM workers WHERE id = ?", workerID).Scan(&after); err != nil {
+		t.Fatalf("read heartbeat: %v", err)
+	}
+	if after <= before {
+		t.Errorf("worker heartbeat did not advance across a 2.5s verification "+
+			"(before=%s after=%s); a long acceptance check runs unprotected and "+
+			"the reaper reclaims the task out from under it", before, after)
+	}
+}

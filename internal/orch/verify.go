@@ -296,9 +296,26 @@ func (o *Orchestrator) VerifyAndCompleteAs(
 	verifyCtx, cancelVerify := context.WithTimeout(
 		context.WithoutCancel(ctx), o.effectiveVerificationBudget())
 	defer cancelVerify()
-	ok, reason, err := o.acceptanceCheck(verifyCtx, dir, task.AcceptanceJSON, ev)
-	if err != nil {
-		return false, fmt.Errorf("orch: run acceptance check: %w", err)
+
+	// KEEP BEATING while it runs. The heartbeat goroutine stops the instant the
+	// provider turn returns, and verification happens after that -- so without
+	// this, a long acceptance command runs with nothing beating and the reaper
+	// reclaims the task at 90s. The owner-guarded MarkDone below then becomes a
+	// benign no-op and successful work is silently requeued.
+	//
+	// A longer verification budget WITHOUT this makes that strictly worse: a
+	// 10-minute window against a 90-second stale threshold guarantees the
+	// reclaim it was meant to prevent. The budget and the heartbeat move
+	// together or not at all.
+	var ok bool
+	var reason string
+	beatErr := o.beatWhile(verifyCtx, task.ClaimedByWorkerID, func() error {
+		var checkErr error
+		ok, reason, checkErr = o.acceptanceCheck(verifyCtx, dir, task.AcceptanceJSON, ev)
+		return checkErr
+	})
+	if beatErr != nil {
+		return false, fmt.Errorf("orch: run acceptance check: %w", beatErr)
 	}
 
 	// From here on, everything RECORDS THE VERDICT that verification just
