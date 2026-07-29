@@ -86,6 +86,21 @@ func TestA2AMessageCascadesOnTaskDelete(t *testing.T) {
 		t.Fatalf("AppendMessage: %v", err)
 	}
 
+	// Prove the row EXISTS before deleting it. Asserting a count is zero
+	// afterwards passes identically whether the cascade worked or the fixture
+	// never created anything -- a nearby delete test shipped that way and hid a
+	// real orphan bug until review.
+	var before int
+	if err := s.DB().QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM a2a_messages WHERE plan_id = ? AND task_id = ?`, planID, "t1",
+	).Scan(&before); err != nil {
+		t.Fatalf("count a2a_messages before delete: %v", err)
+	}
+	if before == 0 {
+		t.Fatal("fixture created no a2a_messages row; the cascade assertion below " +
+			"would pass without testing anything")
+	}
+
 	if _, err := s.DB().ExecContext(ctx, `DELETE FROM tasks WHERE plan_id = ? AND id = ?`, planID, "t1"); err != nil {
 		t.Fatalf("delete task: %v", err)
 	}
