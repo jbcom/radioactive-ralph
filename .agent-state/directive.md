@@ -602,8 +602,10 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
          passes; the step itself passes in 138s standalone. It fails only when
          a long quiet command meets a watchdog under load.
 
-- [ ] The stall lease is invisible until it bites (#322 lands the `-v` fix;
-      this item is the OBSERVABILITY follow-up it exposed). The `race` finding cost a
+- [ ] The stall lease is invisible until it bites. NOT gated on the `-v` fix
+      (PR 322, deliberately un-hashed: this item is the independent
+      OBSERVABILITY follow-up that finding exposed, not a wait on that PR).
+      The `race` finding cost a
       real diagnosis (2 reclaims read as a stuck row) for a step that was
       merely quiet, and NOTHING in the operator surface said so: the row shows
       reclaim_count, but not WHY the claim was lost. A stall-killed turn and a
