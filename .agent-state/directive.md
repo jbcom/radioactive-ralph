@@ -548,8 +548,15 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
       NOT project raw edges as a task list -- that is a DAG dump, not an
       answer. Project the ANSWER: for a task that cannot run, name the
       unsatisfied dependency and whether it is merely incomplete (will clear)
-      or terminal (failed/abandoned -- will not). The second case is the one
-      worth surfacing loudly; it is a dead plan wearing a `pending` badge.
+      or terminal (will not). The second case is the one worth surfacing
+      loudly; it is a dead plan wearing a `pending` badge.
+      TERMINAL IS VERIFIED, not assumed. Both readiness walks
+      (ready_partition.go:108, operator_snapshot.go:717) satisfy a dependency
+      only on 'done', 'skipped', 'decomposed'. MarkFailedWithPayload retries by
+      setting 'pending' and, once retries are exhausted, sets 'failed' -- and
+      no transition anywhere leaves 'failed'. So a dependent behind a failed
+      task can NEVER run, which is exactly what makes the bare `pending` badge
+      a lie worth fixing rather than a cosmetic nit.
       Gate: land #306 first, since it touches the same projection.
 
 - [x] #305 MERGED (CLI task table + blocked-reason in all three views + meso
