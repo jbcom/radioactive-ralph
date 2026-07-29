@@ -526,6 +526,11 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
 
 ## Rolling improvement queue (directive 0 appends here)
 
+- [ ] [WAIT] Land the 1 open PR: #319 (store.DeletePlan -- the retention
+      primitive, with the CLI surface deliberately scoped out). Auto-merge
+      ARMED, no failing checks. Hash-prefixed deliberately: guard 9 extracts
+      `#[0-9]{3}` from THIS line.
+
 - [x] DONE 2026-07-29: store.DeletePlan -- the retention primitive the
       accumulation analysis said was eventually required. Verified before
       writing it that the cascade would actually fire: every dependent table
@@ -536,7 +541,8 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
       remain, and an unknown id ERRORS rather than reporting success -- a prune
       that accepts a typo is worse than one that fails.
 
-- [ ] SCOPED OUT deliberately, not forgotten: no CLI surface for delete. That
+- [x] DECIDED 2026-07-29 (not pending work -- a recorded scope boundary): no
+      CLI surface for delete. That
       needs a new IPC command, a supervisor handler, and a drive-API method,
       which is a much larger change than ~16 runs of headroom justifies today.
       The store primitive is the load-bearing half; wiring it up is mechanical
