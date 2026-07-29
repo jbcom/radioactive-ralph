@@ -886,9 +886,25 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
       turn leaves an untracked file behind, against the "one user-level SQLite
       DB, clean repos" contract (AGENTS.md 42). That is the same hazard the
       .gitignore-prefix churn came from earlier this session.
-      What is left is a channel Ralph already owns: an explicit containment
-      write-path grant for the log directory, or a supervisor-side surface the
-      provider reports through rather than writes to.
+      AND THE GOAL ITSELF IS PARTLY WRONG. "Surface WHAT the provider asked
+      for" means putting provider prose on an operator surface, which the
+      content-safety boundary exists to prevent: only a CLOSED SET of fixed
+      constants crosses (operator_snapshot.go:262-268), never text from an
+      external process. BlockReason is documented "provider-output-free" for
+      the same reason.
+      So the useful version is NOT free text. Options that respect the
+      boundary:
+        - a closed taxonomy of prompt KINDS (permission / credential /
+          clarification / destructive-op confirm), classified from the stream
+          by Ralph the way failure categories already are;
+        - a count or fingerprint of the prompt, so repeated identical blocks
+          are distinguishable from varied ones, with no prose crossing.
+      A containment write-path grant for the log directory remains possible for
+      AGENT-authored notes, but that is a separate, weaker want -- and it puts
+      arbitrary agent text one hop from an operator surface, so it needs the
+      same boundary answered before it is worth building.
+      What this thread actually established: Ralph's own classification works
+      and is verified; the missing thing is a FINER TAXONOMY, not prose.
       Ralph's OWN classification still works and is verified (336, 342); what
       is missing remains WHAT the provider asked for, not THAT it asked.
       Verify by reverting: whatever the channel, a CONTAINED turn must be able
