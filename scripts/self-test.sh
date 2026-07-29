@@ -93,10 +93,14 @@ sed "1s|^# .*|# Prove the build is sound ($RUN_ID)|" "$PLAN" > "$TMP_PLAN"
 # actively editing is exactly the one a concurrent run is most likely to touch.
 # `git diff` hashes the working tree, so any change to content shows up.
 snapshot_tracked() {
-  git diff --no-color 2>/dev/null | git hash-object --stdin 2>/dev/null || true
+  # Against HEAD, so STAGED changes count too. Plain `git diff` shows only the
+  # unstaged half: once a worker's edit is staged the hashes match again and the
+  # guard goes quiet -- on the state that is one keystroke from committed, which
+  # is the worst moment to fall silent.
+  git diff --no-color HEAD 2>/dev/null | git hash-object --stdin 2>/dev/null || true
 }
 tracked_paths() {
-  git diff --name-only 2>/dev/null || true
+  git diff --name-only HEAD 2>/dev/null || true
 }
 TRACKED_BEFORE=$(snapshot_tracked)
 TRACKED_PATHS_BEFORE=$(tracked_paths)
