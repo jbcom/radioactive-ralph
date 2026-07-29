@@ -783,6 +783,11 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
       reclaim_count=0. Nothing short of that has settled this yet -- three
       previous "fixes" (-v, capping, raising stall_timeout) all targeted
       mechanisms that were not the cause.
+      INTERIM (11:05): still ZERO reclaims across all 12 tasks, where prior
+      runs had 2 (unbounded) and 6 (capped) by this phase. unit-orch failed
+      interactive_prompt with a CLEAN TREE and its acceptance command passing
+      by hand -- that is the separate pre-existing pattern already queued, not
+      a reclaim and not caused by my uncommitted edits as in the earlier run.
       INTERIM (10:59): build reached done with reclaims=0 after a ~7min turn,
       and the run is at 1/12 with 4 in flight and ZERO reclaims across every
       task. Under the old code this is the phase where they accumulated. Not
