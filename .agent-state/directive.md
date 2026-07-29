@@ -817,10 +817,20 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
           ImportPlan; MarkFailed->MarkFailedWithPayload;
           HeartbeatWorker->HeartbeatWorkerAndSession;
           ReadOperatorTaskDetail->ListOperatorTaskDescriptions
+          SetProjectConfig -> ApplyProjectConfig (a one-line delegate; the
+            live path calls ApplyProjectConfig from supervisor/config.go and
+            vconfig/source.go)
         UNWIRED (needed, nothing reaches it) -- WIRE:
-          DeletePlan, Backup, SetProjectConfig, ReserveTaskInput/Output,
-          the calibration trio, ListTaskEvents, MaxEventID,
-          CountRunningWorkers, ListTaskGroupPaths, TeamRollups
+          DeletePlan, Backup, ReserveTaskInput/Output, the calibration trio,
+          ListTaskEvents, ListProjectEvents, ListMessages,
+          RecordTaskProviderSession, MaxEventID, CountRunningWorkers,
+          ListTaskGroupPaths, TeamRollups
+      The list was WRONG TWICE and a reviewer caught both: SetProjectConfig was
+      filed UNWIRED when it is a pure delegate, and ListProjectEvents,
+      ListMessages and RecordTaskProviderSession were omitted entirely -- my
+      first pass filtered out internal/store callers and I never re-ran the
+      classification after narrowing the query. Re-derive the list rather than
+      trusting this one.
       CAUTION: my first calibration was WRONG. I assumed ClaimNextReady and
       CreatePlan had to be live because dispatch cannot work without them, and
       treated the zero count as proof the sweep was broken. Dispatch uses
