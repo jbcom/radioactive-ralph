@@ -1112,6 +1112,13 @@ func taskFromStore(item store.OperatorTask) (Task, error) {
 				"ralph_status":  string(item.Status),
 				"retry_count":   item.RetryCount,
 				"reclaim_count": item.ReclaimCount,
+				// How many turns the task was actually GIVEN. Neither counter
+				// answers that alone, and reading retry_count by itself
+				// misleads: the reaper requeues without incrementing it, so a
+				// task reclaimed twice reports retry_count 0 while its event
+				// log shows the claims. Published so every consumer gets the
+				// same answer instead of each rediscovering the relationship.
+				"attempt_count": item.RetryCount + item.ReclaimCount,
 			},
 		},
 	}

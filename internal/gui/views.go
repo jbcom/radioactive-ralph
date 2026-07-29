@@ -334,6 +334,10 @@ func (u *ui) buildMeso(s snapshot) {
 			if t.ReclaimConcurrentClaims > 1 {
 				pressure = fmt.Sprintf(" (%d claims in flight)", t.ReclaimConcurrentClaims)
 			}
+			// Only when the task ALSO retried; see the TUI/CLI note.
+			if t.RetryCount > 0 {
+				pressure += fmt.Sprintf(", %d attempts total", t.RetryCount+t.ReclaimCount)
+			}
 			again := widget.NewLabel(fmt.Sprintf(
 				"    ↳ reclaimed %dx: %s%s", t.ReclaimCount, t.ReclaimReason, pressure))
 			again.Wrapping = fyne.TextWrapWord

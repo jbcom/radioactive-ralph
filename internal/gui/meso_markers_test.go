@@ -234,3 +234,21 @@ func TestMesoShowsReclaimReason(t *testing.T) {
 		t.Errorf("a reclaim under load does not name the load:\n%s", got)
 	}
 }
+
+// TestMesoShowsAttemptTotalWhenBothCountersMoved mirrors the TUI and CLI.
+func TestMesoShowsAttemptTotalWhenBothCountersMoved(t *testing.T) {
+	both := mesoText(t, []observe.Task{
+		{PlanID: "p1", ID: "flaky", Status: "running", ReclaimCount: 2,
+			ReclaimReason: "stale_heartbeat", RetryCount: 1},
+	})
+	if !strings.Contains(both, "3 attempts total") {
+		t.Errorf("1 retry + 2 reclaims does not state its 3 attempts:\n%s", both)
+	}
+	reclaimsOnly := mesoText(t, []observe.Task{
+		{PlanID: "p1", ID: "reaped", Status: "running", ReclaimCount: 2,
+			ReclaimReason: "stale_heartbeat"},
+	})
+	if strings.Contains(reclaimsOnly, "attempts total") {
+		t.Errorf("no retries, yet the row repeats a count it already gives:\n%s", reclaimsOnly)
+	}
+}

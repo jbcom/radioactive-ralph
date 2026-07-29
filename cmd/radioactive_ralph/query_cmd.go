@@ -350,6 +350,13 @@ func writeTaskLines(out io.Writer, page observe.TaskPage, events observe.EventPa
 			if task.ReclaimConcurrentClaims > 1 {
 				line += fmt.Sprintf(" (%d claims in flight)", task.ReclaimConcurrentClaims)
 			}
+			// When the task ALSO retried, neither number states the total on its
+			// own -- and the two accumulate independently, since a reclaim never
+			// resets retry_count. Shown only in that case: with no retries,
+			// "reclaimed Nx" already is the attempt count.
+			if task.RetryCount > 0 {
+				line += fmt.Sprintf(", %d attempts total", task.RetryCount+task.ReclaimCount)
+			}
 		}
 		// The status column is padded so the marker columns align, which leaves
 		// trailing spaces on any row whose markers are all absent -- an unrun
