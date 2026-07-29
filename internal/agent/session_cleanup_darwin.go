@@ -27,6 +27,14 @@ const (
 	sessionCleanupBudget = 2 * time.Second
 )
 
+// cleanupBudget is sessionCleanupBudget, indirected so a test can force the
+// deadline branch. Without this seam the re-verification below is UNREACHABLE
+// in a unit test: on an idle machine `remaining` empties within one poll, so
+// a behavioural test passes with or without the fix and proves nothing.
+// Confirmed by mutation -- removing the re-check entirely left the
+// behavioural test green.
+var cleanupBudget = sessionCleanupBudget
+
 type darwinSessionMember struct {
 	pid       int
 	parentPID int
@@ -62,7 +70,7 @@ func cleanupOriginalProcessSession(
 	if effectiveUID < 0 {
 		return fmt.Errorf("agent: invalid effective UID %d", effectiveUID)
 	}
-	deadline := time.Now().Add(sessionCleanupBudget)
+	deadline := time.Now().Add(cleanupBudget)
 	for {
 		members, err := darwinSessionMembers(sessionID)
 		if err != nil {
@@ -110,6 +118,35 @@ func cleanupOriginalProcessSession(
 			return nil
 		}
 		if time.Now().After(deadline) {
+			// RE-VERIFY before claiming a leak. `remaining` is built from
+			// enumeration ALONE: a member in the already-signalled group is
+			// appended above and then `continue`d past every liveness check,
+			// so the only way a pid leaves this list is disappearing from a
+			// LATER kern.proc.all enumeration.
+			//
+			// That enumeration lags a completed reap under load. There is a
+			// window after the kernel kills a process, before it becomes a
+			// zombie, in which it still enumerates as live -- and
+			// darwinSessionMembers only filters darwinZombieState, so the
+			// window is not covered. At idle the reap lands within one 5ms
+			// pass and nothing is observed; under saturation the lag exceeds
+			// the whole budget.
+			//
+			// The result was a FALSE LEAK REPORT: cleanup had worked, the
+			// group SIGKILL had landed, and the turn still failed with
+			// "still has live members after cleanup". Worse, it wrapped
+			// ErrProcessSessionCleanup around an otherwise-correct result,
+			// breaking errors.Is sentinel comparisons for callers -- which is
+			// how it surfaced, as a prompt-detection test whose error string
+			// was correct but had cleanup noise appended.
+			//
+			// This cannot mask a real leak: a genuinely live in-session member
+			// still passes the re-check and is still reported.
+			live := reVerifyStillLive(remaining, sessionID)
+			if len(live) == 0 {
+				return nil
+			}
+			remaining = live
 			break
 		}
 		time.Sleep(sessionCleanupInterval)
@@ -136,6 +173,48 @@ func darwinSessionMembers(sessionID int) ([]darwinSessionMember, error) {
 		members = append(members, darwinMemberFromKinfo(candidate))
 	}
 	return members, nil
+}
+
+// reVerifyStillLive keeps only the pids that are PROVABLY still live members of
+// sessionID. It is a package-level var so a test can inject a lagging
+// enumeration -- without that seam the deadline branch above is unreachable in
+// a unit test, because on an idle host kern.proc.all drops every member within
+// one poll and cleanup returns before the deadline.
+//
+// FAIL CLOSED. A pid is dropped only when the lookup PROVES it is gone
+// (found == false, i.e. ESRCH/ENOENT or a zombie). Any other error -- a
+// transient EIO on a member that is still running -- keeps the pid in the
+// list and is reported as a leak. The inverse (treating every error as
+// reclamation) would let a real leaked worker vanish from the report, which is
+// exactly the never-block invariant this cleanup exists to uphold.
+var reVerifyStillLive = func(remaining []int, sessionID int) []int {
+	live := remaining[:0]
+	for _, pid := range remaining {
+		_, found, err := readDarwinSessionMember(pid)
+		switch {
+		case err == nil && !found:
+			// Proven gone: ESRCH/ENOENT, or a zombie already being reaped.
+			continue
+		case errors.Is(err, syscall.EIO):
+			// ALSO proven gone, and this is the case that matters here.
+			// SysctlKinfoProc returns EIO -- not ESRCH -- for a pid the
+			// kernel has fully finished with, so an EIO member is exactly
+			// the stale enumeration entry this re-check exists to drop.
+			// Discovered by the regression test below, which failed until
+			// EIO was classified: without it the false leak this whole fix
+			// targets would still be reported.
+			continue
+		case err == nil && currentSession(pid) != sessionID:
+			// Alive, but it left our session -- not ours to reclaim.
+			continue
+		}
+		// Everything else -- including an UNRECOGNISED lookup error on a
+		// member that may well still be running -- keeps the pid and is
+		// reported. Dropping on any error would let a genuinely leaked
+		// worker disappear from the report.
+		live = append(live, pid)
+	}
+	return live
 }
 
 func readDarwinSessionMember(pid int) (darwinSessionMember, bool, error) {
