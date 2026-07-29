@@ -197,15 +197,25 @@ times, against two when unbounded. Captured from `radioactive_ralph status`:
   unit-provider    failed                   via=codex — task retry budget was exhausted — reclaimed 2x: stale_heartbeat (3 claims in flight)
 ```
 
-The absent pressure clause on the `race` row is the finding, not a rendering
-gap. It is omitted when fewer than two claims were in flight, so `race`'s most
-recent reclaims happened while **nothing else was running**. Contention cannot
-explain them.
+The absent pressure clause on the `race` row is the strongest single piece of
+evidence, but it is narrower than it looks: the row carries only the NEWEST
+reclaim's conditions (`operatorTasksQuery` selects it with `MAX(id)`), while
+`reclaimed 4x` is cumulative. So it establishes that reclaim #4 happened with
+nothing else in flight — it says nothing about the first three.
+
+That one data point is still decisive, because a single reclaim under zero
+contention is enough to rule contention out as a NECESSARY cause. It is not
+enough to rule it out as a contributor, and the earlier reclaims may well have
+had company.
 
 So the lease, not the load, is the operative limit for a step like this: a 138s
 command that prints nothing cannot survive a 180s renewable lease reliably, even
-alone on the machine. Capping only lengthens the run — the same step waits
-longer for a slot, and every wait is another chance to be reclaimed.
+alone on the machine. Capping the width lengthens the overall run without
+protecting this step — but NOT because waiting for a slot risks a reclaim. It
+cannot: `dispatchReadySteps` acquires a dispatch slot BEFORE claiming the task,
+and `ReclaimStale` only requeues tasks already in `running`, so a candidate
+waiting on a full semaphore is simply not eligible. The exposure is entirely
+within the turn, once the claim is held.
 
 The honest reading is that this experiment produced FOUR successive answers, and
 only the last is a result: predicted 0, read 1 mid-run and wrote "halved", read 2
