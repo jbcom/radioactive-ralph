@@ -6,10 +6,17 @@ description: Have Ralph verify Ralph, using Ralph — the dogfooding entry point
 # Self-test
 
 ```bash
-radioactive_ralph --supervisor &   # in another shell, if one is not running
-scripts/self-test.sh               # import and report once
-scripts/self-test.sh --watch       # follow until it settles
+go build -o ./radioactive_ralph ./cmd/radioactive_ralph
+./radioactive_ralph --supervisor &   # in another shell
+scripts/self-test.sh                 # import and report once
+scripts/self-test.sh --watch         # follow until it settles
 ```
+
+Start the supervisor from the **checkout under test**, not from `PATH`. The
+supervisor is what runs dispatch, the watchdog, and acceptance verification —
+the runtime being dogfooded. An older installed binary on `PATH` would happily
+serve the run, and the self-test would then be verifying a release you are not
+changing.
 
 The script imports [`docs/plans/self-test.md`](../plans/self-test.md) into a
 running supervisor and has Ralph verify Ralph: build, per-package unit suites,
@@ -35,17 +42,32 @@ a real plan.
 operator surface, because a live plan is the only thing that produces running
 workers, real provenance, and fan-out partitions at once:
 
+A healthy run mid-flight, after `build` verified and its dependents dispatched:
+
 ```
   build            done       via=codex
   unit-store       running    w:…7f3a2b1c via=codex p1
-  unit-orch        running    w:…7f3a2b1c via=codex p1
+  unit-orch        running    w:…4a852dec via=codex p1
+  e2e              pending
+```
+
+And a run where `build` failed, so nothing downstream can proceed:
+
+```
+  build            failed     via=codex — task retry budget was exhausted
+  unit-store       pending    — cannot run: build failed
   e2e              pending    — cannot run: build failed
 ```
 
 - `via=` — which provider executed the task, surviving the worker itself
-- `w:…` — the worker currently holding the claim
-- `p1` — a fan-out partition: these tasks go to one provider turn
-- `— cannot run: X failed` — this task is unreachable, naming the *root* failure
+- `w:…` — the worker currently holding the claim. Two tasks in one partition
+  can show DIFFERENT workers, as above
+- `p1` — a partition that *may* be coalesced into a single provider turn, when
+  the bound provider declares `NativeFanout`. `codex` does not, so these
+  dispatch as separate workers and separate turns; the marker says "one worker
+  may own these", not "one worker does"
+- `— cannot run: X failed` — this task is unreachable, naming the *root*
+  failure rather than the intermediate one
 
 A plan whose every task is finished, failed, or blocked also reports
 `no runnable work`, which distinguishes a dead plan from a slow one.
@@ -54,12 +76,20 @@ A plan whose every task is finished, failed, or blocked also reports
 
 Two things worth knowing before starting one.
 
-**Scratch lands in the project dir, by design.** A contained turn sets `HOME`
-and `TMPDIR` under the containment root so its writes cannot escape, and
-acceptance commands re-run in scratch trees of their own. These are gitignored
-(`.codex-*`, `.rr-accept.*`, `.tmp-*`) and they have to be: their contents churn
-fast enough that `git add -A` does not merely stage junk, it *fails* mid-stat on
-a file the turn already deleted.
+**Scratch lands in the project dir.** Observed during real runs: `.codex-*`,
+`.rr-accept.*`, `.tmp-go-*`, `.tmp-race-work.*` and friends. These come from the
+provider AGENT choosing to work there — Ralph itself does not set `HOME` or
+`TMPDIR`, and the acceptance checker only sets `cmd.Dir` to the project
+checkout — so the exact set depends on the CLI and what a turn decides to do.
+
+They are gitignored by prefix for that reason: an enumerated list would go stale
+the moment an agent picks a new name. It also has to be prefixes rather than
+nothing, because their contents churn fast enough that `git add -A` does not
+merely stage junk — it *fails* mid-stat on a file the turn already deleted:
+
+```
+fatal: unable to stat '.codex-.../store.db': No such file or directory
+```
 
 **A step can edit tracked source.** A provider turn trying to make its
 acceptance command pass will change code to do it — during one run the
