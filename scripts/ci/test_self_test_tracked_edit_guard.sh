@@ -79,4 +79,18 @@ out=$(report_tracked_edits)
 printf '%s' "$out" | grep -q 'tracked.txt' ||
   fail "blind to a rewrite of an already-dirty file -- the case the guard exists for: $out"
 
-printf 'self-test tracked-edit guard: 3 checks passed\n'
+# 4. A STAGED edit. Plain `git diff` shows only unstaged changes, so once a
+#    worker's edit is staged the snapshots match again and the guard falls
+#    silent -- on the state that is one keystroke from committed. Every other
+#    check here leaves its mutation unstaged, so none of them would catch it.
+git checkout -- tracked.txt
+git reset -q
+TRACKED_BEFORE=$(snapshot_tracked)
+TRACKED_PATHS_BEFORE=$(tracked_paths)
+printf 'worker edit then staged\n' >> tracked.txt
+git add tracked.txt
+out=$(report_tracked_edits)
+printf '%s' "$out" | grep -q 'tracked.txt' ||
+  fail "blind to a STAGED edit -- the state closest to being committed: $out"
+
+printf 'self-test tracked-edit guard: 4 checks passed\n'
