@@ -648,6 +648,9 @@ jobs:
             packaging/macos/push-version-branch.sh \
             docs/install.sh \
             scripts/ci/test_install_signature_policy.sh \
+            scripts/ci/dmg_stale_devices.sh \
+            scripts/ci/test_dmg_stale_devices.sh \
+            scripts/ci/finalize_gui_bundle.sh \
             scripts/verify-docs-artifact.sh \
             scripts/verify-repo-claims.sh \
             scripts/self-test.sh \
@@ -696,6 +699,7 @@ jobs:
           bash scripts/ci/test_smoke_goreleaser_artifacts.sh
           bash scripts/ci/test_package_guidance_contract.sh
           bash scripts/ci/test_install_signature_policy.sh
+          bash scripts/ci/test_dmg_stale_devices.sh
           bash scripts/ci/test_prepare_package_rollback_provenance.sh
           python3 scripts/ci/test_premerge_scoop_server_contract.py
       - name: Validate the .desktop launcher
