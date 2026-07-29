@@ -72,7 +72,6 @@ TMP_PLAN="$(mktemp -t ralph-self-test-XXXXXX).md"
 # could never equal the stored slug -- the exact-match watch would have silently
 # never fired, reintroducing the stale-run bug in a new disguise.
 RUN_ID="$(date -u +%Y%m%d-%H%M%S)-$(basename "$TMP_PLAN" .md | sed 's/^ralph-self-test-//' | tr '[:upper:]' '[:lower:]')"
-trap 'rm -f "$TMP_PLAN"' EXIT
 sed "1s|^# .*|# Prove the build is sound ($RUN_ID)|" "$PLAN" > "$TMP_PLAN"
 
 # Snapshot the tracked tree BEFORE the run.
@@ -105,14 +104,6 @@ tracked_paths() {
 TRACKED_BEFORE=$(snapshot_tracked)
 TRACKED_PATHS_BEFORE=$(tracked_paths)
 
-echo "self-test: importing $PLAN as run $RUN_ID"
-"$BIN" plan import "$TMP_PLAN"
-
-report() {
-  "$BIN" status
-  report_tracked_edits
-}
-
 # report_tracked_edits names any TRACKED file the run changed. Untracked scratch
 # is expected and gitignored; a modified source file is not, and it is the thing
 # a reader is least likely to notice on their own.
@@ -133,6 +124,25 @@ report_tracked_edits() {
   echo "  A provider turn edits source to make its acceptance pass. Review these"
   echo "  before committing -- you did not write them."
 }
+
+# Report tracked edits on EVERY exit, not just the success path.
+#
+# `set -e` plus a failing import (no supervisor, a bad plan, a slug conflict)
+# exits before report() is ever reached -- and a run that died partway is
+# exactly the one likely to leave a half-finished worker edit behind, with
+# nobody told about it. Verified: an aborted run printed no warning at all
+# while a modified tracked file sat in the tree.
+#
+# The EXIT trap already removes the temp plan; chaining keeps both.
+trap 'rm -f "$TMP_PLAN"; report_tracked_edits' EXIT
+
+echo "self-test: importing $PLAN as run $RUN_ID"
+"$BIN" plan import "$TMP_PLAN"
+
+report() {
+  "$BIN" status
+}
+
 
 if [ "${1:-}" != "--watch" ]; then
   echo
