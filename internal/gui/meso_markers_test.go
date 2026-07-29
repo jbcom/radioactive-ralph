@@ -205,3 +205,29 @@ func TestMacroFlagsAPlanWithNoRunnableWork(t *testing.T) {
 		t.Errorf("a healthy plan was flagged too:\n%s", got)
 	}
 }
+
+// TestMesoShowsReclaimReason completes the three-surface coverage for the
+// reclaim cause.
+//
+// A field that reaches the store and the CLI but not the TUI or GUI leaves two
+// of three operator surfaces unable to explain the reclaim -- the gap a review
+// caught on this very change, against the repository's own all-surfaces rule.
+//
+// NOT status-gated, unlike the failure category directly above: a reclaim
+// returns the task to pending and it may be running again by the time anyone
+// looks, so a running task legitimately shows its reclaim history.
+func TestMesoShowsReclaimReason(t *testing.T) {
+	got := mesoText(t, []observe.Task{
+		{PlanID: "p1", ID: "race", Status: "running", ReclaimCount: 2, ReclaimReason: "stale_heartbeat"},
+		{PlanID: "p1", ID: "build", Status: "done"},
+	})
+	if !strings.Contains(got, "reclaimed 2x") {
+		t.Errorf("a reclaimed task does not state its count:\n%s", got)
+	}
+	if !strings.Contains(got, "stale_heartbeat") {
+		t.Errorf("a reclaimed task does not name its cause:\n%s", got)
+	}
+	if strings.Count(got, "reclaimed") != 1 {
+		t.Errorf("a task that was never reclaimed carries a reclaim marker:\n%s", got)
+	}
+}

@@ -324,6 +324,16 @@ func (u *ui) buildMeso(s snapshot) {
 			why.Wrapping = fyne.TextWrapWord
 			u.body.Add(why)
 		}
+		// Why this task's claim was lost. NOT status-gated, unlike the failure
+		// above: a reclaim returns the task to pending and it may be running
+		// again by the time anyone looks, while the count stays on the row in
+		// every state.
+		if t.ReclaimCount > 0 && t.ReclaimReason != "" {
+			again := widget.NewLabel(fmt.Sprintf(
+				"    ↳ reclaimed %dx: %s", t.ReclaimCount, t.ReclaimReason))
+			again.Wrapping = fyne.TextWrapWord
+			u.body.Add(again)
+		}
 		if t.BlockedByTaskID != "" {
 			dead := widget.NewLabel("    ↳ cannot run: " + t.BlockedByTaskID + " failed")
 			dead.Wrapping = fyne.TextWrapWord

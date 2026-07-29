@@ -937,6 +937,13 @@ func applyEvent(snap snapshot, ev ipc.AttachEvent) snapshot {
 	for i := range snap.tasks {
 		if snap.tasks[i].ID == ev.TaskID {
 			snap.tasks[i].Status = status
+			// A reclaim also releases the claim. Updating only Status leaves the
+			// row rendering `w:<dead-worker>` beside `pending` until the next
+			// poll -- naming a worker that is definitionally gone, which is
+			// worse than the stale `running` this mapping was added to fix.
+			if ev.Kind == "task.reclaimed" {
+				snap.tasks[i].ClaimedByWorkerID = ""
+			}
 			break
 		}
 	}
