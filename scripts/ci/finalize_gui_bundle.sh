@@ -8,6 +8,9 @@ TARGET="${2:?usage: finalize_gui_bundle.sh <version> <target> <arch>}"
 ARCH="${3:?usage: finalize_gui_bundle.sh <version> <target> <arch>}"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
+# shellcheck source=scripts/ci/dmg_stale_devices.sh
+source "$(dirname "${BASH_SOURCE[0]}")/dmg_stale_devices.sh"
+
 case "$TARGET" in
   darwin)
     codesign --force --deep --sign - "$ROOT/radioactive-ralph.app"
@@ -26,16 +29,13 @@ case "$TARGET" in
       # outlive the FILE, so an early return on a missing file would skip
       # exactly the case this function exists for. hdiutil info reports
       # attached devices regardless of whether the backing file still exists.
-      # Block layout, verified against real `hdiutil info` output: each image
-      # starts at a ==== separator, `image-path` comes BEFORE its /dev/diskN
-      # entries, and the device field is /dev/disk5 (not a bare "/dev/disk"),
-      # so match on the prefix and buffer per block rather than per line.
-      hdiutil info 2>/dev/null \
-        | awk -v img="$DMG" '
-            /^=====/                        { mine = 0; next }
-            /^image-path *:/                { mine = (index($0, img) > 0); next }
-            mine && $1 ~ /^\/dev\/disk[0-9]+$/ { print $1 }
-          ' \
+      # `|| true` on the listing, not just on the detach: under `set -e` with
+      # pipefail a nonzero `hdiutil info` (transient DiskImages service
+      # failure) would abort the whole script from this preflight, before any
+      # create attempt or retry ran -- turning a helper meant to PREVENT
+      # failures into a new way to fail a build that would otherwise succeed.
+      { hdiutil info 2>/dev/null || true; } \
+        | dmg_stale_devices "$DMG" \
         | while read -r dev; do
             hdiutil detach "$dev" -force >/dev/null 2>&1 || true
           done
@@ -45,7 +45,7 @@ case "$TARGET" in
     # released asynchronously a moment after the previous step finishes, so a
     # single attempt turns a transient condition into a red build.
     for attempt in 1 2 3; do
-      detach_stale_devices
+      detach_stale_devices || true
       if hdiutil create \
         -volname radioactive-ralph \
         -srcfolder "$ROOT/radioactive-ralph.app" \
