@@ -867,7 +867,7 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
       real read of it. Do not mistake a green run for having verified the
       diagnostic.
 
-- [ ] [WAIT] Prompt-kind taxonomy in PR 347 (open). When it lands, the NEXT
+- [x] Prompt-kind taxonomy (347, MERGED; precision fix 356, MERGED). The NEXT
       interactive_prompt failure should report a KIND rather than the generic
       category, and that changes what the unit-orch item can conclude:
         interactive_prompt_permission    -> a write-path or binding grant
@@ -944,7 +944,35 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
       experiment has been run, so "needs nine" is unproven and would
       overconstrain the next attempt. The minimum reproducing load is
       still UNKNOWN.
-      NEXT: fix the PTY cleanup race. No containment work.
+      THE PTY CLEANUP RACE IS FIXED (364), and it was not a race at all --
+      it was a FALSE REPORT. `remaining` is built from enumeration ALONE: a
+      member in the already-signalled group is appended and then skipped past
+      every liveness check, so the only way a pid leaves the list is vanishing
+      from a LATER kern.proc.all enumeration -- and the error is constructed
+      from that list with no re-verification. Enumeration lags a completed
+      reap under load, in the window after the kill but before the process
+      becomes a zombie, which darwinSessionMembers does not filter. Fixed by
+      re-verifying liveness at the deadline.
+      It explains all three oddities: exactly ONE straggler (the sleep child,
+      always in the leader group, always taking the unchecked path), always
+      ~2.2-2.4s (the whole budget burning because `remaining` cannot empty),
+      and a prompt test whose error string was CORRECT with cleanup noise
+      appended -- ErrProcessSessionCleanup wrapped around a good result,
+      breaking errors.Is for callers.
+      MY FIRST HYPOTHESIS WAS WRONG, and a subagent disproved it rather than
+      me: the `current != member` identity check fired ZERO times across 20/20
+      reproductions, because `currentSession != sessionID` catches the
+      reparent first. Recorded so nobody re-derives it.
+      HONEST LIMIT: the tests do NOT prove that fix. Three mutations survive
+      them, because on an idle host enumeration drops every member instantly
+      (0 at +0ms) so the deadline branch never runs, and a reaped pid returns
+      EIO which short-circuits the predicate. Reproducing the lag on demand
+      needs a syscall fake, which would prove nothing about the real code.
+      SEPARATELY (365): TestReviewCodex0145MaxCommandEventDoesNotFalseStall
+      was measuring python3 interpreter startup inside a 2s stall bound. First
+      byte now comes from /bin/sh; the event is byte-identical (sha256
+      verified) and time-to-first-byte drops 0.31s -> 0.03s.
+      No containment work.
       A BLOCK IS NOT THE COUNTER-PROOF, and the gate is deliberately narrow
       because a loose one is how this entry went wrong the first time. The run
       can block for reasons that say nothing about containment --
