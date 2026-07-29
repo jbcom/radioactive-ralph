@@ -188,6 +188,19 @@ produces running workers, fan-out partitions, and real provenance at once.
 - **Prove a fix by reverting it.** A test that passes after a change may have
   passed before it. Re-apply the defect and confirm the named test fails for
   the stated reason; if it does not, the test is not testing the fix.
+- **Docs claims need the same proof as code claims — EACH of them.** A guide
+  written this session asserted four mechanisms that do not exist: that a
+  contained turn sets HOME/TMPDIR under the containment root (nothing in
+  internal/ sets either), that acceptance commands run in their own scratch
+  trees (verify.go only sets cmd.Dir), that a `pN` partition means one provider
+  turn (codex is NativeFanout: false, so those tasks ran as separate workers),
+  and a `status` snapshot that could not be emitted at all -- `build done`
+  beside `e2e cannot run: build failed`, two runs stitched together.
+  I had verified the three GREPPABLE facts and reported the guide as checked.
+  The invented ones were all explanatory prose, which is where a plausible
+  mechanism hides: nothing looks wrong about a sentence describing how
+  something works. Paste real captured output rather than composing an example,
+  and grep for the symbol behind every "because X does Y".
 - **Verify the ARTIFACT, not the intent.** "I made the edit" is not "the file
   changed"; "the import succeeded" is not "the run reflects current code". Both
   gaps shipped false claims in one session and neither was visible without
