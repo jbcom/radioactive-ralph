@@ -526,10 +526,51 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
 
 ## Rolling improvement queue (directive 0 appends here)
 
-- [ ] [WAIT] Land the 1 open PR: #317 (docs/guides/self-test.md -- the harness
-      was documented nowhere a newcomer would look). Auto-merge ARMED, no
-      failing checks. Hash-prefixed deliberately: guard 9 extracts `#[0-9]{3}`
-      from THIS line.
+- [ ] [WAIT] Land the 1 open PR: #318 (self-test run accumulation recorded, and
+      report() now pages like the watch loop so a run never omits itself).
+      Auto-merge ARMED, no failing checks. Hash-prefixed deliberately: guard 9
+      extracts `#[0-9]{3}` from THIS line.
+
+- [x] DONE 2026-07-29 (#318): self-test runs ACCUMULATE, one plan per invocation.
+      Nine runs in a single session took this project to 11 plans / 110 tasks.
+      Nothing is degraded yet (`status` returns in ~57ms and the plan page is
+      not full), so this is a real trend rather than a live defect -- worth
+      fixing before it bites, not urgently.
+      The unique-slug design is deliberate and should NOT be reverted: it is
+      what stopped the self-test reporting stale results, which was a genuine
+      false-green. The question is retention, not uniqueness.
+      ARCHIVING IS A DEAD END, checked before proposing it: the operator plan
+      query filters only on project id and the keyset cursor -- there is NO
+      status filter, so an archived plan still fills a page slot. Setting
+      PlanStatusArchived would change a label and nothing else.
+      So the real options are: (a) a delete path for old self-test runs, which
+      is durable state removal and wants its own design; or (b) leave the runs
+      and let `status` page -- the script already passes --plan-limit 200 and
+      fails loudly if its own run is missing, so the operator surface degrades
+      into noise rather than into a wrong answer.
+      (b) is defensible: a wrong answer was the original bug, and noise is not
+      that. Prefer it until someone actually trips the limit.
+      CHOSE (b) and shipped the one thing it needs: report() was still using
+      the DEFAULT 50-plan page while the watch loop paged to 200, so the final
+      report would be the first thing to stop showing the run it had just
+      started -- silently, since a short page looks identical to a small
+      project. Both paths now page to 200. Verified by name: the newest run's
+      slug appears in its own report.
+      Accumulation is allowed to become noise. It must not become a report that
+      omits its own subject.
+      CORRECTION, after a review pushed on it: "let it page" is NOT durable.
+      MaxOperatorPageLimit is 200 and that is a hard ceiling, so at ~12 tasks
+      per run this buys roughly 16 more runs, not indefinite headroom. What
+      makes it acceptable in the meantime is that truncation is LOUD -- status
+      prints "… more tasks available; showing the first bounded page" -- so the
+      surface degrades into a visible short page rather than a silent omission.
+      A delete path is therefore not optional, only not-yet-urgent. Whoever
+      takes it: the operator plan query has no status filter, so archiving does
+      nothing; it has to remove rows.
+
+- [x] #317 MERGED (docs/guides/self-test.md, plus the rule that docs claims
+      need the same proof as code claims -- four invented mechanisms in that
+      guide were caught by review after I reported it verified).
 
 - [x] DONE 2026-07-29: the self-test was documented NOWHERE a newcomer would
       look -- not the README, not any guide, only the plan file and AGENTS.md,
