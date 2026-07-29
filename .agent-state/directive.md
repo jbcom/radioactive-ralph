@@ -526,6 +526,23 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
 
 ## Rolling improvement queue (directive 0 appends here)
 
+- [x] DONE 2026-07-28 by a FOURTH dogfooding pass, run against the merged main.
+      The dead-plan marker looked one hop only, so on Ralph's own plan:
+        build   failed
+        race    pending  -- cannot run: build failed
+        parity  pending                              <- silent, and just as dead
+      parity depends on race, race is dead behind build, so parity can never run
+      either -- but it read exactly like a healthy queued task. Same lie the
+      one-hop fix removed, one level deeper, and a real DAG is mostly deeper
+      levels.
+      Fixed with a recursive CTE that walks the chain and reports the ROOT
+      failure (the task that actually died), because naming the intermediate
+      would send an operator to another pending row to repeat the lookup. Only
+      'failed' terminates the walk -- a merely-unfinished intermediate is not
+      traversed, since that chain still clears itself.
+      Depth-capped at 64. AddDep prevents cycles, but a projection that can hang
+      the operator surface should not depend on that invariant holding.
+
 - [x] GENERATED 2026-07-28 from a P2 review finding on the failure-reason work
       (fixed its two siblings in the same PR; this one is genuinely bigger).
       A failed task whose failure EVENT has aged out of the bounded
@@ -541,9 +558,10 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
       currentSchemaVersion, with an actionable message naming both fixes -- the
       kind of guard this session has been adding elsewhere, working here.
 
-- [ ] [WAIT] Land the 1 open PR: #308 (say why a failed task failed -- the gap
-      the THIRD dogfooding pass found). Auto-merge ARMED. Hash-prefixed
-      deliberately: guard 9 extracts `#[0-9]{3}` from THIS line.
+- [x] #308 MERGED. Grew well past its title: the failure reason on the row, the
+      plan-scoped key and status gate two reviews caught, migration 0004's
+      durable failure_category, and the TUI/GUI parity fix. Verified on main by
+      grepping for the migration, both renderers, and the AGENTS.md rule.
 
 - [x] DONE 2026-07-28 by a THIRD dogfooding pass, run against the merged main
       (the terminal-blocker PR had just landed); shipped in #308. The
