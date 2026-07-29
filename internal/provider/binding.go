@@ -212,17 +212,25 @@ func defaultClaudeProvider() BindingConfig {
 // model with no documented fan-out primitive. This is a "no evidence found"
 // result, not a verified negative; if a future codex release adds a
 // subagent/workflow surface, flip this and cite the new flag here.
-// SupportsContainment: FALSE, verified 2026-07-28 against the installed codex
-// with real turns. Uncontained it returns "CONFIRMED" in 12.6s; contained it
-// dies in 0.5s with
+// SupportsContainment: CAPABLE (the unset default), because codex needs exactly
+// $HOME/.codex and declares it below.
+//
+// SUPERSEDED INVESTIGATION, kept because reading it as current cost real time.
+// An earlier pass concluded containment was impossible: uncontained codex
+// returned "CONFIRMED" in 12.6s, contained it died in 0.5s with
 //
 //	Error: failed to initialize in-process app-server client: Operation not permitted
 //
-// It is NOT a file-path problem, so widening the policy does not fix it. Under
-// `(allow default)` with no write-deny codex succeeds; adding `(deny
-// file-write*)` breaks it EVEN WITH TMPDIR re-allowed. The app-server needs a
-// write the profile cannot enumerate, so there is no narrow subpath to add.
-// Re-test and flip this if a future codex release changes that.
+// and adding `(deny file-write*)` broke it even with TMPDIR re-allowed, which
+// read as "the app-server needs a write the profile cannot enumerate". Bisecting
+// properly found the missing write IS enumerable -- it is $HOME/.codex -- so
+// codex is contained rather than permanently spared. See
+// TestCodexIsContainableWithItsDeclaredPath.
+//
+// The stale version of this comment claimed a FALSE flag the struct never set,
+// so the code and its documentation disagreed silently. Reading the comment led
+// to recording "codex runs uncontained" and ruling out a denied write as a
+// cause of interactive_prompt_permission -- twice, before the tests settled it.
 func defaultCodexProvider() BindingConfig {
 	return BindingConfig{
 		Type: "codex", Binary: "codex", NativeFanout: false,
