@@ -43,8 +43,23 @@ fi
 # Import fails loudly if no supervisor is listening, which is the correct
 # behaviour: a self-test that silently skips when the product is not running
 # would report success for a system that never started.
+#
+# A re-import of the same slug is REFUSED (fail-closed on conflict), which is
+# right for the store but makes a self-test un-rerunnable -- and a check you can
+# only run once is one nobody runs. Treat that specific conflict as "already
+# imported, report on the existing run" rather than an error, while any OTHER
+# import failure still stops the script.
 echo "self-test: importing $PLAN"
-"$BIN" plan import "$PLAN"
+if ! out=$("$BIN" plan import "$PLAN" 2>&1); then
+  if printf '%s' "$out" | grep -q "already exists"; then
+    echo "self-test: plan already imported; reporting on the existing run"
+  else
+    printf '%s\n' "$out" >&2
+    exit 1
+  fi
+else
+  printf '%s\n' "$out"
+fi
 
 report() {
   "$BIN" status
