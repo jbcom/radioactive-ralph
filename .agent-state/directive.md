@@ -528,8 +528,9 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
 
 - [ ] GENERATED 2026-07-29 by the self-test run itself: a step EDITED FOUR
       TRACKED SOURCE FILES while trying to make its acceptance command pass.
-      internal/agent/echo_unix.go, pty_reader_unix.go,
-      orch/contained_open_unix.go, provider/result_open_unix.go all gained an
+      internal/agent/echo_unix.go, internal/agent/pty_reader_unix.go,
+      internal/orch/contained_open_unix.go,
+      internal/provider/result_open_unix.go all gained an
       integer-conversion guard (a new maxUnixFileDescriptor const, gosec G115
       shape). The changes were internally consistent and the tree BUILT -- this
       is the agent doing its job, not a malfunction.
@@ -545,11 +546,16 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
       each one. Chose the snapshot over worktree isolation because it keeps the
       run testing the REAL checkout -- isolation would verify a copy, which is
       a different claim -- and the warning is what a reader needs either way.
-      Two bugs while building it, both caught by testing rather than reading:
+      THREE bugs while building it, each found by testing rather than reading:
       the guard referenced $REPO_ROOT, a variable this script never defines
       (borrowed from verify-repo-claims.sh), so it would have crashed on every
-      run; and my first isolation test captured the before-state AFTER staging,
-      producing a silent pass that looked like a broken guard.
+      run; my first isolation test captured the before-state AFTER staging,
+      producing a silent pass that looked like a broken guard; and a review
+      caught that comparing `git status` output is blind when a path is ALREADY
+      dirty -- " M path" before and after while the content changed underneath.
+      Reproduced, then fixed by hashing `git diff` content instead of status
+      flags. A guard that misses the concurrent-edit case is decorative,
+      because that is the only case it exists for.
 
 - [x] #311, #312, #313 ALL MERGED. The self-test arc is complete:
       scripts/self-test.sh + docs/plans/self-test.md, with acceptance markers

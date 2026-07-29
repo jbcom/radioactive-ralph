@@ -87,7 +87,19 @@ sed "1s|^# .*|# Prove the build is sound ($RUN_ID)|" "$PLAN" > "$TMP_PLAN"
 # That is the agent working as designed, not a malfunction. But it means a run
 # leaves changes nobody authored, and the only thing standing between them and
 # a commit was whoever happened to read `git status`. Report them instead.
-TRACKED_BEFORE=$(git status --porcelain --untracked-files=no 2>/dev/null || true)
+# CONTENT hashes, not `git status` flags. A path already dirty when the run
+# starts reports " M path" both before and after, so a worker rewriting that
+# same file is invisible to a status comparison -- and a file someone is
+# actively editing is exactly the one a concurrent run is most likely to touch.
+# `git diff` hashes the working tree, so any change to content shows up.
+snapshot_tracked() {
+  git diff --no-color 2>/dev/null | git hash-object --stdin 2>/dev/null || true
+}
+tracked_paths() {
+  git diff --name-only 2>/dev/null || true
+}
+TRACKED_BEFORE=$(snapshot_tracked)
+TRACKED_PATHS_BEFORE=$(tracked_paths)
 
 echo "self-test: importing $PLAN as run $RUN_ID"
 "$BIN" plan import "$TMP_PLAN"
@@ -101,13 +113,19 @@ report() {
 # is expected and gitignored; a modified source file is not, and it is the thing
 # a reader is least likely to notice on their own.
 report_tracked_edits() {
-  local after
-  after=$(git status --porcelain --untracked-files=no 2>/dev/null || true)
+  local after paths
+  after=$(snapshot_tracked)
   [ "$after" = "$TRACKED_BEFORE" ] && return 0
   echo
   echo "self-test: WARNING — this run modified tracked files:"
-  diff <(printf '%s\n' "$TRACKED_BEFORE") <(printf '%s\n' "$after") 2>/dev/null |
-    grep '^>' | sed 's/^> /  /'
+  # Every path dirty now that was not dirty before, PLUS any path that was
+  # already dirty (its content changed, or the hash above would have matched).
+  paths=$(tracked_paths)
+  {
+    comm -13 <(printf '%s\n' "$TRACKED_PATHS_BEFORE" | sort) \
+             <(printf '%s\n' "$paths" | sort)
+    printf '%s\n' "$TRACKED_PATHS_BEFORE" | sort
+  } | sort -u | sed '/^$/d;s/^/  /'
   echo "  A provider turn edits source to make its acceptance pass. Review these"
   echo "  before committing -- you did not write them."
 }
