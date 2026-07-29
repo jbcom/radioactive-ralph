@@ -51,4 +51,33 @@ func TestReportsTheProgressLease(t *testing.T) {
 			"(3m) -- naming the setting without its value does not help anyone "+
 			"decide whether their step fits", found.Detail)
 	}
+
+	// Everything actionable must be in Detail, because Report.WriteText prints
+	// Remediate ONLY when Severity != OK -- and this check is deliberately
+	// always OK. The first version parked a careful two-fix explanation in
+	// Remediate, where no operator would ever see it.
+	if found.Severity == OK && found.Remediate != "" {
+		t.Errorf("an always-OK check carries a Remediate line (%q) that "+
+			"WriteText suppresses; put it in Detail or it is written for nobody",
+			found.Remediate)
+	}
+
+	// It must also NOT send a reader chasing the wrong knob. Acceptance
+	// commands run after the turn, under a separate budget, so blaming a slow
+	// `accept:` on the stall lease is the exact confusion that cost a long
+	// misdiagnosis.
+	if !strings.Contains(found.Detail, "AFTER the turn") {
+		t.Errorf("lease check detail = %q, want it to distinguish acceptance "+
+			"commands from provider stalls -- the lease does not govern them",
+			found.Detail)
+	}
+
+	// The rendered artifact, not the struct: this whole finding came from
+	// checking the field and not the output.
+	var out strings.Builder
+	report.WriteText(&out)
+	if !strings.Contains(out.String(), "AFTER the turn") {
+		t.Errorf("the rendered doctor output omits the acceptance distinction:\n%s",
+			out.String())
+	}
 }
