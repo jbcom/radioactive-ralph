@@ -551,3 +551,49 @@ func TestRunStatusQueryNamesATerminallyBlockedDependency(t *testing.T) {
 		t.Errorf("the marker appeared on a task with no failed dependency:\n%s", got)
 	}
 }
+
+// TestRunStatusQueryExplainsWhyATaskFailed closes the gap a THIRD dogfooding
+// pass found: `status` rendered a failed task as the bare word "failed" while
+// the snapshot it had already fetched carried the reason.
+//
+// The reason is not derivable from the row. A task that exhausted its retries
+// and one that never reached a provider both read "failed"; the event's closed
+// FailureSummary is what separates them, and the TUI has rendered it all along
+// (model.go). The CLI human path rendered no events at all, so it stayed
+// strictly less informative than its own --json.
+func TestRunStatusQueryExplainsWhyATaskFailed(t *testing.T) {
+	reply := querySnapshotFixture(1)
+	reply.Tasks = observe.TaskPage{Items: []observe.Task{
+		{PlanID: "plan-1", ID: "build", Status: "failed"},
+		{PlanID: "plan-1", ID: "ok", Status: "done"},
+	}}
+	reply.EventCursor = 26
+	reply.RecentEvents = observe.EventPage{Items: []observe.Event{{
+		ID: 26, PlanID: "plan-1", TaskID: "build", Kind: "task.failed_terminal",
+		Failure: &observe.FailureSummary{
+			Category:  observe.FailureTaskTerminal,
+			Summary:   "task retry budget was exhausted",
+			Retryable: false,
+		},
+	}}}
+
+	var out bytes.Buffer
+	if err := runStatusQueryWith(
+		context.Background(), &out, &fakeObserveClient{snapshot: reply},
+		ipc.ObserveSnapshotArgs{ProjectID: "project-1"}, false, false,
+	); err != nil {
+		t.Fatalf("runStatusQueryWith: %v", err)
+	}
+	got := out.String()
+
+	if !strings.Contains(got, "task retry budget was exhausted") {
+		t.Errorf("a failed task renders as the bare word \"failed\" while the "+
+			"snapshot already carries the reason:\n%s", got)
+	}
+	// A task that did not fail must not pick up someone else's reason.
+	for _, line := range strings.Split(strings.TrimRight(got, "\n"), "\n") {
+		if strings.Contains(line, " ok ") && strings.Contains(line, "retry budget") {
+			t.Errorf("a healthy task rendered another task's failure: %q", line)
+		}
+	}
+}

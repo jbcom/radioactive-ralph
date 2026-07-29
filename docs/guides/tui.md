@@ -107,6 +107,11 @@ project=demo plans=2 tasks=3 active_workers=1 captured_at=2026-07-28T19:00:00Z
   task-d           blocked_capability       — the bound provider does not satisfy this task's requirements; bind a provider that does
 ```
 
+A failed task carries why it failed, drawn from the same closed failure
+taxonomy the TUI shows — a task that exhausted its retries and one that
+never reached a provider both read `failed`, so the row alone cannot tell
+them apart.
+
 A blocked task carries its remediation, because that is the one status an
 operator cannot act on from the status string alone: a blocked task and a
 task waiting on a dependency both sit at zero progress, but only one of

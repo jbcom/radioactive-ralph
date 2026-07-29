@@ -154,7 +154,7 @@ func runStatusQueryWith(
 		if err != nil {
 			return fmt.Errorf("status: write output: %w", err)
 		}
-		if err := writeTaskLines(out, snapshot.Tasks); err != nil {
+		if err := writeTaskLines(out, snapshot.Tasks, snapshot.RecentEvents); err != nil {
 			return err
 		}
 	}
@@ -269,11 +269,12 @@ func writeJSON(out io.Writer, value any) error {
 // partitions, never print the raw ordinal, prefer alias over provider type),
 // and a CLI that re-implemented them would become a third dialect that drifts
 // from the TUI and GUI.
-func writeTaskLines(out io.Writer, page observe.TaskPage) error {
+func writeTaskLines(out io.Writer, page observe.TaskPage, events observe.EventPage) error {
 	if len(page.Items) == 0 {
 		return nil
 	}
 	labels := observe.PartitionLabels(page.Items)
+	reasons := failureReasonsByTask(events)
 	for _, task := range page.Items {
 		line := fmt.Sprintf("  %-16s %-24s", task.ID, task.Status)
 		// Which worker currently HOLDS the task, which is a different question
@@ -308,6 +309,14 @@ func writeTaskLines(out io.Writer, page observe.TaskPage) error {
 		if task.Blocked != nil && task.Blocked.Summary != "" {
 			line += " — " + task.Blocked.Summary
 		}
+		// Why a failed task failed. Not derivable from the row: a task that
+		// exhausted its retries and one that never reached a provider both read
+		// "failed". The snapshot already carries the closed FailureSummary and
+		// the TUI has rendered it all along; without this the CLI human path
+		// stayed strictly less informative than its own --json.
+		if reason := reasons[task.ID]; reason != "" {
+			line += " — " + reason
+		}
 		// The status column is padded so the marker columns align, which leaves
 		// trailing spaces on any row whose markers are all absent -- an unrun
 		// task, the common case. Trailing whitespace is invisible until it shows
@@ -327,4 +336,29 @@ func writeTaskLines(out io.Writer, page observe.TaskPage) error {
 		}
 	}
 	return nil
+}
+
+// failureReasonsByTask maps task id -> the newest failure summary for that
+// task, from the event page the snapshot already returned.
+//
+// Newest wins because a task can fail, be requeued, and fail again: the
+// operator asks about the CURRENT state, and an older attempt's reason would
+// describe a run that has since been superseded. The event page is newest-first
+// (EventPage documents that ordering), so the first entry seen for a task is
+// the one to keep.
+//
+// It reuses the FailureSummary the snapshot carries rather than deriving a
+// second taxonomy from event kinds -- observe owns that classification, and a
+// CLI-local copy would drift from the TUI the first time either changed.
+func failureReasonsByTask(page observe.EventPage) map[string]string {
+	reasons := make(map[string]string)
+	for _, ev := range page.Items {
+		if ev.TaskID == "" || ev.Failure == nil || ev.Failure.Summary == "" {
+			continue
+		}
+		if _, seen := reasons[ev.TaskID]; !seen {
+			reasons[ev.TaskID] = ev.Failure.Summary
+		}
+	}
+	return reasons
 }
