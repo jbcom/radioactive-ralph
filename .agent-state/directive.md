@@ -743,7 +743,16 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
       file says "a field is not shipped until each renderer shows it". Not
       repeating that two commits later.
 
-- [ ] [WAIT] FIXED in PR 331, awaiting merge. REAL ROOT CAUSE, and every earlier story was wrong. A reviewer pointed
+- [x] VERIFIED END TO END (11:2x). race reached done with reclaim_count=0, and
+      EVERY task in the run shows 0 reclaims. Prior runs: 2 unbounded, 6 capped.
+      This is the proof that -v, capping, and stall_timeout all failed to
+      produce -- each passed its unit tests and changed nothing on a dispatched
+      run.
+      Four explanations were needed (silence under load, the progress lease,
+      dispatch contention, then the acceptance budget) and the first three ALL
+      FIT THE DATA. The one that survived is the one whose fix changed the
+      observed behaviour. Fitting the observation is necessary, not sufficient.
+      REAL ROOT CAUSE, and every earlier story was wrong. A reviewer pointed
       out the fact that breaks them all: runWithHeartbeat beats every 20s
       INDEPENDENTLY of provider output, against a 90s stale window. A stalled
       turn keeps beating, so the watchdog killing a silent turn can never
