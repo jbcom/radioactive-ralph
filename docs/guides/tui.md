@@ -93,8 +93,8 @@ task, using the same markers and the same rules as the meso view:
 
 ```
 project=demo plans=2 tasks=3 active_workers=1 captured_at=2026-07-28T19:00:00Z
-  task-a           running                  via=primary p1
-  task-b           running                  via=codex p1
+  task-a           running                  w:…7f3a2b1c via=primary p1
+  task-b           running                  w:…9e8d7c6b via=codex p1
   task-c           ready
   task-d           blocked_capability       — the bound provider does not satisfy this task's requirements; bind a provider that does
 ```
