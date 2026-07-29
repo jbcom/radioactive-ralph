@@ -287,22 +287,32 @@ func TestTransitiveBlockerTerminatesOnACycle(t *testing.T) {
 	}
 }
 
-// TestSnapshotStaysFastOnALongChain guards the P1 a review caught: the first
+// TestSnapshotBlockerWalkIsNotPerTask guards the P1 a review caught: the first
 // blocker walk ran per TASK, re-deriving the same reachability for every row.
 // An imported ordered group is a 1:1 dependency chain, so cost grew
 // quadratically on exactly the long plans most likely to contain a dead
-// ancestor -- measured at 1.3s for 300 tasks, on a query every TUI and GUI
-// refresh runs.
+// ancestor -- 1.3s for 300 tasks, on a query every TUI and GUI refresh runs.
+// Walking forward from failures once brought that to ~25ms.
 //
-// Walking FORWARD from failures once brought that to ~26ms. The bound here is
-// deliberately loose (2s): this is a guard against reintroducing quadratic
-// behaviour, not a benchmark, and a tight threshold would flake on a loaded CI
-// runner and get deleted.
-func TestSnapshotStaysFastOnALongChain(t *testing.T) {
+// Getting this guard right took three attempts, and the failures are the
+// interesting part:
+//
+//  1. A 2s wall-clock bound PASSED locally at 26ms and FAILED on CI at 2.074s.
+//     It was measuring runner speed, not the property it claimed to protect.
+//  2. A "doubling cost <= 8x" ratio bound passed against the RESTORED
+//     quadratic code. Measured: the per-task walk scales 6.6x per doubling and
+//     the forward walk 3.3x -- the forward walk is not linear either, because a
+//     chain of n tasks has O(n^2) reachability pairs and the CTE materializes
+//     them. Runner noise cannot separate 3.3 from 6.6 reliably.
+//  3. What DOES separate them is absolute cost at a fixed size: 25ms vs 1.31s
+//     at n=300, a 50x gap. The bound below sits far above the fast path and far
+//     below the slow one, so it survives a slow runner and still fails loudly
+//     if the per-row walk returns.
+func TestSnapshotBlockerWalkIsNotPerTask(t *testing.T) {
+	const chain = 300
 	ctx := context.Background()
 	s := openTestStore(t)
-	projectID := mustCreateProject(t, s, "perf-chain")
-	const chain = 300
+	projectID := mustCreateProject(t, s, "perf-per-task")
 	specs := []GraphTaskSpec{readySpec("t0", "0")}
 	for i := 1; i < chain; i++ {
 		specs = append(specs, readySpec(
@@ -317,29 +327,41 @@ func TestSnapshotStaysFastOnALongChain(t *testing.T) {
 		t.Fatalf("MarkFailed: %v", err)
 	}
 
-	start := time.Now()
-	snap, err := s.ReadOperatorSnapshot(ctx, OperatorSnapshotQuery{
-		ProjectID: projectID, TaskLimit: 200,
-	})
-	if err != nil {
-		t.Fatalf("snapshot: %v", err)
+	q := OperatorSnapshotQuery{ProjectID: projectID, TaskLimit: 200}
+	if _, err := s.ReadOperatorSnapshot(ctx, q); err != nil {
+		t.Fatalf("warm snapshot: %v", err)
 	}
-	elapsed := time.Since(start)
-
-	// The work must still be CORRECT, or "fast" is meaningless.
-	blocked := 0
-	for _, it := range snap.Tasks.Items {
-		if it.BlockedByTaskID != "" {
-			blocked++
+	best, blocked := time.Hour, 0
+	for i := 0; i < 3; i++ {
+		start := time.Now()
+		snap, err := s.ReadOperatorSnapshot(ctx, q)
+		if err != nil {
+			t.Fatalf("snapshot: %v", err)
+		}
+		if d := time.Since(start); d < best {
+			best = d
+		}
+		blocked = 0
+		for _, it := range snap.Tasks.Items {
+			if it.BlockedByTaskID != "" {
+				blocked++
+			}
 		}
 	}
+
+	// "Fast" is meaningless if the query found nothing to do.
 	if blocked == 0 {
 		t.Fatal("no task reported a blocker; the timing below would be measuring " +
-			"a query that found nothing")
+			"a query that did no work")
 	}
-	if elapsed > 2*time.Second {
-		t.Errorf("snapshot over a %d-task chain took %v; the per-task blocker "+
-			"walk is quadratic and this is the shape that exposes it",
-			chain, elapsed.Round(time.Millisecond))
+
+	// 25ms fast path, 1.31s slow path, measured on this machine. 500ms is 20x
+	// the fast path (ample for a loaded runner) and under half the slow one.
+	const budget = 500 * time.Millisecond
+	if best > budget {
+		t.Errorf("best of 3 snapshots over a %d-task chain took %v, over the %v "+
+			"budget; the blocker walk is being re-derived per task again "+
+			"(that shape measured 1.31s here)",
+			chain, best.Round(time.Millisecond), budget)
 	}
 }
