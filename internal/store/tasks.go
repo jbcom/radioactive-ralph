@@ -57,6 +57,18 @@ type Task struct {
 // plus claims a reaper took back, plus the one it currently holds or finished
 // on -- neither counter includes the claim in hand.
 //
+// THE +1 IS UNCONDITIONAL, so this OVERCOUNTS a task that holds no claim: a
+// freshly created task reports 1 having been given none, and a requeued task
+// between attempts reports one more than it has had. That is a deliberate
+// simplification of a raw accessor, not a claim that the number is
+// status-aware -- an earlier version of this comment read as the latter.
+//
+// Callers that render this to an operator MUST apply the status themselves.
+// observe.AttemptLabel is the one that does: it returns "" when
+// RetryCount+ReclaimCount is zero, and adds the +1 only for a task that is
+// running (holds a claim) or done/failed (finished on one). Nothing in
+// production calls AttemptCount directly today; AttemptLabel is the surface.
+//
 // It is DERIVED rather than a fourth stored counter, so it cannot drift from
 // the two numbers it summarizes.
 //
