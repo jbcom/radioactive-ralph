@@ -526,6 +526,18 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
 
 ## Rolling improvement queue (directive 0 appends here)
 
+- [x] DONE 2026-07-28: verify-repo-claims.sh attributed a FOREIGN repo's test
+      failures to this one. VERIFY_TESTS=1 reported "fyne-lifecycle-ordering
+      TESTS FAIL" and "all worktrees build+test NO" -- for a fork of upstream
+      fyne that shares the .worktrees/ directory. Three guards (build/test,
+      uncommitted, unpushed) globbed every directory there.
+      That is the most damaging direction for a verifier to lie in: it sends you
+      hunting in the wrong codebase, and the obvious response ("make the tests
+      pass") would mean editing an unrelated project. Each loop now checks the
+      worktree's remote. Proven in BOTH directions -- accepts this repo, rejects
+      the fork, and still fires on a real uncommitted file here. Scoped, not
+      silenced, which is the distinction that matters when quieting a check.
+
 - [ ] [WAIT] Land the 1 open PR: #310 (flag a plan with no runnable work -- the
       plan-level form of the stale claim, found by the FIFTH dogfooding pass).
       Auto-merge ARMED. Hash-prefixed deliberately: guard 9 extracts
