@@ -788,6 +788,17 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
       paraphrase of JSON field names presented as captured output. Fixed with
       real output. Same defect as every other one this session: I wrote what
       the surface would plausibly say instead of running it and reading it.
+      FINAL TALLY: race reached FOUR reclaims under the cap, versus two
+      unbounded. Capping made it WORSE, not better -- the opposite of the
+      prediction, in the same direction the mid-run "it halved" reading was
+      wrong. Three successive readings of one experiment (0 predicted, 1
+      "halved", 2 "same", 4 "worse"), and only the last is the result. The
+      lesson is not about caps: it is that a running experiment has no verdict
+      until it stops, and every intermediate reading I wrote down was wrong.
+      Live confirmation of the 328 policy, incidentally: race sits at
+      reclaims=4 retries=0 and is STILL RUNNING. Four worker deaths did not
+      spend a budget reserved for provider failures, which is exactly the
+      behaviour that PR pins in both directions.
       Also shipped from this finding (PR 324, un-hashed): --supervisor help now
       names RALPH_MAX_PARALLEL and says the unset default is UNBOUNDED. It was
       documented only in docs/design/, and an operator debugging a reclaimed
