@@ -526,10 +526,26 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
 
 ## Rolling improvement queue (directive 0 appends here)
 
-- [ ] [WAIT] Land the 1 open PR: #316 (tracked-edit guard runs from an EXIT
-      trap, so a run that FAILS still reports the worker edits it left behind).
-      Auto-merge ARMED, no failing checks. Hash-prefixed deliberately: guard 9
-      extracts `#[0-9]{3}` from THIS line.
+- [x] DONE 2026-07-29: the self-test was documented NOWHERE a newcomer would
+      look -- not the README, not any guide, only the plan file and AGENTS.md,
+      both of which you must already know about. A self-test nobody can find
+      does not get run, which makes the whole harness decorative.
+      docs/guides/self-test.md now covers it: how to run it, why every step
+      carries `accept:` (and that a step without one verifies nothing), how to
+      read a live run's markers, that a run MUTATES the working tree in two
+      ways, and the two step-sizing rules. Linked from the guides index,
+      toctree, and README.
+      Every factual claim in it was checked against the code rather than
+      written from memory -- the gitignore prefixes, the acceptance-marker
+      invariant (via its test), and the --watch flag.
+
+- [x] #316 MERGED. The tracked-edit guard now runs from an EXIT trap, so a run
+      that FAILS still reports the worker edits it left behind -- found by
+      running the script end to end, not by the isolated test, which passed
+      throughout. A review then caught that the guard's own test DESTROYED
+      uncommitted work (unconditional `git checkout --` on its victim);
+      reproduced, then fixed by saving and restoring exact bytes. Verified from
+      merged main: 5 checks pass AND an uncommitted marker survives.
 
 - [x] DONE 2026-07-29: the tracked-edit guard only ran on the SUCCESS path.
       `set -e` plus a failing import (no supervisor, bad plan, slug conflict)
