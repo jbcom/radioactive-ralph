@@ -526,6 +526,21 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
 
 ## Rolling improvement queue (directive 0 appends here)
 
+- [ ] GENERATED 2026-07-29: self-test runs ACCUMULATE, one plan per invocation.
+      Nine runs in a single session took this project to 11 plans / 110 tasks.
+      Nothing is degraded yet (`status` returns in ~57ms and the plan page is
+      not full), so this is a real trend rather than a live defect -- worth
+      fixing before it bites, not urgently.
+      The unique-slug design is deliberate and should NOT be reverted: it is
+      what stopped the self-test reporting stale results, which was a genuine
+      false-green. The question is retention, not uniqueness.
+      Options: a `--prune` flag on scripts/self-test.sh that archives
+      prove-the-build-is-sound-* plans older than the last N; or have the script
+      archive its predecessor on import. PlanStatusArchived already exists
+      (store/plans.go) and nothing sets it, so the status is available.
+      Verify first that archived plans drop out of the operator snapshot --
+      if they do not, archiving buys nothing and the fix is a real delete path.
+
 - [ ] [WAIT] Land the 1 open PR: #317 (docs/guides/self-test.md -- the harness
       was documented nowhere a newcomer would look). Auto-merge ARMED, no
       failing checks. Hash-prefixed deliberately: guard 9 extracts `#[0-9]{3}`
