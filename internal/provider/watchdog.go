@@ -65,12 +65,26 @@ var DefaultPromptPatterns = []*regexp.Regexp{
 	regexp.MustCompile(`(?i)\[y/n\]`),
 	regexp.MustCompile(`(?i)continue\?`),
 	regexp.MustCompile(`(?i)proceed\?`),
-	regexp.MustCompile(`(?i)permission`),
-	regexp.MustCompile(`(?i)approve`),
-	regexp.MustCompile(`(?i)allow this`),
+	// These three name an ASKED question, not a word mentioned. A bare
+	// `permission` matched "permission denied" -- error text -- so an ordinary
+	// failure was killed as a blocked turn and reported as interactive_prompt
+	// while the CLI waited for nobody.
+	//
+	// The asymmetry justifies erring toward a miss: a false NEGATIVE stalls one
+	// turn until the lease expires, while a false POSITIVE kills a WORKING turn
+	// and misdirects the diagnosis -- which is what it did, for the length of
+	// an entire investigation.
+	regexp.MustCompile(`(?i)(needs?|asking for|requesting|grant)\s+permission|permission\s+to\s+\w+\?`),
+	regexp.MustCompile(`(?i)\bapprove\s+(this|that|the)\b|do you approve`),
+	regexp.MustCompile(`(?i)allow this\b.*\?|allow this\??$`),
 	regexp.MustCompile(`(?i)do you want to`),
 	regexp.MustCompile(`(?i)waiting for`),
 	regexp.MustCompile(`(?i)press enter`),
+	// An OPEN QUESTION about the task. Anchored to a question word at line
+	// start and requiring a "?", so it matches a question ASKED rather than any
+	// sentence mentioning one -- the same discipline the permission patterns
+	// above now follow.
+	regexp.MustCompile(`(?im)^\s*(which|what|where|how|who|should i)\b[^?]*\?`),
 }
 
 // DefaultWatchdogConfig returns a WatchdogConfig seeded with
