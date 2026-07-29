@@ -54,6 +54,14 @@ func TestPromptPatternsRejectErrorText(t *testing.T) {
 	// case that several patterns satisfy proves nothing about any of them.
 	mustMatch := []string{
 		"Claude needs permission to edit main.go",
+		// DIRECT forms. The first tightening required a verb before
+		// "permission" and this|that|the after "approve", so a bare
+		// "Permission to edit main.go?" and "Approve changes?" both MISSED --
+		// trading false positives for false negatives, the tradeoff this
+		// test's own comment warns about, because no case covered these shapes.
+		"Permission to edit main.go?",
+		"Approve changes?",
+		"Should I use SQLite?",
 		"Do you want to proceed?",
 		"Overwrite existing file? [Y/n]",
 		"Press enter to continue",
@@ -86,6 +94,14 @@ func TestPromptPatternsRejectErrorText(t *testing.T) {
 func TestEachPositiveCaseIsolatesOnePattern(t *testing.T) {
 	for _, line := range []string{
 		"Claude needs permission to edit main.go",
+		// DIRECT forms. The first tightening required a verb before
+		// "permission" and this|that|the after "approve", so a bare
+		// "Permission to edit main.go?" and "Approve changes?" both MISSED --
+		// trading false positives for false negatives, the tradeoff this
+		// test's own comment warns about, because no case covered these shapes.
+		"Permission to edit main.go?",
+		"Approve changes?",
+		"Should I use SQLite?",
 		"Do you want to overwrite it",
 		"Overwrite existing file? [Y/n]",
 		"Press enter to continue",

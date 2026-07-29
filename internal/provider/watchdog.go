@@ -78,8 +78,8 @@ var DefaultPromptPatterns = []*regexp.Regexp{
 	// The asymmetry justifies erring toward a miss: a false NEGATIVE stalls one
 	// turn until the lease expires; a false POSITIVE kills a WORKING turn and
 	// misdirects the diagnosis -- which it did, for an entire investigation.
-	regexp.MustCompile(`(?i)(needs?|asking for|requesting|grant)\s+permission|permission\s+to\s+\w+\?`),
-	regexp.MustCompile(`(?i)\bapprove\s+(this|that|the)\b|do you approve`),
+	regexp.MustCompile(`(?i)(needs?|asking for|requesting|grant)\s+permission|permission\s+to\s+[^?\n]{1,60}\?`),
+	regexp.MustCompile(`(?i)\bapprove\s+[^?\n]{0,40}\?|\bapprove\s+(this|that|the)\b|do you approve`),
 	regexp.MustCompile(`(?i)allow this\b.*\?|allow this\??$`),
 	regexp.MustCompile(`(?i)do you want to`),
 	regexp.MustCompile(`(?i)waiting for`),
@@ -95,7 +95,7 @@ var DefaultPromptPatterns = []*regexp.Regexp{
 	// question word and a "?". The looser version matched "What's new?" and
 	// "What went wrong?", which providers print as banners: the same
 	// false-positive class as the bare `permission` above.
-	regexp.MustCompile(`(?im)^\s*(which|what|where|who|how)\b[^?]*\b(should|do|would|shall)\s+(i|we)\b[^?]*\?`),
+	regexp.MustCompile(`(?im)^\s*((which|what|where|who|how)\b[^?\n]*\b(should|do|would|shall)\s+(i|we)\b|(should|shall|do)\s+(i|we)\b)[^?\n]*\?`),
 }
 
 // DefaultWatchdogConfig returns a WatchdogConfig seeded with
