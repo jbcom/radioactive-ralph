@@ -92,9 +92,18 @@ fyne-cross/
 # repo whose contract forbids exactly that.
 .ralph-codex-result-*.txt
 
-# Provider scratch dirs. A contained codex turn sets HOME/TMPDIR under the
-# project so its writes stay inside the containment root, which means a
-# self-test in flight leaves these here -- and their contents churn fast enough
-# that `git add -A` can fail mid-stat on a file the turn already deleted.
-.codex-tmp/
-.codex-*-go/
+# Provider and acceptance scratch, created IN the project dir on purpose: a
+# contained turn sets HOME/TMPDIR under the containment root so its writes
+# cannot escape, and the orchestrator re-runs acceptance commands in a scratch
+# tree of its own. A self-test in flight therefore leaves all of these behind.
+#
+# They must be ignored for `git add -A` to stay safe, which this repo requires.
+# Their contents churn fast enough that add -A does not merely stage junk -- it
+# FAILS mid-stat on a file the turn already deleted:
+#
+#   fatal: unable to stat '.codex-.../store.db': No such file or directory
+#
+# so an unignored pattern here breaks committing outright, not just cleanliness.
+.codex-*
+.rr-accept.*
+.tmp-*
