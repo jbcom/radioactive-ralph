@@ -1,0 +1,19 @@
+-- Durable per-task failure classification.
+--
+-- The failure category was already recorded, but ONLY in the event log. The
+-- operator snapshot returns a bounded event page (20 by default), so a task
+-- could sit terminal indefinitely while newer activity from other tasks and
+-- plans evicted the evidence for why it died -- leaving the row a bare
+-- "failed" with no way to recover the reason short of raw SQLite, the access
+-- the dumb-client boundary exists to remove.
+--
+-- Storing it on the task makes the answer independent of how much unrelated
+-- activity has happened since. This is a projection of the event, not a second
+-- source of truth: the event log remains the durable history, and this column
+-- carries only the CURRENT attempt's classification -- cleared on requeue, so
+-- a pending task never advertises a failure it has already moved past.
+--
+-- Values are the closed provider taxonomy (internal/provider.FailureCategory),
+-- never a raw error string: those are unbounded and error-derived, and would
+-- make this the one column that leaks free text across the operator boundary.
+ALTER TABLE tasks ADD COLUMN failure_category TEXT;

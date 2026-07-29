@@ -639,3 +639,31 @@ func TestFailureReasonIsClearedByANewerSuccess(t *testing.T) {
 			"retry succeeded and the row would read \"done — %s\"", got, got)
 	}
 }
+
+// TestFailureReasonSurvivesEventEviction is the P2 case that could not be
+// fixed by rendering alone: the snapshot's event page is bounded (20 by
+// default), so a long-terminal task loses its failure event to newer activity
+// from other tasks and plans while staying failed forever.
+//
+// The durable category on the task row is what makes the answer independent of
+// how much unrelated work has happened since. This fixture is the evicted
+// state: a failed task with NO matching event.
+func TestFailureReasonSurvivesEventEviction(t *testing.T) {
+	reply := querySnapshotFixture(1)
+	reply.Tasks = observe.TaskPage{Items: []observe.Task{{
+		PlanID: "plan-1", ID: "build", Status: "failed", FailureCategory: "auth",
+	}}}
+	reply.RecentEvents = observe.EventPage{Items: []observe.Event{}}
+
+	var out bytes.Buffer
+	if err := runStatusQueryWith(
+		context.Background(), &out, &fakeObserveClient{snapshot: reply},
+		ipc.ObserveSnapshotArgs{ProjectID: "project-1"}, false, false,
+	); err != nil {
+		t.Fatalf("runStatusQueryWith: %v", err)
+	}
+	if got := out.String(); !strings.Contains(got, "auth") {
+		t.Errorf("a failed task whose event has aged out renders as a bare "+
+			"\"failed\"; the durable category is what survives eviction:\n%s", got)
+	}
+}

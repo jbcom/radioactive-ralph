@@ -629,7 +629,11 @@ func (s *Store) MarkFailedWithPayload(ctx context.Context, planID, taskID, sessi
 			SET status = 'pending',
 			    retry_count = retry_count + 1,
 			    claimed_by_session = NULL,
-			    claimed_by_worker_id = NULL
+			    claimed_by_worker_id = NULL,
+			    -- CLEARED on requeue: the column describes the task's CURRENT
+			    -- state, and a pending task still advertising its last attempt's
+			    -- failure reads as broken when it is simply queued to run again.
+			    failure_category = NULL
 			WHERE plan_id = ? AND id = ? AND status = 'running' AND claimed_by_session = ?
 		`, planID, taskID, sessionID)
 		if err != nil {
@@ -653,9 +657,14 @@ func (s *Store) MarkFailedWithPayload(ctx context.Context, planID, taskID, sessi
 	res, err := tx.ExecContext(ctx, `
 		UPDATE tasks SET status = 'failed',
 		                 claimed_by_session = NULL,
-		                 claimed_by_worker_id = NULL
+		                 claimed_by_worker_id = NULL,
+		                 -- Persisted here, not only in the event log: the
+		                 -- operator snapshot pages events, so the reason is
+		                 -- otherwise evicted by unrelated activity while the
+		                 -- task stays terminal forever.
+		                 failure_category = NULLIF(?, '')
 		WHERE plan_id = ? AND id = ? AND status = 'running' AND claimed_by_session = ?
-	`, planID, taskID, sessionID)
+	`, payload.FailureCategory, planID, taskID, sessionID)
 	if err != nil {
 		return false, fmt.Errorf("store: mark failed: %w", err)
 	}

@@ -560,6 +560,12 @@ type Task struct {
 	// in-flight plan as blocked and the marker would stop being read.
 	BlockedByTaskID string `json:"blocked_by_task_id,omitempty"`
 
+	// FailureCategory is why this task failed, from the closed provider
+	// taxonomy, empty unless it is currently failed. Durable on the task, so it
+	// survives the failure event being evicted from the bounded event page --
+	// the case that left a terminal task reading a bare "failed" forever.
+	FailureCategory string `json:"failure_category,omitempty"`
+
 	// Blocked classifies a fail-closed pre-dispatch block, nil when the task is
 	// not blocked.
 	//
@@ -1101,6 +1107,7 @@ func taskFromStore(item store.OperatorTask) (Task, error) {
 		AssignedIndependenceDomain: item.AssignedIndependenceDomain,
 		PartitionOrdinal:           item.PartitionOrdinal,
 		BlockedByTaskID:            item.BlockedByTaskID,
+		FailureCategory:            item.FailureCategory,
 
 		Blocked:   blockedSummaryFor(item.Status),
 		CreatedAt: item.CreatedAt,

@@ -316,6 +316,12 @@ func writeTaskLines(out io.Writer, page observe.TaskPage, events observe.EventPa
 		// stayed strictly less informative than its own --json.
 		if reason := reasons[taskKey(task.PlanID, task.ID)]; reason != "" {
 			line += " — " + reason
+		} else if task.FailureCategory != "" {
+			// Fallback for the evicted case: the event page is bounded, so a
+			// long-terminal task loses its event while the durable category on
+			// the task row survives. Less prose than the event summary, but it
+			// still answers "why" rather than leaving a bare "failed".
+			line += " — " + task.FailureCategory
 		}
 		// The status column is padded so the marker columns align, which leaves
 		// trailing spaces on any row whose markers are all absent -- an unrun
@@ -341,14 +347,12 @@ func writeTaskLines(out io.Writer, page observe.TaskPage, events observe.EventPa
 // failureReasonsByTask maps (plan, task) -> the newest failure summary for that
 // task, from the event page the snapshot already returned.
 //
-// KNOWN LIMIT, stated rather than hidden: the event page is bounded (20 by
-// default), so a task whose failure event has been evicted by newer activity
-// renders as a bare "failed" again. That is a smaller surface than the bare
-// "failed" this replaced -- recent failures, the ones an operator is usually
-// asking about, are covered -- but it is not complete. Closing it properly
-// means projecting the current failure classification durably onto the task
-// row, which is a schema change and belongs in its own change, not smuggled
-// into a rendering fix.
+// The event summary is the PREFERRED reason because it is prose an operator can
+// act on. It is not the only one: the event page is bounded (20 by default), so
+// a long-terminal task loses its failure event to newer activity while staying
+// failed forever. That gap is now closed by the durable failure_category on the
+// task row (migration 0004), which the caller falls back to -- terser, but it
+// still answers "why" instead of leaving a bare "failed".
 //
 // Newest wins because a task can fail, be requeued, and fail again: the
 // operator asks about the CURRENT state, and an older attempt's reason would
