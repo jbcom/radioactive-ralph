@@ -315,6 +315,18 @@ func (o *Orchestrator) VerifyAndCompleteAs(
 		return checkErr
 	})
 	if beatErr != nil {
+		// Name a budget exhaustion as such. A bare "context deadline exceeded"
+		// here reads exactly like the acceptance command failing on its own
+		// terms, and that ambiguity is why this bug took four explanations to
+		// find: an operator could not tell "your suite is failing" from "your
+		// suite did not get to finish".
+		if errors.Is(beatErr, context.DeadlineExceeded) {
+			return false, fmt.Errorf(
+				"orch: acceptance verification exceeded its %s budget for task %s/%s; "+
+					"the command may be slow rather than failing -- time it directly, "+
+					"and note this budget is separate from the provider stall lease: %w",
+				o.effectiveVerificationBudget(), planID, taskID, beatErr)
+		}
 		return false, fmt.Errorf("orch: run acceptance check: %w", beatErr)
 	}
 
