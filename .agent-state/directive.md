@@ -526,7 +526,7 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
 
 ## Rolling improvement queue (directive 0 appends here)
 
-- [ ] GENERATED 2026-07-28 from a P2 review finding on the failure-reason work
+- [x] GENERATED 2026-07-28 from a P2 review finding on the failure-reason work
       (fixed its two siblings in the same PR; this one is genuinely bigger).
       A failed task whose failure EVENT has aged out of the bounded
       RecentEvents page (default 20) renders as a bare `failed` again. The
