@@ -42,7 +42,7 @@
    {"id": "unit-tests-dir", "after": ["build"]}
    ```
 
-8. run the race detector over the concurrency-bearing store `accept: go test -race ./internal/store/`
+8. run the race detector over the concurrency-bearing store `accept: go test -race -v ./internal/store/`
 
    ```ralph-task
    {"id": "race", "after": ["build"]}

@@ -3,6 +3,7 @@
 package orch
 
 import (
+	"fmt"
 	"os"
 
 	"golang.org/x/sys/unix"
@@ -23,6 +24,9 @@ func openContainedFile(path string) (*os.File, error) {
 	)
 	if err != nil {
 		return nil, err
+	}
+	if fd < 0 {
+		return nil, fmt.Errorf("orch: open %s returned invalid file descriptor %d", path, fd)
 	}
 	return os.NewFile(uintptr(fd), path), nil
 }

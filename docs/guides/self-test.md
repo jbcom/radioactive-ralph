@@ -108,12 +108,65 @@ Review those before committing. One run produced a plausible, compiling
 integer-overflow guard across four files for a lint error that — checked
 afterwards — did not reproduce.
 
+That run's root cause was found later, and it is worth knowing because it makes
+the edits look justified: **a stale linter cache invents work.**
+`golangci-lint run ./internal/...` reported 11 issues, every one of them in
+`../.worktrees/rr-sandbox/` — a sibling directory that is not a worktree of this
+repo, has no `go.work` entry, and whose files do not exist on disk. The findings
+came from golangci-lint's own cache. After `golangci-lint cache clean`, the same
+command reports `0 issues`.
+
+So the `lint-internal` step failed on phantom findings, and the provider turn did
+exactly what a diligent agent should: it tried to fix them, could not (the files
+are gone), and asked for interactive guidance — surfacing as
+`failure_category: interactive_prompt`. Both anomalies in that run trace to the
+one cause.
+
+A lint failure naming a path outside the repo is the tell. Check that the file
+exists before believing the finding, and clear the cache before concluding the
+code is at fault.
+
 ## Writing steps
 
 **Size each step to the provider turn deadline.** A step whose turn outlives the
 deadline fails for reasons unrelated to the code, and reads identically to a
 real failure. Broad sweeps (`go test ./internal/... ./cmd/...`) hit this;
 per-package steps do not.
+
+**A silent step is a stalled step.** Two independent bounds govern a turn, and
+the SHORTER one is the one that bites: the turn deadline (30m) is generous, but
+the progress lease (`DefaultStallTimeout`, 3m) is renewed by OUTPUT. A command
+that runs a long time while printing nothing looks identical to a hung provider,
+so the watchdog kills it and the reaper reclaims the task.
+
+Observed: the `race` step ran `go test -race ./internal/store/`, which prints a
+single `ok` line after 138s of silence. That is 41s of headroom against the
+lease -- and under a concurrent self-test run it lost that race twice
+(`reclaim_count: 2`) before finishing. Nothing was wrong with the code or the
+test; the step was simply invisible while it worked.
+
+**Where the output has to appear matters more than whether it exists.** The
+obvious fix — add `-v` so each test line renews the lease — only works when the
+watchdog can SEE those lines. It can, for a directly executed command and for
+the mechanical acceptance rerun. It cannot under Codex dispatch: the watchdog
+observes the outer `codex exec --json` event stream, and a command's stdout
+reaches that stream as `aggregated_output` on a single `item.completed` event
+emitted only when the command FINISHES. There is no incremental output event.
+So `-v` changes what that one event contains, never when it arrives, and a
+138s test is exactly as silent to the lease with it as without.
+
+The step still carries `-v`, which is worth having for the paths that can use
+it. But when a genuinely long command must run under a dispatching provider,
+the silence is STRUCTURAL and cannot be removed — raise `stall_timeout` for
+that binding instead (it is per-binding config, layered user then project, and
+bounded by `MaxStallTimeout`). Removing the silence is the better fix only when
+the silence is removable.
+
+Only that ONE step is anywhere near the lease, which is worth knowing before
+changing anything globally. Every other step was measured: the unit suites and
+both `golangci-lint` runs finish in 2-13s, and `-race` over the same store
+package that takes 2s without it takes 138s with it — ~46x the next-slowest
+step. Measure before broadening a fix.
 
 **Partition coverage, never drop it.** When a step grows too slow, split it —
 do not narrow what it tests. An early revision cut the unit pass down to one

@@ -3,6 +3,8 @@
 package agent
 
 import (
+	"errors"
+	"math"
 	"os"
 
 	"golang.org/x/sys/unix"
@@ -18,7 +20,11 @@ import (
 // TCGETS/TCSETS; the BSDs and macOS use TIOCGETA/TIOCSETA), so they are
 // supplied per-platform via termiosGetReq/termiosSetReq.
 func disablePTYEcho(ptmx *os.File) error {
-	fd := int(ptmx.Fd())
+	rawFD := ptmx.Fd()
+	if rawFD > math.MaxInt {
+		return errors.New("agent: pty file descriptor is outside ioctl range")
+	}
+	fd := int(rawFD)
 	termios, err := unix.IoctlGetTermios(fd, termiosGetReq)
 	if err != nil {
 		return err

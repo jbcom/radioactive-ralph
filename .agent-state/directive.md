@@ -539,10 +539,155 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
       The operator surface carried it end to end -- category on the row, no
       raw provider text, and the dependent steps naming their root blocker.
 
-- [ ] [WAIT] Land the 1 open PR: #321 (fold three overlapping AGENTS.md rules
-      into one organized by layer -- check, setup, threshold). Auto-merge
-      ARMED, no failing checks. Hash-prefixed deliberately: guard 9 extracts
-      `#[0-9]{3}` from THIS line.
+      ROOT CAUSE FOUND LATER, and "no action needed" was premature -- the
+      HANDLING was correct, but the trigger was fixable. A STALE LINTER CACHE
+      invents work: `golangci-lint run ./internal/...` reported 11 issues, all
+      11 in `../.worktrees/rr-sandbox/` -- not a worktree of this repo, absent
+      from any go.work, files not on disk. After `golangci-lint cache clean`
+      the same command reports `0 issues`.
+      So the agent was asked to fix findings it COULD NOT fix (the files are
+      gone), tried, and asked for guidance. That is a diligent agent meeting an
+      impossible task, not a confused one.
+      This also explains the OTHER anomaly in the same run: the four-file
+      integer-overflow guard was written to satisfy PHANTOM lint errors. Both
+      anomalies, one cause.
+      The general tell: a lint failure naming a path outside the repo. Check
+      the file exists before believing the finding. Guide updated.
+
+- [x] #321 MERGED. Folded three overlapping AGENTS.md rules into one organized
+      by layer -- check, setup, threshold. All PRs landed: open=0, queued=0.
+
+
+- [x] DOGFOOD RESULT 2026-07-29, self-test on merged main. TERMINAL: 9 done,
+      1 failed (`lint-internal`), 2 blocked (`claims`, `e2e`) = 12. The plan
+      reports DEAD (no runnable work), not COMPLETE, which is the honest
+      outcome when a step fails.
+      `interactive_prompt` is lint-internal's failure_category -- the REASON
+      for that one failure, not a second failed step. Read as two failures the
+      arithmetic lands at 11/12 and the record contradicts itself; an earlier
+      revision of this entry did exactly that by freezing a mid-flight 8/12
+      while `race` was still running.
+      The run reproduced its own documented hazards, which is the point of
+      running it:
+
+      1. TRANSITIVE BLOCKER, proven live. `claims` declares `after: [e2e]` and
+         nothing else, yet reported `blocked_by=lint-internal` -- the root
+         failure two hops away, not the intermediate one. That is the #309
+         recursive CTE doing its job on a real plan.
+
+      2. THE GUARD-FOR-A-NONEXISTENT-LINT, reproduced exactly. A provider turn
+         wrote a plausible, compiling integer-overflow guard across the same
+         four `*_unix.go` files the self-test guide predicts. Verified by
+         stashing the edits and re-running golangci-lint: ZERO G115 findings.
+         The only issues reported were in a stale `.worktrees/rr-sandbox` path
+         whose files no longer exist. Edits discarded.
+         The doc claimed this happens; the run confirmed it rather than merely
+         restating it.
+
+      3. TWO WORKER EDITS TO TESTS THAT WERE CORRECT, and were kept. The
+         reflex is to distrust an agent rewriting tests, since that can delete
+         coverage -- but checking beat assuming, in the opposite direction from
+         (2):
+         - supervisor_test.go: the original cancelled the context BEFORE
+           collecting results, so a scheduler-delayed starter could acquire
+           the lock after the winner released it and then fail CreateSession
+           on the shared cancelled context -- a sequential restart miscounted
+           as an error. The rewrite waits for the loser's refusal first.
+           Ordering assumption checked, not assumed: 40/40 under -race.
+           waitForSupervisor returning means the winner is SERVING, so the
+           loser has already lost Acquire, and the winner cannot return first
+           because it does not return until cancel().
+         - discovery_posix_test.go: creates the directory that actually holds
+           the socket instead of assuming it equals runtimeDir, and uses
+           live.SocketPath rather than re-deriving a path that may not match.
+
+      The standing lesson, now with a counterexample on each side: unauthored
+      edits need VERIFICATION, not a policy. Blanket-reverting would have
+      discarded two real fixes; blanket-keeping would have shipped dead code
+      for a lint error that does not occur.
+
+      4. A REAL PRODUCT FINDING, which is what dogfooding is FOR. The `race`
+         step sat at reclaim_count=2 and I first misread it as a stuck row --
+         because I filtered on `assigned_worker_id` when the live field is
+         `claimed_by_worker_id`. It was not stuck; it was being reclaimed.
+         Root cause: two independent bounds govern a turn and the SHORTER one
+         bites. The turn deadline is 30m (enormous headroom), but the progress
+         lease is 3m and renews on OUTPUT. `go test -race ./internal/store/`
+         prints ONE `ok` line after 138.6s of silence -- 41s of headroom --
+         so under a concurrent run the watchdog read a working step as a hung
+         provider and killed it. Twice.
+         First fix was `-v`, verified to stream with sub-second gaps -- and a
+         reviewer (codex, PR 322) showed that is NOT sufficient for the path
+         that actually failed. Under Codex dispatch the watchdog observes the
+         outer `codex exec --json` stream, where a command's stdout arrives as
+         `aggregated_output` on ONE `item.completed` event emitted when the
+         command FINISHES; there is no incremental output event. `-v` changes
+         what that event contains, never when it arrives, so the 138s of
+         silence is identical with or without it.
+         I verified the claim rather than deferring to it: no item.started /
+         delta / incremental type exists anywhere in the codex path, and the
+         lease renews on ANY line from the agent process, so no line means no
+         renewal. The reviewer was right.
+         `-v` is KEPT (it helps direct execution and the mechanical acceptance
+         rerun), but the honest fix for a dispatched long command is a larger
+         stall_timeout on that binding -- the silence is structural and cannot
+         be removed. Guide corrected: WHERE the output appears matters more
+         than whether it exists.
+         This is the class of bug only a real run finds. Every unit test
+         passes; the step itself passes in 138s standalone. It fails only when
+         a long quiet command meets a watchdog under load.
+         TERMINAL VERDICT: DEAD 9/12, race=done reclaims=2. The step SURVIVED
+         and passed on its third claim, which confirms the diagnosis rather
+         than merely being consistent with it -- a genuinely broken step would
+         have exhausted its retry budget instead of completing. DEAD (not
+         COMPLETE) is the honest outcome: lint-internal failed, so claims and
+         e2e stayed correctly blocked and the plan reports no runnable work.
+
+- [x] DONE. Reclaim reasons are durable now (PR 322, un-hashed deliberately:
+      guard 9 reads hashes as open-PR citations).
+      The reason was never MISSING -- it was computed and then DROPPED.
+      ClassifyFailure already turns a stall into FailureStall, but the
+      orchestrator writes it via MarkFailedWithPayload, which returns
+      ErrTaskNotOwnedRunning once the reaper has reclaimed the task, and that
+      error is deliberately swallowed as benign. So exactly when a reclaim
+      happens, the category is discarded a few lines from where reclaim_count
+      is incremented. Finding that changed the fix: it is a plumbing gap, not a
+      missing classifier.
+      The reaper now emits one task.reclaimed event per task with plan_id,
+      task_id, count, and the branch that fired -- stale_heartbeat vs
+      orphaned_claim, already distinct in the SQL and previously collapsed.
+      TWO lessons worth keeping:
+        - A comment claimed UPDATE...RETURNING was not portable on the pinned
+          modernc driver, so the code settled for a summary row. Re-tested on
+          v1.54.0: it works. Verify a constraint before designing around it.
+        - My first version derived the reason IN the RETURNING clause, which
+          evaluates against the POST-update row where claimed_by_worker_id has
+          just been nulled -- labelling every reclaim orphaned_claim. The test
+          caught it. A test asserting merely that "a reason exists" would have
+          passed; asserting the SPECIFIC branch is what caught it.
+      Both fixes carry negative proofs.
+
+- [ ] The stall lease is still invisible in the OPERATOR SURFACE. The reclaim
+      reason is now durable in the events stream, but `status` still shows a
+      bare reclaim_count on the task row -- so the fast read is still "why is
+      this number 2?" and the answer lives one query away.
+      Surface the latest reclaim reason on the task row itself, the way
+      failure_category already rides along for failed tasks.
+      Verify by reverting: with it, a reclaimed row names its cause inline;
+      without it, the operator is back to correlating events by hand.
+      Historical note -- the `race` finding cost a
+      real diagnosis (2 reclaims read as a stuck row) for a step that was
+      merely quiet, and NOTHING in the operator surface said so: the row shows
+      reclaim_count, but not WHY the claim was lost. A stall-killed turn and a
+      crashed worker look identical after the fact.
+      Make the reason durable the way failure_category already is for failed
+      tasks -- a reclaim should record what ended the previous claim (stall,
+      turn deadline, worker death), so `reclaim_count: 2` becomes readable
+      instead of merely alarming.
+      Same shape as the interactive_prompt observation above: the invariant
+      WORKED, but the operator had to go read watchdog source to learn that.
+      Verify by reverting: with the reason recorded, a stalled step names its
+      cause; without it, the row is indistinguishable from a dead worker.
 
 - [x] #320 MERGED. Absence assertions must prove presence first -- the third
       distinct form of one mistake this session (a grep matching nothing, a

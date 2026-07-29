@@ -818,6 +818,11 @@ func taskDeltaStatus(kind string) string {
 		return "failed"
 	case "task.released":
 		return "ready"
+	case "task.reclaimed":
+		// The reaper requeued a task whose worker went away. Without this the
+		// row keeps showing 'running' until the next poll — the one state that
+		// is actively misleading, since it names a worker that is gone.
+		return "pending"
 	case "task.blocked", "task.context_requested":
 		// The store emits these on the running→blocked transition (a worker
 		// stalled or requested context). Reflect it immediately — a blocked

@@ -281,4 +281,42 @@ for i,l in enumerate(open('.agent-state/decisions.ndjson'),1):
 print('%-42s %s' % ('decisions.ndjson', 'valid' if not bad else str(bad)+' MALFORMED'))
 sys.exit(1 if bad else 0)" || fail=1
 
+# 11. No committed merge-conflict markers in .agent-state/.
+#
+# Guard 10 covers decisions.ndjson by proxy: a marker there breaks JSON, so the
+# parse fails. directive.md gets no such protection -- it is markdown, where a
+# stray "<<<<<<< HEAD" is merely a line that renders. It survives review because
+# it reads like a heading in a file nobody diffs closely.
+#
+# Not hypothetical: a rebase of this file conflicted TWICE in one run, and a
+# marker did get committed (bef61e9c) when the resolution removed a marker's
+# partner lines but not the marker itself. The pre-commit check that should have
+# caught it ran against the pre-edit state and reported clean.
+#
+# Matched at line start with a trailing delimiter, so prose ABOUT conflict
+# markers -- like this comment block -- does not trip it.
+#
+# The seven-PIPE form is the diff3/zdiff3 ancestor marker (`||||||| base`).
+# Contributors using that conflict style get a third marker the default style
+# never produces, and a partial resolution can leave it orphaned -- the exact
+# scenario this guard exists for. Without it the alternation matches none of
+# that line's characters and reports clean.
+#
+# grep's exit status is preserved rather than swallowed with `|| true`: 1 means
+# "no match" (the good case), but 2+ means the scan itself FAILED -- a missing
+# or unreadable .agent-state/. Collapsing those together is precisely the defect
+# this guard was written to prevent, one layer down: reporting "none committed"
+# without having examined anything. Fail closed instead.
+conflicted=$(grep -rlE '^(<{7}|>{7}|={7}|\|{7})( |$)' .agent-state/ 2>/dev/null)
+scan_status=$?
+if [ "$scan_status" -ge 2 ]; then
+  printf '%-42s %s\n' "agent-state conflict markers" "SCAN FAILED (grep exit $scan_status) — not checked"
+  fail=1
+elif [ -n "$conflicted" ]; then
+  printf '%-42s %s\n' "agent-state conflict markers" "FOUND in: $(echo "$conflicted" | tr '\n' ' ')"
+  fail=1
+else
+  say "agent-state conflict markers" "none committed"
+fi
+
 exit $fail
