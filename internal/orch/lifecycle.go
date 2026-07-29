@@ -190,3 +190,19 @@ func (o *Orchestrator) AbsorbDecisionLog(ctx context.Context, projectID, planID,
 		}),
 	})
 }
+
+// absorbDecisionLogDetached folds a worker's decision log into a store event on
+// a budget of its own.
+//
+// The callers' persistCtx is sized for store writes and may already be spent:
+// acceptance verification detaches and can legitimately run for minutes. Since
+// absorption's error is deliberately ignored (a diagnostic must never fail a
+// turn), an expired context would drop the event in silence -- leaving the
+// subsystem looking wired while producing nothing, which is the failure this
+// whole change exists to correct.
+func (o *Orchestrator) absorbDecisionLogDetached(ctx context.Context, projectID, planID, taskID, workerID string) error {
+	absorbCtx, cancel := context.WithTimeout(
+		context.WithoutCancel(ctx), o.effectivePersistBudget())
+	defer cancel()
+	return o.AbsorbDecisionLog(absorbCtx, projectID, planID, taskID, workerID)
+}

@@ -216,3 +216,51 @@ func TestAbsorbDecisionLogMissingFileIsNoOp(t *testing.T) {
 		t.Fatalf("AbsorbDecisionLog on missing file: %v", err)
 	}
 }
+
+// TestDecisionLogRoundTripReachesTheEventStream proves the BEHAVIOUR the wiring
+// test cannot: that a decision written by one call is readable through the
+// operator surface after the other.
+//
+// TestDecisionLogIsWiredIntoDispatch asserts both sides are CALLED, which is
+// what the review caught missing -- but a source-level check cannot tell you
+// the two halves agree on a path, or that the absorbed content actually lands
+// somewhere an operator can read. That gap is how this subsystem sat fully
+// implemented and inert: every individual piece had a passing test.
+func TestDecisionLogRoundTripReachesTheEventStream(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	root := filepath.Join(t.TempDir(), "xdg-state")
+	o := New(s, WithDecisionLogRoot(root))
+
+	projectID := mustCreateTestProject(t, s, "roundtrip-project")
+	planID := mustCreateTestPlan(t, s, projectID, "roundtrip-plan", "Ship", twoStepSequentialPlan)
+
+	const workerID = "worker-roundtrip"
+	const decision = "turn ended interactive_prompt: provider requested operator input"
+	if err := o.WriteWorkerDecision(workerID, decision); err != nil {
+		t.Fatalf("WriteWorkerDecision: %v", err)
+	}
+	if err := o.AbsorbDecisionLog(ctx, projectID, planID, "0.0", workerID); err != nil {
+		t.Fatalf("AbsorbDecisionLog: %v", err)
+	}
+
+	events, err := s.ListProjectEvents(ctx, projectID, 50)
+	if err != nil {
+		t.Fatalf("ListProjectEvents: %v", err)
+	}
+	var found bool
+	for _, e := range events {
+		if e.Kind == "worker.decision_log" && strings.Contains(e.PayloadJSON, "interactive_prompt") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		kinds := make([]string, 0, len(events))
+		for _, e := range events {
+			kinds = append(kinds, e.Kind)
+		}
+		t.Errorf("a written decision never reached the event stream; an operator "+
+			"still cannot see why a turn ended. kinds=%v", kinds)
+	}
+}

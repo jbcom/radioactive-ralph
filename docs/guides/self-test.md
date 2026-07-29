@@ -69,6 +69,21 @@ And a run where `build` failed, so nothing downstream can proceed:
 - `— cannot run: X failed` — this task is unreachable, naming the *root*
   failure rather than the intermediate one
 
+**The task page saturates before you notice.** `MaxOperatorPageLimit` is 200 for
+tasks as well as plans, and every self-test run adds 12 tasks — so after roughly
+sixteen runs the page fills and the newest run is shown PARTIALLY. Observed: 200
+rows spanning 19 plans, with the current run contributing 6 of its 12 tasks.
+
+`has_more` reports this honestly; the risk is that nothing reads it. A partial
+page looks exactly like a small project, which is the same shape as the
+plan-page hazard the script already guards. `scripts/self-test.sh` now warns when
+the page is full.
+
+Scope the read to one plan id — **pruning is not available**. `store.DeletePlan`
+exists, is tested, and has no callers and no CLI surface, so accumulated runs
+cannot be removed. That is the same unwired-subsystem shape as the decision log,
+and it is why the page fills with nothing to do about it.
+
 A plan whose every task is finished, failed, or blocked also reports
 `no runnable work`, which distinguishes a dead plan from a slow one.
 

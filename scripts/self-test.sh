@@ -146,6 +146,23 @@ report() {
   # project. Accumulation is allowed to become noise; it must not become a
   # report that omits its own subject.
   "$BIN" status --plan-limit 200 --task-limit 200
+
+  # The same hazard reaches TASKS, and the comment above only solved it for
+  # plans. MaxOperatorPageLimit is 200 for both, and every run adds 12 tasks --
+  # so after ~16 runs the page saturates and the newest run is shown PARTIALLY.
+  # Observed: 200 rows across 19 plans, with the current run contributing 6 of
+  # its 12 tasks. has_more says so; nothing was reading it.
+  if "$BIN" status --json --plan-limit 200 --task-limit 200 2>/dev/null |
+     python3 -c 'import json,sys
+try: d=json.load(sys.stdin)
+except Exception: sys.exit(1)
+sys.exit(0 if d.get("tasks",{}).get("has_more") else 1)' 2>/dev/null; then
+    echo
+    echo "self-test: WARNING — the task page is FULL (has_more), so the rows above"
+    echo "  are a partial view and may omit this run's own tasks. Read this run"
+    echo "  by plan id instead. (There is no plan-delete CLI yet: store.DeletePlan"
+    echo "  exists and has no callers, so old runs cannot be pruned.)"
+  fi
 }
 
 
