@@ -131,17 +131,27 @@ for arg in "$@"; do
   previous="$arg"
 done
 printf '%s' '{"outcome":"done","summary":"large event consumed","evidence":[]}' > "$out"
-# Emit the opening bytes from /bin/sh BEFORE paying python3 interpreter
-# startup. The stall clock starts at the first byte of provider output, and
-# this test sets DefaultStallTimeout = 2s -- so with the whole line produced
-# by python3, exec-to-first-byte INCLUDED interpreter startup and the test
-# was measuring python3 launch latency, which it never intended to measure.
-# It false-stalled under parallel load:
+# NO INTERPRETER LAUNCH ANYWHERE IN THIS PATH. The stall clock starts at the
+# first byte of provider output and this test sets DefaultStallTimeout = 2s,
+# so a python3 launch inside the emit made exec-to-first-byte include
+# interpreter startup -- the test was measuring python3 launch latency, which
+# it never intended to measure, and false-stalled under parallel load:
 #   "agent blocked (killed by watchdog): no output before stall timeout"
 # in a test whose entire purpose is proving a large event does NOT stall.
-# The event emitted is byte-for-byte identical; only the ORDER changed.
+#
+# Emitting the prefix from sh first was NOT enough: that only renews the lease
+# once and then hands python3 a fresh 2s window, so a launch slower than 2s
+# reproduces the same failure. yes and head are ordinary shell-pipeline
+# builtins/coreutils in the pipeline -- no launch-time dependency at all.
+#
+# The payload is 1<<20 copies of the two-character JSON escape backslash-n,
+# NOT literal newlines -- it lives inside a JSON string, so literal newlines
+# would make the event invalid. tr strips the real newline yes appends to
+# each line. Verified byte-for-byte against the python3 output (sha256 of the
+# full 2 MiB payload):
+#   bdedaa1cd1aca60909d402c9fba54a72c4d4a4369549c3c505d00bfcc3f80a0d
 printf '%s' '{"type":"item.completed","item":{"type":"command_execution","aggregated_output":"'
-python3 -c 'import sys; sys.stdout.write("\\n" * (1 << 20)); sys.stdout.flush()'
+yes '\\n' | head -1048576 | tr -d '\n'
 printf '%s\n' '"}}'
 `)
 	originalStall := DefaultStallTimeout
