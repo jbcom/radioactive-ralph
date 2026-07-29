@@ -62,6 +62,12 @@ func TestPromptPatternsRejectErrorText(t *testing.T) {
 		"Permission to edit main.go?",
 		"Approve changes?",
 		"Should I use SQLite?",
+		// "Allow this?" earns its place by NEGATIVE PROOF: deleting the
+		// allow-this pattern outright left this suite GREEN, so nothing
+		// isolated it. Every other allow-this prompt on hand also matched
+		// (y/n) or "do you want to", and a case matching two patterns
+		// proves neither -- the defect this very file was written to catch.
+		"Allow this?",
 		"Do you want to proceed?",
 		"Overwrite existing file? [Y/n]",
 		"Press enter to continue",
@@ -102,6 +108,12 @@ func TestEachPositiveCaseIsolatesOnePattern(t *testing.T) {
 		"Permission to edit main.go?",
 		"Approve changes?",
 		"Should I use SQLite?",
+		// "Allow this?" earns its place by NEGATIVE PROOF: deleting the
+		// allow-this pattern outright left this suite GREEN, so nothing
+		// isolated it. Every other allow-this prompt on hand also matched
+		// (y/n) or "do you want to", and a case matching two patterns
+		// proves neither -- the defect this very file was written to catch.
+		"Allow this?",
 		"Do you want to overwrite it",
 		"Overwrite existing file? [Y/n]",
 		"Press enter to continue",
