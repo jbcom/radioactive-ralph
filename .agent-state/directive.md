@@ -667,14 +667,57 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
           passed; asserting the SPECIFIC branch is what caught it.
       Both fixes carry negative proofs.
 
-- [ ] The stall lease is still invisible in the OPERATOR SURFACE. The reclaim
-      reason is now durable in the events stream, but `status` still shows a
-      bare reclaim_count on the task row -- so the fast read is still "why is
-      this number 2?" and the answer lives one query away.
-      Surface the latest reclaim reason on the task row itself, the way
-      failure_category already rides along for failed tasks.
-      Verify by reverting: with it, a reclaimed row names its cause inline;
-      without it, the operator is back to correlating events by hand.
+- [x] DONE (PR 323, un-hashed: guard 9 reads hashes as open-PR citations).
+      The task row now names its own reclaim cause:
+        race             running    — reclaimed 2x: stale_heartbeat
+      Read from the newest task.reclaimed event rather than a durable column,
+      which is the right trade: a reclaim is a RECOVERABLE interruption, so the
+      task returns to pending and has no terminal state to hang a reason on.
+      Deliberately NOT status-gated, unlike the failure reason directly above
+      it in the renderer -- a reclaimed task may be running again by the time
+      anyone looks, and the count shows in every state.
+      MAX(id) not MAX(occurred_at): events are second-resolution, so two
+      reclaims within a second tie and the tie-break would surface the OLDER
+      reason exactly when reclaims are rapid.
+      Query plan checked rather than assumed (this session's own lesson): both
+      events lookups report SEARCH ... USING INDEX events_task, so cost is
+      per-task constant, not proportional to the events table.
+      Proven by reverting at BOTH layers -- dropping the SELECT column fails
+      with an empty reason, dropping the render line fails with a bare row. The
+      render test reads the PRINTED OUTPUT, not the struct field: a reason that
+      reaches --json but never the human line would leave the CLI's default
+      output less informative than its own JSON.
+
+- [ ] A lint finding for a file that does not exist should fail LOUDLY, not
+      quietly waste a turn. The stale-cache episode cost a full diagnosis
+      cycle and produced a four-file phantom "fix" before anyone noticed the
+      paths pointed outside the repo -- and the agent doing that was behaving
+      correctly given what it was told.
+      The self-test cannot currently tell a real lint failure from a cache
+      artifact, and neither can a provider turn. Make the acceptance side
+      detect it: a reported finding whose path does not resolve inside the
+      project is not a finding, it is a stale index.
+      Verify by reverting: plant a finding for a deleted path and the step
+      must fail naming the phantom path, not hand it to an agent to "fix".
+      Reasoning to preserve -- the failure was not that the agent was wrong,
+      it was that an IMPOSSIBLE task is indistinguishable from a hard one.
+      That is the same shape as the never-block invariant (a blocked turn
+      surfaces as a failed task with a named category), so the fix should
+      name a category too rather than merely erroring.
+
+- [x] CONFIRMING SELF-TEST RUN validated the stale-cache diagnosis. The whole
+      point of re-running: `lint-internal` had failed with interactive_prompt,
+      I traced it to golangci-lint resurrecting findings for files that do not
+      exist, cleared the cache -- and on the next run lint-internal came back
+      DONE. Prediction made, then tested, rather than asserted.
+      `race` also ran with reclaim_count=0 through the same phase that
+      previously cost two reclaims.
+      (The run showed unit-orch/unit-provider failing, which is MY uncommitted
+      work-in-progress being picked up mid-run, not a regression -- the
+      self-test reads the working tree. Worth noting because a failed step in
+      a dogfood run is not automatically a product finding; check what changed
+      under it first.)
+
       Historical note -- the `race` finding cost a
       real diagnosis (2 reclaims read as a stuck row) for a step that was
       merely quiet, and NOTHING in the operator surface said so: the row shows
