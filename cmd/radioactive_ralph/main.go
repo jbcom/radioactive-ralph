@@ -111,7 +111,8 @@ func newRootCmd(ctx context.Context, launchDesktop desktopLaunchFunc) *cobra.Com
 	vconfig.AddFlags(root)
 
 	root.Flags().BoolVar(&flags.supervisor, "supervisor", false,
-		"run as the durable supervisor process (spec §4); working directory is irrelevant in this mode")
+		"run as the durable supervisor process (spec §4); working directory is irrelevant in this mode. "+
+			"Dispatch concurrency comes from RALPH_MAX_PARALLEL (1-256); UNSET MEANS UNBOUNDED")
 	root.Flags().BoolVar(&flags.initFlag, "init", false,
 		"initialize (or re-initialize) the current directory as a known project")
 	root.Flags().BoolVar(&flags.forceOverride, "force-override", false,
