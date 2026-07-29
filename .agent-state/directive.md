@@ -529,8 +529,16 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
 - [x] #305 MERGED (CLI task table + blocked-reason in all three views + meso
       row width + GUI worker-claim parity).
 
-- [ ] [WAIT] Land the 1 open PR: #306 (partition ordinal gated on
-      dispatchability -- the bug DOGFOODING found). Auto-merge ARMED.
+- [ ] Land the 1 open PR: #306 (partition ordinal gated on partition
+      membership -- the bug DOGFOODING found). NOT a wait: it has actionable
+      work. Two P1 review threads (fixed in 2663efe, still to answer+resolve)
+      and one failing check -- E2E, whose log shows `go mod download` hit a
+      connection reset fetching fyne.io/fyne/v2 from the module proxy. That is
+      infrastructure, not the diff (which touches no go.mod, workflow, or e2e
+      file), so it needs a re-run once the workflow frees up, not a code fix.
+      Guard 8 caught the mislabel: I had written [WAIT] while three actionable
+      items existed. A wait-label over actionable state is the same false
+      all-clear the guards exist to prevent.
       Hash-prefixed deliberately: guard 9 extracts `#[0-9]{3}` from THIS line.
 
 - [x] DOGFOODING DONE 2026-07-28 -- and it paid for itself immediately.
