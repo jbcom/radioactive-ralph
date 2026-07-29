@@ -804,7 +804,15 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
       yet the verdict -- race has not finished -- but the first phase that
       previously failed has now passed.
 
-- [ ] [WAIT] FIXED in PR 339 (open): CmdPlanDelete through the client, server
+- [x] DONE and VERIFIED END TO END. PR 339 merged, and the delete deferred there
+      is now proven against a live supervisor:
+        200 task rows -> 194, has_more True -> False (page no longer saturated)
+        19 plans -> 18; the deleted plan returns not_found
+      So the retention primitive works through every layer it was missing:
+      store -> IPC -> supervisor -> CLI. The earlier "unknown command:
+      plan-delete" was a stale supervisor binary, not a wiring gap -- worth
+      noting because that error looked like a defect and was a restart.
+      Original framing: CmdPlanDelete through the client, server
       dispatch, supervisor handler, and a `plan delete <id> --yes` subcommand.
       End-to-end delete against a live supervisor is still unverified -- the
       running one predates the binary and correctly answered "unknown command:
