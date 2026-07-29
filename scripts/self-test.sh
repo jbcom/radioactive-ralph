@@ -97,7 +97,7 @@ try:
 except Exception:
     sys.exit()
 for p in d.get("plans", {}).get("items", []):
-    if p.get("slug", "").startswith("prove-the-build-is-sound"):
+    if p.get("slug") == os.environ.get("RUN_SLUG"):
         done, total = p.get("task_done", 0), p.get("task_total", 0)
         if p.get("no_runnable_work"):
             print(f"DEAD {done}/{total}")
