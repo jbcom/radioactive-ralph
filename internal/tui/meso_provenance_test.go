@@ -253,3 +253,28 @@ func TestMesoNamesATerminallyBlockedDependency(t *testing.T) {
 		t.Errorf("the marker appeared on a task with no failed dependency:\n%s", out)
 	}
 }
+
+// TestMesoShowsDurableFailureCategory closes the CLI/UI asymmetry for the
+// third time this session: the CLI explained a failed task and the views did
+// not. The TUI showed failures only in its EVENT feed, which is bounded and
+// scrolls away, so a long-terminal task's row said nothing.
+func TestMesoShowsDurableFailureCategory(t *testing.T) {
+	f := testFake()
+	m := newTestModel(t, f)
+	m.lvl = levelMeso
+	m.selectedPlan = f.plans[0]
+	m.snap.tasks = []observe.Task{
+		{ID: "build", PlanID: "plan-1", Status: "failed", FailureCategory: "auth"},
+		// A RUNNING task carrying a stale category must not advertise it:
+		// status is the authority on what the task is.
+		{ID: "retry", PlanID: "plan-1", Status: "running", FailureCategory: "rate_limit"},
+	}
+	out := m.View()
+
+	if !strings.Contains(out, "failure: auth") {
+		t.Errorf("a failed task shows no reason on its row:\n%s", out)
+	}
+	if strings.Contains(out, "rate_limit") {
+		t.Errorf("a RUNNING task advertised a stale failure category:\n%s", out)
+	}
+}

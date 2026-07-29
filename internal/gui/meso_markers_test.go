@@ -168,3 +168,19 @@ func TestMesoNamesATerminallyBlockedDependency(t *testing.T) {
 		t.Errorf("the marker appeared on a task with no failed dependency:\n%s", got)
 	}
 }
+
+// TestMesoShowsDurableFailureCategory mirrors the TUI and CLI: a failed task
+// explains itself from the durable category, and a running task carrying a
+// stale one does not.
+func TestMesoShowsDurableFailureCategory(t *testing.T) {
+	got := mesoText(t, []observe.Task{
+		{PlanID: "p1", ID: "build", Status: "failed", FailureCategory: "auth"},
+		{PlanID: "p1", ID: "retry", Status: "running", FailureCategory: "rate_limit"},
+	})
+	if !strings.Contains(got, "failure: auth") {
+		t.Errorf("a failed task shows no reason on its row:\n%s", got)
+	}
+	if strings.Contains(got, "rate_limit") {
+		t.Errorf("a RUNNING task advertised a stale failure category:\n%s", got)
+	}
+}
