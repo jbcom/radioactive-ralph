@@ -584,6 +584,38 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
       discarded two real fixes; blanket-keeping would have shipped dead code
       for a lint error that does not occur.
 
+      4. A REAL PRODUCT FINDING, which is what dogfooding is FOR. The `race`
+         step sat at reclaim_count=2 and I first misread it as a stuck row --
+         because I filtered on `assigned_worker_id` when the live field is
+         `claimed_by_worker_id`. It was not stuck; it was being reclaimed.
+         Root cause: two independent bounds govern a turn and the SHORTER one
+         bites. The turn deadline is 30m (enormous headroom), but the progress
+         lease is 3m and renews on OUTPUT. `go test -race ./internal/store/`
+         prints ONE `ok` line after 138.6s of silence -- 41s of headroom --
+         so under a concurrent run the watchdog read a working step as a hung
+         provider and killed it. Twice.
+         Fixed by making the work observable (`-v`, verified to stream with
+         sub-second gaps) rather than raising stall_timeout, which would buy
+         the silence more room instead of removing it. Guide updated: a silent
+         step is a stalled step.
+         This is the class of bug only a real run finds. Every unit test
+         passes; the step itself passes in 138s standalone. It fails only when
+         a long quiet command meets a watchdog under load.
+
+- [ ] The stall lease is invisible until it bites. The `race` finding cost a
+      real diagnosis (2 reclaims read as a stuck row) for a step that was
+      merely quiet, and NOTHING in the operator surface said so: the row shows
+      reclaim_count, but not WHY the claim was lost. A stall-killed turn and a
+      crashed worker look identical after the fact.
+      Make the reason durable the way failure_category already is for failed
+      tasks -- a reclaim should record what ended the previous claim (stall,
+      turn deadline, worker death), so `reclaim_count: 2` becomes readable
+      instead of merely alarming.
+      Same shape as the interactive_prompt observation above: the invariant
+      WORKED, but the operator had to go read watchdog source to learn that.
+      Verify by reverting: with the reason recorded, a stalled step names its
+      cause; without it, the row is indistinguishable from a dead worker.
+
 - [x] #320 MERGED. Absence assertions must prove presence first -- the third
       distinct form of one mistake this session (a grep matching nothing, a
       timing bound measuring runner speed, a fixture creating nothing). The

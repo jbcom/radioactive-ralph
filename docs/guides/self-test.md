@@ -131,6 +131,13 @@ The fix is to make the work OBSERVABLE, not to raise the ceiling: `go test` gets
 `-v` so each test renews the lease. Prefer that to lengthening `stall_timeout`,
 which buys silence more room instead of removing it.
 
+Only that ONE step needed it, which is worth knowing before adding `-v`
+everywhere. Every other step was measured: the unit suites and both
+`golangci-lint` runs finish in 2-13s, and `-race` over the same store package
+that takes 2s without it takes 138s with it. `race` was ~46x the next-slowest
+step, so it is the only one anywhere near the lease. Measure before broadening
+the fix; `-v` on a fast step just adds noise to the transcript.
+
 **Partition coverage, never drop it.** When a step grows too slow, split it —
 do not narrow what it tests. An early revision cut the unit pass down to one
 package, which fit comfortably and would have passed green while a regression
