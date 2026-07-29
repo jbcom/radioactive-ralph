@@ -532,12 +532,14 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
       RecentEvents page (default 20) renders as a bare `failed` again. The
       reason lives only in the event log, so a task can sit terminal
       indefinitely while the evidence for WHY scrolls away.
-      Fix shape: project the current failure classification durably onto the
-      task row (a column + a write at MarkFailed time), rather than reading it
-      out of a page that other tasks can evict. That is a schema change, which
-      is why it was NOT smuggled into the rendering PR -- the limit is stated
-      in a comment on failureReasonsByTask so it cannot be mistaken for
-      complete coverage.
+      DONE 2026-07-28 (same PR, after the rendering fixes landed in it):
+      migration 0004 adds tasks.failure_category, written on terminal failure
+      and CLEARED on requeue so the column always describes CURRENT state. The
+      CLI prefers the event summary (prose) and falls back to the durable
+      category for the evicted case.
+      The schema-version guard caught me adding the migration without bumping
+      currentSchemaVersion, with an actionable message naming both fixes -- the
+      kind of guard this session has been adding elsewhere, working here.
 
 - [ ] [WAIT] Land the 1 open PR: #308 (say why a failed task failed -- the gap
       the THIRD dogfooding pass found). Auto-merge ARMED. Hash-prefixed
