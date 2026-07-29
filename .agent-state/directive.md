@@ -867,6 +867,30 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
       real read of it. Do not mistake a green run for having verified the
       diagnostic.
 
+- [ ] TESTS WRITE INTO THE OPERATOR'S LIVE STATE DIRECTORY. Found while
+      chasing the decision log: ~/.local/state/radioactive-ralph/workers holds
+      188 .decisions.md files, and they are NOT from dispatch. Their timestamps
+      match my `go test` invocations, and the per-category counts are uniform
+      (22 each across four unrelated categories) -- the signature of fixtures,
+      not runs.
+      Cause: tests that exercise WriteWorkerDecision without
+      WithDecisionLogRoot fall through to defaultDecisionLogRoot, which is the
+      REAL XDG state root. So running the suite pollutes an operator's state.
+      Two harms, and the second is worse: it litters live state, and it salts
+      the one diagnostic surface an operator would mine for signal -- I nearly
+      drew conclusions about unit-orch from files my own test run wrote.
+      FIX: make the default unreachable from tests (require an explicit root,
+      or fail closed when the path is not under a t.TempDir).
+      Verify by reverting: after a full `go test ./...`, the real workers
+      directory must be unchanged.
+
+- [ ] DUPLICATE decision lines on a single failure. The captured event shows
+      the SAME line twice for one interactive_prompt, and a reviewer traced it:
+      that category is non-retryable, and the single-worker dispatch path calls
+      WriteWorkerDecision twice for one failure. So it is a double-write, not
+      two attempts -- and I read it as history in an earlier revision.
+      Verify by reverting: one failed turn must produce exactly one line.
+
 - [ ] [WAIT] unit-orch is INTERMITTENT and currently PASSING, so there is
       nothing to act on until it fails again. Not closed: an intermittent bug
       that stops reproducing is hidden, not fixed, and the decision log (wired
