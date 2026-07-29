@@ -203,3 +203,50 @@ func TestOperatorTasksDoNotPartitionUnreadyTasksWithTheirDependency(t *testing.T
 			byID["race"])
 	}
 }
+
+// TestOperatorTasksKeepPartitionWhileRunning is the regression a code review
+// caught in the readiness gate itself.
+//
+// Gating the ordinal on "dispatchable" excluded `running`, so the instant a
+// fan-out partition was CLAIMED every member lost its marker -- during exactly
+// the interval an operator needs it, when the question "is this one turn or
+// three independent workers?" is live. The gate belongs on tasks that have not
+// been dispatched yet, not on tasks already executing as a partition.
+func TestOperatorTasksKeepPartitionWhileRunning(t *testing.T) {
+	ctx := context.Background()
+	s := openTestStore(t)
+	projectID := mustCreateProject(t, s, "partition-running")
+	planID := seedReadyGraph(t, s, projectID, "claimed", []GraphTaskSpec{
+		bindingSpec("a", "0", "claude"),
+		bindingSpec("b", "0", "claude"),
+	})
+	sessionID, workerID := mustCreateSessionAndWorker(t, s, "1")
+	for _, id := range []string{"a", "b"} {
+		if _, err := s.ClaimTask(ctx, planID, id, sessionID, workerID); err != nil {
+			t.Fatalf("ClaimTask %s: %v", id, err)
+		}
+	}
+
+	items, err := operatorTasksForTest(ctx, s, projectID)
+	if err != nil {
+		t.Fatalf("operator tasks: %v", err)
+	}
+	byID := map[string]OperatorTask{}
+	for _, item := range items {
+		byID[item.ID] = item
+	}
+	if got := byID["a"].Status; got != TaskStatusRunning {
+		t.Fatalf("fixture wrong: task a is %q, want running -- this test proves "+
+			"nothing unless the tasks are actually claimed", got)
+	}
+	if byID["a"].PartitionOrdinal == "" || byID["b"].PartitionOrdinal == "" {
+		t.Fatalf("a running fan-out partition lost its ordinals (a=%q b=%q); the "+
+			"marker vanishes exactly when an operator needs to tell one turn from "+
+			"several independent workers",
+			byID["a"].PartitionOrdinal, byID["b"].PartitionOrdinal)
+	}
+	if byID["a"].PartitionOrdinal != byID["b"].PartitionOrdinal {
+		t.Errorf("claimed partition members no longer share an ordinal: a=%q b=%q",
+			byID["a"].PartitionOrdinal, byID["b"].PartitionOrdinal)
+	}
+}

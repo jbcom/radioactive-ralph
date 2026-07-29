@@ -695,17 +695,27 @@ func readOperatorTasks(
 		       COALESCE(m.assigned_model, ''), COALESCE(m.assigned_effort, ''),
 		       COALESCE(m.assigned_independence_domain, ''),
 		       COALESCE(m.group_path, ''), COALESCE(m.metadata_json, ''),
-		       -- Dispatchable RIGHT NOW: the same NOT EXISTS walk over task_deps
-		       -- that ReadyPartitions and ClaimNextReady use, so this cannot
-		       -- become a second notion of ready.
-		       (t.status IN ('pending','ready','blocked_capability','blocked_input')
-		        AND NOT EXISTS (
-		          SELECT 1 FROM task_deps d
-		           JOIN tasks tdep ON tdep.plan_id = d.plan_id AND tdep.id = d.depends_on
-		          WHERE d.plan_id = t.plan_id
-		            AND d.task_id = t.id
-		            AND tdep.status NOT IN ('done', 'skipped', 'decomposed')
-		        )) AS dispatchable,
+		       -- Does this task belong to a partition an operator can act on?
+		       --
+		       -- A RUNNING task always does: it was claimed AS a partition member,
+		       -- so its grouping is a live fact, not a prediction. Applying the
+		       -- dependency gate to it cleared every marker the instant a fan-out
+		       -- turn was claimed -- during exactly the interval the marker
+		       -- answers "one turn, or three independent workers?".
+		       --
+		       -- A not-yet-dispatched task belongs to one only if it is READY,
+		       -- decided by the same NOT EXISTS walk over task_deps that
+		       -- ReadyPartitions and ClaimNextReady use, so this cannot become a
+		       -- second notion of ready.
+		       (t.status = 'running'
+		        OR (t.status IN ('pending','ready','blocked_capability','blocked_input')
+		            AND NOT EXISTS (
+		              SELECT 1 FROM task_deps d
+		               JOIN tasks tdep ON tdep.plan_id = d.plan_id AND tdep.id = d.depends_on
+		              WHERE d.plan_id = t.plan_id
+		                AND d.task_id = t.id
+		                AND tdep.status NOT IN ('done', 'skipped', 'decomposed')
+		            ))) AS partitioned,
 		       t.created_at, t.updated_at
 		FROM tasks t
 		JOIN plans p ON p.id = t.plan_id
@@ -747,7 +757,7 @@ func readOperatorTasks(
 		var parallel, sequence sql.NullInt64
 		var createdRaw, updatedRaw string
 		var groupPath, metadataJSON string
-		var dispatchable bool
+		var partitioned bool
 		if err := rows.Scan(
 			&task.PlanID,
 			&task.ID,
@@ -765,7 +775,7 @@ func readOperatorTasks(
 			&task.AssignedIndependenceDomain,
 			&groupPath,
 			&metadataJSON,
-			&dispatchable,
+			&partitioned,
 			&createdRaw,
 			&updatedRaw,
 		); err != nil {
@@ -773,10 +783,10 @@ func readOperatorTasks(
 		}
 		task.ParallelGroup = operatorNullableInt64(parallel)
 		task.SequenceOrdinal = operatorNullableInt64(sequence)
-		// Only a DISPATCHABLE task gets an ordinal. A partition is "tasks one
-		// worker may own in ONE turn", so a task that is not ready has no
-		// partition to belong to yet -- labelling it anyway claimed a grouping
-		// dispatch would never perform.
+		// Only a task that BELONGS to a partition gets an ordinal: one already
+		// running as a member, or one ready to be dispatched as part of it. A
+		// task still waiting on a dependency has no partition yet -- labelling
+		// it anyway claimed a grouping dispatch would never perform.
 		//
 		// Found by DOGFOODING, not by a test: running Ralph on its own plan
 		// showed `build` carrying the same marker as the three tasks declaring
@@ -786,7 +796,7 @@ func readOperatorTasks(
 		// Derived through the SAME function ReadyPartitions groups by, so the
 		// operator's view of "these run together" cannot drift from the rule
 		// dispatch actually applies.
-		if dispatchable {
+		if partitioned {
 			task.PartitionOrdinal = readyPartitionOrdinal(ReadyPartition{
 				GroupPath:  groupPath,
 				BindingKey: declaredBindingKey(metadataJSON),

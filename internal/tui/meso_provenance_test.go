@@ -200,3 +200,31 @@ func TestMesoRowsFitAConventionalTerminal(t *testing.T) {
 			"information the line exists to carry")
 	}
 }
+
+// TestMesoLabelsRunningFanoutPartition exercises the RENDERED path for a
+// running partition, which a code review specifically asked for: the store
+// keeping the ordinal is necessary but not sufficient, and this repo has
+// already seen markers disappear while the suite stayed green.
+//
+// A running fan-out group is when the marker earns its place -- the operator's
+// live question is "is this one turn, or three independent workers?".
+func TestMesoLabelsRunningFanoutPartition(t *testing.T) {
+	f := testFake()
+	m := newTestModel(t, f)
+	m.lvl = levelMeso
+	m.selectedPlan = f.plans[0]
+	m.snap.tasks = []observe.Task{
+		{
+			ID: "task-1", PlanID: "plan-1", Status: "running",
+			ClaimedByWorkerID: "worker-session-01-7f3a2b1c", PartitionOrdinal: "aaaa",
+		},
+		{
+			ID: "task-2", PlanID: "plan-1", Status: "running",
+			ClaimedByWorkerID: "worker-session-01-7f3a2b1c", PartitionOrdinal: "aaaa",
+		},
+	}
+	if out := m.View(); !strings.Contains(out, "p1") {
+		t.Errorf("a RUNNING fan-out partition carries no marker, so an operator "+
+			"cannot tell one turn from two independent workers:\n%s", out)
+	}
+}
