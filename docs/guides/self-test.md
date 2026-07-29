@@ -87,6 +87,69 @@ and it is why the page fills with nothing to do about it.
 A plan whose every task is finished, failed, or blocked also reports
 `no runnable work`, which distinguishes a dead plan from a slow one.
 
+## When a step fails, the failure event is not where the evidence is
+
+This is the single most expensive thing to learn the hard way. A failed task's
+`task.failed_terminal` event carries a **fixed constant and nothing else** --
+every one is the same 89 bytes:
+
+```json
+{"reason":"provider requested interactive input","failure_category":"interactive_prompt"}
+```
+
+That is the content-safety boundary working as designed: only a closed set of
+fixed constants crosses to operator surfaces, never provider prose. But it means
+the failure event **can never tell you why a step failed**. Reading it and
+concluding anything about the cause is how one wrong category cost four
+diagnostic runs.
+
+The diagnosis lives in the `worker.completed` event for the *same task*, which
+carries the provider's own account of what it ran and what happened:
+
+```sql
+-- macOS: ~/Library/Application Support/radioactive-ralph/ralph.db
+SELECT e.payload_json
+FROM events e
+JOIN tasks t ON t.id = e.task_id
+JOIN plans p ON p.id = t.plan_id
+WHERE p.slug = '<your-run-slug>'
+  AND e.kind = 'worker.completed'
+  AND t.description LIKE '%<package you care about>%';
+```
+
+A real example from this repo's own runs, which no amount of staring at the
+failure event would have produced:
+
+> `internal/observe`: PASS, `internal/plan`: PASS, `internal/orch`: FAIL --
+> three tests reach `agent.Start()` and receive `operation not permitted`.
+> Independent probe confirmed the sandbox blocks PTY creation:
+> `script: openpty: Operation not permitted`.
+
+Two traps in that same record:
+
+- **`exit_code: 0` does not mean the acceptance passed.** `a2a.Evidence`
+  documents `ExitCode` as **advisory only** -- the orchestrator re-runs the real
+  check and never trusts it. In the record above the worker reported `0` while
+  its own prose said `FAIL`.
+- **A category is only as true as the pattern that assigned it.** Read the
+  category, then read what matched to earn it. A bare `permission` pattern once
+  matched `permission denied` in ordinary test output and labelled a red test an
+  interactive block.
+
+## A red check is often not your diff
+
+Three distinct infrastructure flakes hit this repo's CI in a single day, none of
+them caused by the change under test. Read the log before assuming otherwise:
+
+- `hdiutil: create failed - Resource busy` -- a stale DMG device left attached
+  by a previous job on a reused macOS runner.
+- `sum.golang.org ... stream error; INTERNAL_ERROR` -- the Go checksum database
+  dropping a connection mid-download.
+- `no output before stall timeout` in `internal/provider` -- exec-to-first-byte
+  latency under heavy parallelism, not a logic bug. Do not "fix" these by
+  widening `StallTimeout` or reducing parallelism; find what is paying startup
+  cost inside the stall window.
+
 ## A run modifies your working tree
 
 Two things worth knowing before starting one.
