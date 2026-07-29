@@ -743,7 +743,17 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
       file says "a field is not shipped until each renderer shows it". Not
       repeating that two commits later.
 
-- [ ] [WAIT] FIXED in PR 331, awaiting merge. REAL ROOT CAUSE, and every earlier story was wrong. A reviewer pointed
+- [x] VERIFIED END TO END. Run terminal at 9/12, DEAD only because unit-orch
+      failed (correctly blocking claims + e2e). race reached done with reclaim_count=0, and
+      EVERY task in the run shows 0 reclaims. Prior runs: 2 unbounded, 6 capped.
+      This is the proof that -v, capping, and stall_timeout all failed to
+      produce -- each passed its unit tests and changed nothing on a dispatched
+      run.
+      Four explanations were needed (silence under load, the progress lease,
+      dispatch contention, then the acceptance budget) and the first three ALL
+      FIT THE DATA. The one that survived is the one whose fix changed the
+      observed behaviour. Fitting the observation is necessary, not sufficient.
+      REAL ROOT CAUSE, and every earlier story was wrong. A reviewer pointed
       out the fact that breaks them all: runWithHeartbeat beats every 20s
       INDEPENDENTLY of provider output, against a 90s stale window. A stalled
       turn keeps beating, so the watchdog killing a silent turn can never
@@ -783,6 +793,16 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
       reclaim_count=0. Nothing short of that has settled this yet -- three
       previous "fixes" (-v, capping, raising stall_timeout) all targeted
       mechanisms that were not the cause.
+      INTERIM (11:05): still ZERO reclaims across all 12 tasks, where prior
+      runs had 2 (unbounded) and 6 (capped) by this phase. unit-orch failed
+      interactive_prompt with a CLEAN TREE and its acceptance command passing
+      by hand -- that is the separate pre-existing pattern already queued, not
+      a reclaim and not caused by my uncommitted edits as in the earlier run.
+      INTERIM (10:59): build reached done with reclaims=0 after a ~7min turn,
+      and the run is at 1/12 with 4 in flight and ZERO reclaims across every
+      task. Under the old code this is the phase where they accumulated. Not
+      yet the verdict -- race has not finished -- but the first phase that
+      previously failed has now passed.
 
 - [ ] [WAIT] CAPPED-WIDTH EXPERIMENT CONCLUDED, but PR 329 is OPEN not merged
       -- same premature-[x] error as the item above, found by the same review.
