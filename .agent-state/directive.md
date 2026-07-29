@@ -867,6 +867,26 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
       real read of it. Do not mistake a green run for having verified the
       diagnostic.
 
+- [ ] [WAIT] Prompt-kind taxonomy in PR 347 (open). When it lands, the NEXT
+      interactive_prompt failure should report a KIND rather than the generic
+      category, and that changes what the unit-orch item can conclude:
+        interactive_prompt_permission    -> a write-path or binding grant
+        interactive_prompt_confirm       -> a flag that suppresses the prompt
+        interactive_prompt_clarification -> the step's scoped context is thin
+      Read the category first; it names which of three unrelated fixes applies.
+      WHY THIS EXISTS, since the framing changed twice: the original goal was
+      to surface WHAT the provider asked for. That is architecturally barred --
+      only a closed set of fixed constants crosses to operator surfaces, never
+      provider prose (operator_snapshot.go:262-268). A taxonomy delivers the
+      actionable part without the text.
+      TWO WAYS IT WAS INERT BEFORE REVIEW, both worth remembering because both
+      passed their unit tests: the specialised SUMMARY never crossed the
+      projection (which rebuilds from the CATEGORY alone), and the
+      clarification kind was UNREACHABLE because no detector pattern matched an
+      open question. Correct code, no effect.
+      Verify by reverting: a real block must show a kind-specific category on a
+      dispatched run, not just in a projection test.
+
 - [ ] [WAIT] unit-orch is INTERMITTENT and currently PASSING, so there is
       nothing to act on until it fails again. Not closed: an intermittent bug
       that stops reproducing is hidden, not fixed, and the decision log (wired
