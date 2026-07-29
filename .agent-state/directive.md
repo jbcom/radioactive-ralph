@@ -743,7 +743,14 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
       file says "a field is not shipped until each renderer shows it". Not
       repeating that two commits later.
 
-- [ ] REAL ROOT CAUSE, and every earlier story was wrong. A reviewer pointed
+- [ ] [WAIT] FIXED in PR 331 + its review follow-ups; an end-to-end VERIFICATION
+      RUN is in flight (monitor bvx43f32s, supervisor rebuilt with the fix,
+      clean tree). The claim under test is narrow: race reaches done with
+      reclaim_count=0, where it burned 2 unbounded and 6 under a cap. Any
+      nonzero result refutes this diagnosis the way the data refuted the lease
+      one -- three prior "fixes" all passed their unit tests and failed on a
+      real run, so nothing short of a dispatched run settles it.
+      REAL ROOT CAUSE, and every earlier story was wrong. A reviewer pointed
       out the fact that breaks them all: runWithHeartbeat beats every 20s
       INDEPENDENTLY of provider output, against a 90s stale window. A stalled
       turn keeps beating, so the watchdog killing a silent turn can never
@@ -768,7 +775,7 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
       previous "fixes" (-v, capping, raising stall_timeout) all targeted
       mechanisms that were not the cause.
 
-- [ ] [WAIT] CAPPED-WIDTH EXPERIMENT CONCLUDED, but PR 329 is OPEN not merged
+- [x] CAPPED-WIDTH EXPERIMENT CONCLUDED; PR 329 MERGED.
       -- same premature-[x] error as the item above, found by the same review.
       Closes when it merges. Result stands: Final: race reclaimed FOUR
       times under RALPH_MAX_PARALLEL=4, versus two unbounded -- capping made it
@@ -838,7 +845,7 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
       makes the assertion follow a rename. A reviewer analyzing a file in
       isolation cannot see its package.
 
-- [ ] [WAIT] PRs 327 (attempt accounting) + 328 (the policy decision) are OPEN,
+- [x] PRs 327 (attempt accounting) + 328 (the policy decision) MERGED.
       not merged -- main still has RetryCount/ReclaimCount only and a reaper
       that touches neither. Marked [x] prematurely on the theory that "shipped"
       meant "PR opened"; a reviewer caught that this would make the loop skip
