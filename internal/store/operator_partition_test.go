@@ -147,3 +147,59 @@ func TestReadyPartitionOrdinalIsStableAndDistinct(t *testing.T) {
 			len(byOrdinal), byOrdinal)
 	}
 }
+
+// TestOperatorTasksDoNotPartitionUnreadyTasksWithTheirDependency is the case
+// DOGFOODING found that TestOperatorTasksAgreeWithReadyPartitions could not:
+// its fixture had no dependency edges, so every task was ready and agreement
+// held vacuously.
+//
+// Running Ralph on its own plan showed `build` sharing a partition marker with
+// the three tasks that declare after:[build]. A partition is "tasks ONE worker
+// may own in ONE turn", and a task can never share a turn with its own
+// dependency -- ReadyPartitions excludes the dependents until build completes,
+// so the snapshot was claiming a grouping dispatch would never perform.
+func TestOperatorTasksDoNotPartitionUnreadyTasksWithTheirDependency(t *testing.T) {
+	ctx := context.Background()
+	s := openTestStore(t)
+	projectID := mustCreateProject(t, s, "partition-unready")
+	planID := seedReadyGraph(t, s, projectID, "deps", []GraphTaskSpec{
+		readySpec("build", "0"),
+		readySpec("race", "0", "build"),
+		readySpec("e2e", "0", "build"),
+	})
+
+	// Only build is ready, so dispatch would coalesce nothing else with it.
+	parts, err := s.ReadyPartitions(ctx, planID)
+	if err != nil {
+		t.Fatalf("ReadyPartitions: %v", err)
+	}
+	ready := map[string]bool{}
+	for _, p := range parts {
+		for _, task := range p.Tasks {
+			ready[task.ID] = true
+		}
+	}
+	if !ready["build"] || ready["race"] || ready["e2e"] {
+		t.Fatalf("fixture wrong: ReadyPartitions returned %v, want build only "+
+			"-- this test proves nothing if the dependents are already ready", ready)
+	}
+
+	items, err := operatorTasksForTest(ctx, s, projectID)
+	if err != nil {
+		t.Fatalf("operator tasks: %v", err)
+	}
+	byID := map[string]string{}
+	for _, item := range items {
+		byID[item.ID] = item.PartitionOrdinal
+	}
+	if byID["build"] != "" && byID["build"] == byID["race"] {
+		t.Errorf("build and race share partition ordinal %q, but race declares "+
+			"after:[build] and cannot run in the same turn; the marker claims a "+
+			"grouping dispatch would never perform", byID["build"])
+	}
+	if byID["race"] != "" && byID["race"] == byID["e2e"] {
+		t.Errorf("race and e2e share ordinal %q while both are UNREADY; a "+
+			"partition is a dispatchable unit, and neither is dispatchable yet",
+			byID["race"])
+	}
+}

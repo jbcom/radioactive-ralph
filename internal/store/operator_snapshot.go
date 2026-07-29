@@ -695,6 +695,17 @@ func readOperatorTasks(
 		       COALESCE(m.assigned_model, ''), COALESCE(m.assigned_effort, ''),
 		       COALESCE(m.assigned_independence_domain, ''),
 		       COALESCE(m.group_path, ''), COALESCE(m.metadata_json, ''),
+		       -- Dispatchable RIGHT NOW: the same NOT EXISTS walk over task_deps
+		       -- that ReadyPartitions and ClaimNextReady use, so this cannot
+		       -- become a second notion of ready.
+		       (t.status IN ('pending','ready','blocked_capability','blocked_input')
+		        AND NOT EXISTS (
+		          SELECT 1 FROM task_deps d
+		           JOIN tasks tdep ON tdep.plan_id = d.plan_id AND tdep.id = d.depends_on
+		          WHERE d.plan_id = t.plan_id
+		            AND d.task_id = t.id
+		            AND tdep.status NOT IN ('done', 'skipped', 'decomposed')
+		        )) AS dispatchable,
 		       t.created_at, t.updated_at
 		FROM tasks t
 		JOIN plans p ON p.id = t.plan_id
@@ -736,6 +747,7 @@ func readOperatorTasks(
 		var parallel, sequence sql.NullInt64
 		var createdRaw, updatedRaw string
 		var groupPath, metadataJSON string
+		var dispatchable bool
 		if err := rows.Scan(
 			&task.PlanID,
 			&task.ID,
@@ -753,6 +765,7 @@ func readOperatorTasks(
 			&task.AssignedIndependenceDomain,
 			&groupPath,
 			&metadataJSON,
+			&dispatchable,
 			&createdRaw,
 			&updatedRaw,
 		); err != nil {
@@ -760,15 +773,25 @@ func readOperatorTasks(
 		}
 		task.ParallelGroup = operatorNullableInt64(parallel)
 		task.SequenceOrdinal = operatorNullableInt64(sequence)
+		// Only a DISPATCHABLE task gets an ordinal. A partition is "tasks one
+		// worker may own in ONE turn", so a task that is not ready has no
+		// partition to belong to yet -- labelling it anyway claimed a grouping
+		// dispatch would never perform.
+		//
+		// Found by DOGFOODING, not by a test: running Ralph on its own plan
+		// showed `build` carrying the same marker as the three tasks declaring
+		// after:[build]. The agreement test missed it because every task in its
+		// fixture was independently ready, so agreement held vacuously.
+		//
 		// Derived through the SAME function ReadyPartitions groups by, so the
 		// operator's view of "these run together" cannot drift from the rule
-		// dispatch actually applies. Recomputing the grouping here in SQL would
-		// be a second definition of a partition, and the two would diverge the
-		// first time either changed.
-		task.PartitionOrdinal = readyPartitionOrdinal(ReadyPartition{
-			GroupPath:  groupPath,
-			BindingKey: declaredBindingKey(metadataJSON),
-		})
+		// dispatch actually applies.
+		if dispatchable {
+			task.PartitionOrdinal = readyPartitionOrdinal(ReadyPartition{
+				GroupPath:  groupPath,
+				BindingKey: declaredBindingKey(metadataJSON),
+			})
+		}
 		task.CreatedAt, err = parseOperatorTimestamp("task.created_at", createdRaw)
 		if err != nil {
 			return OperatorTaskPage{}, err
