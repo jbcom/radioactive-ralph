@@ -9,6 +9,7 @@ import (
 	"runtime"
 	"time"
 
+	"github.com/jbcom/radioactive-ralph/internal/provider"
 	"github.com/jbcom/radioactive-ralph/internal/xdg"
 )
 
@@ -326,4 +327,35 @@ func checkProviderVersion(ctx context.Context, cfg RunOptions, check providerVer
 		}
 	}
 	return Check{Name: check.Name, Severity: OK, Detail: check.Name + " " + ver}
+}
+
+// checkProgressLease reports the renewable no-progress lease, the bound most
+// likely to kill a working step for reasons unrelated to the code.
+//
+// Two limits govern a provider turn and the SHORTER one bites. The turn
+// deadline is generous (30m); the lease is 3m and is renewed by OUTPUT, so a
+// command that runs a long time while printing nothing looks exactly like a
+// hung provider. The watchdog kills it and the reaper takes the claim back.
+//
+// Measured on a real self-test run: `go test -race ./internal/store/` prints a
+// single line after 138s (30s warm, 62s cold-cache), against a 180s lease. It
+// was reclaimed FOUR times in one run, and nothing warned first -- the value
+// appeared in no CLI output, so the only way to learn it was to watch a task
+// keep dying and go read watchdog source.
+//
+// Always OK, never WARN: the default is correct for ordinary turns, and a
+// warning on every healthy install is one people learn to skip. This is here to
+// be READ when something is already wrong, which is exactly when doctor runs.
+func checkProgressLease(_ context.Context, _ RunOptions) Check {
+	return Check{
+		Name:     "progress lease",
+		Severity: OK,
+		Detail: fmt.Sprintf(
+			"%s default, renewed by provider output (turn deadline %s)",
+			provider.DefaultStallTimeout, provider.DefaultTurnTimeout,
+		),
+		Remediate: "a step that runs longer than the lease WITHOUT printing is " +
+			"killed as stalled; raise stall_timeout for that binding, or make the " +
+			"command emit progress (e.g. `go test -v`)",
+	}
 }

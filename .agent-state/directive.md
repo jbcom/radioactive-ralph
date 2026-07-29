@@ -743,7 +743,46 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
       file says "a field is not shipped until each renderer shows it". Not
       repeating that two commits later.
 
-- [ ] [WAIT-AGENT] Capped-width self-test RUNNING (monitor bq7tfrdz1), the
+- [ ] REAL ROOT CAUSE, and every earlier story was wrong. A reviewer pointed
+      out the fact that breaks them all: runWithHeartbeat beats every 20s
+      INDEPENDENTLY of provider output, against a 90s stale window. A stalled
+      turn keeps beating, so the watchdog killing a silent turn can never
+      produce a reclaim. The lease story cannot explain these reclaims at all.
+      What actually happens, traced: the heartbeat goroutine stops the instant
+      fn returns (orchestrator.go:297), and the post-run path -- including
+      ACCEPTANCE VERIFICATION -- then runs under persistCtx, a 30-SECOND budget
+      (orchestrator.go:1995). The race step's acceptance command is
+      `go test -race -v ./internal/store/`, measured at 30s warm and 138s under
+      load. It cannot fit. persistCtx expires, the task is never marked, and it
+      sits `running` with a dead heartbeat until the reaper takes it at 90s.
+      So the reclaims are a task whose WORK ALREADY SUCCEEDED being requeued
+      because verifying it outlived a budget nobody sized for re-running tests.
+      That also explains what the lease story never could: why capping made it
+      WORSE (slower machine -> slower acceptance -> more certain to exceed 30s),
+      and why race reclaims with nothing else running.
+      FIX: acceptance verification must not run under a 30s deadline sized for
+      store writes. Either give verification its own budget derived from the
+      command it runs, or run it before the heartbeat stops.
+      Verify by reverting: a dispatched run must reach race=done with
+      reclaim_count=0. Nothing short of that has settled this yet -- three
+      previous "fixes" (-v, capping, raising stall_timeout) all targeted
+      mechanisms that were not the cause.
+
+- [ ] [WAIT] CAPPED-WIDTH EXPERIMENT CONCLUDED, but PR 329 is OPEN not merged
+      -- same premature-[x] error as the item above, found by the same review.
+      Closes when it merges. Result stands: Final: race reclaimed FOUR
+      times under RALPH_MAX_PARALLEL=4, versus two unbounded -- capping made it
+      WORSE. Four successive readings (predicted 0, saw 1 "halved", saw 2 "no
+      better", final 4) and only the last is a result; three were recorded as
+      conclusions and all three were wrong. A running experiment has no verdict
+      until it stops.
+      race carries NO pressure clause (gated on >1 in flight), so its reclaims
+      happened with nothing else running: the LEASE is the operative limit, and
+      capping only makes the step wait longer for a slot -- more exposure, not
+      less.
+      Original framing, kept for the diagnosis path:
+
+- [x] [WAIT-AGENT] Capped-width self-test RUNNING (monitor bq7tfrdz1), the
       end-to-end proof the -v fix failed to deliver.
       ANSWERED already: dispatch width is RALPH_MAX_PARALLEL, and unset means
       UNBOUNDED -- supervisorMaxParallel returns 0, the semaphore is nil.
@@ -799,7 +838,12 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
       makes the assertion follow a rename. A reviewer analyzing a file in
       isolation cannot see its package.
 
-- [ ] A RECLAIMED TASK GETS A FRESH RETRY BUDGET, and the row hides it.
+- [ ] [WAIT] PRs 327 (attempt accounting) + 328 (the policy decision) are OPEN,
+      not merged -- main still has RetryCount/ReclaimCount only and a reaper
+      that touches neither. Marked [x] prematurely on the theory that "shipped"
+      meant "PR opened"; a reviewer caught that this would make the loop skip
+      reconciling work still absent from main. Closes when both merge.
+      A RECLAIMED TASK GETS A FRESH RETRY BUDGET, and the row hides it.
       Found by chasing two steps that failed `interactive_prompt` while their
       acceptance commands pass by hand -- the event history is what actually
       explained it, not the category:
