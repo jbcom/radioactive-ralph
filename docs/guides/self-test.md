@@ -145,16 +145,28 @@ lease -- and under a concurrent self-test run it lost that race twice
 (`reclaim_count: 2`) before finishing. Nothing was wrong with the code or the
 test; the step was simply invisible while it worked.
 
-The fix is to make the work OBSERVABLE, not to raise the ceiling: `go test` gets
-`-v` so each test renews the lease. Prefer that to lengthening `stall_timeout`,
-which buys silence more room instead of removing it.
+**Where the output has to appear matters more than whether it exists.** The
+obvious fix — add `-v` so each test line renews the lease — only works when the
+watchdog can SEE those lines. It can, for a directly executed command and for
+the mechanical acceptance rerun. It cannot under Codex dispatch: the watchdog
+observes the outer `codex exec --json` event stream, and a command's stdout
+reaches that stream as `aggregated_output` on a single `item.completed` event
+emitted only when the command FINISHES. There is no incremental output event.
+So `-v` changes what that one event contains, never when it arrives, and a
+138s test is exactly as silent to the lease with it as without.
 
-Only that ONE step needed it, which is worth knowing before adding `-v`
-everywhere. Every other step was measured: the unit suites and both
-`golangci-lint` runs finish in 2-13s, and `-race` over the same store package
-that takes 2s without it takes 138s with it. `race` was ~46x the next-slowest
-step, so it is the only one anywhere near the lease. Measure before broadening
-the fix; `-v` on a fast step just adds noise to the transcript.
+The step still carries `-v`, which is worth having for the paths that can use
+it. But when a genuinely long command must run under a dispatching provider,
+the silence is STRUCTURAL and cannot be removed — raise `stall_timeout` for
+that binding instead (it is per-binding config, layered user then project, and
+bounded by `MaxStallTimeout`). Removing the silence is the better fix only when
+the silence is removable.
+
+Only that ONE step is anywhere near the lease, which is worth knowing before
+changing anything globally. Every other step was measured: the unit suites and
+both `golangci-lint` runs finish in 2-13s, and `-race` over the same store
+package that takes 2s without it takes 138s with it — ~46x the next-slowest
+step. Measure before broadening a fix.
 
 **Partition coverage, never drop it.** When a step grows too slow, split it —
 do not narrow what it tests. An early revision cut the unit pass down to one

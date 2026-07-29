@@ -295,8 +295,24 @@ sys.exit(1 if bad else 0)" || fail=1
 #
 # Matched at line start with a trailing delimiter, so prose ABOUT conflict
 # markers -- like this comment block -- does not trip it.
-conflicted=$(grep -rlE '^(<{7}|>{7}|={7})( |$)' .agent-state/ 2>/dev/null || true)
-if [ -n "$conflicted" ]; then
+#
+# The seven-PIPE form is the diff3/zdiff3 ancestor marker (`||||||| base`).
+# Contributors using that conflict style get a third marker the default style
+# never produces, and a partial resolution can leave it orphaned -- the exact
+# scenario this guard exists for. Without it the alternation matches none of
+# that line's characters and reports clean.
+#
+# grep's exit status is preserved rather than swallowed with `|| true`: 1 means
+# "no match" (the good case), but 2+ means the scan itself FAILED -- a missing
+# or unreadable .agent-state/. Collapsing those together is precisely the defect
+# this guard was written to prevent, one layer down: reporting "none committed"
+# without having examined anything. Fail closed instead.
+conflicted=$(grep -rlE '^(<{7}|>{7}|={7}|\|{7})( |$)' .agent-state/ 2>/dev/null)
+scan_status=$?
+if [ "$scan_status" -ge 2 ]; then
+  printf '%-42s %s\n' "agent-state conflict markers" "SCAN FAILED (grep exit $scan_status) — not checked"
+  fail=1
+elif [ -n "$conflicted" ]; then
   printf '%-42s %s\n' "agent-state conflict markers" "FOUND in: $(echo "$conflicted" | tr '\n' ' ')"
   fail=1
 else

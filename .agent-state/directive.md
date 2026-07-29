@@ -558,10 +558,17 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
       by layer -- check, setup, threshold. All PRs landed: open=0, queued=0.
 
 
-- [x] DOGFOOD RESULT 2026-07-29, self-test on merged main. 8/12 steps verified
-      by re-run acceptance commands, 1 failed (`lint-internal`,
-      interactive_prompt), 2 correctly blocked. The run reproduced its own
-      documented hazards, which is the point of running it:
+- [x] DOGFOOD RESULT 2026-07-29, self-test on merged main. TERMINAL: 9 done,
+      1 failed (`lint-internal`), 2 blocked (`claims`, `e2e`) = 12. The plan
+      reports DEAD (no runnable work), not COMPLETE, which is the honest
+      outcome when a step fails.
+      `interactive_prompt` is lint-internal's failure_category -- the REASON
+      for that one failure, not a second failed step. Read as two failures the
+      arithmetic lands at 11/12 and the record contradicts itself; an earlier
+      revision of this entry did exactly that by freezing a mid-flight 8/12
+      while `race` was still running.
+      The run reproduced its own documented hazards, which is the point of
+      running it:
 
       1. TRANSITIVE BLOCKER, proven live. `claims` declares `after: [e2e]` and
          nothing else, yet reported `blocked_by=lint-internal` -- the root
@@ -609,10 +616,23 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
          prints ONE `ok` line after 138.6s of silence -- 41s of headroom --
          so under a concurrent run the watchdog read a working step as a hung
          provider and killed it. Twice.
-         Fixed by making the work observable (`-v`, verified to stream with
-         sub-second gaps) rather than raising stall_timeout, which would buy
-         the silence more room instead of removing it. Guide updated: a silent
-         step is a stalled step.
+         First fix was `-v`, verified to stream with sub-second gaps -- and a
+         reviewer (codex, PR 322) showed that is NOT sufficient for the path
+         that actually failed. Under Codex dispatch the watchdog observes the
+         outer `codex exec --json` stream, where a command's stdout arrives as
+         `aggregated_output` on ONE `item.completed` event emitted when the
+         command FINISHES; there is no incremental output event. `-v` changes
+         what that event contains, never when it arrives, so the 138s of
+         silence is identical with or without it.
+         I verified the claim rather than deferring to it: no item.started /
+         delta / incremental type exists anywhere in the codex path, and the
+         lease renews on ANY line from the agent process, so no line means no
+         renewal. The reviewer was right.
+         `-v` is KEPT (it helps direct execution and the mechanical acceptance
+         rerun), but the honest fix for a dispatched long command is a larger
+         stall_timeout on that binding -- the silence is structural and cannot
+         be removed. Guide corrected: WHERE the output appears matters more
+         than whether it exists.
          This is the class of bug only a real run finds. Every unit test
          passes; the step itself passes in 138s standalone. It fails only when
          a long quiet command meets a watchdog under load.
