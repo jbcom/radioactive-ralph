@@ -206,3 +206,30 @@ func (o *Orchestrator) absorbDecisionLogDetached(ctx context.Context, projectID,
 	defer cancel()
 	return o.AbsorbDecisionLog(absorbCtx, projectID, planID, taskID, workerID)
 }
+
+// failureDecisionLine renders the decision-log entry for a failed turn.
+//
+// It carries the concurrent worker count because reclaim_count -- the number
+// reached for first -- does NOT measure contention. That counter increments
+// only on a stale heartbeat or an orphaned claim, so nine steps can saturate a
+// machine with it sitting at zero. Comparing runs by it produced a confident
+// "no contention" for a run that may well have been loaded.
+//
+// The count is stated even when it is 1, so an absent number never has to be
+// read as "unknown" -- a diagnostic that omits its own null case forces the
+// reader back into guessing, which is the failure mode this exists to end.
+func failureDecisionLine(category, summary string, runningWorkers int, countErr error) string {
+	load := fmt.Sprintf("%d workers running", runningWorkers)
+	switch {
+	case countErr != nil:
+		// NEVER report a confident 0 for a count that failed. A discarded error
+		// left `running == 0`, which reads as "the machine was idle" -- the
+		// exact false-confidence this line exists to prevent, since mistaking an
+		// unmeasured value for a measured one is what made reclaim_count look
+		// like evidence about contention.
+		load = "worker count unavailable"
+	case runningWorkers == 1:
+		load = "1 worker running"
+	}
+	return fmt.Sprintf("turn ended %s (%s): %s", category, load, summary)
+}
