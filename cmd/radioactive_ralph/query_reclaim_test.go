@@ -123,6 +123,26 @@ func TestStatusRendersAttemptLabel(t *testing.T) {
 		t.Errorf("2 reclaims does not state its 3 claims:\n%s", reclaimsOnly)
 	}
 
+	// RETRY-ONLY: no reclaim at all, so no "reclaimed Nx" clause to hang off.
+	// The first version nested the label inside the reclaim branch, which hid it
+	// on exactly the case AttemptLabel exists to cover -- and the unit test for
+	// AttemptLabel passed the whole time, because it never went through a
+	// renderer.
+	retriesOnly := render(t, observe.Task{
+		PlanID: "plan-1", ID: "retried", Status: "running", RetryCount: 2,
+	})
+	if !strings.Contains(retriesOnly, "3 attempts") {
+		t.Errorf("a retry-only task shows no attempt label:\n%s", retriesOnly)
+	}
+
+	// A reclaim with NO recorded reason must still show the count.
+	reasonless := render(t, observe.Task{
+		PlanID: "plan-1", ID: "quiet", Status: "running", ReclaimCount: 1,
+	})
+	if !strings.Contains(reasonless, "2 attempts") {
+		t.Errorf("a reasonless reclaim shows no attempt label:\n%s", reasonless)
+	}
+
 	// A healthy task gets nothing: "1 attempt" on every row marks nothing.
 	clean := render(t, observe.Task{PlanID: "plan-1", ID: "fine", Status: "done"})
 	if strings.Contains(clean, "attempts") {
