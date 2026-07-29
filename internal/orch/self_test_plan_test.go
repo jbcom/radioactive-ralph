@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/jbcom/radioactive-ralph/internal/plan"
+	plan2 "github.com/jbcom/radioactive-ralph/internal/plan"
 )
 
 // selfTestPlanPath is the plan scripts/self-test.sh imports.
@@ -27,7 +27,7 @@ func TestSelfTestPlanIsImportable(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read self-test plan: %v", err)
 	}
-	p, err := plan.Parse(md)
+	p, err := plan2.Parse(md)
 	if err != nil {
 		t.Fatalf("the shipped self-test plan does not parse: %v", err)
 	}
@@ -49,7 +49,7 @@ func TestSelfTestPlanStepsAllCarryAcceptance(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read self-test plan: %v", err)
 	}
-	p, err := plan.Parse(md)
+	p, err := plan2.Parse(md)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}

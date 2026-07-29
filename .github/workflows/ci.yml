@@ -644,6 +644,7 @@ jobs:
             scripts/ci/test_install_signature_policy.sh \
             scripts/verify-docs-artifact.sh \
             scripts/verify-repo-claims.sh \
+            scripts/self-test.sh \
             scripts/drive-open-prs.sh \
             scripts/generate-api-docs.sh \
             scripts/record-demo.sh \
