@@ -111,11 +111,18 @@ esac
 FAKE
 chmod +x "$FAKE_BIN"
 # The victim must be a file git TRACKS in this repo, or there is nothing for the
-# guard to notice. Use the plan the self-test itself imports: appending a
-# markdown comment cannot change its meaning, and it is restored immediately.
+# guard to notice.
+#
+# Its EXACT contents are saved and restored -- never `git checkout --`. A review
+# reproduced the difference: running this test in a checkout where the victim
+# already had uncommitted changes, `git checkout` replaced it with HEAD and
+# silently destroyed that work. A test written to prevent a run from clobbering
+# your edits must not clobber them itself.
 VICTIM="docs/plans/self-test.md"
+VICTIM_SAVE="$TMP/victim.bak"
+cp "$ROOT/$VICTIM" "$VICTIM_SAVE"
 out=$(SELFTEST_VICTIM="$VICTIM" RALPH_BIN="$FAKE_BIN" bash "$ROOT/scripts/self-test.sh" 2>&1 || true)
-git -C "$ROOT" checkout -- "$VICTIM" 2>/dev/null || true
+cp "$VICTIM_SAVE" "$ROOT/$VICTIM"
 rm -f "$FAKE_BIN"
 printf '%s' "$out" | grep -q 'WARNING' ||
   fail "a run that FAILED at import printed no tracked-edit warning: $out"
