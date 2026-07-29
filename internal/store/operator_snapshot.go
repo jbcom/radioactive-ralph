@@ -189,6 +189,33 @@ type OperatorTask struct {
 	// while the task stays terminal.
 	FailureCategory string `json:"failure_category"`
 
+	// ReclaimReason names why this task's most recent claim was lost:
+	// stale_heartbeat (the worker stopped beating) or orphaned_claim (its
+	// worker row was already gone). Empty when reclaim_count is 0.
+	//
+	// ReclaimCount alone poses a question it cannot answer -- a task at 2 reads
+	// identically whether its worker crashed twice or its turns were killed for
+	// producing no output. Answering it meant correlating the events stream by
+	// hand, which is how a repeatedly-reclaimed step was first mistaken for a
+	// stuck one.
+	//
+	// Unlike FailureCategory this is NOT durable on the task row: reclaims are
+	// recorded as events, so the reason is read from the newest task.reclaimed
+	// event for this task. That is the correct trade here -- a reclaim is a
+	// recoverable interruption, so the task moves back to pending and carries no
+	// terminal state of its own to hang the reason on.
+	ReclaimReason string `json:"reclaim_reason,omitempty"`
+
+	// ReclaimConcurrentClaims is how many tasks were claimed at the moment of
+	// the most recent reclaim. Zero when the task was never reclaimed.
+	//
+	// It exists because a correct reason can still point at the wrong suspect.
+	// The reclaims that prompted all of this were never a worker fault: parallel
+	// steps starve each other, and 30s of work became 138s under load against a
+	// 180s lease. "stale_heartbeat" is TRUE and sends the reader to inspect the
+	// worker, when the answer is that six other steps were running.
+	ReclaimConcurrentClaims int `json:"reclaim_concurrent_claims,omitempty"`
+
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 }
@@ -813,6 +840,24 @@ const operatorTasksQuery = `
 		      WHERE b2.plan_id = b1.plan_id AND b2.task_id = b1.task_id
 		   )
 		   GROUP BY plan_id, task_id
+		),
+		-- Newest task.reclaimed event per task. MAX(id) rather than MAX(occurred_at):
+		-- events carry second-resolution timestamps, so two reclaims of the same
+		-- task within one second tie, and the tie-break would be arbitrary --
+		-- picking the OLDER reason exactly when reclaims are rapid, which is the
+		-- case an operator is most likely to be looking at.
+		last_reclaim(plan_id, task_id, reason, concurrent_claims) AS (
+		  SELECT e.plan_id, e.task_id,
+		         COALESCE(json_extract(e.payload_json, '$.reason'), ''),
+		         COALESCE(json_extract(e.payload_json, '$.concurrent_claims'), 0)
+		    FROM events e
+		   WHERE e.kind = 'task.reclaimed'
+		     AND e.id = (
+		       SELECT MAX(e2.id) FROM events e2
+		        WHERE e2.kind = 'task.reclaimed'
+		          AND e2.plan_id = e.plan_id
+		          AND e2.task_id = e.task_id
+		     )
 		)
 		SELECT t.plan_id, t.id, t.status, t.parallel_group, t.sequence_ordinal,
 		       t.retry_count, t.reclaim_count, COALESCE(t.parent_task_id, ''),
@@ -822,6 +867,8 @@ const operatorTasksQuery = `
 		       COALESCE(m.assigned_independence_domain, ''),
 		       COALESCE(m.group_path, ''), COALESCE(m.metadata_json, ''),
 		       COALESCE(t.failure_category, ''),
+		       COALESCE(lr.reason, ''),
+		       COALESCE(lr.concurrent_claims, 0),
 		       -- Does this task belong to a partition an operator can act on?
 		       --
 		       -- A RUNNING task always does: it was claimed AS a partition member,
@@ -859,6 +906,7 @@ const operatorTasksQuery = `
 		-- task is far worse than reporting it unassigned.
 		LEFT JOIN task_metadata m ON m.plan_id = t.plan_id AND m.task_id = t.id
 		LEFT JOIN blocked_best bb ON bb.plan_id = t.plan_id AND bb.task_id = t.id
+		LEFT JOIN last_reclaim lr ON lr.plan_id = t.plan_id AND lr.task_id = t.id
 		WHERE p.project_id = ?
 		  AND (? = '' OR t.plan_id = ?)
 		  AND (? = '' OR t.id = ?)
@@ -920,6 +968,8 @@ func readOperatorTasks(
 			&groupPath,
 			&metadataJSON,
 			&task.FailureCategory,
+			&task.ReclaimReason,
+			&task.ReclaimConcurrentClaims,
 			&partitioned,
 			&task.BlockedByTaskID,
 			&createdRaw,

@@ -89,6 +89,24 @@ func renderMeso(m Model) string {
 					"               ↳ failure: " + t.FailureCategory))
 				b.WriteString("\n")
 			}
+			// Why this task's claim was lost. NOT status-gated, unlike the
+			// failure above: a reclaim returns the task to pending and it may
+			// be running again by the time anyone looks, while the count stays
+			// on the row in every state. A bare count asks a question it cannot
+			// answer -- 2 reads the same whether a worker crashed twice or two
+			// turns were killed for producing no output.
+			if t.ReclaimCount > 0 && t.ReclaimReason != "" {
+				pressure := ""
+				// Only when work was genuinely in flight: a reclaim on an idle
+				// machine has no load to blame, and a marker on every row is
+				// noise that trains the reader to skip the column.
+				if t.ReclaimConcurrentClaims > 1 {
+					pressure = fmt.Sprintf(" (%d claims in flight)", t.ReclaimConcurrentClaims)
+				}
+				b.WriteString(styleMuted.Render(fmt.Sprintf(
+					"               ↳ reclaimed %dx: %s%s", t.ReclaimCount, t.ReclaimReason, pressure)))
+				b.WriteString("\n")
+			}
 			// A dependency that can never be satisfied. Its own line for the
 			// same reason as the block remediation: inline it pushes the row
 			// past a terminal's width. Distinct from Blocked -- that is a

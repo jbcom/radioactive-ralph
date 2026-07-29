@@ -166,9 +166,76 @@ func checkCommandExitsZero(ctx context.Context, dir, command string) (bool, stri
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		reason := fmt.Sprintf("acceptance command %q failed: %v\n%s", command, err, strings.TrimSpace(string(out)))
+		if phantom := phantomFindingPaths(dir, string(out)); len(phantom) > 0 {
+			reason += fmt.Sprintf(
+				"\n\nNOTE: %d of these findings name files that DO NOT EXIST: %s\n"+
+					"A tool reporting a finding for a path that is not on disk is "+
+					"reporting a stale index, not a defect. Clear the tool's cache "+
+					"(e.g. `golangci-lint cache clean`) and re-run before changing "+
+					"code -- the finding cannot be fixed, because the file is gone.",
+				len(phantom), strings.Join(phantom, ", "))
+		}
 		return false, reason, nil
 	}
 	return true, "", nil
+}
+
+// findingPathRe matches the near-universal "path:line:col:" diagnostic prefix
+// emitted by go vet, golangci-lint, gcc, tsc, and friends. Anchored per line so
+// a path mentioned mid-sentence in prose is not mistaken for a finding.
+//
+// The optional `[A-Za-z]:` prefix is a Windows drive letter, and leaving it out
+// was a real bug: the path body cannot contain `:`, so `C:\src\x.go:9:1:` did
+// not match AT ALL and every Windows finding was invisible. It passed on macOS
+// and Linux and failed only on the Windows runner -- the platform where a
+// colon is part of an ordinary absolute path.
+var findingPathRe = regexp.MustCompile(`(?m)^\s*((?:[A-Za-z]:)?[^\s:][^:]*\.[A-Za-z0-9_]+):\d+:(?:\d+:)?\s`)
+
+// phantomFindingPaths returns the distinct file paths a tool reported findings
+// for that do not exist on disk.
+//
+// This exists because a stale linter cache invents work. golangci-lint once
+// reported 11 findings, every one under a sibling directory that had been
+// deleted; `cache clean` reduced the same command to "0 issues". The step
+// failed, a provider turn was handed those findings, and it tried to fix files
+// that were not there -- burning the turn and producing a plausible, compiling
+// change for a defect that did not exist.
+//
+// The agent behaved correctly. The defect is that an IMPOSSIBLE task looks
+// exactly like a hard one, so nothing surfaced the contradiction until a human
+// noticed the paths pointed outside the project.
+//
+// Deliberately reports rather than suppresses: the command still FAILED and the
+// step still fails. Turning a red step green on a heuristic would be far worse
+// than the ambiguity being fixed -- a mis-parse would hide real findings. This
+// only adds an explanation to a failure that was going to happen anyway.
+func phantomFindingPaths(dir, output string) []string {
+	var phantom []string
+	seen := map[string]bool{}
+	for _, m := range findingPathRe.FindAllStringSubmatch(output, -1) {
+		path := strings.TrimSpace(m[1])
+		if path == "" || seen[path] {
+			continue
+		}
+		seen[path] = true
+		// Relative paths are resolved against dir, which is exactly the working
+		// directory the command ran in (cmd.Dir above). Skipping them was the
+		// first version's bug: golangci-lint reports the real stale-cache paths
+		// RELATIVELY ("../.worktrees/..."), so the detector missed the very case
+		// it was written for and only caught the synthetic absolute-path
+		// fixture. Checked against the real captured output, not just the test.
+		resolved := path
+		if !filepath.IsAbs(resolved) {
+			if dir == "" {
+				continue
+			}
+			resolved = filepath.Join(dir, resolved)
+		}
+		if _, err := os.Stat(resolved); err != nil && os.IsNotExist(err) {
+			phantom = append(phantom, path)
+		}
+	}
+	return phantom
 }
 
 // VerifyAndComplete is THE BACKBONE: it never trusts a worker's

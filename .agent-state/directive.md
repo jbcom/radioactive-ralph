@@ -667,14 +667,120 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
           passed; asserting the SPECIFIC branch is what caught it.
       Both fixes carry negative proofs.
 
-- [ ] The stall lease is still invisible in the OPERATOR SURFACE. The reclaim
-      reason is now durable in the events stream, but `status` still shows a
-      bare reclaim_count on the task row -- so the fast read is still "why is
-      this number 2?" and the answer lives one query away.
-      Surface the latest reclaim reason on the task row itself, the way
-      failure_category already rides along for failed tasks.
-      Verify by reverting: with it, a reclaimed row names its cause inline;
-      without it, the operator is back to correlating events by hand.
+- [x] DONE (PR 323, un-hashed: guard 9 reads hashes as open-PR citations).
+      The task row now names its own reclaim cause:
+        race             running    — reclaimed 2x: stale_heartbeat
+      Read from the newest task.reclaimed event rather than a durable column,
+      which is the right trade: a reclaim is a RECOVERABLE interruption, so the
+      task returns to pending and has no terminal state to hang a reason on.
+      Deliberately NOT status-gated, unlike the failure reason directly above
+      it in the renderer -- a reclaimed task may be running again by the time
+      anyone looks, and the count shows in every state.
+      MAX(id) not MAX(occurred_at): events are second-resolution, so two
+      reclaims within a second tie and the tie-break would surface the OLDER
+      reason exactly when reclaims are rapid.
+      Query plan checked rather than assumed (this session's own lesson): both
+      events lookups report SEARCH ... USING INDEX events_task, so cost is
+      per-task constant, not proportional to the events table.
+      Proven by reverting at BOTH layers -- dropping the SELECT column fails
+      with an empty reason, dropping the render line fails with a bare row. The
+      render test reads the PRINTED OUTPUT, not the struct field: a reason that
+      reaches --json but never the human line would leave the CLI's default
+      output less informative than its own JSON.
+
+- [x] DONE. Acceptance failures now name findings whose paths are not on disk,
+      pointing at the tool cache as the likely cause.
+      REPORTS rather than suppresses, deliberately: the command still failed
+      and the step still fails. Turning a red step green on a heuristic would
+      be far worse than the ambiguity being fixed -- a mis-parse would hide
+      real findings. This only explains a failure that was happening anyway.
+      THE LESSON, which is this session's recurring shape one more time: my
+      first version skipped RELATIVE paths, reasoning they resolve against the
+      tool's working directory. But checkCommandExitsZero sets cmd.Dir itself,
+      so that directory is known -- and golangci-lint reports the real
+      stale-cache paths relatively ("../.worktrees/..."). So the detector
+      missed the exact output it was written for while PASSING against my
+      synthetic absolute-path fixture: a check that works only on its own test
+      data. Caught by running it against the REAL captured output instead of
+      trusting the fixture. Detecting 2 of 3 real paths is what exposed it.
+      Both directions proven by reverting; a companion test asserts a failure
+      whose paths all exist is left untouched.
+
+- [x] DIAGNOSED, and the obvious theory was WRONG. I had already written
+      "cold compilation dominates" into the guide before measuring it.
+      Same machine: 30s warm, 62s COLD-CACHE, 138s UNDER CONCURRENT LOAD,
+      against a 180s lease. A cold-but-idle run has ~2x headroom, so the cache
+      is not the cause. The original 138s was measured while a full self-test
+      ran on the same machine -- which is exactly the condition a dispatched
+      self-test creates for ITSELF: every step running in parallel makes this
+      one slower.
+      So the step is not slow, it is slow WHEN CONTENDED. That is the only
+      theory that explains why it passes comfortably by hand and still loses
+      two claims on every real run, and why no threshold derived from a quiet
+      machine would have predicted it.
+      Splitting was evaluated and rejected on measurement, not taste: the
+      -race compile is ~1s warm and the run spreads across many tests whose
+      slowest is 1.85s. There is no seam. stall_timeout in STORED config is
+      the honest remedy (the headless supervisor has no --config-file to
+      thread), now documented with the checked duration shape and bounds.
+      Cost of nearly shipping the tidy story: one command.
+
+- [x] DONE. A reclaim now names the load that caused it, on all four surfaces
+      in one commit:
+        race    running    — reclaimed 2x: stale_heartbeat (6 claims in flight)
+      concurrent_claims is captured BEFORE the UPDATE releases the claims --
+      afterwards it is unrecoverable, since step 2 deletes the workers. Same
+      pre-capture discipline the reason needed, for the same reason.
+      Gated on `> 1`, not `> 0`, and the difference is load-bearing: a solo
+      reclaim records 1 (the task's OWN claim), so `> 0` would print
+      "(1 claims in flight)" on every reclaim ever. The idle-case test is what
+      catches that -- a detector that always fires passes every presence check.
+      The store test asserts the exact value (3), not mere presence, for the
+      same reason.
+      ALL FOUR SURFACES IN ONE COMMIT, deliberately: the previous change in
+      this branch shipped ReclaimReason to store/observe/CLI and left both
+      views blind until a reviewer caught it -- on the very change whose test
+      file says "a field is not shipped until each renderer shows it". Not
+      repeating that two commits later.
+
+- [ ] [WAIT-AGENT] Capped-width self-test RUNNING (monitor bq7tfrdz1), the
+      end-to-end proof the -v fix failed to deliver.
+      ANSWERED already: dispatch width is RALPH_MAX_PARALLEL, and unset means
+      UNBOUNDED -- supervisorMaxParallel returns 0, the semaphore is nil.
+      Verified directly (unset -> 0; "4" -> 4) and confirmed on the live
+      process: the supervisor that produced every reclaim this session was
+      running with no cap on a 16-core machine. So the contention starving
+      `race` was never a tuned budget it lost against; nobody chose 6.
+      Documented in the guide, with no recommended optimum -- there is none to
+      name, and supervisorMaxParallel's own comment says neither mode is
+      adaptive. The point is that the width becomes a DECISION.
+      NOW TESTING: supervisor restarted with RALPH_MAX_PARALLEL=4 (confirmed
+      in its startup log), tree clean so no uncommitted edits pollute the run
+      as they did last time. The claim under test is narrow and falsifiable:
+      race should reach done with reclaim_count=0, where it burned 2 on both
+      prior unbounded runs.
+      If it still reclaims, the contention theory is WRONG and the remaining
+      explanation is stall_timeout being too short for this step regardless of
+      load -- which is a different fix, so the outcome decides it either way.
+
+- [x] CONFIRMING SELF-TEST RUN validated the stale-cache diagnosis. The whole
+      point of re-running: `lint-internal` had failed with interactive_prompt,
+      I traced it to golangci-lint resurrecting findings for files that do not
+      exist, cleared the cache -- and on the next run lint-internal came back
+      DONE. Prediction made, then tested, rather than asserted.
+      `race` also ran with reclaim_count=0 through the same phase that
+      previously cost two reclaims.
+      (The run showed unit-orch/unit-provider failing, which is MY uncommitted
+      work-in-progress being picked up mid-run, not a regression -- the
+      self-test reads the working tree. Worth noting because a failed step in
+      a dogfood run is not automatically a product finding; check what changed
+      under it first.)
+      TERMINAL: DEAD 8/12, lint-internal=done, race=done/2. Both predictions
+      settled: the stale-cache fix HELD (the step that died on
+      interactive_prompt now passes), and race still burned 2 reclaims WITH
+      `-v` in place, exactly as the codex reviewer said it would. A prediction
+      that survives and one that fails, from the same run.
+
       Historical note -- the `race` finding cost a
       real diagnosis (2 reclaims read as a stuck row) for a step that was
       merely quiet, and NOTHING in the operator surface said so: the row shows

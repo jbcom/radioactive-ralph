@@ -119,6 +119,23 @@ func (s *Store) ReclaimStale(ctx context.Context, staleAfter time.Duration) (rec
 		return 0, fmt.Errorf("store: close reclaimable tasks: %w", err)
 	}
 
+	// How many tasks were claimed when this reclaim happened, counted BEFORE the
+	// UPDATE releases them (afterwards it is unrecoverable -- the claims are
+	// gone and the workers are deleted by step 2).
+	//
+	// This is the suspect a correct reason still points away from. The `race`
+	// step's reclaims were never a worker fault: parallel steps starve each
+	// other, and 30s of work becomes 138s under load against a 180s lease. An
+	// operator reading "reclaimed 2x: stale_heartbeat" gets something TRUE that
+	// sends them looking at the worker, when the answer is that six other steps
+	// were running. A dispatched self-test creates that contention for itself.
+	var concurrentClaims int
+	if err := tx.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM tasks WHERE status = 'running'
+	`).Scan(&concurrentClaims); err != nil {
+		return 0, fmt.Errorf("store: count concurrent claims: %w", err)
+	}
+
 	rows, err := tx.QueryContext(ctx, `
 		UPDATE tasks
 		SET status = 'pending',
@@ -175,7 +192,8 @@ func (s *Store) ReclaimStale(ctx context.Context, staleAfter time.Duration) (rec
 			INSERT INTO events(plan_id, task_id, kind, stream, payload_json)
 			VALUES (?, ?, 'task.reclaimed', 'service', ?)
 		`, rt.planID, rt.taskID,
-			fmt.Sprintf(`{"reason":%q,"reclaim_count":%d}`, rt.reason, rt.count)); err != nil {
+			fmt.Sprintf(`{"reason":%q,"reclaim_count":%d,"concurrent_claims":%d}`,
+				rt.reason, rt.count, concurrentClaims)); err != nil {
 			return 0, fmt.Errorf("store: log reclaim: %w", err)
 		}
 	}

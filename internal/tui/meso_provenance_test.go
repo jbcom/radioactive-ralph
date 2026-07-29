@@ -299,3 +299,64 @@ func TestMacroFlagsAPlanWithNoRunnableWork(t *testing.T) {
 		t.Errorf("a healthy plan was flagged too:\n%s", out)
 	}
 }
+
+// TestMesoShowsReclaimReason closes the same asymmetry AGAIN, on this very
+// change: the reclaim reason reached the store, observe and the CLI, and both
+// views silently discarded it until a review caught it. The comment on the
+// macro test below says this repo has repeatedly landed one renderer and chased
+// the others later; this is that, one more time.
+//
+// NOT status-gated, unlike the failure category above: a reclaim returns the
+// task to pending and it may be running again by the time anyone looks, so a
+// running task legitimately shows its reclaim history.
+func TestMesoShowsReclaimReason(t *testing.T) {
+	f := testFake()
+	m := newTestModel(t, f)
+	m.lvl = levelMeso
+	m.selectedPlan = f.plans[0]
+	m.snap.tasks = []observe.Task{
+		{ID: "race", PlanID: "plan-1", Status: "running", ReclaimCount: 2, ReclaimReason: "stale_heartbeat", ReclaimConcurrentClaims: 6},
+		{ID: "build", PlanID: "plan-1", Status: "done"},
+	}
+	out := m.View()
+
+	if !strings.Contains(out, "reclaimed 2x") {
+		t.Errorf("a reclaimed task does not state its count:\n%s", out)
+	}
+	if !strings.Contains(out, "stale_heartbeat") {
+		t.Errorf("a reclaimed task does not name its cause:\n%s", out)
+	}
+	if strings.Count(out, "reclaimed") != 1 {
+		t.Errorf("a task never reclaimed carries a reclaim marker:\n%s", out)
+	}
+	if !strings.Contains(out, "6 claims in flight") {
+		t.Errorf("a reclaim under load does not name the load:\n%s", out)
+	}
+}
+
+// TestMesoOmitsPressureOnAnIdleReclaim is the other half of the pressure
+// marker. A reclaim on an otherwise idle machine has no load to blame, so
+// naming one would be actively wrong -- and a marker on every row is noise that
+// trains the reader to skip the column, which costs more than it gives.
+//
+// concurrent_claims is 1 here: the reclaimed task's OWN claim. That is the
+// value a real single-worker reclaim records, so a naive `> 0` gate would print
+// "(1 claims in flight)" on every reclaim ever.
+func TestMesoOmitsPressureOnAnIdleReclaim(t *testing.T) {
+	f := testFake()
+	m := newTestModel(t, f)
+	m.lvl = levelMeso
+	m.selectedPlan = f.plans[0]
+	m.snap.tasks = []observe.Task{
+		{ID: "solo", PlanID: "plan-1", Status: "pending", ReclaimCount: 1,
+			ReclaimReason: "stale_heartbeat", ReclaimConcurrentClaims: 1},
+	}
+	out := m.View()
+
+	if !strings.Contains(out, "reclaimed 1x") {
+		t.Fatalf("the reclaim itself is not reported:\n%s", out)
+	}
+	if strings.Contains(out, "in flight") {
+		t.Errorf("an idle reclaim blamed concurrency:\n%s", out)
+	}
+}
