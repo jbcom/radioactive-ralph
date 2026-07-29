@@ -111,3 +111,55 @@ func TestPhantomFindingPathsHandlesRelativePaths(t *testing.T) {
 		}
 	}
 }
+
+// TestFindingPathReMatchesWindowsDriveLetters pins a bug that only the Windows
+// runner could see, using a fixture that runs everywhere.
+//
+// The path body cannot contain ':' (that is what terminates it before the line
+// number), so without an explicit drive-letter alternative `C:\src\x.go:9:1:`
+// matched NOTHING and every Windows finding was invisible to the detector. The
+// tests passed on macOS and Linux and failed only on the one platform where a
+// colon is part of an ordinary absolute path.
+//
+// Asserted against the REGEX rather than the filesystem so it fails on any host:
+// a guard that needs a Windows runner to notice a Windows bug is the same
+// too-late signal that let this reach CI.
+func TestFindingPathReMatchesWindowsDriveLetters(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		line string
+		want string
+	}{
+		{
+			name: "windows absolute",
+			line: `C:\Users\RUNNER~1\AppData\Local\Temp\t\gone\x.go:90:12: G304: bad (gosec)`,
+			want: `C:\Users\RUNNER~1\AppData\Local\Temp\t\gone\x.go`,
+		},
+		{
+			name: "unix absolute",
+			line: "/tmp/t/gone/x.go:90:12: G304: bad (gosec)",
+			want: "/tmp/t/gone/x.go",
+		},
+		{
+			name: "relative",
+			line: "../.worktrees/rr-sandbox/internal/cassette.go:90:12: G304: bad (gosec)",
+			want: "../.worktrees/rr-sandbox/internal/cassette.go",
+		},
+		{
+			name: "line only, no column",
+			line: "internal/x.go:12: some finding (govet)",
+			want: "internal/x.go",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := findingPathRe.FindStringSubmatch(tc.line)
+			if m == nil {
+				t.Fatalf("no match for %q; findings on this platform are invisible "+
+					"to the phantom detector", tc.line)
+			}
+			if m[1] != tc.want {
+				t.Errorf("captured %q, want %q", m[1], tc.want)
+			}
+		})
+	}
+}

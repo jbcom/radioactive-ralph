@@ -183,7 +183,13 @@ func checkCommandExitsZero(ctx context.Context, dir, command string) (bool, stri
 // findingPathRe matches the near-universal "path:line:col:" diagnostic prefix
 // emitted by go vet, golangci-lint, gcc, tsc, and friends. Anchored per line so
 // a path mentioned mid-sentence in prose is not mistaken for a finding.
-var findingPathRe = regexp.MustCompile(`(?m)^\s*([^\s:][^:]*\.[A-Za-z0-9_]+):\d+:(?:\d+:)?\s`)
+//
+// The optional `[A-Za-z]:` prefix is a Windows drive letter, and leaving it out
+// was a real bug: the path body cannot contain `:`, so `C:\src\x.go:9:1:` did
+// not match AT ALL and every Windows finding was invisible. It passed on macOS
+// and Linux and failed only on the Windows runner -- the platform where a
+// colon is part of an ordinary absolute path.
+var findingPathRe = regexp.MustCompile(`(?m)^\s*((?:[A-Za-z]:)?[^\s:][^:]*\.[A-Za-z0-9_]+):\d+:(?:\d+:)?\s`)
 
 // phantomFindingPaths returns the distinct file paths a tool reported findings
 // for that do not exist on disk.
