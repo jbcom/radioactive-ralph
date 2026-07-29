@@ -86,6 +86,7 @@ type DriveHandler interface {
 	HandlePlanImport(ctx context.Context, args PlanImportArgs) (PlanImportReply, error)
 	// HandlePlanSetStatus changes a plan's lifecycle status (validated).
 	HandlePlanSetStatus(ctx context.Context, args PlanSetStatusArgs) (PlanSetStatusReply, error)
+	HandlePlanDelete(ctx context.Context, args PlanDeleteArgs) (PlanDeleteReply, error)
 	// HandleTaskApprove clears the approval gate on a ready_pending_approval task.
 	HandleTaskApprove(ctx context.Context, args TaskApproveArgs) error
 	// HandleWorkerKill kills a running worker via kill-and-reclaim.
@@ -588,7 +589,7 @@ func (s *Server) handleConn(conn net.Conn) {
 		// Final frame: single Response signals end-of-stream.
 		s.writeResponse(conn, Response{Ok: attachErr == nil, Error: errString(attachErr)})
 
-	case CmdPlanImport, CmdPlanSetStatus, CmdTaskApprove, CmdWorkerKill, CmdProjectEnsure,
+	case CmdPlanImport, CmdPlanSetStatus, CmdPlanDelete, CmdTaskApprove, CmdWorkerKill, CmdProjectEnsure,
 		CmdProjectConfigGet, CmdProjectConfigApply:
 		s.dispatchDrive(ctx, conn, req)
 
@@ -748,6 +749,13 @@ func (s *Server) dispatchDrive(ctx context.Context, conn net.Conn, req Request) 
 			return
 		}
 		reply, err := dh.HandlePlanSetStatus(ctx, args)
+		s.writeResult(conn, reply, err)
+	case CmdPlanDelete:
+		var args PlanDeleteArgs
+		if !s.decodeArgs(conn, req.Args, &args) {
+			return
+		}
+		reply, err := dh.HandlePlanDelete(ctx, args)
 		s.writeResult(conn, reply, err)
 	case CmdTaskApprove:
 		var args TaskApproveArgs

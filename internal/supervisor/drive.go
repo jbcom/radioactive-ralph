@@ -11,6 +11,16 @@ import (
 	"github.com/jbcom/radioactive-ralph/internal/store"
 )
 
+// DriveHandler is OPTIONAL: ipc.Server detects it with a type assertion, so a
+// Supervisor missing even ONE method silently loses EVERY drive command --
+// plan-import, task-approve, worker-kill, all of it -- with no compile error.
+//
+// This is not hypothetical. Adding HandlePlanDelete broke exactly that on the
+// test fake, and three unrelated round-trip tests failed with
+// "unsupported_command". The same slip here would compile, ship, and disable
+// the whole drive surface at runtime.
+var _ ipc.DriveHandler = (*Supervisor)(nil)
+
 // isDuplicateSlug reports whether err is the store's duplicate-slug sentinel.
 func isDuplicateSlug(err error) bool { return errors.Is(err, store.ErrDuplicateSlug) }
 
@@ -106,6 +116,44 @@ func (s *Supervisor) HandlePlanSetStatus(ctx context.Context, args ipc.PlanSetSt
 		return zero, fmt.Errorf("supervisor: set plan status: %w", err)
 	}
 	return ipc.PlanSetStatusReply{PlanID: args.PlanID, Status: string(target)}, nil
+}
+
+// HandlePlanDelete removes a plan and everything hanging off it.
+//
+// store.DeletePlan was implemented and tested with no caller and no CLI, so
+// accumulated runs could never be pruned -- and the operator task page
+// saturates at MaxOperatorPageLimit, showing the newest run only partially with
+// nothing an operator could do about it. This is the surface that reaches it.
+func (s *Supervisor) HandlePlanDelete(ctx context.Context, args ipc.PlanDeleteArgs) (ipc.PlanDeleteReply, error) {
+	var zero ipc.PlanDeleteReply
+	if args.PlanID == "" {
+		return zero, &codedError{ipc.CodeInvalidArgs, "plan-delete: plan_id required"}
+	}
+	// Cancel any live worker on this plan FIRST, mirroring HandleWorkerKill and
+	// for the same reason: deleting the task rows does not stop the agent
+	// subprocess. Without this, a `plan delete` on an active plan leaves the
+	// provider running -- still spending tokens and still mutating the checkout
+	// -- until its turn deadline, with its post-run writes then failing against
+	// rows that no longer exist.
+	//
+	// Best-effort per worker: KillWorker returns false when no live run is
+	// registered under that id, which is fine. The delete proceeds either way,
+	// because refusing here would make an abandoned plan undeletable.
+	if running, err := s.store.ListRunningWorkers(ctx); err == nil {
+		for _, w := range running {
+			if w.PlanID == args.PlanID {
+				s.orch.KillWorker(w.ID)
+			}
+		}
+	}
+
+	if err := s.store.DeletePlan(ctx, args.PlanID); err != nil {
+		if isPlanNotFound(err) {
+			return zero, &codedError{ipc.CodeNotFound, err.Error()}
+		}
+		return zero, fmt.Errorf("supervisor: delete plan: %w", err)
+	}
+	return ipc.PlanDeleteReply(args), nil
 }
 
 // HandleTaskApprove clears the approval gate on a ready_pending_approval task.

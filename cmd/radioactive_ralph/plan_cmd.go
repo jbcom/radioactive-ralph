@@ -32,6 +32,7 @@ func newPlanCmd() *cobra.Command {
 	}
 	cmd.AddCommand(newPlanImportCmd())
 	cmd.AddCommand(newPlanLsCmd())
+	cmd.AddCommand(newPlanDeleteCmd())
 	return cmd
 }
 
@@ -136,6 +137,56 @@ func newPlanLsCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&all, "all", false, "list plans in every status, not just active/paused")
 	cmd.Flags().BoolVar(&asJSON, "json", false, "emit JSONL, one plan per line, for machine consumption")
 	return cmd
+}
+
+// newPlanDeleteCmd removes a plan and everything hanging off it.
+//
+// store.DeletePlan was implemented and tested with NO caller and no CLI, so
+// accumulated runs could never be pruned. The consequence is not cosmetic: the
+// operator task page saturates at MaxOperatorPageLimit, and `status` then shows
+// a recent run only PARTIALLY -- a completed 12-task run displayed 6 rows --
+// with no filter or cursor able to recover the rest.
+func newPlanDeleteCmd() *cobra.Command {
+	var yes bool
+	cmd := &cobra.Command{
+		Use:   "delete <plan-id>",
+		Short: "Delete a plan and all of its tasks, dependencies, and events",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runPlanDelete(cmd.Context(), cmd, args[0], yes)
+		},
+	}
+	// Irreversible and unrecoverable: the plan's tasks, deps, and events go
+	// with it. Requiring the flag keeps a mistyped id from silently destroying
+	// a run's history, which is the only record of what happened.
+	cmd.Flags().BoolVar(&yes, "yes", false, "confirm deletion; required, since it cannot be undone")
+	return cmd
+}
+
+func runPlanDelete(ctx context.Context, cmd *cobra.Command, planID string, yes bool) error {
+	if !yes {
+		return fmt.Errorf("plan delete removes %s and all of its tasks, deps, and events, and cannot be undone; pass --yes to confirm", planID)
+	}
+	stateRoot, err := xdg.StateRoot()
+	if err != nil {
+		return fmt.Errorf("resolve state root: %w", err)
+	}
+	client, err := supervisor.Find(stateRoot)
+	if err != nil {
+		return fmt.Errorf(
+			"%w: plan delete needs a running supervisor; start one with: %s",
+			errNoSupervisorListening, supervisorStartHint())
+	}
+	defer func() { _ = client.Close() }()
+
+	reply, err := client.PlanDelete(ctx, ipc.PlanDeleteArgs{PlanID: planID})
+	if err != nil {
+		return fmt.Errorf("plan delete: %w", err)
+	}
+	if _, err := fmt.Fprintf(cmd.OutOrStdout(), "deleted plan %s\n", reply.PlanID); err != nil {
+		return fmt.Errorf("plan delete: write output: %w", err)
+	}
+	return nil
 }
 
 // planSource is the plan-listing read boundary. It exists so the command is
