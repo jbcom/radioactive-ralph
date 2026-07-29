@@ -188,6 +188,20 @@ produces running workers, fan-out partitions, and real provenance at once.
 - **Prove a fix by reverting it.** A test that passes after a change may have
   passed before it. Re-apply the defect and confirm the named test fails for
   the stated reason; if it does not, the test is not testing the fix.
+- **Verify the ARTIFACT, not the intent.** "I made the edit" is not "the file
+  changed"; "the import succeeded" is not "the run reflects current code". Both
+  gaps shipped false claims in one session and neither was visible without
+  going back to look:
+  - A scripted replacement targeted a string that did not match, so the edit
+    silently did nothing. The build passed because nothing had changed, and the
+    commit message described a fix that was not in the code. A REVIEWER caught
+    it; re-reading the file would have.
+  - The self-test reported on a stale plan (6 stored tasks vs 12 in the file)
+    after an import that "succeeded". The mechanism worked; the outcome was
+    wrong, and only inspecting the stored run showed it.
+  After any scripted or multi-step edit, grep the file for the new text before
+  claiming it landed. After any state-changing command, read back the state --
+  not the command's exit code.
 - **Read the output the user gets, not the assertions about it.** Assertions
   test what you thought to check; a rendered view or printed line has
   properties nobody wrote an assertion for. Four defects in one session were
