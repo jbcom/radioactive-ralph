@@ -867,7 +867,7 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
       real read of it. Do not mistake a green run for having verified the
       diagnostic.
 
-- [ ] [WAIT] Prompt-kind taxonomy in PR 347 (open). When it lands, the NEXT
+- [x] Prompt-kind taxonomy (347, MERGED; precision fix 356, MERGED). The NEXT
       interactive_prompt failure should report a KIND rather than the generic
       category, and that changes what the unit-orch item can conclude:
         interactive_prompt_permission    -> a write-path or binding grant
@@ -944,7 +944,48 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
       experiment has been run, so "needs nine" is unproven and would
       overconstrain the next attempt. The minimum reproducing load is
       still UNKNOWN.
-      NEXT: fix the PTY cleanup race. No containment work.
+      THE PTY CLEANUP RACE IS FIXED (364), and it was not a race at all --
+      it was a FALSE REPORT. `remaining` is built from enumeration ALONE: a
+      member in the already-signalled group is appended and then skipped past
+      every liveness check, so the only way a pid leaves the list is vanishing
+      from a LATER kern.proc.all enumeration -- and the error is constructed
+      from that list with no re-verification. Enumeration lags a completed
+      reap under load, in the window after the kill but before the process
+      becomes a zombie, which darwinSessionMembers does not filter. Fixed by
+      re-verifying liveness at the deadline.
+      It explains all three oddities: exactly ONE straggler (the sleep child,
+      always in the leader group, always taking the unchecked path), always
+      ~2.2-2.4s (the whole budget burning because `remaining` cannot empty),
+      and a prompt test whose error string was CORRECT with cleanup noise
+      appended -- ErrProcessSessionCleanup wrapped around a good result,
+      breaking errors.Is for callers.
+      MY FIRST HYPOTHESIS WAS WRONG, and a subagent disproved it rather than
+      me: the `current != member` identity check fired ZERO times across 20/20
+      reproductions, because `currentSession != sessionID` catches the
+      reparent first. Recorded so nobody re-derives it.
+      IT IS PROVEN NOW, but only after review pushed back. My first version
+      shipped with three surviving mutations and a comment ADMITTING the tests
+      proved nothing -- on an idle host enumeration drops every member
+      instantly (0 at +0ms), so the deadline branch never ran. Documenting a
+      gap is not closing it; a reviewer said so and was right.
+      The re-check now sits behind a reVerifyStillLive seam, so the branch is
+      reachable without a saturated machine, and both directions fail on
+      mutation: drop the EIO case -> stale-pid test FAILS; stop keeping live
+      pids -> fail-closed test FAILS.
+      WRITING THAT TEST FOUND TWO MORE BUGS IN MY OWN FIX:
+        1. the predicate was `err == nil && found`, so ANY lookup error
+           dropped the pid -- a transient EIO on a LIVE member would have
+           silently excluded it and reported cleanup as clean while the worker
+           kept running, inverting the never-block invariant.
+        2. SysctlKinfoProc returns EIO, not ESRCH, for a fully reaped pid, so
+           a strict fail-closed rule kept exactly the stale entries the fix
+           exists to drop. The false leak would still have been reported.
+      Both were invisible until a test actually executed the branch.
+      SEPARATELY (365): TestReviewCodex0145MaxCommandEventDoesNotFalseStall
+      was measuring python3 interpreter startup inside a 2s stall bound. First
+      byte now comes from /bin/sh; the event is byte-identical (sha256
+      verified) and time-to-first-byte drops 0.31s -> 0.03s.
+      No containment work.
       A BLOCK IS NOT THE COUNTER-PROOF, and the gate is deliberately narrow
       because a loose one is how this entry went wrong the first time. The run
       can block for reasons that say nothing about containment --
@@ -960,45 +1001,41 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
       If either fails, containment stays closed and the actual category names
       which unrelated fix applies.
 
-- [ ] [WAIT] unit-orch is INTERMITTENT and currently PASSING, so there is
-      nothing to act on until it fails again. Not closed: an intermittent bug
-      that stops reproducing is hidden, not fixed, and the decision log (wired
-      in 336) has never actually captured one -- the run that would have
-      exercised it came back fully green.
-      When it next fails, read the worker.decision_log event FIRST. That is the
-      artifact this whole thread lacked.
-      NARROWED, not ruled out. Compared the three runs by reclaim_count --
-        091609: unit-orch FAILED, 11 reclaims
-        105206: unit-orch FAILED,  0 reclaims
-        112828: unit-orch passed,  0 reclaims
-      That kills "contention is the SOLE trigger" and "it only happens under
-      heavy load". It does NOT rule contention out as a cofactor, and my first
-      write-up said it did -- a reviewer caught the reasoning error.
-      THE MEASUREMENT WAS WRONG FOR THE CLAIM: reclaim_count only increments on
-      a stale heartbeat or an orphaned claim (reaper.go). The plan makes NINE
-      steps ready at once after `build`, so nine processes can saturate CPU and
-      I/O with reclaim_count staying at 0. "0 reclaims" means no worker died --
-      it does not mean the machine was idle.
-      So contention remains a live cofactor and needs a real measure (concurrent
-      claims at failure time, or wall-clock of the turn) rather than a proxy
-      that answers a different question. The two failures still share something
-      the pass does not; the decision log is the next read.
-      Detail: unit-orch fails `interactive_prompt` INTERMITTENTLY -- failed twice, then
-      PASSED on the third clean-tree run (verified by reading the store
-      directly; see the surface problem below). So it is flaky, not
-      deterministic, and an earlier revision of this item calling it
-      "reproducible" was wrong. Closed by evidence, do not
-      re-litigate: not a timeout (acceptance passes by hand in 11.6s), not a
-      retry bug (one claim then terminal -- interactive_prompt is deliberately
-      non-retryable, "the CLI is asking for an operator, not another turn"),
-      not the stale-linter-cache story (nothing is failing for it to fix).
-      The decision log is WIRED as of PR 336 (merged): Ralph records its own
-      classification at all four failure sites and absorbs it into a
-      worker.decision_log event. So the next unit-orch failure should finally
-      produce something readable -- that is the next read, and the first time
-      this question has had an artifact to answer it. An intermittent failure
-      makes that MORE valuable, not less: it cannot be reproduced on demand, so
-      the record has to be captured when it happens.
+- [x] unit-orch was NEVER A TEST FAILURE. Answered by evidence shape, not by
+      catching it in the act -- read a2a_messages for every failed orch task:
+        8 of 8 constant-only ("output":"provider requested interactive input")
+        0 of 8 with real test output, ever
+      A constant-only record means the provider was killed BEFORE producing
+      output, so there was nothing wrong with internal/orch to find. Compare
+      unit-provider over the same runs: 7 real-output, 5 constant-only -- and
+      its real failures were the PTY false-leak bug fixed in 364.
+      THAT IS WHY THIS ITEM NEVER RESOLVED. It was framed as "an intermittent
+      bug that stops reproducing is hidden, not fixed", which assumed a test
+      defect. The signal was in the SHAPE of the evidence, and the shape says
+      watchdog every time. The prompt-detector false positive (356) is the
+      known producer of exactly this shape.
+      NOT CLAIMED: that 356 fixed all eight. Those runs predate it and their
+      matched lines were never preserved, so the specific trigger for each is
+      unrecoverable. What IS established: none of them was internal/orch
+      failing its tests.
+      IF IT RECURS with 356 shipped, the first read is the evidence shape --
+      constant-only means look at the watchdog, real output means a genuine
+      test failure and a different investigation.
+
+      WHERE THE EVIDENCE IS, corrected: a2a_messages, NOT worker.completed.
+      worker.completed is written by store.MarkDone only AFTER verification
+      succeeds, so a failed task has none -- verified: 0 such events across all
+      failed tasks, versus 60 a2a_messages rows. An earlier version of this
+      entry said worker.completed and was wrong; a reviewer on 367 caught it.
+      Join on the FULL key (plan_id, id): self-test plans reuse task ids across
+      runs, so t.id = m.task_id alone can return another run's row.
+      ONE ENVIRONMENT FAILURE, run 053739, worth remembering as a shape but NOT
+      generalised: a worker reported internal/observe PASS, internal/plan PASS,
+      internal/orch FAIL because three tests reached agent.Start() and got
+      `operation not permitted`, with a probe confirming the sandbox blocked
+      pty creation. Measured scope: exactly ONE orch task and ONE provider task
+      in the entire store mention openpty. My first read generalised it; a
+      distinct-task count corrected that.
 
 - [x] FIXED in PR 340: `status --plan <id>` returns a run's full task list
       regardless of history depth. Verified against the live saturated page --
