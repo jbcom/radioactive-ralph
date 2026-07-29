@@ -144,6 +144,7 @@ radioactive_ralph doctor            # environment checks
 - [Getting started](https://jonbogaty.com/radioactive-ralph/getting-started/)
 - [Architecture](https://jonbogaty.com/radioactive-ralph/reference/architecture/)
 - [Design spec](./docs/superpowers/specs/2026-07-16-supervisor-architecture-design.md)
+- [Self-test](./docs/guides/self-test.md) — have Ralph verify Ralph on a real plan
 
 ## Contributing
 
