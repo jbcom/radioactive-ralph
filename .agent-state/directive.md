@@ -888,13 +888,43 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
         unit-provider    failed    via=codex — interactive_prompt_permission
       So the whole path works -- detector, classifier, category, projection,
       and the CLI row an operator reads.
-      AND IT ANSWERS THE QUESTION THIS THREAD HAS BEEN CIRCLING: these blocks
-      are PERMISSION requests. The fix is a write-path or binding grant, not a
-      keystroke and not a plan change. Every earlier guess (timeout, retry
-      budget, stale cache, contention) was looking at the wrong layer.
-      NEXT: find which write the provider is being denied. The containment
-      write paths are per-binding and static (BindingWritePaths), so the
-      candidate is a path codex needs that the binding does not grant.
+      RETRACTED -- the conclusion that once stood here is DISPROVEN, and the
+      original text is gone rather than annotated because this file is the
+      durable work queue: a reader who skims lands on whatever it says.
+      It read: "these blocks are PERMISSION requests, so the fix is a
+      write-path or binding grant -- NEXT, find which write codex is denied
+      via BindingWritePaths." That sent two passes into containment. Both
+      dead-ended, and the tests settled it the other way:
+      TestCodexIsContainableWithItsDeclaredPath passes -- codex IS containable
+      with ~/.codex, nothing is being denied, and there is no missing grant to
+      find. A stale doc comment describing a superseded investigation is what
+      made "uncontained" look verified (corrected in 355).
+      WHAT THE CATEGORY ACTUALLY PROVED: the DETECTOR fired, not that a
+      permission was requested. `interactive_prompt_permission` was assigned by
+      a bare (?i)permission pattern that also matches "permission denied" --
+      ERROR TEXT, not a question. The taxonomy faithfully classified a
+      false positive. Tightened in 356.
+      THE STANDING LESSON, which cost more than the bug: a category is only as
+      true as the pattern that assigned it. This entry treated a detector
+      output as a finding, wrote the finding into the durable queue as
+      settled, and every later pass inherited it as a premise instead of a
+      claim. Category first, THEN what matched to earn it.
+      NEXT: no containment work. The open proof is a run built with 356 where
+      unit-provider reaches `done`.
+      A BLOCK IS NOT THE COUNTER-PROOF, and the gate is deliberately narrow
+      because a loose one is how this entry went wrong the first time. The run
+      can block for reasons that say nothing about containment --
+      interactive_prompt_confirm, interactive_prompt_clarification, a stall, or
+      a turn timeout. Reopening the write-path question on any of those repeats
+      the original error: treating a block as evidence for a specific cause.
+      REOPEN ONLY IF BOTH HOLD:
+        1. the category is again interactive_prompt_permission, AND
+        2. the LINE THAT MATCHED is quoted here and is a real question rather
+           than error text like "permission denied".
+      Condition 2 is not ceremony -- it is the whole bug. The first time, the
+      category alone was taken as the finding, and no one read what matched.
+      If either fails, containment stays closed and the actual category names
+      which unrelated fix applies.
 
 - [ ] [WAIT] unit-orch is INTERMITTENT and currently PASSING, so there is
       nothing to act on until it fails again. Not closed: an intermittent bug
