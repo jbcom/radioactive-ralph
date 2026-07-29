@@ -1002,6 +1002,39 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
       which unrelated fix applies.
 
 - [ ] [WAIT] unit-orch is INTERMITTENT and currently PASSING, so there is
+      READ THE WORKER PROSE FIRST when it next fails -- that is where the
+      evidence is, and it is not in the failure event. Every orch
+      task.failed_terminal payload is exactly 89 bytes: the fixed constant
+      {"reason":"provider requested interactive input","failure_category":
+      "interactive_prompt"} and nothing else. The content-safety boundary is
+      working as designed (only closed-set constants cross), but it means the
+      failure event alone can never diagnose an orch block. The worker.completed
+      event for the SAME task carries the prose.
+      ONE SUCH RECORD, run 053739, read in full:
+        "Acceptance is not satisfied in this worker environment.
+         internal/observe: PASS, internal/plan: PASS,
+         internal/orch: FAIL -- three tests reach agent.Start() and receive
+         `operation not permitted`. Independent probe confirmed the sandbox
+         blocks PTY creation: `script: openpty: Operation not permitted`.
+         The exact command also cannot create its default /tmp/go-build
+         directory here. No source files were changed."
+      So on that run the tests did not fail on their merits -- the worker could
+      not create a pty or write /tmp at all.
+      SCOPE, measured rather than assumed: exactly ONE orch task and ONE
+      provider task in the whole store mention openpty or "operation not
+      permitted". This is a rare environment failure, NOT the systemic cause of
+      the 8 orch interactive_prompt blocks. Do not generalise it -- my first
+      read of this record did, and a distinct-task count corrected it.
+      TWO THINGS RULED OUT for that record: neither the current (356) nor the
+      pre-356 bare patterns match any line of that prose, so the block was NOT
+      the detector misfiring on this text. The prompt came from some other line
+      of provider output not preserved in the store.
+      ALSO NOTE exit_code:0 in worker.completed does NOT mean the acceptance
+      passed. a2a.Evidence documents ExitCode as ADVISORY ONLY -- the
+      orchestrator re-runs the real check and never trusts it. In this very
+      record the worker reported exit_code 0 while its own prose said
+      "internal/orch: FAIL". ~90 tasks in the store pair exit_code 0 with an
+      interactive_prompt failure; that is the design working, not a bug.
       nothing to act on until it fails again. Not closed: an intermittent bug
       that stops reproducing is hidden, not fixed, and the decision log (wired
       in 336) has never actually captured one -- the run that would have
