@@ -104,6 +104,14 @@ func (c *Client) PlanSetStatus(ctx context.Context, args PlanSetStatusArgs) (Pla
 	return reply, err
 }
 
+// PlanDelete removes a plan and everything hanging off it. Irreversible: the
+// plan's tasks, deps, and events go with it.
+func (c *Client) PlanDelete(ctx context.Context, args PlanDeleteArgs) (PlanDeleteReply, error) {
+	var reply PlanDeleteReply
+	err := c.driveCall(ctx, CmdPlanDelete, args, &reply)
+	return reply, err
+}
+
 // TaskApprove clears the approval gate on a ready_pending_approval task.
 func (c *Client) TaskApprove(ctx context.Context, args TaskApproveArgs) error {
 	return c.driveCall(ctx, CmdTaskApprove, args, nil)

@@ -16,6 +16,7 @@ type driveFakeHandler struct {
 	importReply  PlanImportReply
 	importErr    error
 	setStatusErr error
+	deletedPlan  string
 	approveErr   error
 	killErr      error
 	gotImport    PlanImportArgs
@@ -44,6 +45,11 @@ func (h *driveFakeHandler) HandlePlanImport(_ context.Context, a PlanImportArgs)
 	h.gotImport = a
 	return h.importReply, h.importErr
 }
+func (h *driveFakeHandler) HandlePlanDelete(_ context.Context, a PlanDeleteArgs) (PlanDeleteReply, error) {
+	h.deletedPlan = a.PlanID
+	return PlanDeleteReply{PlanID: a.PlanID}, nil
+}
+
 func (h *driveFakeHandler) HandlePlanSetStatus(_ context.Context, a PlanSetStatusArgs) (PlanSetStatusReply, error) {
 	h.gotSetStatus = a
 	return PlanSetStatusReply(a), h.setStatusErr
@@ -221,5 +227,31 @@ func TestDrive_UnknownCommand(t *testing.T) {
 	err := c.driveCall(context.Background(), "bogus-command", struct{}{}, nil)
 	if !IsCode(err, CodeUnsupportedCommand) {
 		t.Errorf("unknown command err = %v, want CodeUnsupportedCommand", err)
+	}
+}
+
+// TestDriveHandlerIsSatisfiedBySupervisor guards a hazard this file discovered
+// the hard way.
+//
+// DriveHandler is OPTIONAL: the server detects it with a type assertion, so a
+// Handler that misses even one method silently loses EVERY drive command --
+// plan-import, task-approve, worker-kill, all of it -- with no compile error.
+// Adding HandlePlanDelete did exactly that to the test fake here, and three
+// unrelated round-trip tests failed with "unsupported_command".
+//
+// The same slip against the real supervisor would compile, ship, and disable
+// the entire drive surface at runtime. A compile-time assertion turns that into
+// a build failure instead.
+func TestDriveHandlerIsSatisfiedBySupervisor(t *testing.T) {
+	// The fake must satisfy it, or the round-trip tests below are testing a
+	// server that silently refused every command.
+	var _ DriveHandler = (*driveFakeHandler)(nil)
+
+	// A Handler WITHOUT the drive methods must not satisfy it -- otherwise the
+	// assertion above proves nothing about which methods are required.
+	if _, ok := any(&fakeHandler{}).(DriveHandler); ok {
+		t.Error("a bare Handler satisfies DriveHandler; the optional-interface " +
+			"detection cannot distinguish a drive-capable server from one that " +
+			"will refuse every command")
 	}
 }

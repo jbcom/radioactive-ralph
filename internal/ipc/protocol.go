@@ -74,6 +74,7 @@ const (
 	// v2 — drive surface (see the IPC drive-api design spec).
 	CmdPlanImport    = "plan-import"
 	CmdPlanSetStatus = "plan-set-status"
+	CmdPlanDelete    = "plan-delete"
 	CmdTaskApprove   = "task-approve"
 	CmdWorkerKill    = "worker-kill"
 	CmdProjectEnsure = "project-ensure"
@@ -233,6 +234,22 @@ type PlanImportReply struct {
 	PlanID string `json:"plan_id"`
 	Slug   string `json:"slug"`
 	Title  string `json:"title"`
+}
+
+// PlanDeleteArgs removes a plan and everything hanging off it (CmdPlanDelete).
+//
+// It exists because store.DeletePlan was implemented and tested with NO caller
+// and no CLI surface, so accumulated runs could never be pruned. The concrete
+// consequence: the operator task page saturates at MaxOperatorPageLimit, and a
+// self-test adds 12 tasks per run, so after ~16 runs the newest run is shown
+// only PARTIALLY -- with nothing an operator could do about it.
+type PlanDeleteArgs struct {
+	PlanID string `json:"plan_id"`
+}
+
+// PlanDeleteReply echoes the removed plan.
+type PlanDeleteReply struct {
+	PlanID string `json:"plan_id"`
 }
 
 // PlanSetStatusArgs changes a plan's lifecycle status (CmdPlanSetStatus), e.g.
