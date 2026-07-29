@@ -283,6 +283,13 @@ func (o *Orchestrator) resolveContainment(
 // window.
 const workerHeartbeatInterval = 20 * time.Second
 
+// WorkerHeartbeatInterval exposes workerHeartbeatInterval so the supervisor
+// package -- which owns staleAfter, the other half of this invariant -- can
+// assert the margin between them. The relationship is cross-package by nature:
+// neither constant's own package can see both, which is exactly how the margin
+// stayed unguarded while the comment above asserted it in prose.
+const WorkerHeartbeatInterval = workerHeartbeatInterval
+
 // persistBudget bounds the post-run STORE WRITES -- usage accounting, evidence,
 // mark-done/failed, worker release. It is detached from the supervisor's run
 // context so a nearly-complete turn still records its result during shutdown.
