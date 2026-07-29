@@ -526,20 +526,16 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
 
 ## Rolling improvement queue (directive 0 appends here)
 
-- [ ] Land the 1 open PR: #304 (per-task provenance + ready-partition identity
-      over the observe surface). Auto-merge ARMED, no failing checks, no
-      unresolved threads -- it is working through the merge queue. Hash-prefixed
-      deliberately: guard 9 extracts `#[0-9]{3}` tokens from THIS line.
+- [x] #304 MERGED (per-task provenance + ready-partition identity over the
+      observe surface). Both halves of the observe item landed with it.
 
-- [ ] STACKED, waiting on #304 to land: the CLI task-table commit is on local
-      branch `feat/cli-task-table` (4074962), NOT pushed. It is stacked, not
-      parallel -- VERIFIED by cherry-picking it onto origin/main and building:
-      observe.PartitionLabels, Task.ProvenanceLabel, and Task.PartitionOrdinal
-      are all undefined there, all three introduced by #304. So it cannot open
-      as an independent PR; rebase onto main once #304 merges, then PR it.
-      (It was committed onto #304's branch first and rejected by the protected-
-      branch hook -- a queued PR locks its branch. Moved to its own branch
-      rather than dequeuing #304.)
+- [x] UNSTACKED 2026-07-28: rebased `feat/cli-task-table` onto the merged main.
+      It WAS genuinely stacked -- verified by cherry-picking onto origin/main
+      and watching the build fail on PartitionLabels/ProvenanceLabel/
+      PartitionOrdinal, all introduced by #304 -- so it could not have opened as
+      an independent PR. The rebase dropped 5 commits already squash-merged;
+      each skip was confirmed content-on-main FIRST (a past rebase silently ate
+      two of my own commits by skipping without checking).
 
 - [ ] GENERATED 2026-07-28: UI/UX pass on the meso views now that task rows
       carry three markers (worker=, via=, pN). Run the TUI and GUI against a
