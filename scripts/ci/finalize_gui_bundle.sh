@@ -33,7 +33,7 @@ case "$TARGET" in
       hdiutil info 2>/dev/null \
         | awk -v img="$DMG" '
             /^=====/                        { mine = 0; next }
-            /^image-path/                   { mine = (index($0, img) > 0); next }
+            /^image-path *:/                { mine = (index($0, img) > 0); next }
             mine && $1 ~ /^\/dev\/disk[0-9]+$/ { print $1 }
           ' \
         | while read -r dev; do
@@ -54,7 +54,7 @@ case "$TARGET" in
         "$DMG"; then
         break
       fi
-      if [[ "$attempt" == 3 ]]; then
+      if [[ "$attempt" -eq 3 ]]; then
         echo "hdiutil create failed after 3 attempts; attached images:" >&2
         hdiutil info >&2 || true
         exit 1
