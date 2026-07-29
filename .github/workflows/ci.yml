@@ -631,6 +631,12 @@ jobs:
       - name: Shellcheck coverage (every repo script is on the list)
         run: bash scripts/ci/test_shellcheck_coverage.sh
 
+      # The self-test's tracked-edit guard shipped three separate bugs, each
+      # found by exercising it rather than reading it. Shellchecking the script
+      # proves it parses, not that the guard fires.
+      - name: Self-test tracked-edit guard behaves
+        run: bash scripts/ci/test_self_test_tracked_edit_guard.sh
+
       - name: Shellcheck packaging + install scripts
         run: |
           # -x so sourced files are followed. Without it a `source` of a real,
@@ -652,6 +658,7 @@ jobs:
             scripts/ci/smoke_launchd.sh \
             scripts/ci/smoke_systemd_user.sh \
             scripts/ci/test_shellcheck_coverage.sh \
+            scripts/ci/test_self_test_tracked_edit_guard.sh \
             .claude/hooks/task-batch-flush.sh \
             scripts/ci/wait_for_package_publication.sh \
             scripts/ci/test_wait_for_package_publication.sh \

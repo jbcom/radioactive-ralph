@@ -526,10 +526,23 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
 
 ## Rolling improvement queue (directive 0 appends here)
 
-- [ ] [WAIT] Land the 1 open PR: #314 (self-test warns when a run edits tracked
-      source; content-hash comparison so an already-dirty file is not a blind
-      spot). Auto-merge ARMED, both review threads resolved, no failing checks.
-      Hash-prefixed deliberately: guard 9 extracts `#[0-9]{3}` from THIS line.
+- [x] DONE 2026-07-29: the tracked-edit guard had NO test. CI shellchecked
+      scripts/self-test.sh, which proves it parses, not that the guard fires --
+      and three separate bugs had already shipped in it (an undefined
+      $REPO_ROOT that would crash every run, a baseline captured after staging,
+      and a status comparison blind to an already-dirty file).
+      scripts/ci/test_self_test_tracked_edit_guard.sh now exercises it in a
+      scratch git repo: silent on a clean tree, names a file modified during
+      the run, and catches the already-dirty rewrite. It SOURCES the functions
+      from self-test.sh rather than restating them, so a copied assertion
+      cannot keep passing after the original changes.
+      Negative-proofed against both broken shapes: neutering the comparison
+      fails check 2, and restoring the old status-based snapshot fails check 3
+      with the blind-spot message specifically.
+
+- [x] #314 MERGED. The self-test harness is complete: it warns when a run
+      edits tracked source, comparing CONTENT hashes so a file that was already
+      dirty is not a blind spot. Verified from merged main in both directions.
 
 - [x] DONE 2026-07-29 (#314): a step EDITED FOUR
       TRACKED SOURCE FILES while trying to make its acceptance command pass.
