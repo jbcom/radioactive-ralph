@@ -526,6 +526,10 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
 
 ## Rolling improvement queue (directive 0 appends here)
 
+- [ ] Land the 1 open PR: #305 (CLI task table + blocked-reason in all three
+      views + meso row width). Auto-merge ARMED. Hash-prefixed deliberately:
+      guard 9 extracts `#[0-9]{3}` tokens from THIS line.
+
 - [x] #304 MERGED (per-task provenance + ready-partition identity over the
       observe surface). Both halves of the observe item landed with it.
 
