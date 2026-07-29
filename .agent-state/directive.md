@@ -909,6 +909,17 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
       output as a finding, wrote the finding into the durable queue as
       settled, and every later pass inherited it as a premise instead of a
       claim. Category first, THEN what matched to earn it.
+      THE BASE RATE, read from the store across every run, which nobody had
+      looked at before deciding what these blocks were:
+        orch      interactive_prompt              8
+        provider  interactive_prompt              4
+        (unlabelled plan) interactive_prompt      3
+        provider  interactive_prompt_permission   1
+      So the permission category -- the ONE that sent two passes into
+      containment -- occurred EXACTLY ONCE out of sixteen blocks, and orch
+      blocks twice as often as provider. The entry was built on a single data
+      point treated as a pattern, and the package it pointed at is not even the
+      one that blocks most.
       NEXT: no containment work. The open proof is a run built with 356 where
       unit-provider reaches `done`.
       A BLOCK IS NOT THE COUNTER-PROOF, and the gate is deliberately narrow
