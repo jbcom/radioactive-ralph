@@ -159,8 +159,9 @@ except Exception: sys.exit(1)
 sys.exit(0 if d.get("tasks",{}).get("has_more") else 1)' 2>/dev/null; then
     echo
     echo "self-test: WARNING — the task page is FULL (has_more), so the rows above"
-    echo "  are a partial view and may omit this run's own tasks. Prune old plans"
-    echo "  (radioactive_ralph plan delete) or read this run by plan id."
+    echo "  are a partial view and may omit this run's own tasks. Read this run"
+    echo "  by plan id instead. (There is no plan-delete CLI yet: store.DeletePlan"
+    echo "  exists and has no callers, so old runs cannot be pruned.)"
   fi
 }
 
