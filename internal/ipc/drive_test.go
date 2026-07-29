@@ -47,7 +47,7 @@ func (h *driveFakeHandler) HandlePlanImport(_ context.Context, a PlanImportArgs)
 }
 func (h *driveFakeHandler) HandlePlanDelete(_ context.Context, a PlanDeleteArgs) (PlanDeleteReply, error) {
 	h.deletedPlan = a.PlanID
-	return PlanDeleteReply{PlanID: a.PlanID}, nil
+	return PlanDeleteReply(a), nil
 }
 
 func (h *driveFakeHandler) HandlePlanSetStatus(_ context.Context, a PlanSetStatusArgs) (PlanSetStatusReply, error) {
