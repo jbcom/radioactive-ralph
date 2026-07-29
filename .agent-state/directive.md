@@ -706,23 +706,38 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
       Both directions proven by reverting; a companion test asserts a failure
       whose paths all exist is left untouched.
 
-- [ ] The `race` step still loses its claim under dispatch, and now we know
-      the -v fix cannot help it. The confirming run reproduced reclaim_count=2
-      WITH `-v` in place, exactly as the codex reviewer predicted: under Codex
-      dispatch the watchdog sees the outer `codex exec --json` stream, where a
-      command's stdout arrives on ONE item.completed event when the command
-      finishes, so a 138s test is silent to the lease either way.
-      The guide now says to raise stall_timeout for that binding, but nothing
-      DOES it -- the self-test still runs the race step against the 3m default
-      and will keep burning two claims every run.
-      Decide and implement: either a per-binding stall_timeout the self-test
-      sets for its own dispatch, or split the race step so no single command
-      outlives the lease. Prefer the split if it keeps coverage whole -- it
-      removes the silence rather than tolerating it, and the guide already
-      argues that is the better fix WHEN the silence is removable.
-      Verify by reverting: the step must complete with reclaim_count=0 on a
-      dispatched run, which is the only proof that survives the fact that it
-      passes standalone in 138s today.
+- [x] DIAGNOSED, and the obvious theory was WRONG. I had already written
+      "cold compilation dominates" into the guide before measuring it.
+      Same machine: 30s warm, 62s COLD-CACHE, 138s UNDER CONCURRENT LOAD,
+      against a 180s lease. A cold-but-idle run has ~2x headroom, so the cache
+      is not the cause. The original 138s was measured while a full self-test
+      ran on the same machine -- which is exactly the condition a dispatched
+      self-test creates for ITSELF: every step running in parallel makes this
+      one slower.
+      So the step is not slow, it is slow WHEN CONTENDED. That is the only
+      theory that explains why it passes comfortably by hand and still loses
+      two claims on every real run, and why no threshold derived from a quiet
+      machine would have predicted it.
+      Splitting was evaluated and rejected on measurement, not taste: the
+      -race compile is ~1s warm and the run spreads across many tests whose
+      slowest is 1.85s. There is no seam. stall_timeout in STORED config is
+      the honest remedy (the headless supervisor has no --config-file to
+      thread), now documented with the checked duration shape and bounds.
+      Cost of nearly shipping the tidy story: one command.
+
+- [ ] The self-test contends with itself and nothing says so. The race
+      finding's real cause is that parallel steps starve each other -- 30s of
+      work becomes 138s -- yet an operator reading a reclaimed row sees only
+      `reclaimed 2x: stale_heartbeat`, which is TRUE and still points at the
+      wrong suspect. Nothing in the surface says "you were running 6 other
+      steps".
+      Surface concurrency pressure at the moment of the reclaim: how many
+      workers were active when the claim was lost. That converts "why did my
+      worker die?" into "the machine was saturated", which is the actual
+      answer and the one no amount of staring at the task row yields.
+      Verify by reverting: a reclaim under load must name the load; a reclaim
+      on an idle machine must not, or the marker becomes noise on every row
+      and stops being read.
 
 - [x] CONFIRMING SELF-TEST RUN validated the stale-cache diagnosis. The whole
       point of re-running: `lint-internal` had failed with interactive_prompt,
