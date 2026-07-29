@@ -85,3 +85,16 @@ fyne-cross/
 # Ralph runtime state is user-level (XDG state root), never repo-committed.
 # AGENTS.md: "There is NO committed repo state -- no .radioactive-ralph/ dir."
 .radioactive-ralph/
+
+# Per-turn provider result files. internal/provider/codex.go creates these in
+# the project dir and removes them on cleanup, but a self-test run in flight
+# leaves them present -- and `git add -A` then commits runtime state into a
+# repo whose contract forbids exactly that.
+.ralph-codex-result-*.txt
+
+# Provider scratch dirs. A contained codex turn sets HOME/TMPDIR under the
+# project so its writes stay inside the containment root, which means a
+# self-test in flight leaves these here -- and their contents churn fast enough
+# that `git add -A` can fail mid-stat on a file the turn already deleted.
+.codex-tmp/
+.codex-*-go/
