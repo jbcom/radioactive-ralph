@@ -184,3 +184,24 @@ func TestMesoShowsDurableFailureCategory(t *testing.T) {
 		t.Errorf("a RUNNING task advertised a stale failure category:\n%s", got)
 	}
 }
+
+// TestMacroFlagsAPlanWithNoRunnableWork completes the three-surface coverage
+// for the dead-plan signal.
+func TestMacroFlagsAPlanWithNoRunnableWork(t *testing.T) {
+	f := newFakeController()
+	u := newTestUI(t, f)
+	u.render(snapshot{level: levelMacro, plans: []observe.Plan{
+		{ID: "p1", Slug: "dead", Title: "Dead plan", Status: "active", NoRunnableWork: true},
+		{ID: "p2", Slug: "live", Title: "Live plan", Status: "active"},
+	}})
+	var b strings.Builder
+	renderedText(u.root, &b)
+	got := b.String()
+
+	if !strings.Contains(got, "no runnable work") {
+		t.Errorf("a dead plan carries no marker in the plan list:\n%s", got)
+	}
+	if strings.Count(got, "no runnable work") != 1 {
+		t.Errorf("a healthy plan was flagged too:\n%s", got)
+	}
+}

@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 )
@@ -284,5 +285,70 @@ func TestTransitiveBlockerTerminatesOnACycle(t *testing.T) {
 	case <-time.After(15 * time.Second):
 		t.Fatal("the projection HUNG on a dependency cycle; visited-node " +
 			"tracking must terminate without a depth cap")
+	}
+}
+
+// TestSnapshotBlockerWalkIsMaterializedOnce guards the P1 a review caught: the
+// first blocker walk ran per TASK, re-deriving the same reachability for every
+// row. An imported ordered group is a 1:1 dependency chain, so cost grew
+// quadratically on the long plans most likely to contain a dead ancestor --
+// 1.3s for 300 tasks, on a query every TUI and GUI refresh runs.
+//
+// This asserts the SHAPE of the query plan, not wall-clock, after three timing
+// bounds failed in three different ways:
+//
+//  1. 2s absolute: passed locally at 26ms, FAILED CI at 2.074s.
+//  2. "doubling costs <= 8x": PASSED against the restored quadratic code. Both
+//     shapes are super-linear (6.6x vs 3.3x per doubling) because a chain of n
+//     tasks has O(n^2) reachability pairs; runner noise cannot separate those.
+//  3. 500ms absolute: FAILED CI at 2.15s. That number is the lesson -- the
+//     FIXED code on CI is slower than the QUADRATIC code on a dev machine, so
+//     NO absolute threshold can distinguish the two shapes across hardware.
+//
+// EXPLAIN QUERY PLAN can. A materialized CTE is computed once; a per-row walk
+// appears as a CORRELATED SCALAR SUBQUERY. That distinction is exactly the
+// regression being guarded and is identical on every machine.
+func TestSnapshotBlockerWalkIsMaterializedOnce(t *testing.T) {
+	ctx := context.Background()
+	s := openTestStore(t)
+
+	rows, err := s.DB().QueryContext(ctx,
+		"EXPLAIN QUERY PLAN "+operatorTasksQuery,
+		"p", "", "", "", "", "", "", "", "", 10)
+	if err != nil {
+		t.Fatalf("explain: %v", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var plan []string
+	for rows.Next() {
+		var id, parent, aux int
+		var detail string
+		if err := rows.Scan(&id, &parent, &aux, &detail); err != nil {
+			t.Fatalf("scan plan: %v", err)
+		}
+		plan = append(plan, detail)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("iterate plan: %v", err)
+	}
+	if len(plan) == 0 {
+		t.Fatal("empty query plan; this test would assert nothing")
+	}
+	joined := strings.Join(plan, "\n")
+
+	// The RECURSIVE walk specifically must be materialized. Other correlated
+	// scalar subqueries in this query are fine and expected -- the failure
+	// category and partition lookups are single indexed reads per row. What
+	// cannot be per-row is the transitive reachability walk, whose cost is
+	// proportional to the chain length rather than constant.
+	if !strings.Contains(joined, "MATERIALIZE") {
+		t.Errorf("no MATERIALIZE in the plan: the recursive blocker walk is being "+
+			"re-derived per row, which is the quadratic shape this guards "+
+			"against:\n%s", joined)
+	}
+	if strings.Contains(joined, "RECURSIVE STEP") &&
+		!strings.Contains(joined, "MATERIALIZE") {
+		t.Errorf("a recursive step runs outside a materialized CTE:\n%s", joined)
 	}
 }

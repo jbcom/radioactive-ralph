@@ -542,7 +542,7 @@ type GraphTaskSpec struct {
 ```
 
 <a name="OperatorEvent"></a>
-## type [OperatorEvent](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/operator_snapshot.go#L217-L233>)
+## type [OperatorEvent](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/operator_snapshot.go#L227-L243>)
 
 OperatorEvent is safe event metadata. Raw payload, actor/provider output, and any IDs carried inside the payload are never selected.
 
@@ -567,7 +567,7 @@ type OperatorEvent struct {
 ```
 
 <a name="OperatorEventPage"></a>
-## type [OperatorEventPage](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/operator_snapshot.go#L237-L241>)
+## type [OperatorEventPage](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/operator_snapshot.go#L247-L251>)
 
 OperatorEventPage is one bounded newest\-first event page. NextBeforeID is a keyset cursor that continues toward older events.
 
@@ -624,25 +624,35 @@ type OperatorMessageQuery struct {
 ```
 
 <a name="OperatorPlan"></a>
-## type [OperatorPlan](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/operator_snapshot.go#L97-L106>)
+## type [OperatorPlan](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/operator_snapshot.go#L97-L116>)
 
 OperatorPlan is a safe plan projection. SourceMarkdown, TagsJSON, and session information are intentionally absent.
 
 ```go
 type OperatorPlan struct {
-    ID        string     `json:"id"`
-    Slug      string     `json:"slug"`
-    Title     string     `json:"title"`
-    Status    PlanStatus `json:"status"`
-    TaskDone  int        `json:"task_done"`
-    TaskTotal int        `json:"task_total"`
-    CreatedAt time.Time  `json:"created_at"`
-    UpdatedAt time.Time  `json:"updated_at"`
+    ID       string     `json:"id"`
+    Slug     string     `json:"slug"`
+    Title    string     `json:"title"`
+    Status   PlanStatus `json:"status"`
+    TaskDone int        `json:"task_done"`
+
+    // NoRunnableWork reports that no task in this plan can make progress: every
+    // one is finished, failed, or waiting on something already dead. DERIVED,
+    // never stored -- a read path must not mutate durable status, and a
+    // dispatcher that later requeues work would have to undo it.
+    //
+    // It exists because the plan row is the strongest form of a stale claim: a
+    // plan whose every task is dead still reads "active, 0 done", which an
+    // operator scanning a plan list takes for work in progress.
+    NoRunnableWork bool      `json:"no_runnable_work"`
+    TaskTotal      int       `json:"task_total"`
+    CreatedAt      time.Time `json:"created_at"`
+    UpdatedAt      time.Time `json:"updated_at"`
 }
 ```
 
 <a name="OperatorPlanPage"></a>
-## type [OperatorPlanPage](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/operator_snapshot.go#L109-L113>)
+## type [OperatorPlanPage](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/operator_snapshot.go#L119-L123>)
 
 OperatorPlanPage is one bounded, ID\-ordered plan page.
 
@@ -721,7 +731,7 @@ type OperatorStatusCount struct {
 ```
 
 <a name="OperatorTask"></a>
-## type [OperatorTask](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/operator_snapshot.go#L117-L184>)
+## type [OperatorTask](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/operator_snapshot.go#L127-L194>)
 
 OperatorTask is safe task state. Description and AcceptanceJSON can contain source text, commands, or repository paths, so neither is projected.
 
@@ -824,7 +834,7 @@ type OperatorTaskDetail struct {
 ```
 
 <a name="OperatorTaskPage"></a>
-## type [OperatorTaskPage](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/operator_snapshot.go#L187-L191>)
+## type [OperatorTaskPage](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/operator_snapshot.go#L197-L201>)
 
 OperatorTaskPage is one bounded, \(plan\_id, task\_id\)\-ordered task page.
 
@@ -837,7 +847,7 @@ type OperatorTaskPage struct {
 ```
 
 <a name="OperatorWorker"></a>
-## type [OperatorWorker](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/operator_snapshot.go#L197-L206>)
+## type [OperatorWorker](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/operator_snapshot.go#L207-L216>)
 
 OperatorWorker is one active Ralph\-managed worker. Ralph worker IDs are operator controls \(for example worker kill\), not provider\-session IDs. Claims contains every task claimed by the worker in this project, including native fan\-out claims beyond workers.current\_task\_id.
 
@@ -855,7 +865,7 @@ type OperatorWorker struct {
 ```
 
 <a name="OperatorWorkerClaim"></a>
-## type [OperatorWorkerClaim](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/operator_snapshot.go#L209-L213>)
+## type [OperatorWorkerClaim](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/operator_snapshot.go#L219-L223>)
 
 OperatorWorkerClaim is one project task held by an active worker.
 
@@ -1586,7 +1596,7 @@ func (s *Store) PutTaskMetadata(ctx context.Context, planID, taskID, groupPath, 
 PutTaskMetadata inserts the immutable half of a task's metadata row. Plan import owns this; provenance fields are filled in later by the dispatch path.
 
 <a name="Store.ReadOperatorSnapshot"></a>
-### func \(\*Store\) [ReadOperatorSnapshot](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/operator_snapshot.go#L251-L254>)
+### func \(\*Store\) [ReadOperatorSnapshot](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/operator_snapshot.go#L261-L264>)
 
 ```go
 func (s *Store) ReadOperatorSnapshot(ctx context.Context, q OperatorSnapshotQuery) (*OperatorSnapshot, error)

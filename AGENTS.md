@@ -133,6 +133,23 @@ completion is never agent-asserted and never inferred from termination.
   stayed quiet — which looked like the guard failing to fire. The test was
   incomplete, not the guard. A negative result is only evidence once the setup
   is confirmed to produce the condition being tested.
+- **Assert algorithmic SHAPE, not wall-clock.** Three timing bounds for one
+  guard failed three different ways before the structural version worked:
+  - 2s absolute: passed locally at 26ms, FAILED CI at 2.074s.
+  - "doubling costs <= 8x": PASSED against the restored quadratic code. Both
+    shapes were super-linear (6.6x per doubling vs 3.3x) and runner noise
+    cannot separate those.
+  - 500ms absolute: FAILED CI at 2.15s. That number is the lesson -- the FIXED
+    code on CI was slower than the QUADRATIC code on the dev machine, so NO
+    absolute threshold distinguishes the shapes across hardware.
+
+  `EXPLAIN QUERY PLAN` does: a `MATERIALIZE`d CTE is computed once, a per-row
+  walk shows up as a `CORRELATED SCALAR SUBQUERY`. Identical on every machine.
+  Name the query as a constant so a test can EXPLAIN it.
+  Whatever form the guard takes, restore the defect and watch it FAIL first --
+  a threshold tuned only against the fixed code cannot tell "fast" from
+  "running on a fast machine", and two of the three above passed happily
+  against the very regression they existed to catch.
 - **A new task field is not shipped until every surface renders it.** The
   observe DTO feeds three renderers (TUI meso, GUI meso, CLI `status`), and
   landing a field in one is the most repeated mistake in this repo's history --

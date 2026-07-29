@@ -278,3 +278,24 @@ func TestMesoShowsDurableFailureCategory(t *testing.T) {
 		t.Errorf("a RUNNING task advertised a stale failure category:\n%s", out)
 	}
 }
+
+// TestMacroFlagsAPlanWithNoRunnableWork covers the TUI's plan list. Per the
+// render-every-surface rule, a field is not shipped until each renderer shows
+// it -- this repo has repeatedly landed one and chased the others later.
+func TestMacroFlagsAPlanWithNoRunnableWork(t *testing.T) {
+	f := testFake()
+	m := newTestModel(t, f)
+	m.lvl = levelMacro
+	m.snap.plans = []observe.Plan{
+		{ID: "p1", Slug: "dead", Title: "Dead plan", Status: "active", NoRunnableWork: true},
+		{ID: "p2", Slug: "live", Title: "Live plan", Status: "active"},
+	}
+	out := m.View()
+
+	if !strings.Contains(out, "no runnable work") {
+		t.Errorf("a dead plan carries no marker in the plan list:\n%s", out)
+	}
+	if strings.Count(out, "no runnable work") != 1 {
+		t.Errorf("a healthy plan was flagged too:\n%s", out)
+	}
+}

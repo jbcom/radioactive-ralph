@@ -95,14 +95,24 @@ type OperatorStatusCount struct {
 // OperatorPlan is a safe plan projection. SourceMarkdown, TagsJSON, and
 // session information are intentionally absent.
 type OperatorPlan struct {
-	ID        string     `json:"id"`
-	Slug      string     `json:"slug"`
-	Title     string     `json:"title"`
-	Status    PlanStatus `json:"status"`
-	TaskDone  int        `json:"task_done"`
-	TaskTotal int        `json:"task_total"`
-	CreatedAt time.Time  `json:"created_at"`
-	UpdatedAt time.Time  `json:"updated_at"`
+	ID       string     `json:"id"`
+	Slug     string     `json:"slug"`
+	Title    string     `json:"title"`
+	Status   PlanStatus `json:"status"`
+	TaskDone int        `json:"task_done"`
+
+	// NoRunnableWork reports that no task in this plan can make progress: every
+	// one is finished, failed, or waiting on something already dead. DERIVED,
+	// never stored -- a read path must not mutate durable status, and a
+	// dispatcher that later requeues work would have to undo it.
+	//
+	// It exists because the plan row is the strongest form of a stale claim: a
+	// plan whose every task is dead still reads "active, 0 done", which an
+	// operator scanning a plan list takes for work in progress.
+	NoRunnableWork bool      `json:"no_runnable_work"`
+	TaskTotal      int       `json:"task_total"`
+	CreatedAt      time.Time `json:"created_at"`
+	UpdatedAt      time.Time `json:"updated_at"`
 }
 
 // OperatorPlanPage is one bounded, ID-ordered plan page.
@@ -637,6 +647,22 @@ func readOperatorPlans(
 	limit int,
 ) (OperatorPlanPage, error) {
 	rows, err := tx.QueryContext(ctx, `
+		-- Every task reachable from a FAILED task, computed once for the whole
+		-- project rather than once per task. Direction matters: this walks
+		-- FORWARD from failures to their dependents, so one pass marks every
+		-- transitively-blocked task instead of each task walking back up its
+		-- own ancestor chain.
+		WITH RECURSIVE blocked_tasks(plan_id, task_id) AS (
+		  SELECT d.plan_id, d.task_id
+		    FROM task_deps d
+		    JOIN tasks f ON f.plan_id = d.plan_id AND f.id = d.depends_on
+		   WHERE f.status = 'failed'
+		  UNION
+		  SELECT d.plan_id, d.task_id
+		    FROM task_deps d
+		    JOIN blocked_tasks b
+		      ON b.plan_id = d.plan_id AND b.task_id = d.depends_on
+		)
 		SELECT p.id, p.slug, p.title, p.status,
 		       SUM(
 		         CASE
@@ -645,9 +671,39 @@ func readOperatorPlans(
 		         END
 		       ),
 		       COUNT(t.id),
+		       -- Tasks that can still make progress, and tasks that are STUCK.
+		       --
+		       -- Both are needed because "nothing runnable" alone is also true of
+		       -- a plan that SUCCEEDED: every task done means nothing left to
+		       -- run. Exhaustion by success and exhaustion by failure are
+		       -- different states and only the second is worth warning about, so
+		       -- the flag requires at least one genuinely stuck task.
+		       --
+		       -- blocked_tasks is computed ONCE PER PLAN in the CTE above, not
+		       -- re-walked per task: an imported ordered group is a 1:1
+		       -- dependency chain, so a correlated walk re-derived the same
+		       -- reachability for every downstream task and grew quadratically
+		       -- on exactly the long plans most likely to have a dead ancestor.
+		       SUM(
+		         CASE
+		           WHEN t.status IN ('done', 'skipped', 'decomposed', 'failed')
+		             THEN 0
+		           WHEN bt.task_id IS NOT NULL THEN 0
+		           ELSE 1
+		         END
+		       ),
+		       SUM(
+		         CASE
+		           WHEN t.status = 'failed' THEN 1
+		           WHEN bt.task_id IS NOT NULL THEN 1
+		           ELSE 0
+		         END
+		       ),
 		       p.created_at, p.updated_at
 		FROM plans p
 		LEFT JOIN tasks t ON t.plan_id = p.id
+		LEFT JOIN blocked_tasks bt
+		       ON bt.plan_id = t.plan_id AND bt.task_id = t.id
 		WHERE p.project_id = ?
 		  AND (? = '' OR p.id = ?)
 		  AND (? = '' OR p.id > ?)
@@ -664,6 +720,7 @@ func readOperatorPlans(
 	for rows.Next() {
 		var plan OperatorPlan
 		var createdRaw, updatedRaw string
+		var runnable, stuck int
 		if err := rows.Scan(
 			&plan.ID,
 			&plan.Slug,
@@ -671,6 +728,8 @@ func readOperatorPlans(
 			&plan.Status,
 			&plan.TaskDone,
 			&plan.TaskTotal,
+			&runnable,
+			&stuck,
 			&createdRaw,
 			&updatedRaw,
 		); err != nil {
@@ -684,6 +743,21 @@ func readOperatorPlans(
 		if err != nil {
 			return OperatorPlanPage{}, err
 		}
+		// TaskTotal > 0 keeps an EMPTY plan unflagged -- awaiting tasks, not
+		// dead, and a marker on every freshly-created plan is noise.
+		//
+		// It is BELT-AND-BRACES, and the measurement is worth recording: a
+		// LEFT JOIN with no tasks still yields one row whose t.status is NULL,
+		// and NULL IN (...) is not true, so the ELSE branch counts it and
+		// runnable comes back 1 rather than 0. The guard therefore never fires
+		// today. Kept because that behaviour is an artifact of the join shape,
+		// not something the CASE arms state, and a later rewrite (an inner join,
+		// a COALESCE, a different aggregate) would silently start flagging every
+		// empty plan.
+		// Requires a STUCK task, not merely the absence of runnable ones: a plan
+		// that finished successfully also has nothing left to run, and flagging
+		// it puts a failure-shaped warning on work that went perfectly.
+		plan.NoRunnableWork = plan.TaskTotal > 0 && runnable == 0 && stuck > 0
 		items = append(items, plan)
 	}
 	if err := rows.Err(); err != nil {
@@ -699,14 +773,47 @@ func readOperatorPlans(
 	return page, nil
 }
 
-func readOperatorTasks(
-	ctx context.Context,
-	tx *sql.Tx,
-	projectID, planID, taskID string,
-	after OperatorTaskCursor,
-	limit int,
-) (OperatorTaskPage, error) {
-	rows, err := tx.QueryContext(ctx, `
+// operatorTasksQuery is named so a test can EXPLAIN it. The blocker walk must
+// stay a MATERIALIZED CTE computed once, never a correlated per-row subquery:
+// see TestSnapshotBlockerWalkIsMaterializedOnce for why that is asserted
+// structurally rather than with a timing bound.
+const operatorTasksQuery = `
+		-- Every task made unreachable by a failure, with the ROOT failure that
+		-- did it, computed ONCE for the whole project.
+		--
+		-- Walks FORWARD from each failed task to its dependents. The first
+		-- version walked BACKWARD from every task up its own ancestor chain,
+		-- which re-derived the same reachability once per row: an imported
+		-- ordered group is a 1:1 chain, so cost grew quadratically on exactly
+		-- the long plans most likely to contain a dead ancestor. Measured at
+		-- 1.3s for a 300-task chain, on a query every TUI/GUI refresh runs.
+		--
+		-- depth orders candidates so the ROOT failure wins over an intermediate
+		-- one -- an operator needs the task that actually died, not another
+		-- pending row to look up. UNION (not UNION ALL) bounds the walk by
+		-- visited nodes, so a cycle terminates without a depth cap.
+		--
+		-- Only 'failed' seeds the walk: an unfinished intermediate clears itself
+		-- as upstream work completes, and following it would mark healthy
+		-- in-flight work as dead.
+		WITH RECURSIVE blocked(plan_id, task_id, root_id, depth) AS (
+		  SELECT d.plan_id, d.task_id, d.depends_on, 1
+		    FROM task_deps d
+		    JOIN tasks f ON f.plan_id = d.plan_id AND f.id = d.depends_on
+		   WHERE f.status = 'failed'
+		  UNION
+		  SELECT d.plan_id, d.task_id, b.root_id, b.depth + 1
+		    FROM task_deps d
+		    JOIN blocked b ON b.plan_id = d.plan_id AND b.task_id = d.depends_on
+		),
+		blocked_best(plan_id, task_id, root_id) AS (
+		  SELECT plan_id, task_id, root_id FROM blocked b1
+		   WHERE b1.depth = (
+		     SELECT MIN(b2.depth) FROM blocked b2
+		      WHERE b2.plan_id = b1.plan_id AND b2.task_id = b1.task_id
+		   )
+		   GROUP BY plan_id, task_id
+		)
 		SELECT t.plan_id, t.id, t.status, t.parallel_group, t.sequence_ordinal,
 		       t.retry_count, t.reclaim_count, COALESCE(t.parent_task_id, ''),
 		       COALESCE(t.claimed_by_worker_id, ''),
@@ -742,46 +849,7 @@ func readOperatorTasks(
 		       -- a scary marker on every healthy plan mid-flight. A failed one
 		       -- never clears (nothing transitions out of 'failed'), which is
 		       -- what makes the dependent's plain 'pending' badge a lie.
-		       COALESCE((
-		         -- Walks the dependency chain, not just one hop. A task whose
-		         -- blocker is itself dead is equally unreachable, and a real DAG
-		         -- is mostly deeper levels: stopping at depth 1 left every task
-		         -- past the first reading like a healthy queued one.
-		         --
-		         -- Reports the ROOT failure -- the task that actually died --
-		         -- because that is the one an operator can act on. Naming the
-		         -- intermediate would send them to another pending row.
-		         --
-		         -- Only 'failed' terminates the walk. An intermediate that is
-		         -- merely unfinished is NOT traversed: that chain still clears
-		         -- itself, and following it would mark healthy in-flight work as
-		         -- dead.
-		         -- Terminates by VISITED-NODE tracking, not a depth cap. UNION
-		         -- (not UNION ALL) discards rows already produced, so each task
-		         -- is expanded once and a cycle cannot loop forever -- bounded by
-		         -- the number of tasks in the plan rather than a magic number.
-		         --
-		         -- A cap was the first attempt and it silently recreated the very
-		         -- bug this projection fixes, just past its threshold: plan
-		         -- import turns an ordered group into a 1:1 dependency chain with
-		         -- no depth limit of its own, so an ordinary long ordered list
-		         -- reached it and its deepest tasks read as healthy again.
-		         WITH RECURSIVE dead(id, depth) AS (
-		           SELECT d.depends_on, 1
-		             FROM task_deps d
-		            WHERE d.plan_id = t.plan_id AND d.task_id = t.id
-		           UNION
-		           SELECT d.depends_on, dead.depth + 1
-		             FROM task_deps d
-		             JOIN dead ON d.task_id = dead.id
-		            WHERE d.plan_id = t.plan_id
-		         )
-		         SELECT dead.id FROM dead
-		          JOIN tasks tdep ON tdep.plan_id = t.plan_id AND tdep.id = dead.id
-		         WHERE tdep.status = 'failed'
-		         ORDER BY dead.depth, dead.id
-		         LIMIT 1
-		       ), '') AS blocked_by,
+		       COALESCE(bb.root_id, '') AS blocked_by,
 		       t.created_at, t.updated_at
 		FROM tasks t
 		JOIN plans p ON p.id = t.plan_id
@@ -790,6 +858,7 @@ func readOperatorTasks(
 		-- list rather than show up with empty provenance. Silently dropping the
 		-- task is far worse than reporting it unassigned.
 		LEFT JOIN task_metadata m ON m.plan_id = t.plan_id AND m.task_id = t.id
+		LEFT JOIN blocked_best bb ON bb.plan_id = t.plan_id AND bb.task_id = t.id
 		WHERE p.project_id = ?
 		  AND (? = '' OR t.plan_id = ?)
 		  AND (? = '' OR t.id = ?)
@@ -799,8 +868,17 @@ func readOperatorTasks(
 		    OR (t.plan_id = ? AND t.id > ?)
 		  )
 		ORDER BY t.plan_id, t.id
-		LIMIT ?
-	`,
+		LIMIT ?`
+
+func readOperatorTasks(
+	ctx context.Context,
+	tx *sql.Tx,
+	projectID, planID, taskID string,
+	after OperatorTaskCursor,
+	limit int,
+) (OperatorTaskPage, error) {
+	rows, err := tx.QueryContext(ctx, operatorTasksQuery,
+
 		projectID,
 		planID,
 		planID,

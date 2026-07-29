@@ -200,11 +200,18 @@ func (u *ui) buildMacro(s snapshot) {
 			prog := s.progress[p.ID]
 			open := u.button(p.Title, func() { u.drillTo(planID, "") })
 			open.Alignment = widget.ButtonAlignLeading
-			u.body.Add(container.NewHBox(
+			row := container.NewHBox(
 				statusChip(string(p.Status)),
 				open,
 				widget.NewLabel(fmt.Sprintf("%d/%d", prog.Done, prog.Total)),
-			))
+			)
+			// Same signal the TUI and CLI carry: a plan whose every task is
+			// failed or unreachable otherwise reads as "active, 0 done", which
+			// an operator scanning this list takes for work in progress.
+			if p.NoRunnableWork {
+				row.Add(widget.NewLabel("no runnable work"))
+			}
+			u.body.Add(row)
 		}
 		if canImport {
 			u.body.Add(u.importButton())

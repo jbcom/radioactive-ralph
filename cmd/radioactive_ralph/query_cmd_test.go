@@ -702,3 +702,34 @@ func TestFailureReasonOnlyOnFailedTasks(t *testing.T) {
 			"row describes current state, not history:\n%s", got)
 	}
 }
+
+// TestRunStatusQueryWarnsAboutDeadPlans covers the plan-level signal a FIFTH
+// dogfooding pass found: both of Ralph's own plans read "active, 0 done" while
+// every task in them was failed or unreachable.
+func TestRunStatusQueryWarnsAboutDeadPlans(t *testing.T) {
+	reply := querySnapshotFixture(1)
+	reply.Plans = observe.PlanPage{Items: []observe.Plan{
+		{ID: "p1", Slug: "dead-plan", Title: "Dead", Status: "active",
+			TaskTotal: 3, NoRunnableWork: true},
+		{ID: "p2", Slug: "live-plan", Title: "Live", Status: "active",
+			TaskTotal: 3},
+	}}
+
+	var out bytes.Buffer
+	if err := runStatusQueryWith(
+		context.Background(), &out, &fakeObserveClient{snapshot: reply},
+		ipc.ObserveSnapshotArgs{ProjectID: "project-1"}, false, false,
+	); err != nil {
+		t.Fatalf("runStatusQueryWith: %v", err)
+	}
+	got := out.String()
+
+	if !strings.Contains(got, "dead-plan: no runnable work") {
+		t.Errorf("a plan whose every task is dead is not flagged; it renders as "+
+			"\"active\" and reads as work in progress:\n%s", got)
+	}
+	if strings.Contains(got, "live-plan") {
+		t.Errorf("a healthy plan was warned about; a warning on every plan is "+
+			"one an operator stops reading:\n%s", got)
+	}
+}

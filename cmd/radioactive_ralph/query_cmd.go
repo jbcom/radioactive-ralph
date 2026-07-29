@@ -154,6 +154,9 @@ func runStatusQueryWith(
 		if err != nil {
 			return fmt.Errorf("status: write output: %w", err)
 		}
+		if err := writePlanWarnings(out, snapshot.Plans); err != nil {
+			return err
+		}
 		if err := writeTaskLines(out, snapshot.Tasks, snapshot.RecentEvents); err != nil {
 			return err
 		}
@@ -402,4 +405,23 @@ func failureReasonsByTask(page observe.EventPage) map[string]string {
 // answer rather than a missing one.
 func taskKey(planID, taskID string) string {
 	return planID + "\x00" + taskID
+}
+
+// writePlanWarnings names any plan that cannot advance.
+//
+// Only plans that are STUCK are listed -- a healthy plan needs no line, and a
+// warning on every plan is one an operator stops reading. The summary counts
+// above say how much work exists; this says which of it is already dead.
+func writePlanWarnings(out io.Writer, page observe.PlanPage) error {
+	for _, plan := range page.Items {
+		if !plan.NoRunnableWork {
+			continue
+		}
+		if _, err := fmt.Fprintf(out,
+			"  plan %s: no runnable work — every task is done, failed, or blocked by a failure\n",
+			plan.Slug); err != nil {
+			return fmt.Errorf("status: write plan warning: %w", err)
+		}
+	}
+	return nil
 }

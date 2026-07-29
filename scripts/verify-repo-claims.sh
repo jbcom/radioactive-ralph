@@ -103,9 +103,22 @@ d=$(gh pr list --state open --json number,mergeStateStatus \
   --jq '[.[]|select(.mergeStateStatus=="DIRTY")]|length' 2>/dev/null)
 say "PRs needing manual merge (DIRTY)" "${d:-?}"
 
+# is_this_repo reports whether a worktree belongs to radioactive-ralph.
+#
+# The .worktrees/ directory is SHARED across projects -- it currently holds a
+# fork of upstream fyne -- so globbing it and reporting every failure as ours
+# made this verifier lie in the most damaging direction: it announced "TESTS
+# FAIL" for a foreign repo, which reads as a defect in this one. A guard that
+# attributes someone else's breakage to you is worse than no guard, because the
+# natural response is to go hunting in the wrong codebase.
+is_this_repo() {
+  git -C "$1" remote -v 2>/dev/null | grep -q "radioactive-ralph"
+}
+
 # 5. Local worktrees must build and test — a claim of "green" is checkable.
 for wt in /Users/jbogaty/src/jbcom/.worktrees/*/; do
   [ -f "$wt/go.mod" ] || continue
+  is_this_repo "$wt" || continue
   name=$(basename "$wt")
   if ! (cd "$wt" && go build ./... >/dev/null 2>&1); then
     say "  $name" "BUILD FAILS"; fail=1
@@ -132,12 +145,14 @@ fi
 # 6. Uncommitted work anywhere — silent local-only changes are lost work.
 for wt in /Users/jbogaty/src/jbcom/radioactive-ralph /Users/jbogaty/src/jbcom/.worktrees/*/; do
   [ -d "$wt/.git" ] || [ -f "$wt/.git" ] || continue
+  is_this_repo "$wt" || continue
   n=$(git -C "$wt" status --porcelain 2>/dev/null|wc -l|tr -d ' ')
   [ "$n" != "0" ] && say "  $(basename "$wt") uncommitted files" "$n"
 done
 
 # 7. Unpushed commits — committed but not shared is also lost work.
 for wt in /Users/jbogaty/src/jbcom/radioactive-ralph /Users/jbogaty/src/jbcom/.worktrees/*/; do
+  is_this_repo "$wt" || continue
   br=$(git -C "$wt" branch --show-current 2>/dev/null) || continue
   [ -z "$br" ] && continue
   n=$(git -C "$wt" log --oneline "origin/$br..HEAD" 2>/dev/null|wc -l|tr -d ' ')
