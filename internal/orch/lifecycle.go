@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"testing"
 	"time"
 
 	"github.com/jbcom/radioactive-ralph/internal/agent"
@@ -118,6 +119,15 @@ func (o *Orchestrator) decisionLogPath(workerID string) (string, error) {
 // directly, since xdg.StateRoot is repo/workspace-oriented and this needs
 // only the bare state root.
 func defaultDecisionLogRoot() (string, error) {
+	// The test guard runs FIRST, before RALPH_STATE_DIR is honoured. A reviewer
+	// caught the ordering: `go test` inherits an operator's environment, so a
+	// developer with RALPH_STATE_DIR set pointing at their live state would
+	// take the early return and keep polluting it -- the exact bug this guard
+	// exists to stop, surviving in the configuration most likely to have it.
+	if testing.Testing() {
+		return "", fmt.Errorf("orch: refusing a real state root under test; " +
+			"use WithDecisionLogRoot(t.TempDir())")
+	}
 	if override := os.Getenv("RALPH_STATE_DIR"); override != "" {
 		return filepath.Clean(override), nil
 	}
