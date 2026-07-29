@@ -557,7 +557,18 @@ only what is LEFT. Merged in the current arc: #212, #215, #216, #217, #219,
       no transition anywhere leaves 'failed'. So a dependent behind a failed
       task can NEVER run, which is exactly what makes the bare `pending` badge
       a lie worth fixing rather than a cosmetic nit.
-      Gate: land #306 first, since it touches the same projection.
+      BUILT 2026-07-28 on local branch `feat/name-terminal-blocker` (c898799),
+      NOT pushed. Field `BlockedByTaskID` projects store -> observe -> TUI/GUI/
+      CLI; verified on the LIVE supervisor, where the three dependents of a
+      failed `build` now read "cannot run: build failed" and the one whose
+      blocker has not failed stays correctly unmarked.
+      It is STACKED on #306: both edit internal/store/operator_snapshot.go
+      (same query) plus operator_partition_test.go and meso_provenance_test.go.
+      Rebasing onto main now would mean resolving conflicts against work that
+      is about to land, so: wait for #306, rebase, then PR. Cheaper than it
+      looks -- the snapshot query already walked task_deps for the readiness
+      gate and discarded the edge, so this is a correlated subquery over rows
+      it was already visiting.
 
 - [x] #305 MERGED (CLI task table + blocked-reason in all three views + meso
       row width + GUI worker-claim parity).
