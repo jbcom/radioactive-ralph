@@ -53,7 +53,7 @@ func TestStoreBindingResolverAppliesProjectTimeoutsOverUserDefaults(t *testing.T
 		t.Fatalf("set user project timeout overlay: %v", err)
 	}
 
-	binding, err := storeBindingResolver(st)(ctx, projectID, false, orch.BindingDispatch)
+	binding, err := storeBindingResolver(st, NewProviderCooldowns(nil))(ctx, projectID, false, orch.BindingDispatch)
 	if err != nil {
 		t.Fatalf("resolve binding: %v", err)
 	}
@@ -78,7 +78,7 @@ func TestStoreBindingResolverRejectsNonStringTimeout(t *testing.T) {
 	if err := st.SetProjectConfig(ctx, projectID, turnTimeoutConfigKey, `300`); err != nil {
 		t.Fatalf("set invalid timeout: %v", err)
 	}
-	if _, err := storeBindingResolver(st)(ctx, projectID, false, orch.BindingDispatch); err == nil {
+	if _, err := storeBindingResolver(st, NewProviderCooldowns(nil))(ctx, projectID, false, orch.BindingDispatch); err == nil {
 		t.Fatal("resolver accepted numeric timeout instead of a duration string")
 	}
 }
@@ -114,7 +114,7 @@ func TestStoreBindingResolverRejectsInvalidTimeoutBeforeDispatch(t *testing.T) {
 			if err := st.SetProjectConfig(ctx, projectID, tc.key, tc.value); err != nil {
 				t.Fatalf("set timeout: %v", err)
 			}
-			if _, err := storeBindingResolver(st)(ctx, projectID, false, orch.BindingDispatch); err == nil {
+			if _, err := storeBindingResolver(st, NewProviderCooldowns(nil))(ctx, projectID, false, orch.BindingDispatch); err == nil {
 				t.Fatalf("resolver accepted %s=%q; a task would be claimed and then loop forever", tc.key, tc.value)
 			}
 		})
@@ -141,7 +141,7 @@ func TestStoreBindingResolverHonorsProjectConfig(t *testing.T) {
 		t.Fatalf("SetProjectConfig: %v", err)
 	}
 
-	resolve := storeBindingResolver(st)
+	resolve := storeBindingResolver(st, NewProviderCooldowns(nil))
 	binding, err := resolve(ctx, projectID, false, orch.BindingDispatch)
 	if err != nil {
 		t.Fatalf("resolve binding: %v", err)
@@ -168,7 +168,7 @@ func TestStoreBindingResolverDefaultsToClaude(t *testing.T) {
 		t.Fatalf("CreateProject: %v", err)
 	}
 
-	resolve := storeBindingResolver(st)
+	resolve := storeBindingResolver(st, NewProviderCooldowns(nil))
 	binding, err := resolve(ctx, projectID, false, orch.BindingDispatch)
 	if err != nil {
 		t.Fatalf("resolve binding: %v", err)
@@ -196,7 +196,7 @@ func TestStoreBindingResolverProviderPoolRoundRobins(t *testing.T) {
 		t.Fatalf("SetProjectConfig: %v", err)
 	}
 
-	resolve := storeBindingResolver(st)
+	resolve := storeBindingResolver(st, NewProviderCooldowns(nil))
 	want := []string{"claude", "codex", "opencode", "claude"}
 	for i, wantName := range want {
 		binding, err := resolve(ctx, projectID, true, orch.BindingDispatch)
@@ -225,7 +225,7 @@ func TestStoreBindingResolverProbeDoesNotConsumePoolCursor(t *testing.T) {
 		t.Fatalf("set provider pool: %v", err)
 	}
 
-	resolve := storeBindingResolver(st)
+	resolve := storeBindingResolver(st, NewProviderCooldowns(nil))
 	for i := 0; i < 2; i++ {
 		binding, err := resolve(ctx, projectID, true, orch.BindingProbe)
 		if err != nil {
@@ -274,7 +274,7 @@ func TestStoreBindingResolverSingleSelectionPreservesNativeFanout(t *testing.T) 
 				t.Fatalf("set provider selection: %v", err)
 			}
 
-			binding, err := storeBindingResolver(st)(ctx, projectID, true, orch.BindingDispatch)
+			binding, err := storeBindingResolver(st, NewProviderCooldowns(nil))(ctx, projectID, true, orch.BindingDispatch)
 			if err != nil {
 				t.Fatalf("resolve binding: %v", err)
 			}
@@ -310,7 +310,7 @@ func TestStoreBindingResolverRejectsWholeInvalidPoolBeforeAssignment(t *testing.
 				t.Fatalf("SetProjectConfig: %v", err)
 			}
 
-			resolve := storeBindingResolver(st)
+			resolve := storeBindingResolver(st, NewProviderCooldowns(nil))
 			// Every call must reject the whole pool. The old per-member
 			// validation advanced the cursor and could dispatch a valid member
 			// on the next tick after encountering an invalid one.
@@ -346,7 +346,7 @@ func TestStoreBindingResolverProjectSingularOverridesUserPool(t *testing.T) {
 		t.Fatalf("set legacy project provider: %v", err)
 	}
 
-	binding, err := storeBindingResolver(st)(ctx, projectID, true, orch.BindingDispatch)
+	binding, err := storeBindingResolver(st, NewProviderCooldowns(nil))(ctx, projectID, true, orch.BindingDispatch)
 	if err != nil {
 		t.Fatalf("resolve binding: %v", err)
 	}
@@ -402,7 +402,7 @@ func TestStoreBindingResolverConcurrentRoundRobinIsBalanced(t *testing.T) {
 		t.Fatalf("set provider pool: %v", err)
 	}
 
-	resolve := storeBindingResolver(st)
+	resolve := storeBindingResolver(st, NewProviderCooldowns(nil))
 	const calls = 300
 	counts := make(map[string]int, len(names))
 	var countsMu sync.Mutex
@@ -546,5 +546,125 @@ func TestStoreContainmentResolverFailsClosedOnReadError(t *testing.T) {
 		t.Fatal("a config-resolution FAILURE disabled containment; a transient read " +
 			"error must not silently drop a security boundary, least of all while the " +
 			"store is already unhealthy")
+	}
+}
+
+// TestStoreBindingResolverAppliesProviderModelOverrides verifies that a
+// [provider_config.<name>] table in stored config flows through to the
+// resolved binding's BindingConfig, so resolveModel picks the configured
+// model instead of the built-in default. Without this wiring the resolver
+// selects the right provider NAME but discards every per-provider override.
+func TestStoreBindingResolverAppliesProviderModelOverrides(t *testing.T) {
+	ctx := context.Background()
+	st := openBindingTestStore(t)
+
+	projectID, err := st.CreateProject(ctx, "model-override-project", []store.Fingerprint{
+		{Kind: store.FingerprintKindAbsPath, Value: t.TempDir()},
+	})
+	if err != nil {
+		t.Fatalf("CreateProject: %v", err)
+	}
+	if err := st.SetProjectConfig(ctx, projectID, providersConfigKey, `["opencode"]`); err != nil {
+		t.Fatalf("set providers: %v", err)
+	}
+	pcTable := `{"opencode":{"haiku_model":"ollama/glm-5.2:cloud","sonnet_model":"ollama/qwen3.5:cloud","opus_model":"ollama/kimi-k2.7-code:cloud"}}`
+	if err := st.SetProjectConfig(ctx, projectID, providerConfigTableKey, pcTable); err != nil {
+		t.Fatalf("set provider_config: %v", err)
+	}
+
+	binding, err := storeBindingResolver(st, NewProviderCooldowns(nil))(ctx, projectID, false, orch.BindingDispatch)
+	if err != nil {
+		t.Fatalf("resolve binding: %v", err)
+	}
+	if binding.Name != "opencode" {
+		t.Fatalf("binding.Name = %q, want opencode", binding.Name)
+	}
+	if binding.Config.SonnetModel != "ollama/qwen3.5:cloud" {
+		t.Fatalf("SonnetModel = %q, want ollama/qwen3.5:cloud", binding.Config.SonnetModel)
+	}
+	if binding.Config.OpusModel != "ollama/kimi-k2.7-code:cloud" {
+		t.Fatalf("OpusModel = %q, want ollama/kimi-k2.7-code:cloud", binding.Config.OpusModel)
+	}
+	if binding.Config.HaikuModel != "ollama/glm-5.2:cloud" {
+		t.Fatalf("HaikuModel = %q, want ollama/glm-5.2:cloud", binding.Config.HaikuModel)
+	}
+
+	// The resolved model for a sonnet-tier request must be the configured
+	// override, not the built-in default (which for opencode is "").
+	invocation, err := provider.ResolveInvocation(binding, provider.Request{Model: provider.ModelSonnet})
+	if err != nil {
+		t.Fatalf("ResolveInvocation: %v", err)
+	}
+	if invocation.Model != "ollama/qwen3.5:cloud" {
+		t.Fatalf("invocation.Model = %q, want ollama/qwen3.5:cloud", invocation.Model)
+	}
+}
+
+// TestStoreBindingResolverMergesUserAndProjectProviderConfigs verifies that
+// a user-scope [provider_config.opencode] and a project-scope override merge
+// field-by-field rather than the project replacing the whole table. This
+// matches how timeout overrides layer: the project wins per-key, not
+// per-table.
+func TestStoreBindingResolverMergesUserAndProjectProviderConfigs(t *testing.T) {
+	ctx := context.Background()
+	st := openBindingTestStore(t)
+	userID, err := vconfig.UserScopeProjectID(ctx, st)
+	if err != nil {
+		t.Fatalf("UserScopeProjectID: %v", err)
+	}
+	userPC := `{"opencode":{"haiku_model":"ollama/glm-5.2:cloud","sonnet_model":"ollama/glm-5.2:cloud"}}`
+	if err := st.SetProjectConfig(ctx, userID, providerConfigTableKey, userPC); err != nil {
+		t.Fatalf("set user provider_config: %v", err)
+	}
+	projectID, err := st.CreateProject(ctx, "merge-pc-project", []store.Fingerprint{
+		{Kind: store.FingerprintKindAbsPath, Value: t.TempDir()},
+	})
+	if err != nil {
+		t.Fatalf("CreateProject: %v", err)
+	}
+	if err := st.SetProjectConfig(ctx, projectID, providersConfigKey, `["opencode"]`); err != nil {
+		t.Fatalf("set providers: %v", err)
+	}
+	projectPC := `{"opencode":{"sonnet_model":"ollama/qwen3.5:cloud","opus_model":"ollama/kimi-k2.7-code:cloud"}}`
+	if err := st.SetProjectConfig(ctx, projectID, providerConfigTableKey, projectPC); err != nil {
+		t.Fatalf("set project provider_config: %v", err)
+	}
+
+	binding, err := storeBindingResolver(st, NewProviderCooldowns(nil))(ctx, projectID, false, orch.BindingDispatch)
+	if err != nil {
+		t.Fatalf("resolve binding: %v", err)
+	}
+	// haiku_model comes from the user scope (not overridden by project).
+	if binding.Config.HaikuModel != "ollama/glm-5.2:cloud" {
+		t.Fatalf("HaikuModel = %q, want ollama/glm-5.2:cloud (from user scope)", binding.Config.HaikuModel)
+	}
+	// sonnet_model is overridden by the project scope.
+	if binding.Config.SonnetModel != "ollama/qwen3.5:cloud" {
+		t.Fatalf("SonnetModel = %q, want ollama/qwen3.5:cloud (project override)", binding.Config.SonnetModel)
+	}
+	// opus_model is set only in the project scope.
+	if binding.Config.OpusModel != "ollama/kimi-k2.7-code:cloud" {
+		t.Fatalf("OpusModel = %q, want ollama/kimi-k2.7-code:cloud (project only)", binding.Config.OpusModel)
+	}
+}
+
+// TestResolveProviderConfigsReturnsNilForAbsentTable verifies that a project
+// with no [provider_config] table produces a nil map, so
+// provider.ResolveBinding falls back to the built-in defaults without error.
+func TestResolveProviderConfigsReturnsNilForAbsentTable(t *testing.T) {
+	ctx := context.Background()
+	st := openBindingTestStore(t)
+	projectID, err := st.CreateProject(ctx, "no-pc-project", []store.Fingerprint{
+		{Kind: store.FingerprintKindAbsPath, Value: t.TempDir()},
+	})
+	if err != nil {
+		t.Fatalf("CreateProject: %v", err)
+	}
+	cfgs, err := resolveProviderConfigs(ctx, st, projectID)
+	if err != nil {
+		t.Fatalf("resolveProviderConfigs: %v", err)
+	}
+	if cfgs != nil {
+		t.Fatalf("cfgs = %v, want nil for a project with no provider_config table", cfgs)
 	}
 }
