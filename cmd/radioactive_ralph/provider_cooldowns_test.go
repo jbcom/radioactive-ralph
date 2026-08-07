@@ -71,12 +71,13 @@ func TestProviderCooldownsIgnoresNonCooldownFailures(t *testing.T) {
 	now := time.Date(2026, 8, 6, 16, 0, 0, 0, time.UTC)
 	cd := NewProviderCooldowns(func() time.Time { return now })
 
-	// Throttling, stall, and unavailable should NOT enter cooldown —
-	// those are transient and handled by the retry budget.
+	// Stall, unavailable, and runtime should NOT enter cooldown —
+	// those are transient or unrelated and handled by the retry budget.
+	// Throttling DOES enter cooldown now (see shouldCooldown).
 	for _, cat := range []provider.FailureCategory{
-		provider.FailureProviderThrottled,
 		provider.FailureStall,
 		provider.FailureProviderUnavailable,
+		provider.FailureRuntime,
 	} {
 		cd.RecordFailure("claude", provider.Failure{Category: cat})
 	}

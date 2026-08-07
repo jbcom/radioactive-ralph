@@ -148,7 +148,13 @@ func (c *ProviderCooldowns) EarliestExpiry() string {
 func shouldCooldown(category provider.FailureCategory) bool {
 	switch category {
 	case provider.FailureProviderAuth,
-		provider.FailureProviderRejected:
+		provider.FailureProviderRejected,
+		// Throttling (429) is transient but if it persists across retries
+		// the provider needs a longer cooldown than the retry budget
+		// provides. Without this, a rate-limited provider keeps getting
+		// dispatched and failing, burning the entire retry budget before
+		// the pool moves on.
+		provider.FailureProviderThrottled:
 		return true
 	default:
 		return false
