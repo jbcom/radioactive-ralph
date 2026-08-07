@@ -64,7 +64,7 @@ func TestDetectClassifiesEveryCandidate(t *testing.T) {
 		"gemini":       Deprecated,
 		"cursor-agent": RemoteDelegating,
 		"cursor":       Unknown,
-		"agy":          Unknown,
+		"agy":          Supported,
 	}
 	for name, want := range wantStatus {
 		got, ok := byName[name]
@@ -143,15 +143,15 @@ func TestDetectGeminiReasonCitesDeprecation(t *testing.T) {
 	}
 }
 
-func TestDetectAgyReasonCitesUnconfirmedLocalSurface(t *testing.T) {
+func TestDetectAgyClassifiedAsLocalOnly(t *testing.T) {
 	withFakePath(t, nil, nil)
 	detected := Detect()
 	agy := indexByName(detected)["agy"]
-	if agy.Status != Unknown {
-		t.Fatalf("agy status = %v, want Unknown", agy.Status)
+	if agy.Status != Supported {
+		t.Fatalf("agy status = %v, want Supported (local-only: tool execution is local, inference is cloud-hosted like claude/codex)", agy.Status)
 	}
-	if !strings.Contains(agy.Reason, "unconfirmed") {
-		t.Errorf("agy reason = %q, want it to say the local surface is unconfirmed", agy.Reason)
+	if !strings.Contains(agy.Reason, "local") {
+		t.Errorf("agy reason = %q, want it to mention local execution", agy.Reason)
 	}
 }
 
