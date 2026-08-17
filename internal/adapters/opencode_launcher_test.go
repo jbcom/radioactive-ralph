@@ -6,12 +6,16 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -40,6 +44,112 @@ func TestOpenCodeLauncherPreservesManagedProviderFailureWithoutStop(t *testing.T
 	}
 	if _, calls := handler.observed(); calls != 0 {
 		t.Fatalf("provider failure submitted %d Stop events", calls)
+	}
+}
+
+func TestOpenCodeLauncherPreservesManagedProviderSignalWithoutStop(t *testing.T) {
+	server, handler, endpoint := startLauncherHookServer(t, ipc.HookEventReply{Allow: true})
+	defer func() { _ = server.Stop() }()
+	binary := writeOpenCodeLauncherFixture(t, "#!/bin/sh\nkill -TERM $$\n")
+	code := RunOpenCodeLauncher(launcherOptions(t, binary, endpoint))
+	if code != 128+int(syscall.SIGTERM) {
+		t.Fatalf("managed provider signal exit = %d, want %d", code, 128+int(syscall.SIGTERM))
+	}
+	if _, calls := handler.observed(); calls != 0 {
+		t.Fatalf("signaled provider submitted %d Stop events", calls)
+	}
+}
+
+func TestOpenCodeLauncherReapsProviderGroupBeforeFinalStop(t *testing.T) {
+	server, handler, endpoint := startLauncherHookSequenceServer(t, []ipc.HookEventReply{
+		{Allow: true, Reason: "acceptance_passed"},
+	})
+	defer func() { _ = server.Stop() }()
+	pidFile := filepath.Join(t.TempDir(), "provider-pgid")
+	marker := filepath.Join(t.TempDir(), "descendant-writes")
+	binary := writeOpenCodeLauncherFixture(t, "#!/bin/sh\n"+
+		"printf '%s\\n' \"$$\" > \"$RALPH_TEST_PGID\"\n"+
+		": > \"$RALPH_TEST_DESCENDANT\"\n"+
+		"( trap '' TERM; while :; do printf x >> \"$RALPH_TEST_DESCENDANT\"; /bin/sleep 0.01; done ) &\n"+
+		"exit 0\n")
+	groupAliveAtStop := make(chan error, 1)
+	handler.afterFirst = func() {
+		raw, err := os.ReadFile(pidFile) //nolint:gosec // test-owned provider fixture
+		if err != nil {
+			groupAliveAtStop <- err
+			return
+		}
+		pgid, err := strconv.Atoi(strings.TrimSpace(string(raw)))
+		if err != nil {
+			groupAliveAtStop <- err
+			return
+		}
+		if err := syscall.Kill(-pgid, 0); !errors.Is(err, syscall.ESRCH) {
+			groupAliveAtStop <- fmt.Errorf("provider group still exists at Stop: %v", err)
+			return
+		}
+		before, err := os.ReadFile(marker) //nolint:gosec // test-owned descendant fixture
+		if err != nil {
+			groupAliveAtStop <- err
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+		after, err := os.ReadFile(marker) //nolint:gosec // test-owned descendant fixture
+		if err != nil {
+			groupAliveAtStop <- err
+			return
+		}
+		if !bytes.Equal(before, after) {
+			groupAliveAtStop <- fmt.Errorf("descendant mutated state during Stop")
+		}
+	}
+	opts := launcherOptions(t, binary, endpoint)
+	opts.Env = append(opts.Env,
+		"RALPH_TEST_PGID="+pidFile,
+		"RALPH_TEST_DESCENDANT="+marker,
+	)
+	if code := RunOpenCodeLauncher(opts); code != 0 {
+		t.Fatalf("managed descendant launch exit = %d", code)
+	}
+	select {
+	case err := <-groupAliveAtStop:
+		t.Fatal(err)
+	default:
+	}
+	if got := handler.callCount(); got != 1 {
+		t.Fatalf("Stop calls = %d, want 1 after process-group cleanup", got)
+	}
+}
+
+func TestManagedOpenCodeProviderOutputDrainIsFinite(t *testing.T) {
+	binary := writeOpenCodeLauncherFixture(t, "#!/bin/sh\nprintf output\n")
+	blocked := &blockingOpenCodeWriter{
+		started:  make(chan struct{}),
+		release:  make(chan struct{}),
+		finished: make(chan struct{}),
+	}
+	cmd := exec.CommandContext(context.Background(), binary) //nolint:gosec // test-owned absolute fixture
+	started := time.Now()
+	runErr, controlErr := runManagedOpenCodeProvider(cmd, blocked, io.Discard, 50*time.Millisecond)
+	if runErr != nil {
+		t.Fatalf("provider run error = %v", runErr)
+	}
+	if controlErr == nil || !strings.Contains(controlErr.Error(), "output remained open") {
+		t.Fatalf("provider control error = %v, want bounded output-drain failure", controlErr)
+	}
+	if elapsed := time.Since(started); elapsed > time.Second {
+		t.Fatalf("blocked output drain took %s, want finite return", elapsed)
+	}
+	select {
+	case <-blocked.started:
+	default:
+		t.Fatal("provider output never reached the blocked writer")
+	}
+	close(blocked.release)
+	select {
+	case <-blocked.finished:
+	case <-time.After(time.Second):
+		t.Fatal("blocked output writer did not finish after release")
 	}
 }
 
@@ -551,6 +661,21 @@ func writeOpenCodeLauncherFixture(t *testing.T, body string) string {
 		t.Fatalf("write fake OpenCode: %v", err)
 	}
 	return path
+}
+
+type blockingOpenCodeWriter struct {
+	startOnce  sync.Once
+	finishOnce sync.Once
+	started    chan struct{}
+	release    chan struct{}
+	finished   chan struct{}
+}
+
+func (w *blockingOpenCodeWriter) Write(p []byte) (int, error) {
+	w.startOnce.Do(func() { close(w.started) })
+	<-w.release
+	w.finishOnce.Do(func() { close(w.finished) })
+	return len(p), nil
 }
 
 type progressSignalWriter struct {

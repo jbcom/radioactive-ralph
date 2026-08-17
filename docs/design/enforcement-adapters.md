@@ -86,6 +86,12 @@ rejects every documented config, plugin, command, agent, mode, skill, and
 compatible global-skill discovery entry point before each launch. Ralph disables
 project config and supplies exactly the reviewed generated plugin through the
 finite environment config; ordinary unmanaged OpenCode runs remain transparent.
+The managed launcher places the real provider in its own process group and
+reclaims every non-zombie member before submitting final `Stop`. Ralph owns the
+provider output pipes and waits for them to close after that proof. A provider
+that exits while a background tool keeps running therefore cannot mutate the
+checkout during or after acceptance; cleanup uncertainty fails closed without a `Stop`
+request.
 
 The installer writes files under a private directory, syncs them before
 publication, verifies an existing content-addressed release byte-for-byte

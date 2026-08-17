@@ -25,6 +25,7 @@ const (
 	openCodeStopPollInterval        = 2 * time.Second
 	openCodeStopPollAttempts        = 360
 	openCodeStopPollTimeout         = 12 * time.Minute
+	openCodeProviderReapTimeout     = 5 * time.Second
 	maxOpenCodeAuthBytes            = 1 << 20
 )
 
@@ -53,8 +54,9 @@ type OpenCodeLaunchOptions struct {
 	VerificationProgressInterval time.Duration
 }
 
-// RunOpenCodeLauncher runs the real provider first. A genuine provider
-// failure is returned unchanged. Only a successful managed run submits the
+// RunOpenCodeLauncher runs the real provider in a separately reclaimable
+// process group. A genuine provider failure is returned unchanged after every
+// descendant is gone. Only a successful, fully reaped managed run submits the
 // synchronous Stop event and polls its finite status while verification runs;
 // unavailable, timed-out, or failed verification exits through OpenCode's
 // finite fail-closed protocol.
@@ -112,8 +114,21 @@ func runOpenCodeLauncher(opts OpenCodeLaunchOptions, polling openCodeStopPolling
 	cmd.Stdin = opts.Stdin
 	cmd.Stdout = opts.Stdout
 	cmd.Stderr = opts.Stderr
-	if err := cmd.Run(); err != nil {
-		if exitErr, ok := err.(*exec.ExitError); ok {
+	var runErr error
+	if managed {
+		var controlErr error
+		runErr, controlErr = runManagedOpenCodeProvider(
+			cmd, opts.Stdout, opts.Stderr, openCodeProviderReapTimeout,
+		)
+		if controlErr != nil {
+			_, _ = fmt.Fprintln(opts.Stderr, managedOpenCodeLauncherFailure)
+			return 1
+		}
+	} else {
+		runErr = cmd.Run()
+	}
+	if runErr != nil {
+		if exitErr, ok := runErr.(*exec.ExitError); ok {
 			return providerExitCode(exitErr)
 		}
 		_, _ = fmt.Fprintln(opts.Stderr, managedOpenCodeLauncherFailure)
@@ -123,6 +138,74 @@ func runOpenCodeLauncher(opts OpenCodeLaunchOptions, polling openCodeStopPolling
 		return 0
 	}
 	return pollOpenCodeStop(opts, env, polling)
+}
+
+func runManagedOpenCodeProvider(
+	cmd *exec.Cmd, stdout, stderr io.Writer, outputDrainTimeout time.Duration,
+) (runErr, controlErr error) {
+	stdoutReader, stdoutWriter, err := os.Pipe()
+	if err != nil {
+		return nil, fmt.Errorf("create managed provider stdout pipe: %w", err)
+	}
+	stderrReader, stderrWriter, err := os.Pipe()
+	if err != nil {
+		_ = stdoutReader.Close()
+		_ = stdoutWriter.Close()
+		return nil, fmt.Errorf("create managed provider stderr pipe: %w", err)
+	}
+	copyResults := make(chan error, 2)
+	go func() {
+		_, copyErr := io.Copy(stdout, stdoutReader)
+		copyResults <- copyErr
+	}()
+	go func() {
+		_, copyErr := io.Copy(stderr, stderrReader)
+		copyResults <- copyErr
+	}()
+	closePipes := func() {
+		_ = stdoutReader.Close()
+		_ = stderrReader.Close()
+		_ = stdoutWriter.Close()
+		_ = stderrWriter.Close()
+	}
+
+	cmd.Stdout, cmd.Stderr = stdoutWriter, stderrWriter
+	configureOpenCodeProviderProcess(cmd)
+	if err := cmd.Start(); err != nil {
+		closePipes()
+		return err, nil
+	}
+	// The child owns the write handles after Start. Closing Ralph's duplicates
+	// lets the copy goroutines observe EOF after the direct child and every
+	// reclaimed group descendant have closed their inherited descriptors.
+	_ = stdoutWriter.Close()
+	_ = stderrWriter.Close()
+	runErr = cmd.Wait()
+	// A successful direct-child wait is not a completion boundary: tools may
+	// have left background descendants in the provider process group. Reap and
+	// prove that group absent before acceptance can observe the checkout.
+	if err := reclaimOpenCodeProviderProcess(cmd.Process); err != nil {
+		closePipes()
+		return runErr, err
+	}
+
+	timer := time.NewTimer(outputDrainTimeout)
+	defer timer.Stop()
+	for completed := 0; completed < 2; completed++ {
+		select {
+		case copyErr := <-copyResults:
+			if copyErr != nil {
+				closePipes()
+				return runErr, fmt.Errorf("copy managed provider output: %w", copyErr)
+			}
+		case <-timer.C:
+			closePipes()
+			return runErr, fmt.Errorf("managed provider output remained open after cleanup")
+		}
+	}
+	_ = stdoutReader.Close()
+	_ = stderrReader.Close()
+	return runErr, nil
 }
 
 func pollOpenCodeStop(opts OpenCodeLaunchOptions, env []string, polling openCodeStopPolling) int {
