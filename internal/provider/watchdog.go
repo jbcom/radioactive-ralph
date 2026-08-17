@@ -66,10 +66,10 @@ var DefaultStallTimeout = 3 * time.Minute
 // POSIX-confirmation prompts ("(y/n)", "[Y/n]", etc.). Callers with a
 // provider-specific prompt shape should extend, not replace, this list.
 var DefaultPromptPatterns = []*regexp.Regexp{
-	regexp.MustCompile(`(?i)\(y/n\)`),
-	regexp.MustCompile(`(?i)\[y/n\]`),
-	regexp.MustCompile(`(?i)continue\?`),
-	regexp.MustCompile(`(?i)proceed\?`),
+	parenConfirmPromptPattern,
+	bracketConfirmPromptPattern,
+	continuePromptPattern,
+	proceedPromptPattern,
 	// These three name an ASKED question, not a word mentioned. A bare
 	// `permission` matched "permission denied" -- ERROR TEXT -- so an ordinary
 	// failure was killed as a blocked turn and reported as interactive_prompt
@@ -78,12 +78,12 @@ var DefaultPromptPatterns = []*regexp.Regexp{
 	// The asymmetry justifies erring toward a miss: a false NEGATIVE stalls one
 	// turn until the lease expires; a false POSITIVE kills a WORKING turn and
 	// misdirects the diagnosis -- which it did, for an entire investigation.
-	regexp.MustCompile(`(?i)(needs?|asking for|requesting|grant)\s+permission|permission\s+to\s+[^?\n]{1,60}\?`),
-	regexp.MustCompile(`(?i)\bapprove\s+[^?\n]{0,40}\?|\bapprove\s+(this|that|the)\b|do you approve`),
-	regexp.MustCompile(`(?i)allow this\b.*\?|allow this\??$`),
+	permissionPromptPattern,
+	approvalPromptPattern,
+	allowThisPromptPattern,
 	doYouWantToPromptPattern,
-	regexp.MustCompile(`(?i)waiting for`),
-	regexp.MustCompile(`(?i)press enter`),
+	waitingForPromptPattern,
+	pressEnterPromptPattern,
 	// An OPEN QUESTION about the task. Without this the detector never fires on
 	// "Which database should I target?", so the clarification KIND was
 	// classifiable but unreachable -- a taxonomy branch nothing could produce.
@@ -95,7 +95,7 @@ var DefaultPromptPatterns = []*regexp.Regexp{
 	// question word and a "?". The looser version matched "What's new?" and
 	// "What went wrong?", which providers print as banners: the same
 	// false-positive class as the bare `permission` above.
-	regexp.MustCompile(`(?im)^\s*((which|what|where|who|how)\b[^?\n]*\b(should|do|would|shall)\s+(i|we)\b|(should|shall|do)\s+(i|we)\b)[^?\n]*\?`),
+	clarificationPromptPattern,
 }
 
 // DefaultWatchdogConfig returns a WatchdogConfig seeded with

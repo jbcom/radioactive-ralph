@@ -36,12 +36,30 @@ func TestPromptKindIsAClosedTaxonomy(t *testing.T) {
 		// Unmatched text must NOT be guessed at. An unknown kind is honest; a
 		// wrong one sends the operator to the wrong response.
 		{"unrecognized", "something entirely different", PromptKindUnknown},
+		{"permission error", "permission denied", PromptKindUnknown},
+		{"diagnostic question", "What went wrong?", PromptKindUnknown},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := ClassifyPromptKind(tc.line); got != tc.want {
 				t.Errorf("ClassifyPromptKind(%q) = %q, want %q", tc.line, got, tc.want)
 			}
 		})
+	}
+}
+
+// TestPromptKindPositiveIsolatesOnePattern ensures the shared classifier
+// expressions remain discriminating. If several expressions satisfy a case,
+// removing the intended one can leave classification tests falsely green.
+func TestPromptKindPositiveIsolatesOnePattern(t *testing.T) {
+	const line = "Do you want to deploy now?"
+	var hits int
+	for _, pattern := range promptKindPatterns {
+		if pattern.re.MatchString(line) {
+			hits++
+		}
+	}
+	if hits != 1 {
+		t.Fatalf("%q matches %d classifier patterns, want exactly 1", line, hits)
 	}
 }
 

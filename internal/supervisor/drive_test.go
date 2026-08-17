@@ -247,3 +247,45 @@ func TestHandlePlanDelete_RemovesThePlanAndItsTasks(t *testing.T) {
 		t.Errorf("empty plan_id err = %v, want CodeInvalidArgs", err)
 	}
 }
+
+// TestHandlePlanDelete_PreservesPlanWhenWorkerDiscoveryFails proves deletion
+// fails closed. If active-worker discovery is unavailable, deleting the plan
+// could leave an undiscovered provider mutating the checkout with its durable
+// task rows already gone.
+func TestHandlePlanDelete_PreservesPlanWhenWorkerDiscoveryFails(t *testing.T) {
+	sup := newTestSupervisor(t, nil)
+	ctx := context.Background()
+	projectID, err := sup.store.CreateProject(ctx, "p", []store.Fingerprint{{
+		Kind: store.FingerprintKindAbsPath, Value: t.TempDir(),
+	}})
+	if err != nil {
+		t.Fatalf("CreateProject: %v", err)
+	}
+	reply, err := sup.HandlePlanImport(ctx, ipc.PlanImportArgs{
+		Markdown: "# P\n\n1. do the work\n", Project: projectID,
+	})
+	if err != nil {
+		t.Fatalf("HandlePlanImport: %v", err)
+	}
+
+	// Rename only the discovery table. SQLite rewrites foreign-key references
+	// to the new name, so this makes ListRunningWorkers fail while leaving the
+	// plan table independently queryable for the postcondition.
+	if _, err := sup.store.DB().ExecContext(ctx, "ALTER TABLE workers RENAME TO unavailable_workers"); err != nil {
+		t.Fatalf("break worker discovery fixture: %v", err)
+	}
+
+	if _, err := sup.HandlePlanDelete(ctx, ipc.PlanDeleteArgs{PlanID: reply.PlanID}); err == nil ||
+		!strings.Contains(err.Error(), "list running workers") {
+		t.Fatalf("HandlePlanDelete discovery error = %v, want list-running-workers failure", err)
+	}
+
+	var plans int
+	if err := sup.store.DB().QueryRowContext(ctx,
+		"SELECT COUNT(*) FROM plans WHERE id = ?", reply.PlanID).Scan(&plans); err != nil {
+		t.Fatalf("count preserved plan: %v", err)
+	}
+	if plans != 1 {
+		t.Fatalf("plan rows after worker discovery failure = %d, want 1; deletion must fail closed", plans)
+	}
+}

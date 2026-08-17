@@ -13,7 +13,25 @@ import "regexp"
 // remain valid so prompts can name files such as config.toml.
 const doYouWantToPromptExpression = `(?im)^[\t ]*do you want to\b(?:[^\r\n]{0,159}\?[\t ]*|[^\r\n]{0,159}[^\s.!?][\t ]*)$`
 
-var doYouWantToPromptPattern = regexp.MustCompile(doYouWantToPromptExpression)
+var (
+	parenConfirmPromptPattern   = regexp.MustCompile(`(?i)\(y/n\)`)
+	bracketConfirmPromptPattern = regexp.MustCompile(`(?i)\[y/n\]`)
+	continuePromptPattern       = regexp.MustCompile(`(?i)continue\?`)
+	proceedPromptPattern        = regexp.MustCompile(`(?i)proceed\?`)
+	permissionPromptPattern     = regexp.MustCompile(
+		`(?i)(needs?|asking for|requesting|grant)\s+permission|permission\s+to\s+[^?\n]{1,60}\?`,
+	)
+	approvalPromptPattern = regexp.MustCompile(
+		`(?i)\bapprove\s+[^?\n]{0,40}\?|\bapprove\s+(this|that|the)\b|do you approve`,
+	)
+	allowThisPromptPattern     = regexp.MustCompile(`(?i)allow this\b.*\?|allow this\??$`)
+	doYouWantToPromptPattern   = regexp.MustCompile(doYouWantToPromptExpression)
+	waitingForPromptPattern    = regexp.MustCompile(`(?i)waiting for`)
+	pressEnterPromptPattern    = regexp.MustCompile(`(?i)press enter`)
+	clarificationPromptPattern = regexp.MustCompile(
+		`(?im)^\s*((which|what|where|who|how)\b[^?\n]*\b(should|do|would|shall)\s+(i|we)\b|(should|shall|do)\s+(i|we)\b)[^?\n]*\?`,
+	)
+)
 
 // PromptKind is the CLOSED taxonomy of what an interactive block was asking
 // for. It is a fixed constant, never provider text.
@@ -53,12 +71,18 @@ var promptKindPatterns = []struct {
 	re   *regexp.Regexp
 	kind PromptKind
 }{
-	{regexp.MustCompile(`(?i)permission|approve|allow this`), PromptKindPermission},
+	{permissionPromptPattern, PromptKindPermission},
+	{approvalPromptPattern, PromptKindPermission},
+	{allowThisPromptPattern, PromptKindPermission},
 	{doYouWantToPromptPattern, PromptKindConfirm},
-	{regexp.MustCompile(`(?i)\(y/n\)|\[y/n\]|continue\?|proceed\?|press enter`), PromptKindConfirm},
+	{parenConfirmPromptPattern, PromptKindConfirm},
+	{bracketConfirmPromptPattern, PromptKindConfirm},
+	{continuePromptPattern, PromptKindConfirm},
+	{proceedPromptPattern, PromptKindConfirm},
+	{pressEnterPromptPattern, PromptKindConfirm},
 	// Last: an open question is the residual case, and matching it early would
 	// swallow confirms, which also end in "?".
-	{regexp.MustCompile(`(?i)^\s*(which|what|where|how|who|should i)\b.*\?`), PromptKindClarification},
+	{clarificationPromptPattern, PromptKindClarification},
 }
 
 // ClassifyPromptKind derives the kind from a line of provider output.

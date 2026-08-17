@@ -417,7 +417,7 @@ type CreatePlanOpts struct {
 ```
 
 <a name="CreateTaskOpts"></a>
-## type [CreateTaskOpts](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/tasks.go#L130-L145>)
+## type [CreateTaskOpts](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/tasks.go#L118-L133>)
 
 CreateTaskOpts configures task creation.
 
@@ -477,7 +477,7 @@ type Event struct {
 ```
 
 <a name="EventPayload"></a>
-## type [EventPayload](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/tasks.go#L115-L127>)
+## type [EventPayload](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/tasks.go#L103-L115>)
 
 EventPayload keeps event payloads structured so the CLI, TUI, and tests can reason about approvals, handoffs, retries, and provider context without string scraping.
 
@@ -1080,7 +1080,7 @@ type SessionOpts struct {
 ```
 
 <a name="StatusCounts"></a>
-## type [StatusCounts](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/tasks.go#L290-L297>)
+## type [StatusCounts](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/tasks.go#L278-L285>)
 
 StatusCounts is the aggregate view the status reply exposes: how many active plans exist and how many tasks sit in each status a client surfaces. Sourced from one pass over the store so \`status\` reports real numbers rather than the zeros the reply carried before \(the task/plan counters were never populated\).
 
@@ -1116,7 +1116,7 @@ func Open(ctx context.Context, opts Options) (*Store, error)
 Open returns a migrated, ready\-to\-use Store.
 
 <a name="Store.AddDep"></a>
-### func \(\*Store\) [AddDep](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/tasks.go#L207>)
+### func \(\*Store\) [AddDep](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/tasks.go#L195>)
 
 ```go
 func (s *Store) AddDep(ctx context.Context, planID, taskID, dependsOn string) error
@@ -1152,7 +1152,7 @@ func (s *Store) ApplyProjectConfig(ctx context.Context, projectID string, upsert
 ApplyProjectConfig atomically deletes and upserts a set of DB\-resident project config keys. Deletes run before upserts, so a key present in both collections ends with the upserted value. This is the mutation primitive for replacing logical config selections whose old aliases must not survive beside their canonical key.
 
 <a name="Store.ApproveTask"></a>
-### func \(\*Store\) [ApproveTask](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/tasks.go#L908>)
+### func \(\*Store\) [ApproveTask](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/tasks.go#L896>)
 
 ```go
 func (s *Store) ApproveTask(ctx context.Context, planID, taskID string) (found, changed bool, err error)
@@ -1179,7 +1179,7 @@ func (s *Store) BindTaskCalibration(ctx context.Context, planID, taskID, calibra
 BindTaskCalibration snapshots the immutable calibration resolved for an await\-calibration task. The first successful bind wins; idempotent repeats with the same content address are allowed, while a different address fails closed so an alias can never retarget an admitted task.
 
 <a name="Store.ClaimNextReady"></a>
-### func \(\*Store\) [ClaimNextReady](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/tasks.go#L387>)
+### func \(\*Store\) [ClaimNextReady](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/tasks.go#L375>)
 
 ```go
 func (s *Store) ClaimNextReady(ctx context.Context, planID, sessionID, workerID string) (*Task, error)
@@ -1292,7 +1292,7 @@ func (s *Store) CreateSession(ctx context.Context, o SessionOpts) (string, error
 CreateSession inserts a session row. Returns the session id. The row lifetime matches one supervisor or client process attached to this DB.
 
 <a name="Store.CreateTask"></a>
-### func \(\*Store\) [CreateTask](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/tasks.go#L158>)
+### func \(\*Store\) [CreateTask](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/tasks.go#L146>)
 
 ```go
 func (s *Store) CreateTask(ctx context.Context, o CreateTaskOpts) error
@@ -1379,7 +1379,7 @@ func (s *Store) GetProjectConfig(ctx context.Context, projectID string) (map[str
 GetProjectConfig returns all DB\-resident config key/value pairs for a project. Values are stored as JSON\-encoded scalars/arrays/objects \(the caller decodes\); this layer treats them as opaque strings.
 
 <a name="Store.GetTask"></a>
-### func \(\*Store\) [GetTask](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/tasks.go#L489>)
+### func \(\*Store\) [GetTask](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/tasks.go#L477>)
 
 ```go
 func (s *Store) GetTask(ctx context.Context, planID, id string) (*Task, error)
@@ -1502,7 +1502,7 @@ func (s *Store) ListRunningWorkers(ctx context.Context) ([]RunningWorker, error)
 ListRunningWorkers returns every worker row currently status='running', with the worker id and its current plan/task. It is the read backing the status reply's per\-worker detail so a client \(the GUI\) can name a specific worker to kill. Workers with no assigned task are still listed \(PlanID/TaskID empty\).
 
 <a name="Store.ListTaskEvents"></a>
-### func \(\*Store\) [ListTaskEvents](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/tasks.go#L551>)
+### func \(\*Store\) [ListTaskEvents](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/tasks.go#L539>)
 
 ```go
 func (s *Store) ListTaskEvents(ctx context.Context, planID, taskID string, limit int) ([]Event, error)
@@ -1522,7 +1522,7 @@ ListTaskGroupPaths returns task id \-\> leaf\-group path for one plan.
 Dispatch needs every ready task's group in one query rather than N lookups, and getting it from here rather than re\-parsing the plan markdown is the point: recovering positional information by re\-parsing is exactly the dependence the graph walk removes.
 
 <a name="Store.ListTasks"></a>
-### func \(\*Store\) [ListTasks](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/tasks.go#L510>)
+### func \(\*Store\) [ListTasks](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/tasks.go#L498>)
 
 ```go
 func (s *Store) ListTasks(ctx context.Context, planID string, statuses []TaskStatus) ([]Task, error)
@@ -1531,7 +1531,7 @@ func (s *Store) ListTasks(ctx context.Context, planID string, statuses []TaskSta
 ListTasks returns tasks for one plan, optionally filtered by status.
 
 <a name="Store.MarkBlocked"></a>
-### func \(\*Store\) [MarkBlocked](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/tasks.go#L778>)
+### func \(\*Store\) [MarkBlocked](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/tasks.go#L766>)
 
 ```go
 func (s *Store) MarkBlocked(ctx context.Context, planID, taskID, sessionID string, payload EventPayload) error
@@ -1560,7 +1560,7 @@ func (s *Store) MarkBlockedInput(ctx context.Context, planID, taskID, reason str
 MarkBlockedInput records a fail\-closed immutable\-input admission failure. The bool reports whether this call was the transition into the blocked state; see MarkBlockedCapability.
 
 <a name="Store.MarkDone"></a>
-### func \(\*Store\) [MarkDone](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/tasks.go#L581>)
+### func \(\*Store\) [MarkDone](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/tasks.go#L569>)
 
 ```go
 func (s *Store) MarkDone(ctx context.Context, planID, taskID, sessionID string, evidenceJSON string) ([]Task, error)
@@ -1569,7 +1569,7 @@ func (s *Store) MarkDone(ctx context.Context, planID, taskID, sessionID string, 
 MarkDone transitions a running task to done, logs the event, and returns the set of newly\-ready downstream tasks.
 
 <a name="Store.MarkFailed"></a>
-### func \(\*Store\) [MarkFailed](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/tasks.go#L649>)
+### func \(\*Store\) [MarkFailed](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/tasks.go#L637>)
 
 ```go
 func (s *Store) MarkFailed(ctx context.Context, planID, taskID, sessionID, reason string, maxRetries int) (retried bool, err error)
@@ -1578,7 +1578,7 @@ func (s *Store) MarkFailed(ctx context.Context, planID, taskID, sessionID, reaso
 MarkFailed transitions a running task, owned by sessionID, to failed or retries. See MarkFailedWithPayload.
 
 <a name="Store.MarkFailedWithPayload"></a>
-### func \(\*Store\) [MarkFailedWithPayload](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/tasks.go#L665>)
+### func \(\*Store\) [MarkFailedWithPayload](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/tasks.go#L653>)
 
 ```go
 func (s *Store) MarkFailedWithPayload(ctx context.Context, planID, taskID, sessionID string, payload EventPayload, maxRetries int) (retried bool, err error)
@@ -1660,7 +1660,7 @@ func (s *Store) ReadOperatorTaskDetail(ctx context.Context, projectID, planID, t
 ReadOperatorTaskDetail returns one task's description, scoped to a project so a caller cannot read across projects by guessing ids.
 
 <a name="Store.Ready"></a>
-### func \(\*Store\) [Ready](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/tasks.go#L354>)
+### func \(\*Store\) [Ready](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/tasks.go#L342>)
 
 ```go
 func (s *Store) Ready(ctx context.Context, planID string) ([]Task, error)
@@ -1758,7 +1758,7 @@ func (s *Store) RecordTaskProviderSession(ctx context.Context, planID, taskID, c
 RecordTaskProviderSession stores the session identifier returned by the provider after a turn. Both the live task claim and the execution metadata must still identify claimingSessionID; otherwise this is a stale post\-run write from a reclaimed worker.
 
 <a name="Store.ReleaseClaim"></a>
-### func \(\*Store\) [ReleaseClaim](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/tasks.go#L749>)
+### func \(\*Store\) [ReleaseClaim](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/tasks.go#L737>)
 
 ```go
 func (s *Store) ReleaseClaim(ctx context.Context, planID, taskID, sessionID, reason string) error
@@ -1823,7 +1823,7 @@ func (s *Store) SetWorkerTask(ctx context.Context, workerID, planID, taskID stri
 SetWorkerTask updates the currently assigned plan/task for one worker row and refreshes its heartbeat.
 
 <a name="Store.StatusCounts"></a>
-### func \(\*Store\) [StatusCounts](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/tasks.go#L302>)
+### func \(\*Store\) [StatusCounts](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/tasks.go#L290>)
 
 ```go
 func (s *Store) StatusCounts(ctx context.Context) (StatusCounts, error)
@@ -1874,15 +1874,15 @@ type Task struct {
 ```
 
 <a name="Task.AttemptCount"></a>
-### func \(Task\) [AttemptCount](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/tasks.go#L110>)
+### func \(Task\) [AttemptCount](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/tasks.go#L98>)
 
 ```go
 func (t Task) AttemptCount() int
 ```
 
-AttemptCount is how many claims this task has been GIVEN: retries it used up, plus claims a reaper took back, plus the one it currently holds or finished on \-\- neither counter includes the claim in hand.
+AttemptCount returns RetryCount \+ ReclaimCount \+ 1. It is a derived estimate, not authoritative accounting of every claim a task has been given.
 
-THE \+1 IS UNCONDITIONAL, so this OVERCOUNTS a task that holds no claim: a freshly created task reports 1 having been given none, and a requeued task between attempts reports one more than it has had. That is a deliberate simplification of a raw accessor, not a claim that the number is status\-aware \-\- an earlier version of this comment read as the latter.
+THE \+1 IS UNCONDITIONAL, so this OVERCOUNTS a task that holds no claim: a freshly created task reports 1 having been given none, and a requeued task between attempts reports one more than it has had. That is a deliberate simplification of a raw accessor; callers must not treat it as status\-aware.
 
 Callers that render this to an operator MUST apply the status themselves. observe.AttemptLabel is the one that does: it returns "" when RetryCount\+ReclaimCount is zero, and adds the \+1 only for a task that is running \(holds a claim\) or done/failed \(finished on one\). Nothing in production calls AttemptCount directly today; AttemptLabel is the surface.
 
@@ -1890,11 +1890,9 @@ APPLYING STATUS FIXES THE OVERCOUNT, NOT THE UNDERCOUNT, and neither function ca
 
 So neither number is the count of claims EVER GIVEN; both are derived from the two counters that happen to be incremented, and those cover the retry and reaper paths only. Do not present either as authoritative attempt accounting \-\- the task's event log is the only complete record. Closing the gap means incrementing on those three paths \(a schema\-level policy decision about what counts as a spent attempt\), not adjusting the arithmetic here.
 
-It is DERIVED rather than a fourth stored counter, so it cannot drift from the two numbers it summarizes.
+It is DERIVED rather than a fourth stored counter, so it cannot drift from the two numbers it summarizes. The deterministic reclaim test proves that two reclaims produce a value of three under this formula; it does not make the estimate complete claim accounting.
 
-It exists because neither counter alone answers "how many goes has this had?", and reading only retry\_count actively misleads. Observed on a live self\-test run, a task's history was claimed / claimed / failed\_terminal / claimed / reclaimed / claimed / reclaimed / claimed / failed\_terminal \-\- five claims, two reclaims \-\- while retry\_count read 0 throughout. The reaper requeues without touching retry\_count \(only MarkFailed increments it\), so a task that burned real turns reads as untouched and the row disagrees with its own event log.
-
-Deliberately NOT wired into the retry\-budget check. Whether a reclaim should consume budget is a policy question \-\- arguably it should not, since the worker died before the task got a fair turn \-\- and today's generosity is a side effect of the reaper not knowing about retries rather than a decision. This makes the truth visible without silently changing that policy. The \+1 was missing at first, so a task with 1 retry and 2 reclaims reported three claims when it had had four, and a task succeeding on its FIRST claim reported zero \-\- a count no reader would recognise.
+Deliberately NOT wired into the retry\-budget check. Whether a reclaim should consume budget is a policy question \-\- arguably it should not, since the worker died before the task got a fair turn \-\- and today's generosity is a side effect of the reaper not knowing about retries rather than a decision. This makes the stored counters visible without silently changing that policy.
 
 <a name="TaskExecutionMetadata"></a>
 ## type [TaskExecutionMetadata](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/task_metadata.go#L23-L42>)

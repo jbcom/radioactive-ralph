@@ -123,6 +123,8 @@ func TestEachPositiveCaseIsolatesOnePattern(t *testing.T) {
 		// proves neither -- the defect this very file was written to catch.
 		"Allow this?",
 		"Do you want to overwrite it",
+		"  Do you want to deploy now?",
+		"Do you want to overwrite config.toml?",
 		"Overwrite existing file? [Y/n]",
 		"Press enter to continue",
 		"Which database should I target?",

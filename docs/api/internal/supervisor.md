@@ -221,13 +221,13 @@ HandleObserveTaskDescriptions serves one PLAN's author\-written task labels.
 Kept off HandleObserveSnapshot deliberately: a description is plan\-author free text that can contain filesystem paths, so the bulk snapshot stays content\-free and labels are fetched only by the human\-facing views. Scoped per plan rather than per task so a list view costs one round trip, not N.
 
 <a name="Supervisor.HandlePlanDelete"></a>
-### func \(\*Supervisor\) [HandlePlanDelete](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/supervisor/drive.go#L129>)
+### func \(\*Supervisor\) [HandlePlanDelete](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/supervisor/drive.go#L130>)
 
 ```go
 func (s *Supervisor) HandlePlanDelete(ctx context.Context, args ipc.PlanDeleteArgs) (ipc.PlanDeleteReply, error)
 ```
 
-HandlePlanDelete cancels active provider workers for a plan before removing the plan and everything hanging off it. Worker cancellation is best\-effort: an already\-exited worker does not make an otherwise valid deletion fail.
+HandlePlanDelete discovers and cancels active provider workers for a plan before removing the plan and everything hanging off it. Failure to discover workers aborts deletion; cancellation of an already\-exited worker remains best\-effort and does not make an otherwise valid deletion fail.
 
 store.DeletePlan was implemented and tested with no caller and no CLI, so accumulated runs could never be pruned \-\- and the operator task page saturates at MaxOperatorPageLimit, showing the newest run only partially with nothing an operator could do about it. This is the surface that reaches it.
 
@@ -314,7 +314,7 @@ func (s *Supervisor) HandleStop(_ context.Context, _ ipc.StopArgs) error
 HandleStop breaks Run's select loop, which triggers shutdown. Graceful vs. immediate is not yet differentiated \(no in\-flight plan work exists yet to wait on\) — both simply request shutdown.
 
 <a name="Supervisor.HandleTaskApprove"></a>
-### func \(\*Supervisor\) [HandleTaskApprove](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/supervisor/drive.go#L162>)
+### func \(\*Supervisor\) [HandleTaskApprove](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/supervisor/drive.go#L167>)
 
 ```go
 func (s *Supervisor) HandleTaskApprove(ctx context.Context, args ipc.TaskApproveArgs) error
@@ -323,7 +323,7 @@ func (s *Supervisor) HandleTaskApprove(ctx context.Context, args ipc.TaskApprove
 HandleTaskApprove clears the approval gate on a ready\_pending\_approval task.
 
 <a name="Supervisor.HandleWorkerKill"></a>
-### func \(\*Supervisor\) [HandleWorkerKill](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/supervisor/drive.go#L185>)
+### func \(\*Supervisor\) [HandleWorkerKill](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/supervisor/drive.go#L190>)
 
 ```go
 func (s *Supervisor) HandleWorkerKill(ctx context.Context, args ipc.WorkerKillArgs) error

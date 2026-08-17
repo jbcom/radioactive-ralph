@@ -176,19 +176,19 @@ var (
 
 ```go
 var DefaultPromptPatterns = []*regexp.Regexp{
-    regexp.MustCompile(`(?i)\(y/n\)`),
-    regexp.MustCompile(`(?i)\[y/n\]`),
-    regexp.MustCompile(`(?i)continue\?`),
-    regexp.MustCompile(`(?i)proceed\?`),
+    parenConfirmPromptPattern,
+    bracketConfirmPromptPattern,
+    continuePromptPattern,
+    proceedPromptPattern,
 
-    regexp.MustCompile(`(?i)(needs?|asking for|requesting|grant)\s+permission|permission\s+to\s+[^?\n]{1,60}\?`),
-    regexp.MustCompile(`(?i)\bapprove\s+[^?\n]{0,40}\?|\bapprove\s+(this|that|the)\b|do you approve`),
-    regexp.MustCompile(`(?i)allow this\b.*\?|allow this\??$`),
+    permissionPromptPattern,
+    approvalPromptPattern,
+    allowThisPromptPattern,
     doYouWantToPromptPattern,
-    regexp.MustCompile(`(?i)waiting for`),
-    regexp.MustCompile(`(?i)press enter`),
+    waitingForPromptPattern,
+    pressEnterPromptPattern,
 
-    regexp.MustCompile(`(?im)^\s*((which|what|where|who|how)\b[^?\n]*\b(should|do|would|shall)\s+(i|we)\b|(should|shall|do)\s+(i|we)\b)[^?\n]*\?`),
+    clarificationPromptPattern,
 }
 ```
 
@@ -878,7 +878,7 @@ func (OpencodeRunner) Run(ctx context.Context, binding Binding, req Request) (Re
 Run spawns \`opencode run \<prompt\> \-\-format json\` and blocks until the CLI exits naturally. A step\_finish with reason=tool\-calls is an intermediate model step; OpenCode 1.18.3 closes the actual run only after session.status becomes idle, so Ralph must consume the complete stream.
 
 <a name="PromptKind"></a>
-## type [PromptKind](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/prompt_kind.go#L29>)
+## type [PromptKind](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/prompt_kind.go#L47>)
 
 PromptKind is the CLOSED taxonomy of what an interactive block was asking for. It is a fixed constant, never provider text.
 
@@ -913,7 +913,7 @@ const (
 ```
 
 <a name="ClassifyPromptKind"></a>
-### func [ClassifyPromptKind](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/prompt_kind.go#L69>)
+### func [ClassifyPromptKind](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/prompt_kind.go#L93>)
 
 ```go
 func ClassifyPromptKind(line string) PromptKind
