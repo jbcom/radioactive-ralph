@@ -76,9 +76,10 @@ type Handler interface {
 }
 
 // DriveHandler is the OPTIONAL v2 drive surface. A Handler that also
-// implements DriveHandler gains the plan-import/plan-set-status/task-approve/
-// worker-kill commands; one that does not still serves the v1 observe surface,
-// and the server answers a drive command with an unsupported_command response.
+// implements DriveHandler gains the plan-import/plan-set-status/plan-delete/
+// task-approve/worker-kill commands; one that does not still serves the v1
+// observe surface, and the server answers a drive command with an
+// unsupported_command response.
 // Keeping it a separate interface means existing v1 Handler implementations
 // (and their test doubles) compile unchanged.
 type DriveHandler interface {

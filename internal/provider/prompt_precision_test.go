@@ -33,6 +33,11 @@ func TestPromptPatternsRejectErrorText(t *testing.T) {
 		"What's new?",
 		"What went wrong?",
 		"How did that happen?",
+		// Mentioning the English phrase is not itself a prompt. The historical
+		// unanchored pattern killed each of these working turns.
+		"The phrase 'do you want to' appears in the provider output.",
+		"The log records do you want to as an example.",
+		"A diagnostic may say do you want to without asking.",
 	}
 	for _, line := range mustNotMatch {
 		for _, re := range DefaultPromptPatterns {
@@ -69,6 +74,7 @@ func TestPromptPatternsRejectErrorText(t *testing.T) {
 		// proves neither -- the defect this very file was written to catch.
 		"Allow this?",
 		"Do you want to proceed?",
+		"  Do you want to deploy now?",
 		"Overwrite existing file? [Y/n]",
 		"Press enter to continue",
 		"Which database should I target?",

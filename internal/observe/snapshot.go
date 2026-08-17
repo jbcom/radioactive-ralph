@@ -464,8 +464,9 @@ func WorkerSuffix(id string, limit int) string {
 	return "…" + string(r[len(r)-limit:])
 }
 
-// AttemptLabel renders how many claims a task has been given, or "" when the
-// number says nothing worth a marker.
+// AttemptLabel renders a derived attempt marker, or "" when the two stored
+// counters say nothing worth a marker. It is an approximation, not an
+// authoritative count of every claim a task has been given.
 //
 // It lives here for the same reason PartitionLabels does: this is display
 // POLICY, and the first version duplicated it across the CLI, TUI, and GUI --
@@ -474,11 +475,15 @@ func WorkerSuffix(id string, limit int) string {
 //
 // THE ARITHMETIC. RetryCount counts claims that ended in a requeued failure;
 // ReclaimCount counts claims the reaper took back. Neither counts the claim the
-// task is holding NOW, nor the one it finished on. So the claims a task has
-// received is retries + reclaims + 1 while it is running or terminal on the
-// current claim. Summing only the two counters -- the first version -- reported
-// three claims for a task that had had four, and reported ZERO for a task
-// succeeding on its first claim, which is not a count anyone would recognise.
+// task is holding NOW, nor the one it finished on, so the display adds one only
+// while the task is running or terminal on that current claim.
+//
+// THE LIMIT. ReleaseClaim, MarkBlocked, and ReclaimWorker clear claims without
+// incrementing either counter. Each such exit makes this marker undercount by
+// one. If the first exit takes one of those paths, both counters remain zero and
+// this function renders "" even though the task was claimed. The event log is
+// the authoritative attempt history; this label is only a compact signal from
+// the counters available on the task projection.
 //
 // THE VISIBILITY GATE. Empty unless the task actually lost a claim, because on
 // a healthy task "1 attempt" is true of every row and marks nothing. A reader

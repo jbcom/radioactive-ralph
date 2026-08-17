@@ -58,6 +58,8 @@ Package provider adapts configured CLI backends into radioactive\_ralph's provid
 - [type Model](<#Model>)
 - [type OpencodeRunner](<#OpencodeRunner>)
   - [func \(OpencodeRunner\) Run\(ctx context.Context, binding Binding, req Request\) \(Result, error\)](<#OpencodeRunner.Run>)
+- [type PromptKind](<#PromptKind>)
+  - [func ClassifyPromptKind\(line string\) PromptKind](<#ClassifyPromptKind>)
 - [type Request](<#Request>)
 - [type Result](<#Result>)
 - [type Runner](<#Runner>)
@@ -178,12 +180,15 @@ var DefaultPromptPatterns = []*regexp.Regexp{
     regexp.MustCompile(`(?i)\[y/n\]`),
     regexp.MustCompile(`(?i)continue\?`),
     regexp.MustCompile(`(?i)proceed\?`),
-    regexp.MustCompile(`(?i)permission`),
-    regexp.MustCompile(`(?i)approve`),
-    regexp.MustCompile(`(?i)allow this`),
-    regexp.MustCompile(`(?i)do you want to`),
+
+    regexp.MustCompile(`(?i)(needs?|asking for|requesting|grant)\s+permission|permission\s+to\s+[^?\n]{1,60}\?`),
+    regexp.MustCompile(`(?i)\bapprove\s+[^?\n]{0,40}\?|\bapprove\s+(this|that|the)\b|do you approve`),
+    regexp.MustCompile(`(?i)allow this\b.*\?|allow this\??$`),
+    doYouWantToPromptPattern,
     regexp.MustCompile(`(?i)waiting for`),
     regexp.MustCompile(`(?i)press enter`),
+
+    regexp.MustCompile(`(?im)^\s*((which|what|where|who|how)\b[^?\n]*\b(should|do|would|shall)\s+(i|we)\b|(should|shall|do)\s+(i|we)\b)[^?\n]*\?`),
 }
 ```
 
@@ -347,7 +352,7 @@ CheckRequirements verifies a binding satisfies every requirement.
 Every failing key is named at once. Reporting the first miss alone would turn one plan fix into N dispatch cycles, since the operator cannot see the rest until the one they fixed stops failing.
 
 <a name="DefaultWatchdogConfig"></a>
-## func [DefaultWatchdogConfig](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/watchdog.go#L83>)
+## func [DefaultWatchdogConfig](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/watchdog.go#L108>)
 
 ```go
 func DefaultWatchdogConfig() agent.WatchdogConfig
@@ -376,7 +381,7 @@ func KnownCapability(key string) bool
 KnownCapability reports whether key is in the closed vocabulary.
 
 <a name="StreamJSONWatchdogConfig"></a>
-## func [StreamJSONWatchdogConfig](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/watchdog.go#L99>)
+## func [StreamJSONWatchdogConfig](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/watchdog.go#L125>)
 
 ```go
 func StreamJSONWatchdogConfig() agent.WatchdogConfig
@@ -553,18 +558,23 @@ const (
 ```
 
 <a name="BlockedError"></a>
-## type [BlockedError](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/watchdog.go#L33-L35>)
+## type [BlockedError](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/watchdog.go#L33-L40>)
 
 BlockedError retains a typed, provider\-output\-free reason while preserving errors.Is\(err, ErrAgentBlocked\) compatibility.
 
 ```go
 type BlockedError struct {
     Reason BlockReason
+    // Kind is the closed-taxonomy kind of an interactive prompt, empty for any
+    // other reason. It answers "what was it asking for" without carrying the
+    // prompt text, which the content-safety boundary keeps off operator
+    // surfaces.
+    Kind PromptKind
 }
 ```
 
 <a name="BlockedError.Error"></a>
-### func \(\*BlockedError\) [Error](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/watchdog.go#L37>)
+### func \(\*BlockedError\) [Error](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/watchdog.go#L42>)
 
 ```go
 func (e *BlockedError) Error() string
@@ -573,7 +583,7 @@ func (e *BlockedError) Error() string
 
 
 <a name="BlockedError.Unwrap"></a>
-### func \(\*BlockedError\) [Unwrap](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/watchdog.go#L48>)
+### func \(\*BlockedError\) [Unwrap](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/watchdog.go#L53>)
 
 ```go
 func (e *BlockedError) Unwrap() error
@@ -640,7 +650,7 @@ func (DeclarativeRunner) Run(ctx context.Context, binding Binding, req Request) 
 Run executes one declarative provider turn.
 
 <a name="Failure"></a>
-## type [Failure](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/failure.go#L46-L50>)
+## type [Failure](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/failure.go#L64-L68>)
 
 Failure is the privacy\-safe durable representation of a provider error. Cause remains available transiently for errors.Is/debug logging, but Summary and Category are the only fields suitable for evidence or event persistence.
 
@@ -653,7 +663,7 @@ type Failure struct {
 ```
 
 <a name="ClassifyFailure"></a>
-### func [ClassifyFailure](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/failure.go#L97>)
+### func [ClassifyFailure](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/failure.go#L123>)
 
 ```go
 func ClassifyFailure(err error) Failure
@@ -662,7 +672,7 @@ func ClassifyFailure(err error) Failure
 ClassifyFailure converts a transient provider error to its durable, provider\-output\-free category and summary.
 
 <a name="Failure.Error"></a>
-### func \(Failure\) [Error](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/failure.go#L52>)
+### func \(Failure\) [Error](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/failure.go#L70>)
 
 ```go
 func (f Failure) Error() string
@@ -671,7 +681,7 @@ func (f Failure) Error() string
 
 
 <a name="Failure.RetryBudget"></a>
-### func \(Failure\) [RetryBudget](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/failure.go#L88>)
+### func \(Failure\) [RetryBudget](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/failure.go#L114>)
 
 ```go
 func (f Failure) RetryBudget(configured int) int
@@ -680,7 +690,7 @@ func (f Failure) RetryBudget(configured int) int
 RetryBudget returns the retry count dispatch should hand to the store for this failure: the caller's budget when the failure is worth retrying, and ZERO when it is not, which makes the task fail terminally on this attempt.
 
 <a name="Failure.Retryable"></a>
-### func \(Failure\) [Retryable](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/failure.go#L65>)
+### func \(Failure\) [Retryable](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/failure.go#L83>)
 
 ```go
 func (f Failure) Retryable() bool
@@ -693,7 +703,7 @@ This lives on the classification rather than in dispatch because the answer is a
 The default is RETRYABLE, matching the pre\-classification behavior — a category nobody has reasoned about should not silently become terminal.
 
 <a name="Failure.Unwrap"></a>
-### func \(Failure\) [Unwrap](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/failure.go#L53>)
+### func \(Failure\) [Unwrap](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/failure.go#L71>)
 
 ```go
 func (f Failure) Unwrap() error
@@ -718,8 +728,26 @@ const (
     FailureProcessCleanup FailureCategory = "process_cleanup"
     // FailureOutputLimit means a bounded output/evidence ceiling was crossed.
     FailureOutputLimit FailureCategory = "output_limit"
-    // FailureInteractivePrompt means the CLI requested operator input.
+    // FailureInteractivePrompt means the CLI requested operator input of an
+    // unrecognised shape. The three kind-specific codes below are preferred
+    // when the prompt classifier recognises one, because they carry the only
+    // thing an operator can act on: WHICH response the block needs.
+    //
+    // These are CATEGORIES rather than summary text on purpose. The operator
+    // projection rebuilds a failure from the category alone
+    // (observe.failureForEvent), so a specialised summary never crosses -- only
+    // a new constant does.
     FailureInteractivePrompt FailureCategory = "interactive_prompt"
+    // FailureInteractivePromptPermission means the provider asked to be ALLOWED
+    // to act. Usually answered by a write-path or binding grant, not a
+    // keystroke.
+    FailureInteractivePromptPermission FailureCategory = "interactive_prompt_permission"
+    // FailureInteractivePromptConfirm means a yes/no on an action the CLI
+    // already intended. Usually answered by a flag that suppresses the prompt.
+    FailureInteractivePromptConfirm FailureCategory = "interactive_prompt_confirm"
+    // FailureInteractivePromptClarification means an open question about the
+    // task. The step's scoped context was insufficient, so the PLAN needs work.
+    FailureInteractivePromptClarification FailureCategory = "interactive_prompt_clarification"
     // FailureStall means the renewable progress lease expired.
     FailureStall FailureCategory = "stall_timeout"
     // FailureTurnDeadline means the absolute turn deadline expired.
@@ -848,6 +876,52 @@ func (OpencodeRunner) Run(ctx context.Context, binding Binding, req Request) (Re
 ```
 
 Run spawns \`opencode run \<prompt\> \-\-format json\` and blocks until the CLI exits naturally. A step\_finish with reason=tool\-calls is an intermediate model step; OpenCode 1.18.3 closes the actual run only after session.status becomes idle, so Ralph must consume the complete stream.
+
+<a name="PromptKind"></a>
+## type [PromptKind](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/prompt_kind.go#L28>)
+
+PromptKind is the CLOSED taxonomy of what an interactive block was asking for. It is a fixed constant, never provider text.
+
+Known permission, confirmation, and clarification shapes map to their fixed kinds. An interactive line with no known shape uses PromptKindUnknown; the generic interactive\_prompt reason remains the safe fallback rather than guessing from provider prose.
+
+Surfacing the prompt itself is barred: only this closed set of fixed constants crosses to operator surfaces, never prose from an external process. This gives the operator the distinction without the text.
+
+```go
+type PromptKind string
+```
+
+<a name="PromptKindPermission"></a>
+
+```go
+const (
+    // PromptKindPermission is a request to be ALLOWED to act -- edit a file,
+    // run a command. Usually answerable by a policy change (a wider write path,
+    // a binding grant) rather than a human keystroke.
+    PromptKindPermission PromptKind = "permission"
+    // PromptKindConfirm is a yes/no on an action the CLI already intends. The
+    // cheapest class: usually a flag that suppresses the prompt.
+    PromptKindConfirm PromptKind = "confirm"
+    // PromptKindClarification is an open question about the task. The
+    // expensive class: it means the step's scoped context was insufficient, so
+    // the PLAN needs work, not the configuration.
+    PromptKindClarification PromptKind = "clarification"
+    // PromptKindUnknown means no pattern matched. Deliberately not guessed:
+    // a wrong kind sends the operator to the wrong response, which is worse
+    // than admitting the classifier did not recognise the shape.
+    PromptKindUnknown PromptKind = "unknown"
+)
+```
+
+<a name="ClassifyPromptKind"></a>
+### func [ClassifyPromptKind](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/prompt_kind.go#L68>)
+
+```go
+func ClassifyPromptKind(line string) PromptKind
+```
+
+ClassifyPromptKind derives the kind from a line of provider output.
+
+The INPUT is provider text; the OUTPUT is a fixed constant. That asymmetry is the point \-\- classification happens on Ralph's side of the boundary, and only the constant travels onward.
 
 <a name="Request"></a>
 ## type [Request](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/provider.go#L27-L69>)

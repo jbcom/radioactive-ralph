@@ -118,7 +118,9 @@ func (s *Supervisor) HandlePlanSetStatus(ctx context.Context, args ipc.PlanSetSt
 	return ipc.PlanSetStatusReply{PlanID: args.PlanID, Status: string(target)}, nil
 }
 
-// HandlePlanDelete removes a plan and everything hanging off it.
+// HandlePlanDelete cancels active provider workers for a plan before removing
+// the plan and everything hanging off it. Worker cancellation is best-effort:
+// an already-exited worker does not make an otherwise valid deletion fail.
 //
 // store.DeletePlan was implemented and tested with no caller and no CLI, so
 // accumulated runs could never be pruned -- and the operator task page

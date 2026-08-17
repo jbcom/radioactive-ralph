@@ -2,17 +2,29 @@ package provider
 
 import "regexp"
 
+// doYouWantToPromptExpression recognizes a provider question only when the
+// phrase starts a prompt-shaped line. The old unanchored expression also
+// matched diagnostics and prose that merely mentioned "do you want to", which
+// made the watchdog kill a working provider turn.
+//
+// Some CLIs omit the final question mark, so end-of-line remains sufficient;
+// a full stop, characteristic of quoted prose and diagnostics, is deliberately
+// rejected.
+const doYouWantToPromptExpression = `(?im)^\s*do you want to\b[^.\n]{0,160}(?:\?\s*)?$`
+
+var doYouWantToPromptPattern = regexp.MustCompile(doYouWantToPromptExpression)
+
 // PromptKind is the CLOSED taxonomy of what an interactive block was asking
 // for. It is a fixed constant, never provider text.
 //
-// Every interactive block currently reports one category, interactive_prompt,
-// so an operator learns THAT a turn asked for something and never what kind --
-// a credential request and a routine "(y/n)" look identical, though they need
-// completely different responses.
+// Known permission, confirmation, and clarification shapes map to their fixed
+// kinds. An interactive line with no known shape uses PromptKindUnknown; the
+// generic interactive_prompt reason remains the safe fallback rather than
+// guessing from provider prose.
 //
-// Surfacing the prompt itself is barred: only a closed set of fixed constants
-// crosses to operator surfaces, never prose from an external process. This
-// gives the operator the distinction without the text.
+// Surfacing the prompt itself is barred: only this closed set of fixed
+// constants crosses to operator surfaces, never prose from an external
+// process. This gives the operator the distinction without the text.
 type PromptKind string
 
 const (
@@ -34,14 +46,15 @@ const (
 )
 
 // promptKindPatterns map a matched shape to its kind. Ordered most-specific
-// first: "do you want to" is a confirm, but "permission" anywhere in the line
-// outranks it, since being asked for permission is the more actionable fact.
+// first: a confirmation can contain "permission", but the permission shape
+// outranks it because being asked for permission is the more actionable fact.
 var promptKindPatterns = []struct {
 	re   *regexp.Regexp
 	kind PromptKind
 }{
 	{regexp.MustCompile(`(?i)permission|approve|allow this`), PromptKindPermission},
-	{regexp.MustCompile(`(?i)\(y/n\)|\[y/n\]|continue\?|proceed\?|press enter|do you want to`), PromptKindConfirm},
+	{doYouWantToPromptPattern, PromptKindConfirm},
+	{regexp.MustCompile(`(?i)\(y/n\)|\[y/n\]|continue\?|proceed\?|press enter`), PromptKindConfirm},
 	// Last: an open question is the residual case, and matching it early would
 	// swallow confirms, which also end in "?".
 	{regexp.MustCompile(`(?i)^\s*(which|what|where|how|who|should i)\b.*\?`), PromptKindClarification},

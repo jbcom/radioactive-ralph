@@ -81,7 +81,7 @@ var DefaultPromptPatterns = []*regexp.Regexp{
 	regexp.MustCompile(`(?i)(needs?|asking for|requesting|grant)\s+permission|permission\s+to\s+[^?\n]{1,60}\?`),
 	regexp.MustCompile(`(?i)\bapprove\s+[^?\n]{0,40}\?|\bapprove\s+(this|that|the)\b|do you approve`),
 	regexp.MustCompile(`(?i)allow this\b.*\?|allow this\??$`),
-	regexp.MustCompile(`(?i)do you want to`),
+	doYouWantToPromptPattern,
 	regexp.MustCompile(`(?i)waiting for`),
 	regexp.MustCompile(`(?i)press enter`),
 	// An OPEN QUESTION about the task. Without this the detector never fires on

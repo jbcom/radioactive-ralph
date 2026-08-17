@@ -32,7 +32,8 @@ import (
 
 // ProtoVersion is the wire protocol version this build speaks. The original
 // read-only-TUI surface (status/attach/enqueue/stop/reload-config) is v1; the
-// drive commands (plan-import/plan-set-status/task-approve/worker-kill) are v2;
+// drive commands (plan-import/plan-set-status/plan-delete/task-approve/
+// worker-kill) are v2;
 // safe project-scoped snapshot/message queries are v3; ProjectEnsure's
 // resolve-only mode is v4. A client omitting Request.ProtoVersion is treated as
 // v1 for back-compat.

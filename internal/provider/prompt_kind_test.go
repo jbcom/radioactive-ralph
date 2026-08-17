@@ -8,10 +8,10 @@ import (
 // TestPromptKindIsAClosedTaxonomy gives an operator the one thing the current
 // signal withholds, without crossing the content-safety boundary.
 //
-// Today every interactive block reports the same category: interactive_prompt.
-// An operator learns THAT the turn asked for something, never what KIND -- so a
-// credential request and a routine "(y/n)" are indistinguishable, and the two
-// need completely different responses.
+// The watchdog reports a fixed kind for known prompt shapes and retains an
+// unknown fallback when it cannot classify one. A credential request and a
+// routine "(y/n)" therefore remain distinguishable without exposing either
+// provider line.
 //
 // The obvious fix is to surface the prompt text, and that is barred: only a
 // CLOSED SET of fixed constants crosses to operator surfaces, never prose from
@@ -31,6 +31,7 @@ func TestPromptKindIsAClosedTaxonomy(t *testing.T) {
 		{"posix confirm", "Overwrite existing file? (y/n)", PromptKindConfirm},
 		{"bracketed confirm", "Continue with deploy? [Y/n]", PromptKindConfirm},
 		{"press enter", "Press enter to continue", PromptKindConfirm},
+		{"question confirmation", "Do you want to deploy now?", PromptKindConfirm},
 		{"open question", "Which database should I target?", PromptKindClarification},
 		// Unmatched text must NOT be guessed at. An unknown kind is honest; a
 		// wrong one sends the operator to the wrong response.
@@ -41,6 +42,21 @@ func TestPromptKindIsAClosedTaxonomy(t *testing.T) {
 				t.Errorf("ClassifyPromptKind(%q) = %q, want %q", tc.line, got, tc.want)
 			}
 		})
+	}
+}
+
+// TestDoYouWantToMentionIsNotAConfirmation keeps classification aligned with
+// watchdog detection. A line the watchdog correctly ignores must not acquire a
+// misleading confirm kind through a broader, second copy of the regex.
+func TestDoYouWantToMentionIsNotAConfirmation(t *testing.T) {
+	for _, line := range []string{
+		"The phrase 'do you want to' appears in the provider output.",
+		"The log records do you want to as an example.",
+		"A diagnostic may say do you want to without asking.",
+	} {
+		if got := ClassifyPromptKind(line); got != PromptKindUnknown {
+			t.Errorf("ClassifyPromptKind(%q) = %q, want %q", line, got, PromptKindUnknown)
+		}
 	}
 }
 
