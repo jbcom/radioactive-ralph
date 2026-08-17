@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -188,6 +189,9 @@ func TestResolveManagedOpencodeLaunchRejectsTamperedBundleBeforeBinaryLookup(t *
 
 func installOpencodeLaunchTestBundle(t *testing.T) string {
 	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("adapter installation is unsupported on native Windows")
+	}
 	source := filepath.Join(t.TempDir(), "radioactive_ralph")
 	if err := os.WriteFile(source, []byte("#!/bin/sh\nexit 0\n"), 0o700); err != nil {
 		t.Fatalf("write Ralph fixture: %v", err)
