@@ -151,6 +151,9 @@ func TestInstallReplacesBareCode127WithAbsoluteHookCommand(t *testing.T) {
 }
 
 func TestRenderedOpenCodeProgressHookSwallowsSpawnFailure(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("native Windows providers are disabled")
+	}
 	bun, err := exec.LookPath("bun")
 	if err != nil {
 		t.Fatal("bun is required to execute the generated OpenCode plugin smoke")
