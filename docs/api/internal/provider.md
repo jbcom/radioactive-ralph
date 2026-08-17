@@ -878,7 +878,7 @@ func (OpencodeRunner) Run(ctx context.Context, binding Binding, req Request) (Re
 Run spawns \`opencode run \<prompt\> \-\-format json\` and blocks until the CLI exits naturally. A step\_finish with reason=tool\-calls is an intermediate model step; OpenCode 1.18.3 closes the actual run only after session.status becomes idle, so Ralph must consume the complete stream.
 
 <a name="PromptKind"></a>
-## type [PromptKind](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/prompt_kind.go#L47>)
+## type [PromptKind](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/prompt_kind.go#L50>)
 
 PromptKind is the CLOSED taxonomy of what an interactive block was asking for. It is a fixed constant, never provider text.
 
@@ -913,7 +913,7 @@ const (
 ```
 
 <a name="ClassifyPromptKind"></a>
-### func [ClassifyPromptKind](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/prompt_kind.go#L93>)
+### func [ClassifyPromptKind](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/prompt_kind.go#L96>)
 
 ```go
 func ClassifyPromptKind(line string) PromptKind
