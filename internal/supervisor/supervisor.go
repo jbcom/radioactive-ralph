@@ -81,6 +81,9 @@ type Supervisor struct {
 	// stable ordering that always dispatches the same head of the list.
 	dispatchCursor int
 
+	hookRunsMu sync.Mutex
+	hookRuns   map[hookRunKey]struct{}
+
 	stopCh   chan struct{}
 	stopOnce *sync.Once
 }

@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/jbcom/radioactive-ralph/internal/ipc"
 	"github.com/jbcom/radioactive-ralph/internal/orch"
 	"github.com/jbcom/radioactive-ralph/internal/rlog"
 	"github.com/jbcom/radioactive-ralph/internal/store"
@@ -72,6 +73,8 @@ func runSupervisorMode(ctx context.Context, logFormat string) error {
 		orch.WithBindingResolver(storeBindingResolver(st)),
 		orch.WithContainmentResolver(storeContainmentResolver(st)),
 	}
+	hookEndpoint, _ := ipc.ServiceEndpoint(stateRoot)
+	orchestratorOptions = append(orchestratorOptions, orch.WithHookEndpoint(hookEndpoint))
 	if maxParallel > 0 {
 		orchestratorOptions = append(orchestratorOptions, orch.WithMaxParallel(maxParallel))
 	}

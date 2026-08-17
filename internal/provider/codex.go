@@ -127,6 +127,7 @@ func (CodexRunner) Run(ctx context.Context, binding Binding, req Request) (Resul
 		MaxOutputRetentionBytes: agent.RetentionBudgetForLineBytes(codexRetainedJSONLLineBytes),
 		OversizeOutputPolicy:    agent.DiscardOversizeOutput,
 		MaxObservedOutputBytes:  maxStructuredEvidenceBytes,
+		Env:                     managedHookEnvironment(req),
 	})
 	if err != nil {
 		return Result{}, fmt.Errorf("provider: start codex agent: %w", err)

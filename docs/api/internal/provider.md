@@ -450,7 +450,7 @@ type Binding struct {
 ```
 
 <a name="ResolveBinding"></a>
-### func [ResolveBinding](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/provider.go#L106>)
+### func [ResolveBinding](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/provider.go#L113>)
 
 ```go
 func ResolveBinding(cfg File, local Local, fromConfig VariantFile) (Binding, error)
@@ -924,13 +924,20 @@ ClassifyPromptKind derives the kind from a line of provider output.
 The INPUT is provider text; the OUTPUT is a fixed constant. That asymmetry is the point \-\- classification happens on Ralph's side of the boundary, and only the constant travels onward.
 
 <a name="Request"></a>
-## type [Request](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/provider.go#L27-L69>)
+## type [Request](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/provider.go#L27-L76>)
 
 Request is the provider\-neutral execution contract for one worker turn.
 
 ```go
 type Request struct {
     WorkingDir string
+
+    // ManagedSessionID and HookEndpoint are opaque control-plane coordinates
+    // injected only by Ralph's orchestrator. Generated global hooks no-op when
+    // they are absent and send finite events to the supervisor when present.
+    // They are never provider credentials and must never be logged.
+    ManagedSessionID string
+    HookEndpoint     string
 
     // ContainmentRoot, when set, confines the provider process AND everything
     // it spawns to writing beneath this absolute path, enforced by the kernel
@@ -975,7 +982,7 @@ type Request struct {
 ```
 
 <a name="Result"></a>
-## type [Result](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/provider.go#L88-L98>)
+## type [Result](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/provider.go#L95-L105>)
 
 Result captures the observable output of one provider turn.
 
@@ -994,7 +1001,7 @@ type Result struct {
 ```
 
 <a name="Runner"></a>
-## type [Runner](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/provider.go#L101-L103>)
+## type [Runner](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/provider.go#L108-L110>)
 
 Runner executes one provider turn.
 
@@ -1005,7 +1012,7 @@ type Runner interface {
 ```
 
 <a name="NewRunner"></a>
-### func [NewRunner](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/provider.go#L151>)
+### func [NewRunner](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/provider.go#L158>)
 
 ```go
 func NewRunner(binding Binding) (Runner, error)
@@ -1035,7 +1042,7 @@ func ResolveTurnLimits(binding Binding, req Request) (TurnLimits, error)
 ResolveTurnLimits resolves request overrides over binding configuration over safe defaults. Every result is positive and bounded.
 
 <a name="Usage"></a>
-## type [Usage](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/provider.go#L80-L85>)
+## type [Usage](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/provider.go#L87-L92>)
 
 Usage captures the token/cost accounting for one provider turn. Fields are zero when the provider does not report them. Coverage today: the claude and opencode runners populate Usage from their stream\-json frames; codex and declarative bindings report zero \(their CLIs surface usage differently and are not yet parsed\). CostUSD is authoritative when non\-zero; the runtime accumulates it for spend\-cap enforcement, so a capped variant on an unreported provider still requires a cap value but its cost is not yet metered. Extending codex parsing is the follow\-up to close that gap.
 

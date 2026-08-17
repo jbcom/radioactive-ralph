@@ -128,6 +128,7 @@ func (ClaudeRunner) Run(ctx context.Context, binding Binding, req Request) (Resu
 		// Ralph can still observe natural exit and preserve a later nonzero
 		// process status.
 		OneShotInput: input,
+		Env:          managedHookEnvironment(req),
 	}
 	a, err := agent.Start(ctx, opts)
 	if err != nil {

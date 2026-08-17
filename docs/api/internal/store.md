@@ -35,6 +35,9 @@ The schema is embedded under schema/\*.sql and applied in lexical order by Migra
 - [type Fingerprint](<#Fingerprint>)
   - [func Fingerprints\(ctx context.Context, dir string\) \(\[\]Fingerprint, error\)](<#Fingerprints>)
 - [type GraphTaskSpec](<#GraphTaskSpec>)
+- [type HookTask](<#HookTask>)
+- [type HookVerificationKey](<#HookVerificationKey>)
+- [type HookVerificationState](<#HookVerificationState>)
 - [type OperatorEvent](<#OperatorEvent>)
 - [type OperatorEventPage](<#OperatorEventPage>)
 - [type OperatorMessageMetadata](<#OperatorMessageMetadata>)
@@ -72,6 +75,7 @@ The schema is embedded under schema/\*.sql and applied in lexical order by Migra
   - [func \(s \*Store\) BindTaskCalibration\(ctx context.Context, planID, taskID, calibrationID, capabilitySetJSON string\) error](<#Store.BindTaskCalibration>)
   - [func \(s \*Store\) ClaimNextReady\(ctx context.Context, planID, sessionID, workerID string\) \(\*Task, error\)](<#Store.ClaimNextReady>)
   - [func \(s \*Store\) ClaimTask\(ctx context.Context, planID, taskID, sessionID, workerID string\) \(\*Task, error\)](<#Store.ClaimTask>)
+  - [func \(s \*Store\) ClearHookVerification\(ctx context.Context, sessionID, planID, taskID string\) error](<#Store.ClearHookVerification>)
   - [func \(s \*Store\) ClearTaskBlock\(ctx context.Context, planID, taskID string, blocked TaskStatus\) \(bool, error\)](<#Store.ClearTaskBlock>)
   - [func \(s \*Store\) ClearWorkerTask\(ctx context.Context, workerID, status string\) error](<#Store.ClearWorkerTask>)
   - [func \(s \*Store\) Close\(\) error](<#Store.Close>)
@@ -95,6 +99,8 @@ The schema is embedded under schema/\*.sql and applied in lexical order by Migra
   - [func \(s \*Store\) HeartbeatSession\(ctx context.Context, sessionID string\) error](<#Store.HeartbeatSession>)
   - [func \(s \*Store\) HeartbeatWorker\(ctx context.Context, workerID string\) error](<#Store.HeartbeatWorker>)
   - [func \(s \*Store\) HeartbeatWorkerAndSession\(ctx context.Context, workerID string\) error](<#Store.HeartbeatWorkerAndSession>)
+  - [func \(s \*Store\) HookVerificationStates\(ctx context.Context, sessionID string\) \(map\[HookVerificationKey\]HookVerificationState, error\)](<#Store.HookVerificationStates>)
+  - [func \(s \*Store\) InvalidateHookVerifications\(ctx context.Context, sessionID string\) error](<#Store.InvalidateHookVerifications>)
   - [func \(s \*Store\) ListCalibrationAttempts\(ctx context.Context, planID, taskID string\) \(\[\]CalibrationAttempt, error\)](<#Store.ListCalibrationAttempts>)
   - [func \(s \*Store\) ListCalibrations\(ctx context.Context\) \(\[\]ProviderCalibration, error\)](<#Store.ListCalibrations>)
   - [func \(s \*Store\) ListMessages\(ctx context.Context, planID, taskID string\) \(\[\]A2AMessage, error\)](<#Store.ListMessages>)
@@ -132,6 +138,9 @@ The schema is embedded under schema/\*.sql and applied in lexical order by Migra
   - [func \(s \*Store\) ReserveTaskInput\(ctx context.Context, planID, taskID, path, sha256 string\) error](<#Store.ReserveTaskInput>)
   - [func \(s \*Store\) ReserveTaskOutput\(ctx context.Context, planID, taskID, path, mode string\) error](<#Store.ReserveTaskOutput>)
   - [func \(s \*Store\) ResolveProject\(ctx context.Context, fps \[\]Fingerprint\) \(projectID string, found bool, err error\)](<#Store.ResolveProject>)
+  - [func \(s \*Store\) RunningHookTasks\(ctx context.Context, sessionID string\) \(\[\]HookTask, error\)](<#Store.RunningHookTasks>)
+  - [func \(s \*Store\) SetHookVerificationPending\(ctx context.Context, sessionID, planID, taskID string\) error](<#Store.SetHookVerificationPending>)
+  - [func \(s \*Store\) SetHookVerificationResult\(ctx context.Context, sessionID, planID, taskID string, passed bool\) error](<#Store.SetHookVerificationResult>)
   - [func \(s \*Store\) SetPlanStatus\(ctx context.Context, id string, status PlanStatus\) error](<#Store.SetPlanStatus>)
   - [func \(s \*Store\) SetProjectConfig\(ctx context.Context, projectID, key, value string\) error](<#Store.SetProjectConfig>)
   - [func \(s \*Store\) SetWorkerTask\(ctx context.Context, workerID, planID, taskID string\) error](<#Store.SetWorkerTask>)
@@ -541,6 +550,54 @@ type GraphTaskSpec struct {
     Inputs  []TaskInputSpec
     Outputs []TaskOutputSpec
 }
+```
+
+<a name="HookTask"></a>
+## type [HookTask](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/hook_sessions.go#L11-L16>)
+
+HookTask identifies one currently running task assigned to the managed provider session carried in a generated hook environment. One native\-fanout turn may own several tasks, so callers must verify every returned row.
+
+```go
+type HookTask struct {
+    PlanID   string
+    TaskID   string
+    WorkerID string
+    Provider string
+}
+```
+
+<a name="HookVerificationKey"></a>
+## type [HookVerificationKey](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/hook_verifications.go#L22-L25>)
+
+HookVerificationKey identifies one task verdict within a managed session.
+
+```go
+type HookVerificationKey struct {
+    PlanID string
+    TaskID string
+}
+```
+
+<a name="HookVerificationState"></a>
+## type [HookVerificationState](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/hook_verifications.go#L10>)
+
+HookVerificationState is the finite durable Stop\-check lifecycle.
+
+```go
+type HookVerificationState string
+```
+
+<a name="HookVerificationPending"></a>
+
+```go
+const (
+    // HookVerificationPending means supervisor-owned verification is running.
+    HookVerificationPending HookVerificationState = "pending"
+    // HookVerificationPassed means the last independent check passed.
+    HookVerificationPassed HookVerificationState = "passed"
+    // HookVerificationFailed means the last independent check completed false.
+    HookVerificationFailed HookVerificationState = "failed"
+)
 ```
 
 <a name="OperatorEvent"></a>
@@ -1200,6 +1257,15 @@ It is the graph counterpart to ClaimNextReady, which picks whichever ready task 
 
 The readiness predicate is deliberately identical to ClaimNextReady's, minus the ordering and LIMIT: same claimable statuses, same NOT EXISTS walk over task\_deps. Two predicates that must agree but are written twice would drift, so any change here belongs in both.
 
+<a name="Store.ClearHookVerification"></a>
+### func \(\*Store\) [ClearHookVerification](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/hook_verifications.go#L122-L125>)
+
+```go
+func (s *Store) ClearHookVerification(ctx context.Context, sessionID, planID, taskID string) error
+```
+
+ClearHookVerification removes one inconclusive attempt so a later Stop can retry it. It is distinct from a genuine failed acceptance verdict.
+
 <a name="Store.ClearTaskBlock"></a>
 ### func \(\*Store\) [ClearTaskBlock](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/task_metadata.go#L379>)
 
@@ -1422,6 +1488,24 @@ func (s *Store) HeartbeatWorkerAndSession(ctx context.Context, workerID string) 
 ```
 
 HeartbeatWorkerAndSession refreshes both a worker row AND its owning session row in one call. A worker's session \(spawnWorkerRows\) is not heartbeated by anything else — only the supervisor's own session is \(HeartbeatSession\) — so without this a live worker's session goes stale and the reaper's step\-2 session delete would CASCADE\-delete the still\-running worker, NULLing its task's claim and letting branch \(b\) re\-dispatch a live task \(double execution\). Beating both keeps the session as fresh as the worker for the reaper's staleness math. The two UPDATEs share one tx so a mid\-call failure never leaves the pair inconsistent.
+
+<a name="Store.HookVerificationStates"></a>
+### func \(\*Store\) [HookVerificationStates](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/hook_verifications.go#L29-L32>)
+
+```go
+func (s *Store) HookVerificationStates(ctx context.Context, sessionID string) (map[HookVerificationKey]HookVerificationState, error)
+```
+
+HookVerificationStates returns finite verdicts for one Ralph session. Raw provider data and diagnostics are structurally absent from the table.
+
+<a name="Store.InvalidateHookVerifications"></a>
+### func \(\*Store\) [InvalidateHookVerifications](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/hook_verifications.go#L112>)
+
+```go
+func (s *Store) InvalidateHookVerifications(ctx context.Context, sessionID string) error
+```
+
+InvalidateHookVerifications drops cached verdicts after observable progress. The next Stop must independently verify the new checkout state.
 
 <a name="Store.ListCalibrationAttempts"></a>
 ### func \(\*Store\) [ListCalibrationAttempts](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/calibrations.go#L328>)
@@ -1794,6 +1878,33 @@ func (s *Store) ResolveProject(ctx context.Context, fps []Fingerprint) (projectI
 ```
 
 ResolveProject looks up an existing project by matching ANY of the given fingerprints against project\_identifiers. Returns found=false \(no error\) when no fingerprint matches.
+
+<a name="Store.RunningHookTasks"></a>
+### func \(\*Store\) [RunningHookTasks](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/hook_sessions.go#L21>)
+
+```go
+func (s *Store) RunningHookTasks(ctx context.Context, sessionID string) ([]HookTask, error)
+```
+
+RunningHookTasks returns every live task whose immutable execution metadata names sessionID. It never accepts a provider's own session identifier: only Ralph's random store session id crosses the hook boundary.
+
+<a name="Store.SetHookVerificationPending"></a>
+### func \(\*Store\) [SetHookVerificationPending](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/hook_verifications.go#L58-L61>)
+
+```go
+func (s *Store) SetHookVerificationPending(ctx context.Context, sessionID, planID, taskID string) error
+```
+
+SetHookVerificationPending creates or resets one verification attempt. The live owner checks prevent a stale/reclaimed session from creating evidence.
+
+<a name="Store.SetHookVerificationResult"></a>
+### func \(\*Store\) [SetHookVerificationResult](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/hook_verifications.go#L83-L87>)
+
+```go
+func (s *Store) SetHookVerificationResult(ctx context.Context, sessionID, planID, taskID string, passed bool) error
+```
+
+SetHookVerificationResult records only a finite verdict and only while the same session still owns the running task. A stale async result is discarded.
 
 <a name="Store.SetPlanStatus"></a>
 ### func \(\*Store\) [SetPlanStatus](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/plans.go#L111>)

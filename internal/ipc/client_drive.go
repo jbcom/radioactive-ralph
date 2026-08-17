@@ -187,3 +187,12 @@ func (c *Client) NegotiatedVersion(ctx context.Context) (int, error) {
 	}
 	return st.ProtoVersion, nil
 }
+
+// HookEvent sends one normalized, secret-blind provider event to the
+// supervisor. It uses v5 so an older supervisor fails closed instead of
+// silently accepting a completion signal it cannot enforce.
+func (c *Client) HookEvent(ctx context.Context, args HookEventArgs) (HookEventReply, error) {
+	var reply HookEventReply
+	err := c.versionedCall(ctx, HookProtoVersion, CmdHookEvent, args, &reply)
+	return reply, err
+}
