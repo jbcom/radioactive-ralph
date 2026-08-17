@@ -648,7 +648,7 @@ func configureManagedHooks(
 		return
 	}
 	for _, task := range tasks {
-		if task == nil || strings.TrimSpace(task.AcceptanceJSON) == "" {
+		if task == nil || !hasMechanicalAcceptance(task.AcceptanceJSON) {
 			return
 		}
 	}

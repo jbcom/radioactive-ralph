@@ -22,11 +22,15 @@ func TestRunningHookTasksRequiresLiveClaimAndExecutionBinding(t *testing.T) {
 	if _, err := s.ClaimNextReady(ctx, planID, sessionID, workerID); err != nil {
 		t.Fatalf("ClaimNextReady: %v", err)
 	}
+	tasks, err := s.RunningHookTasks(ctx, sessionID)
+	if err != nil || len(tasks) != 0 {
+		t.Fatalf("claim without execution binding returned hook tasks = %+v, err=%v", tasks, err)
+	}
 	if err := s.RecordTaskExecution(ctx, planID, "task", "claude", "claude", "", "", "", sessionID); err != nil {
 		t.Fatalf("RecordTaskExecution: %v", err)
 	}
 
-	tasks, err := s.RunningHookTasks(ctx, sessionID)
+	tasks, err = s.RunningHookTasks(ctx, sessionID)
 	if err != nil {
 		t.Fatalf("RunningHookTasks: %v", err)
 	}
@@ -35,8 +39,8 @@ func TestRunningHookTasksRequiresLiveClaimAndExecutionBinding(t *testing.T) {
 	}) {
 		t.Fatalf("hook tasks = %+v", tasks)
 	}
-	if err := s.SetHookVerificationPending(ctx, sessionID, planID, "task"); err != nil {
-		t.Fatalf("SetHookVerificationPending: %v", err)
+	if written, err := s.SetHookVerificationPending(ctx, sessionID, planID, "task"); err != nil || !written {
+		t.Fatalf("SetHookVerificationPending: written=%v err=%v", written, err)
 	}
 	states, err := s.HookVerificationStates(ctx, sessionID)
 	if err != nil || states[HookVerificationKey{PlanID: planID, TaskID: "task"}] != HookVerificationPending {
@@ -64,8 +68,8 @@ func TestRunningHookTasksRequiresLiveClaimAndExecutionBinding(t *testing.T) {
 	if err != nil || len(tasks) != 0 {
 		t.Fatalf("released hook tasks = %+v, err=%v", tasks, err)
 	}
-	if err := s.SetHookVerificationPending(ctx, sessionID, planID, "task"); err != nil {
-		t.Fatalf("stale SetHookVerificationPending: %v", err)
+	if written, err := s.SetHookVerificationPending(ctx, sessionID, planID, "task"); err != nil || written {
+		t.Fatalf("stale SetHookVerificationPending: written=%v err=%v", written, err)
 	}
 	states, err = s.HookVerificationStates(ctx, sessionID)
 	if err != nil || len(states) != 0 {

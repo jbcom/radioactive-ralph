@@ -38,12 +38,12 @@ func RunHook(
 	stdout, stderr io.Writer,
 	getenv Environment,
 ) error {
-	if !validAdapter(adapter) || (event != ipc.HookEventPostToolUse && event != ipc.HookEventStop) {
-		return block(adapter, stdout, stderr, "invalid_event")
-	}
 	sessionID := getenv(ManagedSessionEnv)
 	if sessionID == "" {
 		return nil
+	}
+	if !validAdapter(adapter) || (event != ipc.HookEventPostToolUse && event != ipc.HookEventStop) {
+		return block(adapter, stdout, stderr, "invalid_event")
 	}
 	endpoint := getenv(HookEndpointEnv)
 	if endpoint == "" || !validPayload(input, event) {

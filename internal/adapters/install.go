@@ -237,7 +237,7 @@ timeout = 600
 	opencode := fmt.Sprintf(`const hook = %s;
 const invoke = async (event, payload) => {
   const child = Bun.spawn([hook, "hook", "event", "--adapter", "opencode", "--event", event], {
-    stdin: JSON.stringify(payload), stdout: "pipe", stderr: "ignore", env: process.env,
+    stdin: new Blob([JSON.stringify(payload)]), stdout: "pipe", stderr: "ignore", env: process.env,
   });
   const output = await new Response(child.stdout).text();
   const code = await child.exited;

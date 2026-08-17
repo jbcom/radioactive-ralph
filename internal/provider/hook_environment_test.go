@@ -19,8 +19,22 @@ func TestManagedHookEnvironmentReplacesCoordinatesOnce(t *testing.T) {
 }
 
 func TestManagedHookEnvironmentPreservesLegacyNil(t *testing.T) {
-	if got := managedHookEnvironment(Request{}); got != nil {
+	if got := managedHookEnvironmentFrom(Request{}, []string{"PATH=/usr/bin:/bin"}); got != nil {
 		t.Fatalf("unmanaged environment = %#v, want nil", got)
+	}
+}
+
+func TestManagedHookEnvironmentStripsInheritedCoordinatesFromUnmanagedTurn(t *testing.T) {
+	env := managedHookEnvironmentFrom(Request{}, []string{
+		"PATH=/usr/bin:/bin",
+		adapters.ManagedSessionEnv + "=stale-session",
+		adapters.HookEndpointEnv + "=/tmp/stale.sock",
+	})
+	if env == nil {
+		t.Fatal("filtered environment is nil; agent would inherit stale coordinates")
+	}
+	if len(env) != 1 || env[0] != "PATH=/usr/bin:/bin" {
+		t.Fatalf("filtered environment = %#v", env)
 	}
 }
 

@@ -19,6 +19,7 @@ func TestCanStopAsRechecksAcceptanceWithoutCompletingTask(t *testing.T) {
 	}{
 		{name: "passing mechanical", acceptance: `{"command":"exit 0"}`, want: true},
 		{name: "failing mechanical", acceptance: `{"command":"exit 1"}`, want: false},
+		{name: "explicit empty object has no predicate", acceptance: `{}`, want: false},
 		{name: "judgment-only has no independent predicate", acceptance: "", want: false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

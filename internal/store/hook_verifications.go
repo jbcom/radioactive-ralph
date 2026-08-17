@@ -58,9 +58,9 @@ func (s *Store) HookVerificationStates(
 func (s *Store) SetHookVerificationPending(
 	ctx context.Context,
 	sessionID, planID, taskID string,
-) error {
+) (bool, error) {
 	now := s.clock.Now().UTC().Format(time.RFC3339Nano)
-	_, err := s.db.ExecContext(ctx, `
+	result, err := s.db.ExecContext(ctx, `
 		INSERT INTO hook_verifications(session_id, plan_id, task_id, state, updated_at)
 		SELECT ?, ?, ?, 'pending', ?
 		WHERE EXISTS (
@@ -73,9 +73,13 @@ func (s *Store) SetHookVerificationPending(
 		DO UPDATE SET state = 'pending', updated_at = excluded.updated_at
 	`, sessionID, planID, taskID, now, planID, taskID, sessionID, sessionID)
 	if err != nil {
-		return fmt.Errorf("store: set hook verification pending: %w", err)
+		return false, fmt.Errorf("store: set hook verification pending: %w", err)
 	}
-	return nil
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("store: inspect hook verification pending result: %w", err)
+	}
+	return affected == 1, nil
 }
 
 // SetHookVerificationResult records only a finite verdict and only while the

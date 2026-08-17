@@ -19,6 +19,9 @@ the supervisor:
 Tool arguments, tool results, transcripts, prompts, environment snapshots, and
 provider credentials never cross the hook IPC boundary. An ordinary session
 without `RALPH_MANAGED_SESSION_ID` is a no-op and does not even read hook stdin.
+A provider launch that is not managed also strips stale inherited Ralph hook
+coordinates, so a contaminated service environment cannot accidentally enroll
+an ordinary turn.
 A managed malformed event, missing executable, missing supervisor, protocol
 mismatch, or rejected verification fails closed with static output and exit
 code 2; input and environment values are never echoed.
@@ -41,7 +44,10 @@ check closes the hook-to-process-exit race. A native-fanout turn must pass every
 assigned task.
 
 Adapter v1 manages only tasks with explicit mechanical acceptance. A
-judgment-only task needs bounded assistant evidence that is not available at
+malformed acceptance document, an empty object, or an object without a
+non-empty command or file predicate is not mechanical acceptance and cannot
+enable the hook gate. A judgment-only task needs bounded assistant evidence
+that is not available at
 the common secret-blind hook boundary, so the orchestrator deliberately omits
 the managed marker for that turn. Treating `Stop`, process exit, or hook success
 as judgment evidence would violate the completion contract; trapping the turn

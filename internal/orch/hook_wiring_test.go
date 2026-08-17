@@ -22,6 +22,13 @@ func TestConfigureManagedHooksRequiresExplicitAcceptanceForEveryTask(t *testing.
 	if req.ManagedSessionID != "" || req.HookEndpoint != "" {
 		t.Fatalf("mixed fanout was partially hook-managed: %+v", req)
 	}
+	for _, acceptance := range []string{"{}", `{"dir":"."}`, `{"command":"  "}`, "not-json"} {
+		req = provider.Request{}
+		configureManagedHooks(&req, "session", "/tmp/hook.sock", &store.Task{AcceptanceJSON: acceptance})
+		if req.ManagedSessionID != "" || req.HookEndpoint != "" {
+			t.Fatalf("non-mechanical acceptance %q enabled hooks: %+v", acceptance, req)
+		}
+	}
 
 	req = provider.Request{}
 	configureManagedHooks(&req, "session", "", explicit)

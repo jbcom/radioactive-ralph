@@ -13,7 +13,12 @@ func TestRunHookUnmanagedIsNoopWithoutReadingSecretPayload(t *testing.T) {
 	reader := &panicReader{}
 	var stdout, stderr bytes.Buffer
 	err := RunHook(context.Background(), "claude", "PostToolUse", reader,
-		&stdout, &stderr, func(string) string { return "" })
+		&stdout, &stderr, func(key string) string {
+			if key == HookEndpointEnv {
+				return secret
+			}
+			return ""
+		})
 	if err != nil {
 		t.Fatalf("unmanaged RunHook: %v", err)
 	}
@@ -22,6 +27,18 @@ func TestRunHookUnmanagedIsNoopWithoutReadingSecretPayload(t *testing.T) {
 	}
 	if strings.Contains(stdout.String()+stderr.String(), secret) {
 		t.Fatal("unmanaged hook echoed secret")
+	}
+}
+
+func TestRunHookUnmanagedInvalidEventRemainsNoop(t *testing.T) {
+	reader := &panicReader{}
+	var stdout, stderr bytes.Buffer
+	if err := RunHook(context.Background(), "unknown", "unknown", reader,
+		&stdout, &stderr, func(string) string { return "" }); err != nil {
+		t.Fatalf("unmanaged invalid event: %v", err)
+	}
+	if reader.read || stdout.Len() != 0 || stderr.Len() != 0 {
+		t.Fatal("unmanaged invalid event was not a strict no-op")
 	}
 }
 

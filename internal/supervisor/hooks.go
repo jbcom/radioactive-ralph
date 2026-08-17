@@ -2,7 +2,9 @@ package supervisor
 
 import (
 	"context"
+	"hash/fnv"
 	"slices"
+	"sync"
 	"time"
 
 	"github.com/jbcom/radioactive-ralph/internal/ipc"
@@ -30,6 +32,9 @@ func (s *Supervisor) HandleHookEvent(
 		args.SessionID == "" {
 		return ipc.HookEventReply{Allow: false, Reason: "invalid_event"}, nil
 	}
+	eventLock := s.hookEventLock(args.SessionID)
+	eventLock.Lock()
+	defer eventLock.Unlock()
 
 	tasks, err := s.store.RunningHookTasks(ctx, args.SessionID)
 	if err != nil {
@@ -46,6 +51,9 @@ func (s *Supervisor) HandleHookEvent(
 	}
 
 	if args.Event == ipc.HookEventPostToolUse {
+		if s.beforeHookInvalidation != nil {
+			s.beforeHookInvalidation()
+		}
 		if err := s.store.InvalidateHookVerifications(ctx, args.SessionID); err != nil {
 			s.log("hook verification invalidation failed")
 			return ipc.HookEventReply{Allow: false, Reason: "internal_error"}, nil
@@ -91,10 +99,15 @@ func (s *Supervisor) HandleHookEvent(
 			pending = true
 			continue
 		}
-		if err := s.store.SetHookVerificationPending(ctx, args.SessionID, task.PlanID, task.TaskID); err != nil {
+		written, err := s.store.SetHookVerificationPending(ctx, args.SessionID, task.PlanID, task.TaskID)
+		if err != nil {
 			s.releaseHookRun(key)
 			s.log("hook verification start failed")
 			return ipc.HookEventReply{Allow: false, Reason: "internal_error"}, nil
+		}
+		if !written {
+			s.releaseHookRun(key)
+			return ipc.HookEventReply{Allow: false, Reason: "ownership_changed"}, nil
 		}
 		started = true
 		s.orch.VerifyStopAsync(task.PlanID, task.TaskID, args.SessionID, func(passed bool, verifyErr error) {
@@ -127,6 +140,12 @@ func (s *Supervisor) HandleHookEvent(
 		return ipc.HookEventReply{Allow: false, Reason: "verification_failed"}, nil
 	}
 	return ipc.HookEventReply{Allow: false, Reason: "verification_required"}, nil
+}
+
+func (s *Supervisor) hookEventLock(sessionID string) *sync.Mutex {
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(sessionID))
+	return &s.hookEventLocks[h.Sum32()%uint32(len(s.hookEventLocks))]
 }
 
 func (s *Supervisor) claimHookRun(key hookRunKey) bool {

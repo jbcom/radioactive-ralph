@@ -110,6 +110,9 @@ func mechanicalAcceptanceCheck(ctx context.Context, dir string, acceptanceJSON s
 	if err := json.Unmarshal([]byte(acceptanceJSON), &acc); err != nil {
 		return false, "", fmt.Errorf("orch: unmarshal acceptance: %w", err)
 	}
+	if strings.TrimSpace(acc.Command) == "" && strings.TrimSpace(acc.FileExists) == "" {
+		return false, "explicit acceptance has no mechanical predicate", nil
+	}
 
 	checkDir := acc.Dir
 	if checkDir == "" {
@@ -127,6 +130,17 @@ func mechanicalAcceptanceCheck(ctx context.Context, dir string, acceptanceJSON s
 	}
 
 	return true, "", nil
+}
+
+func hasMechanicalAcceptance(acceptanceJSON string) bool {
+	if strings.TrimSpace(acceptanceJSON) == "" {
+		return false
+	}
+	var acc Acceptance
+	if err := json.Unmarshal([]byte(acceptanceJSON), &acc); err != nil {
+		return false
+	}
+	return strings.TrimSpace(acc.Command) != "" || strings.TrimSpace(acc.FileExists) != ""
 }
 
 func checkFileExists(dir, path string) (bool, string, error) {

@@ -145,6 +145,75 @@ func TestHandleHookEventDoesNotParkStopBehindAcceptance(t *testing.T) {
 	}
 }
 
+func TestHandleHookEventSerializesProgressInvalidationBeforeStopVerdict(t *testing.T) {
+	ctx := context.Background()
+	sup := newTestSupervisor(t, clockwork.NewFakeClock())
+	sessionID := seedManagedHookTask(t, sup, `{"command":"exit 0"}`)
+	tasks, err := sup.store.RunningHookTasks(ctx, sessionID)
+	if err != nil || len(tasks) != 1 {
+		t.Fatalf("RunningHookTasks = %+v, err=%v", tasks, err)
+	}
+	written, err := sup.store.SetHookVerificationPending(
+		ctx, sessionID, tasks[0].PlanID, tasks[0].TaskID)
+	if err != nil || !written {
+		t.Fatalf("SetHookVerificationPending: written=%v err=%v", written, err)
+	}
+	if err := sup.store.SetHookVerificationResult(
+		ctx, sessionID, tasks[0].PlanID, tasks[0].TaskID, true); err != nil {
+		t.Fatalf("SetHookVerificationResult: %v", err)
+	}
+
+	invalidationEntered := make(chan struct{})
+	releaseInvalidation := make(chan struct{})
+	sup.beforeHookInvalidation = func() {
+		close(invalidationEntered)
+		<-releaseInvalidation
+	}
+	t.Cleanup(func() {
+		sup.beforeHookInvalidation = nil
+		select {
+		case <-releaseInvalidation:
+		default:
+			close(releaseInvalidation)
+		}
+	})
+
+	progressDone := make(chan ipc.HookEventReply, 1)
+	go func() {
+		reply, _ := sup.HandleHookEvent(ctx, ipc.HookEventArgs{
+			Adapter: "claude", Event: ipc.HookEventPostToolUse, SessionID: sessionID,
+		})
+		progressDone <- reply
+	}()
+	select {
+	case <-invalidationEntered:
+	case <-time.After(time.Second):
+		t.Fatal("progress hook did not reach invalidation seam")
+	}
+
+	stopDone := make(chan ipc.HookEventReply, 1)
+	go func() {
+		reply, _ := sup.HandleHookEvent(ctx, ipc.HookEventArgs{
+			Adapter: "claude", Event: ipc.HookEventStop, SessionID: sessionID,
+		})
+		stopDone <- reply
+	}()
+	select {
+	case reply := <-stopDone:
+		t.Fatalf("Stop raced past in-flight progress invalidation: %+v", reply)
+	case <-time.After(25 * time.Millisecond):
+	}
+
+	close(releaseInvalidation)
+	if reply := <-progressDone; !reply.Allow || reply.Reason != "progress_recorded" {
+		t.Fatalf("progress reply = %+v", reply)
+	}
+	if reply := <-stopDone; reply.Allow || reply.Reason != "verification_started" {
+		t.Fatalf("post-invalidation Stop reply = %+v", reply)
+	}
+	sup.orch.Wait()
+}
+
 func seedManagedHookTask(t *testing.T, sup *Supervisor, acceptance string) string {
 	t.Helper()
 	ctx := context.Background()

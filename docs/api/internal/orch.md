@@ -455,7 +455,7 @@ AbsorbDecisionLog reads workerID's XDG decision log \(if any\) and emits its con
 A missing decision log file is not an error — most workers write no decisions and that's fine; AbsorbDecisionLog is a no\-op in that case.
 
 <a name="Orchestrator.CanStopAs"></a>
-### func \(\*Orchestrator\) [CanStopAs](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/orch/verify.go#L264-L267>)
+### func \(\*Orchestrator\) [CanStopAs](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/orch/verify.go#L278-L281>)
 
 ```go
 func (o *Orchestrator) CanStopAs(ctx context.Context, planID, taskID, reportingSession string) (bool, error)
@@ -526,7 +526,7 @@ func (o *Orchestrator) SetBaseContext(ctx context.Context)
 SetBaseContext sets the long\-lived context async dispatch goroutines run under. The supervisor calls this once at the top of Run with its run context — the orchestrator is constructed before that context exists, so it can't be a construction option there. Must be called before the first DispatchNext. A nil ctx is ignored.
 
 <a name="Orchestrator.VerifyAndComplete"></a>
-### func \(\*Orchestrator\) [VerifyAndComplete](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/orch/verify.go#L247>)
+### func \(\*Orchestrator\) [VerifyAndComplete](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/orch/verify.go#L261>)
 
 ```go
 func (o *Orchestrator) VerifyAndComplete(ctx context.Context, planID, taskID string, ev a2a.Evidence) (done bool, err error)
@@ -535,7 +535,7 @@ func (o *Orchestrator) VerifyAndComplete(ctx context.Context, planID, taskID str
 VerifyAndComplete is THE BACKBONE: it never trusts a worker's termination or self\-report. It checks ev against task's acceptance criteria — re\-running mechanical checks in pure Go — and only marks the task done in the store if verification passes. Otherwise it marks the task failed \(retryable, per the task's normal retry budget\) and emits a worker.verification\_failed event carrying the rejection reason.
 
 <a name="Orchestrator.VerifyAndCompleteAs"></a>
-### func \(\*Orchestrator\) [VerifyAndCompleteAs](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/orch/verify.go#L345-L349>)
+### func \(\*Orchestrator\) [VerifyAndCompleteAs](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/orch/verify.go#L359-L363>)
 
 ```go
 func (o *Orchestrator) VerifyAndCompleteAs(ctx context.Context, planID, taskID, reportingSession string, ev a2a.Evidence) (done bool, err error)
@@ -548,7 +548,7 @@ The session has to be passed in rather than read from the task. store.MarkDone a
 An empty reportingSession keeps the old behavior for orchestrator\-initiated verification, which has no separate reporter.
 
 <a name="Orchestrator.VerifyStopAsync"></a>
-### func \(\*Orchestrator\) [VerifyStopAsync](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/orch/verify.go#L309-L312>)
+### func \(\*Orchestrator\) [VerifyStopAsync](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/orch/verify.go#L323-L326>)
 
 ```go
 func (o *Orchestrator) VerifyStopAsync(planID, taskID, reportingSession string, done func(bool, error))

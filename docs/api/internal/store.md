@@ -139,7 +139,7 @@ The schema is embedded under schema/\*.sql and applied in lexical order by Migra
   - [func \(s \*Store\) ReserveTaskOutput\(ctx context.Context, planID, taskID, path, mode string\) error](<#Store.ReserveTaskOutput>)
   - [func \(s \*Store\) ResolveProject\(ctx context.Context, fps \[\]Fingerprint\) \(projectID string, found bool, err error\)](<#Store.ResolveProject>)
   - [func \(s \*Store\) RunningHookTasks\(ctx context.Context, sessionID string\) \(\[\]HookTask, error\)](<#Store.RunningHookTasks>)
-  - [func \(s \*Store\) SetHookVerificationPending\(ctx context.Context, sessionID, planID, taskID string\) error](<#Store.SetHookVerificationPending>)
+  - [func \(s \*Store\) SetHookVerificationPending\(ctx context.Context, sessionID, planID, taskID string\) \(bool, error\)](<#Store.SetHookVerificationPending>)
   - [func \(s \*Store\) SetHookVerificationResult\(ctx context.Context, sessionID, planID, taskID string, passed bool\) error](<#Store.SetHookVerificationResult>)
   - [func \(s \*Store\) SetPlanStatus\(ctx context.Context, id string, status PlanStatus\) error](<#Store.SetPlanStatus>)
   - [func \(s \*Store\) SetProjectConfig\(ctx context.Context, projectID, key, value string\) error](<#Store.SetProjectConfig>)
@@ -1258,7 +1258,7 @@ It is the graph counterpart to ClaimNextReady, which picks whichever ready task 
 The readiness predicate is deliberately identical to ClaimNextReady's, minus the ordering and LIMIT: same claimable statuses, same NOT EXISTS walk over task\_deps. Two predicates that must agree but are written twice would drift, so any change here belongs in both.
 
 <a name="Store.ClearHookVerification"></a>
-### func \(\*Store\) [ClearHookVerification](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/hook_verifications.go#L122-L125>)
+### func \(\*Store\) [ClearHookVerification](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/hook_verifications.go#L126-L129>)
 
 ```go
 func (s *Store) ClearHookVerification(ctx context.Context, sessionID, planID, taskID string) error
@@ -1499,7 +1499,7 @@ func (s *Store) HookVerificationStates(ctx context.Context, sessionID string) (m
 HookVerificationStates returns finite verdicts for one Ralph session. Raw provider data and diagnostics are structurally absent from the table.
 
 <a name="Store.InvalidateHookVerifications"></a>
-### func \(\*Store\) [InvalidateHookVerifications](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/hook_verifications.go#L112>)
+### func \(\*Store\) [InvalidateHookVerifications](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/hook_verifications.go#L116>)
 
 ```go
 func (s *Store) InvalidateHookVerifications(ctx context.Context, sessionID string) error
@@ -1892,13 +1892,13 @@ RunningHookTasks returns every live task whose immutable execution metadata name
 ### func \(\*Store\) [SetHookVerificationPending](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/hook_verifications.go#L58-L61>)
 
 ```go
-func (s *Store) SetHookVerificationPending(ctx context.Context, sessionID, planID, taskID string) error
+func (s *Store) SetHookVerificationPending(ctx context.Context, sessionID, planID, taskID string) (bool, error)
 ```
 
 SetHookVerificationPending creates or resets one verification attempt. The live owner checks prevent a stale/reclaimed session from creating evidence.
 
 <a name="Store.SetHookVerificationResult"></a>
-### func \(\*Store\) [SetHookVerificationResult](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/hook_verifications.go#L83-L87>)
+### func \(\*Store\) [SetHookVerificationResult](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/store/hook_verifications.go#L87-L91>)
 
 ```go
 func (s *Store) SetHookVerificationResult(ctx context.Context, sessionID, planID, taskID string, passed bool) error

@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -87,8 +88,19 @@ func TestInstallReplacesBareCode127WithAbsoluteHookCommand(t *testing.T) {
 	if !strings.Contains(string(opencodeRaw), wantAbsolute) ||
 		!strings.Contains(string(opencodeRaw), `"tool.execute.after"`) ||
 		!strings.Contains(string(opencodeRaw), `event.type !== "session.idle"`) ||
+		!strings.Contains(string(opencodeRaw), `stdin: new Blob([JSON.stringify(payload)])`) ||
 		!strings.Contains(string(opencodeRaw), `Bun.sleep(2000)`) {
 		t.Fatalf("OpenCode plugin missing absolute commands/events: %s", opencodeRaw)
+	}
+	if bun, err := exec.LookPath("bun"); err == nil {
+		pluginPath := filepath.Join(target, "current", "opencode-plugin.js")
+		script := `const plugin = await import(` + strconv.Quote(pluginPath) + `); ` +
+			`const hooks = await plugin.RadioactiveRalphEnforcement(); ` +
+			`await hooks["tool.execute.after"]({sessionID: "smoke"});`
+		cmd := exec.Command(bun, "-e", script)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("OpenCode Bun.spawn Blob smoke: %v\n%s", err, out)
+		}
 	}
 
 	// Post-fix smoke under the identical sanitized PATH. The command resolves
