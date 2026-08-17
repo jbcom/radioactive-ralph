@@ -119,7 +119,11 @@ func TestResolveManagedOpencodeLaunchUsesVerifiedAbsoluteWrapper(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolveOpencodeLaunch: %v", err)
 	}
-	defer launch.cleanup()
+	defer func() {
+		if err := launch.cleanup(); err != nil {
+			t.Errorf("cleanup managed launch: %v", err)
+		}
+	}()
 	bundle, err := adapters.ResolveCurrentBundle(target)
 	if err != nil {
 		t.Fatalf("ResolveCurrentBundle: %v", err)
@@ -198,6 +202,20 @@ func TestOpencodeVerificationProgressIntervalFailsClosedForImpossibleLease(t *te
 	if interval, err := opencodeVerificationProgressInterval(300 * time.Millisecond); err != nil ||
 		interval != 100*time.Millisecond {
 		t.Fatalf("300ms stall resolved to (%s, %v), want 100ms", interval, err)
+	}
+}
+
+func TestCleanupOpenCodeLaunchClearsResultAndSurfacesFailure(t *testing.T) {
+	originalErr := errors.New("provider failure")
+	cleanupErr := errors.New("cleanup failure")
+	result := Result{SessionID: "must-not-escape"}
+	retErr := originalErr
+	cleanupOpenCodeLaunch(&result, &retErr, func() error { return cleanupErr })
+	if result != (Result{}) {
+		t.Fatalf("cleanup failure retained partial result: %+v", result)
+	}
+	if !errors.Is(retErr, originalErr) || !errors.Is(retErr, cleanupErr) {
+		t.Fatalf("cleanup failure was not joined with provider failure: %v", retErr)
 	}
 }
 

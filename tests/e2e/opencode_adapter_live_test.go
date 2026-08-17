@@ -156,7 +156,11 @@ func runLiveOpenCodeLauncherWithEnv(
 		if err != nil {
 			t.Fatalf("prepare isolated live OpenCode runtime: %v", err)
 		}
-		defer runtimePaths.Cleanup()
+		defer func() {
+			if err := runtimePaths.Cleanup(); err != nil {
+				t.Errorf("cleanup isolated live OpenCode runtime: %v", err)
+			}
+		}()
 		launcherArgs = append(launcherArgs, "--runtime-root", runtimePaths.Root)
 	}
 	launcherArgs = append(launcherArgs, "--")

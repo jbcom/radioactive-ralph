@@ -72,9 +72,26 @@ func isOpenCodeRuntimeChild(parent, root string) bool {
 }
 
 // Cleanup removes only the launch-private child carried by a runtime value
-// created or resolved by this package. A caller-constructed value is inert.
-func (r OpenCodeRuntimePaths) Cleanup() {
-	if r.parent != "" && isOpenCodeRuntimeChild(r.parent, r.Root) {
-		_ = os.RemoveAll(r.Root)
+// created or resolved by this package. It restores traversal on directories
+// without following symlinks so provider-created mode changes cannot strand
+// copied credentials. A caller-constructed value fails without deleting.
+func (r OpenCodeRuntimePaths) Cleanup() error {
+	if r.parent == "" || !isOpenCodeRuntimeChild(r.parent, r.Root) {
+		return fmt.Errorf("adapters: invalid OpenCode runtime cleanup target")
 	}
+	if err := filepath.WalkDir(r.Root, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if entry.IsDir() {
+			return os.Chmod(path, 0o700) //nolint:gosec // exact launch-private directory; WalkDir never follows symlinks
+		}
+		return nil
+	}); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("adapters: restore OpenCode runtime traversal: %w", err)
+	}
+	if err := os.RemoveAll(r.Root); err != nil {
+		return fmt.Errorf("adapters: remove OpenCode runtime: %w", err)
+	}
+	return nil
 }

@@ -74,7 +74,11 @@ func TestOpenCodeRuntimeAllowsStateButRejectsConfigurationEntrypoints(t *testing
 	if err != nil {
 		t.Fatalf("PrepareOpenCodeRuntime: %v", err)
 	}
-	defer runtimePaths.Cleanup()
+	defer func() {
+		if err := runtimePaths.Cleanup(); err != nil {
+			t.Errorf("cleanup OpenCode runtime: %v", err)
+		}
+	}()
 	if err := os.WriteFile(filepath.Join(runtimePaths.Home, "runtime-state"),
 		[]byte("isolated\n"), 0o600); err != nil {
 		t.Fatalf("write managed runtime state: %v", err)
@@ -118,10 +122,14 @@ func TestOpenCodeRuntimeIsUniqueCleanableAndRejectsCompatibleHomeSkillDiscovery(
 	}
 	second, err := PrepareOpenCodeRuntime(bundle)
 	if err != nil {
-		first.Cleanup()
+		_ = first.Cleanup()
 		t.Fatalf("prepare second OpenCode runtime: %v", err)
 	}
-	defer second.Cleanup()
+	defer func() {
+		if err := second.Cleanup(); err != nil {
+			t.Errorf("cleanup second OpenCode runtime: %v", err)
+		}
+	}()
 	if first.Root == second.Root {
 		t.Fatalf("concurrent OpenCode runtimes share root %q", first.Root)
 	}
@@ -132,7 +140,9 @@ func TestOpenCodeRuntimeIsUniqueCleanableAndRejectsCompatibleHomeSkillDiscovery(
 		!strings.Contains(err.Error(), "not isolated") {
 		t.Fatalf("compatible home skill discovery accepted: %v", err)
 	}
-	first.Cleanup()
+	if err := first.Cleanup(); err != nil {
+		t.Fatalf("clean first OpenCode runtime: %v", err)
+	}
 	if _, err := os.Stat(first.Root); !os.IsNotExist(err) {
 		t.Fatalf("OpenCode runtime cleanup left root: %v", err)
 	}
@@ -144,8 +154,73 @@ func TestCallerConstructedOpenCodeRuntimeCannotDeleteArbitraryRoot(t *testing.T)
 	if err := os.WriteFile(marker, []byte("keep\n"), 0o600); err != nil {
 		t.Fatalf("write cleanup marker: %v", err)
 	}
-	OpenCodeRuntimePaths{Root: root}.Cleanup()
+	if err := (OpenCodeRuntimePaths{Root: root}).Cleanup(); err == nil {
+		t.Fatal("caller-constructed runtime cleanup did not fail closed")
+	}
 	if _, err := os.Stat(marker); err != nil {
 		t.Fatalf("caller-constructed runtime deleted arbitrary root: %v", err)
+	}
+}
+
+func TestOpenCodeRuntimeCleanupRestoresTraversalWithoutFollowingSymlinks(t *testing.T) {
+	parent := t.TempDir()
+	root := filepath.Join(parent, "launch-cleanup")
+	home, config := filepath.Join(root, "home"), filepath.Join(root, "config")
+	for _, path := range []string{home, config} {
+		if err := os.MkdirAll(path, 0o700); err != nil {
+			t.Fatalf("create runtime path: %v", err)
+		}
+	}
+	locked := filepath.Join(home, "locked")
+	if err := os.Mkdir(locked, 0o700); err != nil {
+		t.Fatalf("create locked directory: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(locked, "auth-copy"), []byte("secret\n"), 0o600); err != nil {
+		t.Fatalf("write cleanup fixture: %v", err)
+	}
+	outside := t.TempDir()
+	outsideMarker := filepath.Join(outside, "keep")
+	if err := os.WriteFile(outsideMarker, []byte("keep\n"), 0o600); err != nil {
+		t.Fatalf("write outside marker: %v", err)
+	}
+	if err := os.Symlink(outside, filepath.Join(locked, "outside-link")); err != nil {
+		t.Fatalf("create cleanup symlink fixture: %v", err)
+	}
+	if err := os.Chmod(locked, 0); err != nil {
+		t.Fatalf("remove traversal from fixture: %v", err)
+	}
+	runtimePaths := OpenCodeRuntimePaths{
+		Root: root, Home: home, ConfigDir: config, parent: parent,
+	}
+	if err := runtimePaths.Cleanup(); err != nil {
+		t.Fatalf("cleanup mode-zero runtime: %v", err)
+	}
+	if _, err := os.Stat(root); !os.IsNotExist(err) {
+		t.Fatalf("mode-zero runtime remained after cleanup: %v", err)
+	}
+	if _, err := os.Stat(outsideMarker); err != nil {
+		t.Fatalf("cleanup followed runtime symlink: %v", err)
+	}
+}
+
+func TestOpenCodeRuntimeCleanupSurfacesRemovalFailure(t *testing.T) {
+	parent := t.TempDir()
+	root := filepath.Join(parent, "launch-blocked")
+	if err := os.Mkdir(root, 0o700); err != nil {
+		t.Fatalf("create blocked runtime: %v", err)
+	}
+	runtimePaths := OpenCodeRuntimePaths{Root: root, parent: parent}
+	if err := os.Chmod(parent, 0o500); err != nil {
+		t.Fatalf("make runtime parent read-only: %v", err)
+	}
+	err := runtimePaths.Cleanup()
+	if restoreErr := os.Chmod(parent, 0o700); restoreErr != nil {
+		t.Fatalf("restore runtime parent: %v", restoreErr)
+	}
+	if err == nil {
+		t.Fatal("runtime cleanup silently ignored removal failure")
+	}
+	if cleanupErr := runtimePaths.Cleanup(); cleanupErr != nil {
+		t.Fatalf("cleanup after restoring parent: %v", cleanupErr)
 	}
 }

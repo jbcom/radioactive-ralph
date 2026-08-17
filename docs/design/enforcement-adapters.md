@@ -74,7 +74,9 @@ It also owns a private runtime parent outside the immutable release. Every
 managed OpenCode launch receives a unique 0700 home/config pair below that
 parent, and Ralph removes the pair after provider and final-Stop completion.
 Concurrent workers therefore never share writable config, package, or cache
-state. OpenCode may bootstrap package/cache state there, but Ralph
+state. Cleanup restores traversal on launch-private directories without
+following symlinks and fails provider completion if removal cannot be proven,
+so copied credentials cannot be silently stranded. OpenCode may bootstrap package/cache state there, but Ralph
 rejects every documented config, plugin, command, agent, mode, skill, and
 compatible global-skill discovery entry point before each launch. Ralph disables
 project config and supplies exactly the reviewed generated plugin through the

@@ -57,7 +57,7 @@ Package provider adapts configured CLI backends into radioactive\_ralph's provid
   - [func \(l Local\) BinaryFor\(providerName string\) \(string, bool\)](<#Local.BinaryFor>)
 - [type Model](<#Model>)
 - [type OpencodeRunner](<#OpencodeRunner>)
-  - [func \(OpencodeRunner\) Run\(ctx context.Context, binding Binding, req Request\) \(Result, error\)](<#OpencodeRunner.Run>)
+  - [func \(OpencodeRunner\) Run\(ctx context.Context, binding Binding, req Request\) \(result Result, retErr error\)](<#OpencodeRunner.Run>)
 - [type PromptKind](<#PromptKind>)
   - [func ClassifyPromptKind\(line string\) PromptKind](<#ClassifyPromptKind>)
 - [type Request](<#Request>)
@@ -869,10 +869,10 @@ type OpencodeRunner struct{}
 ```
 
 <a name="OpencodeRunner.Run"></a>
-### func \(OpencodeRunner\) [Run](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/opencode.go#L61>)
+### func \(OpencodeRunner\) [Run](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/opencode.go#L61-L63>)
 
 ```go
-func (OpencodeRunner) Run(ctx context.Context, binding Binding, req Request) (Result, error)
+func (OpencodeRunner) Run(ctx context.Context, binding Binding, req Request) (result Result, retErr error)
 ```
 
 Run spawns \`opencode run \<prompt\> \-\-format json\` and blocks until the CLI exits naturally. A step\_finish with reason=tool\-calls is an intermediate model step; OpenCode 1.18.3 closes the actual run only after session.status becomes idle, so Ralph must consume the complete stream.

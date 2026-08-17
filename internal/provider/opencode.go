@@ -58,7 +58,9 @@ const minOpenCodeVerificationProgressInterval = 100 * time.Millisecond
 // CLI exits naturally. A step_finish with reason=tool-calls is an
 // intermediate model step; OpenCode 1.18.3 closes the actual run only after
 // session.status becomes idle, so Ralph must consume the complete stream.
-func (OpencodeRunner) Run(ctx context.Context, binding Binding, req Request) (Result, error) {
+func (OpencodeRunner) Run(
+	ctx context.Context, binding Binding, req Request,
+) (result Result, retErr error) {
 	limits, err := ResolveTurnLimits(binding, req)
 	if err != nil {
 		return Result{}, err
@@ -86,9 +88,7 @@ func (OpencodeRunner) Run(ctx context.Context, binding Binding, req Request) (Re
 	if err != nil {
 		return Result{}, err
 	}
-	if launch.cleanup != nil {
-		defer launch.cleanup()
-	}
+	defer cleanupOpenCodeLaunch(&result, &retErr, launch.cleanup)
 
 	opts := agent.Options{
 		Command:               launch.command,
@@ -210,7 +210,18 @@ type opencodeLaunch struct {
 	args                  []string
 	containmentWritePaths []string
 	runtimeRoot           string
-	cleanup               func()
+	cleanup               func() error
+}
+
+func cleanupOpenCodeLaunch(result *Result, retErr *error, cleanup func() error) {
+	if cleanup == nil {
+		return
+	}
+	if cleanupErr := cleanup(); cleanupErr != nil {
+		*result = Result{}
+		*retErr = errors.Join(
+			*retErr, fmt.Errorf("provider: clean managed OpenCode runtime: %w", cleanupErr))
+	}
 }
 
 func resolveOpencodeLaunch(
