@@ -149,8 +149,17 @@ func runLiveOpenCodeLauncherWithEnv(
 	launcherArgs := make([]string, 0, 7+len(args))
 	launcherArgs = append(launcherArgs,
 		"hook", "launch-opencode", "--binary", openCode,
-		"--adapter-root", bundle.Target, "--",
+		"--adapter-root", bundle.Target,
 	)
+	if session != "" && endpoint != "" {
+		runtimePaths, err := adapters.PrepareOpenCodeRuntime(bundle)
+		if err != nil {
+			t.Fatalf("prepare isolated live OpenCode runtime: %v", err)
+		}
+		defer runtimePaths.Cleanup()
+		launcherArgs = append(launcherArgs, "--runtime-root", runtimePaths.Root)
+	}
+	launcherArgs = append(launcherArgs, "--")
 	launcherArgs = append(launcherArgs, args...)
 	cmd := exec.CommandContext(ctx, bundle.Executable, launcherArgs...) //nolint:gosec // exact verified test bundle and operator-installed provider
 	env := liveOpenCodeEnvironment(os.Environ(), map[string]string{

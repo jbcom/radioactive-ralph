@@ -245,3 +245,25 @@ func TestInstallRejectsSymlinkedExistingReleaseEntry(t *testing.T) {
 		t.Fatalf("Install accepted symlinked release entry: %v", err)
 	}
 }
+
+func TestInstallRejectsSymlinkedRuntimeRoot(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("native Windows providers are disabled")
+	}
+	source := filepath.Join(t.TempDir(), "fake-ralph")
+	if err := os.WriteFile(source, []byte("#!/bin/sh\nexit 0\n"), 0o700); err != nil {
+		t.Fatalf("write fake executable: %v", err)
+	}
+	target := filepath.Join(t.TempDir(), "bundle")
+	if err := os.Mkdir(target, 0o700); err != nil {
+		t.Fatalf("create bundle target: %v", err)
+	}
+	outside := t.TempDir()
+	if err := os.Symlink(outside, filepath.Join(target, "runtime")); err != nil {
+		t.Fatalf("plant runtime symlink: %v", err)
+	}
+	if _, err := Install(source, target); err == nil ||
+		!strings.Contains(err.Error(), "runtime root is invalid") {
+		t.Fatalf("Install accepted symlinked runtime root: %v", err)
+	}
+}

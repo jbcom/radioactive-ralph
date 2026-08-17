@@ -56,6 +56,7 @@ func Install(sourceExecutable, target string) (Manifest, error) {
 	digest := hex.EncodeToString(sum[:])
 	releaseName := digest
 	releasesDir := filepath.Join(target, "releases")
+	runtimeDir := filepath.Join(target, "runtime")
 	releaseDir := filepath.Join(releasesDir, releaseName)
 	currentExecutable := filepath.Join(target, "current", "bin", "radioactive_ralph")
 
@@ -83,6 +84,16 @@ func Install(sourceExecutable, target string) (Manifest, error) {
 	}
 	if err := os.Chmod(releasesDir, 0o700); err != nil { //nolint:gosec // directories require execute permission to remain traversable
 		return Manifest{}, fmt.Errorf("adapters: restrict releases: %w", err)
+	}
+	if err := os.MkdirAll(runtimeDir, 0o700); err != nil {
+		return Manifest{}, fmt.Errorf("adapters: create runtime root: %w", err)
+	}
+	runtimeInfo, err := os.Lstat(runtimeDir) //nolint:gosec // fixed installer-owned child under the operator-selected target
+	if err != nil || !runtimeInfo.IsDir() {
+		return Manifest{}, fmt.Errorf("adapters: runtime root is invalid")
+	}
+	if err := os.Chmod(runtimeDir, 0o700); err != nil { //nolint:gosec // directories require execute permission to remain traversable
+		return Manifest{}, fmt.Errorf("adapters: restrict runtime root: %w", err)
 	}
 	if _, err := os.Stat(releaseDir); os.IsNotExist(err) { //nolint:gosec // releaseDir is intentionally below the operator-selected install root
 		stage, err := os.MkdirTemp(releasesDir, ".install-*")
@@ -116,11 +127,6 @@ func writeRelease(stage string, executable []byte, files map[string][]byte) erro
 	binDir := filepath.Join(stage, "bin")
 	if err := os.MkdirAll(binDir, 0o700); err != nil {
 		return fmt.Errorf("adapters: create bin directory: %w", err)
-	}
-	for _, name := range []string{"opencode-managed-home", "opencode-managed-config"} {
-		if err := os.Mkdir(filepath.Join(stage, name), 0o700); err != nil {
-			return fmt.Errorf("adapters: create managed OpenCode directory: %w", err)
-		}
 	}
 	if err := writeSynced(filepath.Join(binDir, "radioactive_ralph"), executable, 0o700); err != nil {
 		return err
@@ -170,19 +176,6 @@ func verifyRelease(releaseDir, digest string, executableSize int64, files map[st
 	}
 	sum := sha256.Sum256(executable)
 	if hex.EncodeToString(sum[:]) != digest {
-		return fmt.Errorf("adapters: existing content-addressed release is corrupt")
-	}
-	for _, name := range []string{"opencode-managed-home", "opencode-managed-config"} {
-		dir := filepath.Join(releaseDir, name)
-		entry, err := os.Lstat(dir) //nolint:gosec // fixed installer-owned child under the operator-selected release root
-		if err != nil || !entry.IsDir() || entry.Mode().Perm() != 0o700 {
-			return fmt.Errorf("adapters: existing content-addressed release is corrupt")
-		}
-	}
-	if !safeManagedOpenCodeDirectories(
-		filepath.Join(releaseDir, "opencode-managed-home"),
-		filepath.Join(releaseDir, "opencode-managed-config"),
-	) {
 		return fmt.Errorf("adapters: existing content-addressed release is corrupt")
 	}
 	for name, want := range files {

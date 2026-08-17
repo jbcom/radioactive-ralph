@@ -25,6 +25,7 @@ const (
 	openCodeStopPollInterval        = 2 * time.Second
 	openCodeStopPollAttempts        = 360
 	openCodeStopPollTimeout         = 12 * time.Minute
+	maxOpenCodeAuthBytes            = 1 << 20
 )
 
 type openCodeStopPolling struct {
@@ -227,6 +228,9 @@ func managedOpenCodeEnvironment(opts OpenCodeLaunchOptions) ([]string, error) {
 	if err != nil {
 		return nil, fmt.Errorf("encode managed OpenCode config: %w", err)
 	}
+	if err := copyOpenCodeAuth(opts.Env, dataHome); err != nil {
+		return nil, fmt.Errorf("copy managed OpenCode authentication: %w", err)
+	}
 
 	replacements := map[string]string{
 		"HOME":                    opts.Home,
@@ -243,6 +247,65 @@ func managedOpenCodeEnvironment(opts OpenCodeLaunchOptions) ([]string, error) {
 		openCodePureEnv:   true,
 	}
 	return replaceEnvironment(opts.Env, replacements, remove), nil
+}
+
+// copyOpenCodeAuth preserves only OpenCode's documented credential file in
+// the launch-private data root. Its contents never enter generated artifacts,
+// process arguments, logs, or Ralph's finite failure protocol.
+func copyOpenCodeAuth(env []string, privateDataHome string) error {
+	lookup := environmentLookup(env)
+	callerDataHome := lookup("XDG_DATA_HOME")
+	if callerDataHome == "" {
+		home := lookup("HOME")
+		if home == "" {
+			return nil
+		}
+		callerDataHome = filepath.Join(home, ".local", "share")
+	}
+	if !filepath.IsAbs(callerDataHome) {
+		return fmt.Errorf("OpenCode authentication root is invalid")
+	}
+	sourcePath := filepath.Join(callerDataHome, "opencode", "auth.json")
+	entry, err := os.Lstat(sourcePath) //nolint:gosec // operator-owned documented OpenCode credential path
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil || !entry.Mode().IsRegular() || entry.Size() < 0 || entry.Size() > maxOpenCodeAuthBytes {
+		return fmt.Errorf("OpenCode authentication file is invalid")
+	}
+	source, err := os.Open(sourcePath) //nolint:gosec // validated documented OpenCode credential path
+	if err != nil {
+		return fmt.Errorf("open OpenCode authentication file")
+	}
+	defer func() { _ = source.Close() }()
+	opened, err := source.Stat()
+	if err != nil || !opened.Mode().IsRegular() || !os.SameFile(entry, opened) {
+		return fmt.Errorf("OpenCode authentication file changed during validation")
+	}
+
+	targetDir := filepath.Join(privateDataHome, "opencode")
+	if err := os.MkdirAll(targetDir, 0o700); err != nil {
+		return fmt.Errorf("create private OpenCode data directory")
+	}
+	targetPath := filepath.Join(targetDir, "auth.json")
+	target, err := os.OpenFile(targetPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600) //nolint:gosec // fixed child of fresh launch-private data root
+	if err != nil {
+		return fmt.Errorf("create private OpenCode authentication file")
+	}
+	copied, copyErr := io.Copy(target, io.LimitReader(source, maxOpenCodeAuthBytes+1))
+	if copyErr == nil && copied != entry.Size() {
+		copyErr = fmt.Errorf("OpenCode authentication file size changed")
+	}
+	if copyErr == nil {
+		copyErr = target.Sync()
+	}
+	if closeErr := target.Close(); copyErr == nil {
+		copyErr = closeErr
+	}
+	if copyErr != nil {
+		return fmt.Errorf("copy private OpenCode authentication file")
+	}
+	return nil
 }
 
 // OpenCode bootstraps package metadata and node_modules under its private

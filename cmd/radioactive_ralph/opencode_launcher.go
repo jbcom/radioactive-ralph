@@ -18,10 +18,11 @@ func maybeRunOpenCodeLauncher(args []string) (bool, int) {
 	}
 	flags := flag.NewFlagSet("hook launch-opencode", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
-	var binary, adapterRoot string
+	var binary, adapterRoot, runtimeRoot string
 	var verificationProgressInterval time.Duration
 	flags.StringVar(&binary, "binary", "", "")
 	flags.StringVar(&adapterRoot, "adapter-root", "", "")
+	flags.StringVar(&runtimeRoot, "runtime-root", "", "")
 	flags.DurationVar(
 		&verificationProgressInterval,
 		"verification-progress-interval",
@@ -51,9 +52,14 @@ func maybeRunOpenCodeLauncher(args []string) (bool, int) {
 			fmt.Fprintln(os.Stderr, "Radioactive Ralph managed OpenCode launch failed.")
 			return true, 1
 		}
+		runtimePaths, err := adapters.ResolveOpenCodeRuntime(bundle, runtimeRoot)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "Radioactive Ralph managed OpenCode launch failed.")
+			return true, 1
+		}
 		opts.Plugin = bundle.OpenCodePlugin
-		opts.Home = bundle.OpenCodeHome
-		opts.ConfigDir = bundle.OpenCodeConfigDir
+		opts.Home = runtimePaths.Home
+		opts.ConfigDir = runtimePaths.ConfigDir
 	}
 	return true, adapters.RunOpenCodeLauncher(opts)
 }

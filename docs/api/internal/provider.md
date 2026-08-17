@@ -869,7 +869,7 @@ type OpencodeRunner struct{}
 ```
 
 <a name="OpencodeRunner.Run"></a>
-### func \(OpencodeRunner\) [Run](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/opencode.go#L59>)
+### func \(OpencodeRunner\) [Run](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/opencode.go#L61>)
 
 ```go
 func (OpencodeRunner) Run(ctx context.Context, binding Binding, req Request) (Result, error)

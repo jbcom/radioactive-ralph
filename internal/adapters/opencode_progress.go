@@ -17,6 +17,7 @@ type openCodeVerificationProgress struct {
 func startOpenCodeVerificationProgress(
 	output io.Writer, interval time.Duration,
 ) *openCodeVerificationProgress {
+	_, _ = fmt.Fprintln(output, managedOpenCodeVerificationWait)
 	progress := &openCodeVerificationProgress{
 		stopCh: make(chan struct{}),
 		doneCh: make(chan struct{}),

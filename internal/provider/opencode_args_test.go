@@ -119,6 +119,7 @@ func TestResolveManagedOpencodeLaunchUsesVerifiedAbsoluteWrapper(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolveOpencodeLaunch: %v", err)
 	}
+	defer launch.cleanup()
 	bundle, err := adapters.ResolveCurrentBundle(target)
 	if err != nil {
 		t.Fatalf("ResolveCurrentBundle: %v", err)
@@ -129,6 +130,7 @@ func TestResolveManagedOpencodeLaunchUsesVerifiedAbsoluteWrapper(t *testing.T) {
 	wantPrefix := []string{
 		"hook", "launch-opencode", "--binary", realBinary,
 		"--adapter-root", bundle.Target,
+		"--runtime-root", launch.runtimeRoot,
 		"--verification-progress-interval", "100ms", "--",
 	}
 	if len(launch.args) < len(wantPrefix) || !reflect.DeepEqual(launch.args[:len(wantPrefix)], wantPrefix) {
@@ -137,12 +139,16 @@ func TestResolveManagedOpencodeLaunchUsesVerifiedAbsoluteWrapper(t *testing.T) {
 	if slices.Contains(launch.args, "--pure") {
 		t.Fatalf("managed args disable the reviewed plugin: %v", launch.args)
 	}
-	wantContainmentWritePaths := []string{bundle.OpenCodeHome, bundle.OpenCodeConfigDir}
+	wantContainmentWritePaths := []string{
+		filepath.Join(launch.runtimeRoot, "home"), filepath.Join(launch.runtimeRoot, "config"),
+	}
 	if !reflect.DeepEqual(launch.containmentWritePaths, wantContainmentWritePaths) {
 		t.Fatalf("managed containment paths = %v, want exact ordered paths %v",
 			launch.containmentWritePaths, wantContainmentWritePaths)
 	}
-	for _, forbidden := range []string{bundle.Target, bundle.Root, filepath.Dir(bundle.Root)} {
+	for _, forbidden := range []string{
+		bundle.Target, bundle.Root, bundle.OpenCodeRuntimeDir, filepath.Dir(bundle.Root),
+	} {
 		if slices.Contains(launch.containmentWritePaths, forbidden) {
 			t.Fatalf("managed containment paths include broad release path %q: %v",
 				forbidden, launch.containmentWritePaths)
@@ -182,7 +188,9 @@ func TestResolveUnmanagedOpencodeLaunchIsDirectAndPure(t *testing.T) {
 }
 
 func TestOpencodeVerificationProgressIntervalFailsClosedForImpossibleLease(t *testing.T) {
-	for _, stall := range []time.Duration{-time.Second, 0, time.Nanosecond, 2 * time.Nanosecond} {
+	for _, stall := range []time.Duration{
+		-time.Second, 0, time.Nanosecond, 2 * time.Nanosecond, 299 * time.Millisecond,
+	} {
 		if interval, err := opencodeVerificationProgressInterval(stall); err == nil || interval != 0 {
 			t.Fatalf("stall %s resolved to (%s, %v), want fail-closed error", stall, interval, err)
 		}

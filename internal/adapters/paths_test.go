@@ -33,8 +33,7 @@ func TestResolveCurrentBundleVerifiesExactRelease(t *testing.T) {
 		t.Fatalf("exact release = bundle:%q current:%q err=%v", bundle.Root, resolved, err)
 	}
 	for _, exact := range []string{
-		bundle.Executable, bundle.OpenCodePlugin,
-		bundle.OpenCodeHome, bundle.OpenCodeConfigDir,
+		bundle.Executable, bundle.OpenCodePlugin, bundle.OpenCodeRuntimeDir,
 	} {
 		if strings.Contains(exact, string(filepath.Separator)+"current"+string(filepath.Separator)) {
 			t.Fatalf("verified execution path still traverses movable current link: %q", exact)
@@ -58,7 +57,7 @@ func TestResolveCurrentBundleVerifiesExactRelease(t *testing.T) {
 	}
 }
 
-func TestResolveCurrentBundleAllowsRuntimeStateButRejectsConfigurationEntrypoints(t *testing.T) {
+func TestOpenCodeRuntimeAllowsStateButRejectsConfigurationEntrypoints(t *testing.T) {
 	source := filepath.Join(t.TempDir(), "radioactive_ralph")
 	if err := os.WriteFile(source, []byte("#!/bin/sh\nexit 0\n"), 0o700); err != nil {
 		t.Fatalf("write source: %v", err)
@@ -71,31 +70,36 @@ func TestResolveCurrentBundleAllowsRuntimeStateButRejectsConfigurationEntrypoint
 	if err != nil {
 		t.Fatalf("ResolveCurrentBundle: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(bundle.OpenCodeHome, "runtime-state"),
+	runtimePaths, err := PrepareOpenCodeRuntime(bundle)
+	if err != nil {
+		t.Fatalf("PrepareOpenCodeRuntime: %v", err)
+	}
+	defer runtimePaths.Cleanup()
+	if err := os.WriteFile(filepath.Join(runtimePaths.Home, "runtime-state"),
 		[]byte("isolated\n"), 0o600); err != nil {
 		t.Fatalf("write managed runtime state: %v", err)
 	}
-	if _, err := ResolveCurrentBundle(target); err != nil {
+	if _, err := ResolveOpenCodeRuntime(bundle, runtimePaths.Root); err != nil {
 		t.Fatalf("isolated runtime state rejected: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(bundle.OpenCodeConfigDir, "package.json"),
+	if err := os.WriteFile(filepath.Join(runtimePaths.ConfigDir, "package.json"),
 		[]byte(`{"private":true}`), 0o600); err != nil {
 		t.Fatalf("write OpenCode package state: %v", err)
 	}
-	if _, err := ResolveCurrentBundle(target); err != nil {
+	if _, err := ResolveOpenCodeRuntime(bundle, runtimePaths.Root); err != nil {
 		t.Fatalf("OpenCode package state rejected: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(bundle.OpenCodeConfigDir, "opencode.json"),
+	if err := os.WriteFile(filepath.Join(runtimePaths.ConfigDir, "opencode.json"),
 		[]byte(`{"plugin":["unreviewed"]}`), 0o600); err != nil {
 		t.Fatalf("contaminate managed config: %v", err)
 	}
-	if _, err := ResolveCurrentBundle(target); err == nil ||
-		!strings.Contains(err.Error(), "release is corrupt") {
+	if _, err := ResolveOpenCodeRuntime(bundle, runtimePaths.Root); err == nil ||
+		!strings.Contains(err.Error(), "not isolated") {
 		t.Fatalf("managed config content accepted: %v", err)
 	}
 }
 
-func TestResolveCurrentBundleRejectsCompatibleHomeSkillDiscovery(t *testing.T) {
+func TestOpenCodeRuntimeIsUniqueCleanableAndRejectsCompatibleHomeSkillDiscovery(t *testing.T) {
 	source := filepath.Join(t.TempDir(), "radioactive_ralph")
 	if err := os.WriteFile(source, []byte("#!/bin/sh\nexit 0\n"), 0o700); err != nil {
 		t.Fatalf("write source: %v", err)
@@ -108,11 +112,40 @@ func TestResolveCurrentBundleRejectsCompatibleHomeSkillDiscovery(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ResolveCurrentBundle: %v", err)
 	}
-	if err := os.Mkdir(filepath.Join(bundle.OpenCodeHome, ".agents"), 0o700); err != nil {
+	first, err := PrepareOpenCodeRuntime(bundle)
+	if err != nil {
+		t.Fatalf("prepare first OpenCode runtime: %v", err)
+	}
+	second, err := PrepareOpenCodeRuntime(bundle)
+	if err != nil {
+		first.Cleanup()
+		t.Fatalf("prepare second OpenCode runtime: %v", err)
+	}
+	defer second.Cleanup()
+	if first.Root == second.Root {
+		t.Fatalf("concurrent OpenCode runtimes share root %q", first.Root)
+	}
+	if err := os.Mkdir(filepath.Join(first.Home, ".agents"), 0o700); err != nil {
 		t.Fatalf("create compatible skill root: %v", err)
 	}
-	if _, err := ResolveCurrentBundle(target); err == nil ||
-		!strings.Contains(err.Error(), "release is corrupt") {
+	if _, err := ResolveOpenCodeRuntime(bundle, first.Root); err == nil ||
+		!strings.Contains(err.Error(), "not isolated") {
 		t.Fatalf("compatible home skill discovery accepted: %v", err)
+	}
+	first.Cleanup()
+	if _, err := os.Stat(first.Root); !os.IsNotExist(err) {
+		t.Fatalf("OpenCode runtime cleanup left root: %v", err)
+	}
+}
+
+func TestCallerConstructedOpenCodeRuntimeCannotDeleteArbitraryRoot(t *testing.T) {
+	root := t.TempDir()
+	marker := filepath.Join(root, "keep")
+	if err := os.WriteFile(marker, []byte("keep\n"), 0o600); err != nil {
+		t.Fatalf("write cleanup marker: %v", err)
+	}
+	OpenCodeRuntimePaths{Root: root}.Cleanup()
+	if _, err := os.Stat(marker); err != nil {
+		t.Fatalf("caller-constructed runtime deleted arbitrary root: %v", err)
 	}
 }

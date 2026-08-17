@@ -52,6 +52,8 @@ var ErrOpencodeMissingFinish = errors.New("provider: opencode exited without a s
 // aggregate usage.
 var ErrOpencodeInvalidUsage = errors.New("provider: opencode reported invalid usage")
 
+const minOpenCodeVerificationProgressInterval = 100 * time.Millisecond
+
 // Run spawns `opencode run <prompt> --format json` and blocks until the
 // CLI exits naturally. A step_finish with reason=tool-calls is an
 // intermediate model step; OpenCode 1.18.3 closes the actual run only after
@@ -83,6 +85,9 @@ func (OpencodeRunner) Run(ctx context.Context, binding Binding, req Request) (Re
 		binding, req, invocation, limits.StallTimeout, os.Getenv, exec.LookPath)
 	if err != nil {
 		return Result{}, err
+	}
+	if launch.cleanup != nil {
+		defer launch.cleanup()
 	}
 
 	opts := agent.Options{
@@ -204,6 +209,8 @@ type opencodeLaunch struct {
 	command               string
 	args                  []string
 	containmentWritePaths []string
+	runtimeRoot           string
+	cleanup               func()
 }
 
 func resolveOpencodeLaunch(
@@ -239,16 +246,22 @@ func resolveOpencodeLaunch(
 	if err != nil {
 		return opencodeLaunch{}, fmt.Errorf("provider: resolve absolute OpenCode binary: %w", err)
 	}
+	runtimePaths, err := adapters.PrepareOpenCodeRuntime(bundle)
+	if err != nil {
+		return opencodeLaunch{}, fmt.Errorf("provider: prepare managed OpenCode runtime: %w", err)
+	}
 	args = append([]string{
 		"hook", "launch-opencode",
 		"--binary", realBinary,
 		"--adapter-root", bundle.Target,
+		"--runtime-root", runtimePaths.Root,
 		"--verification-progress-interval", progressInterval.String(),
 		"--",
 	}, args...)
 	return opencodeLaunch{
-		command: bundle.Executable, args: args,
-		containmentWritePaths: []string{bundle.OpenCodeHome, bundle.OpenCodeConfigDir},
+		command: bundle.Executable, args: args, runtimeRoot: runtimePaths.Root,
+		containmentWritePaths: []string{runtimePaths.Home, runtimePaths.ConfigDir},
+		cleanup:               runtimePaths.Cleanup,
 	}, nil
 }
 
@@ -257,7 +270,7 @@ func opencodeVerificationProgressInterval(stallTimeout time.Duration) (time.Dura
 		return 0, fmt.Errorf("provider: managed OpenCode stall timeout must be positive")
 	}
 	interval := stallTimeout / 3
-	if interval <= 0 {
+	if interval < minOpenCodeVerificationProgressInterval {
 		return 0, fmt.Errorf("provider: managed OpenCode stall timeout is too short")
 	}
 	return interval, nil

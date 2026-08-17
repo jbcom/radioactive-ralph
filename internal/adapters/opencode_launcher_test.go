@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -63,7 +64,8 @@ func TestOpenCodeLauncherFinalStopIsFiniteAndFailClosed(t *testing.T) {
 			if code := runOpenCodeLauncher(opts, openCodeStopPolling{attempts: 1}); code != tc.wantCode {
 				t.Fatalf("exit = %d, want %d", code, tc.wantCode)
 			}
-			if stdout.String() != tc.wantOutput || stderr.Len() != 0 {
+			if stdout.String() != tc.wantOutput ||
+				stderr.String() != managedOpenCodeVerificationWait+"\n" {
 				t.Fatalf("protocol = stdout:%q stderr:%q", stdout.String(), stderr.String())
 			}
 			got, calls := handler.observed()
@@ -97,8 +99,8 @@ func TestOpenCodeLauncherPollsStartedAndPendingUntilAcceptancePasses(t *testing.
 	if got := handler.callCount(); got != 3 {
 		t.Fatalf("Stop calls = %d, want 3", got)
 	}
-	if stderr.Len() != 0 {
-		t.Fatalf("short polling emitted premature progress: %q", stderr.String())
+	if stderr.String() != managedOpenCodeVerificationWait+"\n" {
+		t.Fatalf("short polling initial progress = %q", stderr.String())
 	}
 }
 
@@ -122,8 +124,8 @@ func TestOpenCodeLauncherPendingExhaustionIsBoundedAndFailClosed(t *testing.T) {
 	if _, calls := handler.observed(); calls != 3 {
 		t.Fatalf("Stop calls = %d, want bounded 3", calls)
 	}
-	if stderr.Len() != 0 {
-		t.Fatalf("short bounded polling emitted premature progress: %q", stderr.String())
+	if stderr.String() != managedOpenCodeVerificationWait+"\n" {
+		t.Fatalf("short bounded polling initial progress = %q", stderr.String())
 	}
 }
 
@@ -138,7 +140,11 @@ func TestOpenCodeLauncherProgressRemainsInsideShortStallLease(t *testing.T) {
 	var stdout bytes.Buffer
 	progress := newProgressSignalWriter(2)
 	progressTimedOut := make(chan struct{}, 1)
+	initialProgressMissing := make(chan struct{}, 1)
 	handler.afterFirst = func() {
+		if progress.Count() < 1 {
+			initialProgressMissing <- struct{}{}
+		}
 		if !progress.wait(2 * time.Second) {
 			progressTimedOut <- struct{}{}
 		}
@@ -159,6 +165,11 @@ func TestOpenCodeLauncherProgressRemainsInsideShortStallLease(t *testing.T) {
 	select {
 	case <-progressTimedOut:
 		t.Fatal("verification progress did not reach the synchronized heartbeat boundary")
+	default:
+	}
+	select {
+	case <-initialProgressMissing:
+		t.Fatal("initial verification heartbeat was not emitted before the first Stop RPC")
 	default:
 	}
 }
@@ -216,7 +227,8 @@ func TestOpenCodeLauncherUnavailableSupervisorIsStaticSecretBlindAndPathIndepend
 		t.Fatalf("exit = %d, want fail-closed 2", code)
 	}
 	combined := stdout.String() + stderr.String()
-	if stdout.String() != "{\"status\":\"supervisor_unavailable\"}\n" || stderr.Len() != 0 {
+	if stdout.String() != "{\"status\":\"supervisor_unavailable\"}\n" ||
+		stderr.String() != managedOpenCodeVerificationWait+"\n" {
 		t.Fatalf("unavailable protocol = stdout:%q stderr:%q", stdout.String(), stderr.String())
 	}
 	if strings.Contains(combined, secret) || strings.Contains(combined, opts.Binary) {
@@ -354,6 +366,7 @@ func TestOpenCodeLauncherDoesNotExposeCallerStateRoots(t *testing.T) {
 	defer func() { _ = server.Stop() }()
 	opts := launcherOptions(t, "", endpoint)
 	callerHome := environmentLookup(opts.Env)("HOME")
+	const authSecret = "secret caller state"
 	canaries := []string{
 		filepath.Join(callerHome, ".local", "share", "opencode", "auth.json"),
 		filepath.Join(callerHome, ".cache", "opencode", "skills", "cached-skill"),
@@ -363,7 +376,7 @@ func TestOpenCodeLauncherDoesNotExposeCallerStateRoots(t *testing.T) {
 		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 			t.Fatalf("mkdir caller canary: %v", err)
 		}
-		if err := os.WriteFile(path, []byte("secret caller state\n"), 0o600); err != nil {
+		if err := os.WriteFile(path, []byte(authSecret+"\n"), 0o600); err != nil {
 			t.Fatalf("write caller canary: %v", err)
 		}
 	}
@@ -372,12 +385,48 @@ func TestOpenCodeLauncherDoesNotExposeCallerStateRoots(t *testing.T) {
 		"XDG_CACHE_HOME="+filepath.Join(callerHome, ".cache"),
 		"XDG_STATE_HOME="+filepath.Join(callerHome, ".local", "state"),
 	)
+	privateAuth := filepath.Join(opts.Home, ".local", "share", "opencode", "auth.json")
 	script := "#!/bin/sh\n" +
 		"case \"$HOME:$XDG_DATA_HOME:$XDG_CACHE_HOME:$XDG_STATE_HOME\" in *" +
-		shellQuote(callerHome) + "*) exit 41;; esac\n"
+		shellQuote(callerHome) + "*) exit 41;; esac\n" +
+		"IFS= read -r copied_auth < " + shellQuote(privateAuth) + "\n" +
+		"[ \"$copied_auth\" = 'secret caller state' ] || exit 42\n"
 	opts.Binary = writeOpenCodeLauncherFixture(t, script)
+	var stdout, stderr bytes.Buffer
+	opts.Stdout, opts.Stderr = &stdout, &stderr
 	if code := RunOpenCodeLauncher(opts); code != 0 {
 		t.Fatalf("caller state isolation exit = %d", code)
+	}
+	if strings.Contains(stdout.String()+stderr.String(), authSecret) {
+		t.Fatal("managed launcher echoed copied OpenCode authentication")
+	}
+	info, err := os.Stat(privateAuth)
+	if err != nil || info.Mode().Perm() != 0o600 {
+		t.Fatalf("private authentication mode = %v, err=%v", info, err)
+	}
+}
+
+func TestOpenCodeLauncherRejectsInvalidAuthBeforeProviderStartWithoutEcho(t *testing.T) {
+	callerHome := t.TempDir()
+	authPath := filepath.Join(callerHome, ".local", "share", "opencode", "auth.json")
+	if err := os.MkdirAll(authPath, 0o700); err != nil {
+		t.Fatalf("create invalid auth directory: %v", err)
+	}
+	marker := filepath.Join(t.TempDir(), "launched")
+	binary := writeOpenCodeLauncherFixture(t, "#!/bin/sh\n: > \"$RALPH_TEST_MARKER\"\n")
+	opts := launcherOptions(t, binary, "/tmp/unused.sock")
+	opts.Env = append(opts.Env, "HOME="+callerHome, "RALPH_TEST_MARKER="+marker)
+	var stdout, stderr bytes.Buffer
+	opts.Stdout, opts.Stderr = &stdout, &stderr
+	if code := RunOpenCodeLauncher(opts); code != 1 {
+		t.Fatalf("invalid auth exit = %d, want 1", code)
+	}
+	if stdout.Len() != 0 || stderr.String() != managedOpenCodeLauncherFailure+"\n" ||
+		strings.Contains(stderr.String(), authPath) {
+		t.Fatalf("invalid auth output = stdout:%q stderr:%q", stdout.String(), stderr.String())
+	}
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatalf("provider started despite invalid auth: %v", err)
 	}
 }
 
@@ -405,7 +454,8 @@ func launcherOptions(t *testing.T, binary, endpoint string) OpenCodeLaunchOption
 			ManagedSessionEnv + "=managed-session",
 			HookEndpointEnv + "=" + endpoint,
 		},
-		Stdin: strings.NewReader("provider-input"),
+		Stdin:  strings.NewReader("provider-input"),
+		Stderr: io.Discard,
 	}
 }
 
@@ -531,6 +581,12 @@ func (w *progressSignalWriter) String() string {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	return w.buffer.String()
+}
+
+func (w *progressSignalWriter) Count() int {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.beats
 }
 
 func (w *progressSignalWriter) wait(timeout time.Duration) bool {

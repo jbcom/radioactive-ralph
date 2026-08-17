@@ -25,12 +25,11 @@ const (
 // BundlePaths are the verified executable and OpenCode resources in the
 // atomically selected adapter release.
 type BundlePaths struct {
-	Target            string
-	Root              string
-	Executable        string
-	OpenCodePlugin    string
-	OpenCodeHome      string
-	OpenCodeConfigDir string
+	Target             string
+	Root               string
+	Executable         string
+	OpenCodePlugin     string
+	OpenCodeRuntimeDir string
 }
 
 // DefaultTarget returns the canonical user-level adapter installation root.
@@ -130,12 +129,17 @@ func ResolveCurrentBundle(target string) (BundlePaths, error) {
 		return BundlePaths{}, err
 	}
 
+	runtimeDir := filepath.Join(resolvedTarget, "runtime")
+	runtimeInfo, err := os.Lstat(runtimeDir) //nolint:gosec // fixed installer-owned child under the verified target
+	if err != nil || !runtimeInfo.IsDir() || runtimeInfo.Mode().Perm() != 0o700 {
+		return BundlePaths{}, fmt.Errorf("adapters: OpenCode runtime root is invalid")
+	}
+
 	return BundlePaths{
-		Target:            target,
-		Root:              releaseDir,
-		Executable:        filepath.Join(releaseDir, "bin", "radioactive_ralph"),
-		OpenCodePlugin:    filepath.Join(releaseDir, "opencode-plugin.js"),
-		OpenCodeHome:      filepath.Join(releaseDir, "opencode-managed-home"),
-		OpenCodeConfigDir: filepath.Join(releaseDir, "opencode-managed-config"),
+		Target:             target,
+		Root:               releaseDir,
+		Executable:         filepath.Join(releaseDir, "bin", "radioactive_ralph"),
+		OpenCodePlugin:     filepath.Join(releaseDir, "opencode-plugin.js"),
+		OpenCodeRuntimeDir: runtimeDir,
 	}, nil
 }

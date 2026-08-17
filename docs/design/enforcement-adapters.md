@@ -70,8 +70,11 @@ bundle contains:
 - `opencode-plugin.js`
 - `manifest.json`
 
-It also owns a private isolated runtime home and configuration root for managed
-OpenCode launches. OpenCode may bootstrap package/cache state there, but Ralph
+It also owns a private runtime parent outside the immutable release. Every
+managed OpenCode launch receives a unique 0700 home/config pair below that
+parent, and Ralph removes the pair after provider and final-Stop completion.
+Concurrent workers therefore never share writable config, package, or cache
+state. OpenCode may bootstrap package/cache state there, but Ralph
 rejects every documented config, plugin, command, agent, mode, skill, and
 compatible global-skill discovery entry point before each launch. Ralph disables
 project config and supplies exactly the reviewed generated plugin through the
@@ -101,17 +104,23 @@ fail-closed final check. A normal `verification_started` or
 `verification_pending` reply is polled for at most 12 minutes, covering the
 supervisor's bounded 10-minute acceptance check without turning pending work
 into a false provider failure. The wrapper emits only a static progress line
-while it waits, starting before the first Stop RPC and recurring at one third
-of the resolved provider stall lease, so even a short operator-configured lease
-cannot reap healthy verification during IPC or acceptance work. Unavailable,
+while it waits. The first line is synchronous before the first Stop RPC; later
+lines recur at one third of the resolved provider stall lease. Managed OpenCode
+fails closed when that interval would be below 100 milliseconds (a stall lease
+below 300 milliseconds), bounding heartbeat volume under the provider's raw
+PTY evidence cap. Unavailable,
 timed-out, malformed, or failed verification
 returns the static OpenCode JSON protocol and exit 2. The managed launch adds
-only its exact, content-verified private home and config directories to the
-containment write allowances OpenCode needs for package bootstrap; it never
+only its exact launch-private home and config directories to the containment
+write allowances OpenCode needs for package bootstrap; it never
 retains the unmanaged real-state allowance or grants the adapter/release root.
 `HOME` and every XDG state root resolve
-inside that private home, so an inherited auth file, cached skill, model cache,
-or global config cannot silently enter a managed turn. No-tool runs take this
+inside that private home. Ralph copies only the documented, bounded regular
+`XDG_DATA_HOME/opencode/auth.json` credential file into the ephemeral data root
+with mode 0600 so an ordinarily authenticated OpenCode remains authenticated;
+credential bytes never enter generated artifacts, arguments, logs, or finite
+failure output. Cached skills, model state, and global config do not enter the
+managed turn. No-tool runs take this
 same launcher finalization path, and sanitized `PATH` cannot produce the former
 bare-hook code-127 failure. Ralph's supervisor/reaper remains the load-bearing
 recovery authority.

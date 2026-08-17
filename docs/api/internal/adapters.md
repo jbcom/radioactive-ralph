@@ -27,6 +27,10 @@ Package adapters renders and installs the provider\-specific edge of Ralph's can
 - [type Manifest](<#Manifest>)
   - [func Install\(sourceExecutable, target string\) \(Manifest, error\)](<#Install>)
 - [type OpenCodeLaunchOptions](<#OpenCodeLaunchOptions>)
+- [type OpenCodeRuntimePaths](<#OpenCodeRuntimePaths>)
+  - [func PrepareOpenCodeRuntime\(bundle BundlePaths\) \(OpenCodeRuntimePaths, error\)](<#PrepareOpenCodeRuntime>)
+  - [func ResolveOpenCodeRuntime\(bundle BundlePaths, root string\) \(OpenCodeRuntimePaths, error\)](<#ResolveOpenCodeRuntime>)
+  - [func \(r OpenCodeRuntimePaths\) Cleanup\(\)](<#OpenCodeRuntimePaths.Cleanup>)
 
 
 ## Constants
@@ -67,7 +71,7 @@ var ErrBlocked = errors.New("managed hook blocked")
 ```
 
 <a name="DefaultTarget"></a>
-## func [DefaultTarget](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/adapters/paths.go#L37>)
+## func [DefaultTarget](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/adapters/paths.go#L36>)
 
 ```go
 func DefaultTarget() (string, error)
@@ -85,7 +89,7 @@ func RunHook(ctx context.Context, adapter, event string, input io.Reader, stdout
 RunHook normalizes one provider event and asks the supervisor for a verdict. Unmanaged sessions are a strict no\-op, allowing globally configured hooks to coexist with ordinary user sessions. Managed failures block without echoing any raw JSON or environment value.
 
 <a name="RunOpenCodeLauncher"></a>
-## func [RunOpenCodeLauncher](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/adapters/opencode_launcher.go#L60>)
+## func [RunOpenCodeLauncher](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/adapters/opencode_launcher.go#L61>)
 
 ```go
 func RunOpenCodeLauncher(opts OpenCodeLaunchOptions) int
@@ -94,23 +98,22 @@ func RunOpenCodeLauncher(opts OpenCodeLaunchOptions) int
 RunOpenCodeLauncher runs the real provider first. A genuine provider failure is returned unchanged. Only a successful managed run submits the synchronous Stop event and polls its finite status while verification runs; unavailable, timed\-out, or failed verification exits through OpenCode's finite fail\-closed protocol.
 
 <a name="BundlePaths"></a>
-## type [BundlePaths](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/adapters/paths.go#L27-L34>)
+## type [BundlePaths](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/adapters/paths.go#L27-L33>)
 
 BundlePaths are the verified executable and OpenCode resources in the atomically selected adapter release.
 
 ```go
 type BundlePaths struct {
-    Target            string
-    Root              string
-    Executable        string
-    OpenCodePlugin    string
-    OpenCodeHome      string
-    OpenCodeConfigDir string
+    Target             string
+    Root               string
+    Executable         string
+    OpenCodePlugin     string
+    OpenCodeRuntimeDir string
 }
 ```
 
 <a name="CurrentBundleFromEnvironment"></a>
-### func [CurrentBundleFromEnvironment](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/adapters/paths.go#L47>)
+### func [CurrentBundleFromEnvironment](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/adapters/paths.go#L46>)
 
 ```go
 func CurrentBundleFromEnvironment(getenv Environment) (BundlePaths, error)
@@ -119,7 +122,7 @@ func CurrentBundleFromEnvironment(getenv Environment) (BundlePaths, error)
 CurrentBundleFromEnvironment resolves and verifies the active release. The environment surface is one explicit non\-secret path, never a shell snapshot.
 
 <a name="ResolveCurrentBundle"></a>
-### func [ResolveCurrentBundle](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/adapters/paths.go#L62>)
+### func [ResolveCurrentBundle](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/adapters/paths.go#L61>)
 
 ```go
 func ResolveCurrentBundle(target string) (BundlePaths, error)
@@ -159,7 +162,7 @@ func Install(sourceExecutable, target string) (Manifest, error)
 Install builds a content\-addressed release beside target/current, then atomically switches the current symlink. No live provider config is mutated; deployment can merge the rendered fragments after review and feature probes.
 
 <a name="OpenCodeLaunchOptions"></a>
-## type [OpenCodeLaunchOptions](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/adapters/opencode_launcher.go#L39-L53>)
+## type [OpenCodeLaunchOptions](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/adapters/opencode_launcher.go#L40-L54>)
 
 OpenCodeLaunchOptions are the finite inputs to Ralph's managed OpenCode process wrapper. Provider arguments and streams pass through unchanged.
 
@@ -180,5 +183,46 @@ type OpenCodeLaunchOptions struct {
     VerificationProgressInterval time.Duration
 }
 ```
+
+<a name="OpenCodeRuntimePaths"></a>
+## type [OpenCodeRuntimePaths](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/adapters/opencode_runtime.go#L14-L19>)
+
+OpenCodeRuntimePaths identifies one launch\-private writable OpenCode world. It is deliberately outside the immutable content\-addressed adapter release.
+
+```go
+type OpenCodeRuntimePaths struct {
+    Root      string
+    Home      string
+    ConfigDir string
+    // contains filtered or unexported fields
+}
+```
+
+<a name="PrepareOpenCodeRuntime"></a>
+### func [PrepareOpenCodeRuntime](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/adapters/opencode_runtime.go#L24>)
+
+```go
+func PrepareOpenCodeRuntime(bundle BundlePaths) (OpenCodeRuntimePaths, error)
+```
+
+PrepareOpenCodeRuntime creates one private home/config pair for a single managed provider launch. Call Cleanup after the provider and final Stop decision have both completed.
+
+<a name="ResolveOpenCodeRuntime"></a>
+### func [ResolveOpenCodeRuntime](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/adapters/opencode_runtime.go#L44>)
+
+```go
+func ResolveOpenCodeRuntime(bundle BundlePaths, root string) (OpenCodeRuntimePaths, error)
+```
+
+ResolveOpenCodeRuntime validates that root is one exact installer\-owned launch directory and returns its fixed home/config children.
+
+<a name="OpenCodeRuntimePaths.Cleanup"></a>
+### func \(OpenCodeRuntimePaths\) [Cleanup](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/adapters/opencode_runtime.go#L76>)
+
+```go
+func (r OpenCodeRuntimePaths) Cleanup()
+```
+
+Cleanup removes only the launch\-private child carried by a runtime value created or resolved by this package. A caller\-constructed value is inert.
 
 Generated by [gomarkdoc](<https://github.com/princjef/gomarkdoc>)
