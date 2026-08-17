@@ -2,17 +2,51 @@ package provider
 
 import "regexp"
 
+// doYouWantToPromptExpression recognizes a provider question only when the
+// phrase starts a prompt-shaped line. The old unanchored expression also
+// matched diagnostics and prose that merely mentioned "do you want to", which
+// made the watchdog kill a working provider turn.
+//
+// Some CLIs omit the final question mark, so a non-punctuation character at
+// end-of-line is also a prompt boundary. A terminal full stop, characteristic
+// of quoted prose and diagnostics, is deliberately rejected. Internal periods
+// remain valid so prompts can name files such as config.toml. Do not cap the
+// question length: providers may include more than 160 characters of context,
+// while the single-line boundary and Go's linear-time regexp engine already
+// keep matching bounded by the observed output line.
+const doYouWantToPromptExpression = `(?im)^[\t ]*do you want to\b(?:[^\r\n]*\?[\t ]*|[^\r\n]*[^\s.!?][\t ]*)$`
+
+var (
+	parenConfirmPromptPattern   = regexp.MustCompile(`(?i)\(y/n\)`)
+	bracketConfirmPromptPattern = regexp.MustCompile(`(?i)\[y/n\]`)
+	continuePromptPattern       = regexp.MustCompile(`(?i)continue\?`)
+	proceedPromptPattern        = regexp.MustCompile(`(?i)proceed\?`)
+	permissionPromptPattern     = regexp.MustCompile(
+		`(?i)(needs?|asking for|requesting|grant)\s+permission|permission\s+to\s+[^?\n]{1,60}\?`,
+	)
+	approvalPromptPattern = regexp.MustCompile(
+		`(?i)\bapprove\s+[^?\n]{0,40}\?|\bapprove\s+(this|that|the)\b|do you approve`,
+	)
+	allowThisPromptPattern     = regexp.MustCompile(`(?i)allow this\b.*\?|allow this\??$`)
+	doYouWantToPromptPattern   = regexp.MustCompile(doYouWantToPromptExpression)
+	waitingForPromptPattern    = regexp.MustCompile(`(?i)waiting for`)
+	pressEnterPromptPattern    = regexp.MustCompile(`(?i)press enter`)
+	clarificationPromptPattern = regexp.MustCompile(
+		`(?im)^\s*((which|what|where|who|how)\b[^?\n]*\b(should|do|would|shall)\s+(i|we)\b|(should|shall|do)\s+(i|we)\b)[^?\n]*\?`,
+	)
+)
+
 // PromptKind is the CLOSED taxonomy of what an interactive block was asking
 // for. It is a fixed constant, never provider text.
 //
-// Every interactive block currently reports one category, interactive_prompt,
-// so an operator learns THAT a turn asked for something and never what kind --
-// a credential request and a routine "(y/n)" look identical, though they need
-// completely different responses.
+// Known permission, confirmation, and clarification shapes map to their fixed
+// kinds. An interactive line with no known shape uses PromptKindUnknown; the
+// generic interactive_prompt reason remains the safe fallback rather than
+// guessing from provider prose.
 //
-// Surfacing the prompt itself is barred: only a closed set of fixed constants
-// crosses to operator surfaces, never prose from an external process. This
-// gives the operator the distinction without the text.
+// Surfacing the prompt itself is barred: only this closed set of fixed
+// constants crosses to operator surfaces, never prose from an external
+// process. This gives the operator the distinction without the text.
 type PromptKind string
 
 const (
@@ -34,17 +68,24 @@ const (
 )
 
 // promptKindPatterns map a matched shape to its kind. Ordered most-specific
-// first: "do you want to" is a confirm, but "permission" anywhere in the line
-// outranks it, since being asked for permission is the more actionable fact.
+// first: a confirmation can contain "permission", but the permission shape
+// outranks it because being asked for permission is the more actionable fact.
 var promptKindPatterns = []struct {
 	re   *regexp.Regexp
 	kind PromptKind
 }{
-	{regexp.MustCompile(`(?i)permission|approve|allow this`), PromptKindPermission},
-	{regexp.MustCompile(`(?i)\(y/n\)|\[y/n\]|continue\?|proceed\?|press enter|do you want to`), PromptKindConfirm},
+	{permissionPromptPattern, PromptKindPermission},
+	{approvalPromptPattern, PromptKindPermission},
+	{allowThisPromptPattern, PromptKindPermission},
+	{doYouWantToPromptPattern, PromptKindConfirm},
+	{parenConfirmPromptPattern, PromptKindConfirm},
+	{bracketConfirmPromptPattern, PromptKindConfirm},
+	{continuePromptPattern, PromptKindConfirm},
+	{proceedPromptPattern, PromptKindConfirm},
+	{pressEnterPromptPattern, PromptKindConfirm},
 	// Last: an open question is the residual case, and matching it early would
 	// swallow confirms, which also end in "?".
-	{regexp.MustCompile(`(?i)^\s*(which|what|where|how|who|should i)\b.*\?`), PromptKindClarification},
+	{clarificationPromptPattern, PromptKindClarification},
 }
 
 // ClassifyPromptKind derives the kind from a line of provider output.

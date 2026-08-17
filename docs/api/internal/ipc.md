@@ -53,6 +53,7 @@ For commands that stream \(attach\), the server sends N \>= 0 frames of \{"event
   - [func \(c \*Client\) ObserveMessages\(ctx context.Context, args ObserveMessagesArgs\) \(\*ObserveMessagesReply, error\)](<#Client.ObserveMessages>)
   - [func \(c \*Client\) ObserveSnapshot\(ctx context.Context, args ObserveSnapshotArgs\) \(\*ObserveSnapshotReply, error\)](<#Client.ObserveSnapshot>)
   - [func \(c \*Client\) ObserveTaskDescriptions\(ctx context.Context, args ObserveTaskDescriptionsArgs\) \(\*ObserveTaskDescriptionsReply, error\)](<#Client.ObserveTaskDescriptions>)
+  - [func \(c \*Client\) PlanDelete\(ctx context.Context, args PlanDeleteArgs\) \(PlanDeleteReply, error\)](<#Client.PlanDelete>)
   - [func \(c \*Client\) PlanImport\(ctx context.Context, args PlanImportArgs\) \(PlanImportReply, error\)](<#Client.PlanImport>)
   - [func \(c \*Client\) PlanSetStatus\(ctx context.Context, args PlanSetStatusArgs\) \(PlanSetStatusReply, error\)](<#Client.PlanSetStatus>)
   - [func \(c \*Client\) ProjectConfigApply\(ctx context.Context, args ProjectConfigApplyArgs\) error](<#Client.ProjectConfigApply>)
@@ -78,6 +79,8 @@ For commands that stream \(attach\), the server sends N \>= 0 frames of \{"event
 - [type ObserveSnapshotReply](<#ObserveSnapshotReply>)
 - [type ObserveTaskDescriptionsArgs](<#ObserveTaskDescriptionsArgs>)
 - [type ObserveTaskDescriptionsReply](<#ObserveTaskDescriptionsReply>)
+- [type PlanDeleteArgs](<#PlanDeleteArgs>)
+- [type PlanDeleteReply](<#PlanDeleteReply>)
 - [type PlanImportArgs](<#PlanImportArgs>)
 - [type PlanImportReply](<#PlanImportReply>)
 - [type PlanSetStatusArgs](<#PlanSetStatusArgs>)
@@ -105,7 +108,7 @@ For commands that stream \(attach\), the server sends N \>= 0 frames of \{"event
 
 ## Constants
 
-<a name="ProtoVersion"></a>ProtoVersion is the wire protocol version this build speaks. The original read\-only\-TUI surface \(status/attach/enqueue/stop/reload\-config\) is v1; the drive commands \(plan\-import/plan\-set\-status/task\-approve/worker\-kill\) are v2; safe project\-scoped snapshot/message queries are v3; ProjectEnsure's resolve\-only mode is v4. A client omitting Request.ProtoVersion is treated as v1 for back\-compat.
+<a name="ProtoVersion"></a>ProtoVersion is the wire protocol version this build speaks. The original read\-only\-TUI surface \(status/attach/enqueue/stop/reload\-config\) is v1; the drive commands \(plan\-import/plan\-set\-status/plan\-delete/task\-approve/ worker\-kill\) are v2; safe project\-scoped snapshot/message queries are v3; ProjectEnsure's resolve\-only mode is v4. A client omitting Request.ProtoVersion is treated as v1 for back\-compat.
 
 ```go
 const (
@@ -149,6 +152,7 @@ const (
     // v2 — drive surface (see the IPC drive-api design spec).
     CmdPlanImport    = "plan-import"
     CmdPlanSetStatus = "plan-set-status"
+    CmdPlanDelete    = "plan-delete"
     CmdTaskApprove   = "task-approve"
     CmdWorkerKill    = "worker-kill"
     CmdProjectEnsure = "project-ensure"
@@ -218,7 +222,7 @@ func IsCode(err error, code string) bool
 IsCode reports whether err carries the given error class. It matches any error implementing the Coded interface \(Code\(\) string\) — both the client's \*CodedError \(decoded from a wire Response.Code\) and a handler\-side coded error returned by a direct in\-process call.
 
 <a name="NewServer"></a>
-## func [NewServer](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/server.go#L204>)
+## func [NewServer](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/server.go#L206>)
 
 ```go
 func NewServer(opts ServerOptions) (*Server, error)
@@ -238,7 +242,7 @@ ServiceEndpoint returns the local control\-plane endpoint plus its heartbeat fil
 On POSIX the endpoint is normally sessionsDir/service.sock. But a deeply nested sessionsDir — a long XDG/App Support path, a deep RALPH\_STATE\_DIR, or a macOS /var/folders/... temp root under test — can push that path past the kernel's sun\_path limit, so bind\(\) fails with EINVAL. When that would happen we fall back to a short, collision\-resistant socket path under the system temp dir keyed by a hash of sessionsDir. The heartbeat file always stays in sessionsDir \(it is a plain file, not a socket, so it has no path limit\) which keeps discovery/liveness colocated with the workspace.
 
 <a name="SocketAlive"></a>
-## func [SocketAlive](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/server.go#L871>)
+## func [SocketAlive](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/server.go#L880>)
 
 ```go
 func SocketAlive(heartbeatPath string, maxAge time.Duration) bool
@@ -247,7 +251,7 @@ func SocketAlive(heartbeatPath string, maxAge time.Duration) bool
 SocketAlive reports whether the heartbeat file at path was touched within maxAge. Clients \(\`radioactive\_ralph status\`\) call this before attempting a socket connection so they can distinguish "service dead" from "service slow to respond."
 
 <a name="AttachArgs"></a>
-## type [AttachArgs](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/protocol.go#L195-L198>)
+## type [AttachArgs](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/protocol.go#L197-L200>)
 
 AttachArgs is the client's payload when opening an event stream via CmdAttach. ProjectID scopes the stream — the IPC connection carries no implicit project \(the supervisor serves every project on one socket\), so the client names it, as the drive commands do. AfterID is the client\-owned resume cursor: the stream carries every event with id strictly greater than AfterID. AfterID=0 means "from the beginning" — the CLIENT, not the server, picks the live\-tail cursor from the safe snapshot's project\-wide EventCursor and passes it here. A reconnecting client passes the highest id it has processed, resuming with no gap and no duplicate.
 
@@ -259,7 +263,7 @@ type AttachArgs struct {
 ```
 
 <a name="AttachEvent"></a>
-## type [AttachEvent](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/protocol.go#L203-L211>)
+## type [AttachEvent](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/protocol.go#L205-L213>)
 
 AttachEvent is one safe event streamed over an Attach connection. It contains metadata and the fixed Failure summary only. JSON decoders ignore the legacy actor/payload fields from older frames rather than retaining raw content.
 
@@ -276,7 +280,7 @@ type AttachEvent struct {
 ```
 
 <a name="CalibrationHandler"></a>
-## type [CalibrationHandler](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/server.go#L114-L120>)
+## type [CalibrationHandler](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/server.go#L116-L122>)
 
 CalibrationHandler is the OPTIONAL calibration surface.
 
@@ -293,7 +297,7 @@ type CalibrationHandler interface {
 ```
 
 <a name="CalibrationListReply"></a>
-## type [CalibrationListReply](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/protocol.go#L451-L453>)
+## type [CalibrationListReply](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/protocol.go#L469-L471>)
 
 CalibrationListReply enumerates the recorded calibrations, one per alias.
 
@@ -304,7 +308,7 @@ type CalibrationListReply struct {
 ```
 
 <a name="CalibrationPutArgs"></a>
-## type [CalibrationPutArgs](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/protocol.go#L441-L443>)
+## type [CalibrationPutArgs](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/protocol.go#L459-L461>)
 
 CalibrationPutArgs records one calibration \(CmdCalibrationPut\).
 
@@ -317,7 +321,7 @@ type CalibrationPutArgs struct {
 ```
 
 <a name="CalibrationPutReply"></a>
-## type [CalibrationPutReply](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/protocol.go#L446-L448>)
+## type [CalibrationPutReply](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/protocol.go#L464-L466>)
 
 CalibrationPutReply returns the content\-addressed id the store derived.
 
@@ -328,7 +332,7 @@ type CalibrationPutReply struct {
 ```
 
 <a name="CalibrationRecord"></a>
-## type [CalibrationRecord](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/protocol.go#L409-L430>)
+## type [CalibrationRecord](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/protocol.go#L427-L448>)
 
 CalibrationRecord is the wire form of one provider calibration — a MEASUREMENT of a single provider command line.
 
@@ -389,7 +393,7 @@ func (c *Client) AttachEvents(ctx context.Context, args AttachArgs, fn func(Atta
 AttachEvents is the typed convenience over Attach: it opens the stream with the given args \(project scope \+ resume cursor\) and decodes each frame into an AttachEvent before handing it to fn. Prefer this to raw Attach for the event stream; Attach stays available for callers that want the raw frames.
 
 <a name="Client.CalibrationList"></a>
-### func \(\*Client\) [CalibrationList](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/client_drive.go#L165>)
+### func \(\*Client\) [CalibrationList](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/client_drive.go#L173>)
 
 ```go
 func (c *Client) CalibrationList(ctx context.Context) (CalibrationListReply, error)
@@ -398,7 +402,7 @@ func (c *Client) CalibrationList(ctx context.Context) (CalibrationListReply, err
 CalibrationList enumerates the recorded calibrations, one per alias, so an operator can see which aliases have a measured independence domain — the difference between a differentFrom constraint that can be enforced and one that silently cannot.
 
 <a name="Client.CalibrationPut"></a>
-### func \(\*Client\) [CalibrationPut](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/client_drive.go#L153>)
+### func \(\*Client\) [CalibrationPut](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/client_drive.go#L161>)
 
 ```go
 func (c *Client) CalibrationPut(ctx context.Context, args CalibrationPutArgs) (CalibrationPutReply, error)
@@ -427,7 +431,7 @@ func (c *Client) Enqueue(ctx context.Context, args EnqueueArgs) (EnqueueReply, e
 Enqueue pushes a task. Returns the resulting task ID \(possibly a dedup hit from FTS\) and whether the task was freshly inserted.
 
 <a name="Client.NegotiatedVersion"></a>
-### func \(\*Client\) [NegotiatedVersion](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/client_drive.go#L175>)
+### func \(\*Client\) [NegotiatedVersion](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/client_drive.go#L183>)
 
 ```go
 func (c *Client) NegotiatedVersion(ctx context.Context) (int, error)
@@ -464,6 +468,15 @@ ObserveTaskDescriptions reads one PLAN's author\-written task labels.
 
 Separate from ObserveSnapshot on purpose: a description is plan\-author free text that can carry filesystem paths, so it stays out of the always\-on bulk snapshot and is fetched only by the human\-facing views that need a label. Plan\-scoped, not per\-task: a list view must cost one round trip, not N.
 
+<a name="Client.PlanDelete"></a>
+### func \(\*Client\) [PlanDelete](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/client_drive.go#L109>)
+
+```go
+func (c *Client) PlanDelete(ctx context.Context, args PlanDeleteArgs) (PlanDeleteReply, error)
+```
+
+PlanDelete removes a plan and everything hanging off it. Irreversible: the plan's tasks, deps, and events go with it.
+
 <a name="Client.PlanImport"></a>
 ### func \(\*Client\) [PlanImport](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/client_drive.go#L94>)
 
@@ -483,7 +496,7 @@ func (c *Client) PlanSetStatus(ctx context.Context, args PlanSetStatusArgs) (Pla
 PlanSetStatus changes a plan's lifecycle status \(paused|active|abandoned\).
 
 <a name="Client.ProjectConfigApply"></a>
-### func \(\*Client\) [ProjectConfigApply](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/client_drive.go#L144>)
+### func \(\*Client\) [ProjectConfigApply](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/client_drive.go#L152>)
 
 ```go
 func (c *Client) ProjectConfigApply(ctx context.Context, args ProjectConfigApplyArgs) error
@@ -492,7 +505,7 @@ func (c *Client) ProjectConfigApply(ctx context.Context, args ProjectConfigApply
 ProjectConfigApply upserts and deletes project config keys in one call.
 
 <a name="Client.ProjectConfigGet"></a>
-### func \(\*Client\) [ProjectConfigGet](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/client_drive.go#L135>)
+### func \(\*Client\) [ProjectConfigGet](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/client_drive.go#L143>)
 
 ```go
 func (c *Client) ProjectConfigGet(ctx context.Context, args ProjectConfigGetArgs) (ProjectConfigGetReply, error)
@@ -501,7 +514,7 @@ func (c *Client) ProjectConfigGet(ctx context.Context, args ProjectConfigGetArgs
 ProjectConfigGet reads a project's stored config values through the supervisor, so a client never opens the store to resolve its config layers.
 
 <a name="Client.ProjectEnsure"></a>
-### func \(\*Client\) [ProjectEnsure](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/client_drive.go#L120-L123>)
+### func \(\*Client\) [ProjectEnsure](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/client_drive.go#L128-L131>)
 
 ```go
 func (c *Client) ProjectEnsure(ctx context.Context, args ProjectEnsureArgs) (*ProjectEnsureReply, error)
@@ -537,7 +550,7 @@ func (c *Client) Stop(ctx context.Context, args StopArgs) error
 Stop issues a stop request. The server closes the socket after replying; expect the returned error to be ErrClosed on the next call.
 
 <a name="Client.TaskApprove"></a>
-### func \(\*Client\) [TaskApprove](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/client_drive.go#L108>)
+### func \(\*Client\) [TaskApprove](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/client_drive.go#L116>)
 
 ```go
 func (c *Client) TaskApprove(ctx context.Context, args TaskApproveArgs) error
@@ -546,7 +559,7 @@ func (c *Client) TaskApprove(ctx context.Context, args TaskApproveArgs) error
 TaskApprove clears the approval gate on a ready\_pending\_approval task.
 
 <a name="Client.WorkerKill"></a>
-### func \(\*Client\) [WorkerKill](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/client_drive.go#L113>)
+### func \(\*Client\) [WorkerKill](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/client_drive.go#L121>)
 
 ```go
 func (c *Client) WorkerKill(ctx context.Context, args WorkerKillArgs) error
@@ -555,7 +568,7 @@ func (c *Client) WorkerKill(ctx context.Context, args WorkerKillArgs) error
 WorkerKill kills a running worker via kill\-and\-reclaim.
 
 <a name="Coded"></a>
-## type [Coded](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/server.go#L811-L813>)
+## type [Coded](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/server.go#L820-L822>)
 
 Coded is implemented by handler errors that carry a stable machine\-readable error class \(Code\* consts\). writeResult copies it into Response.Code so the client can branch on the failure kind.
 
@@ -596,9 +609,9 @@ func (e *CodedError) Error() string
 
 
 <a name="DriveHandler"></a>
-## type [DriveHandler](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/server.go#L84-L105>)
+## type [DriveHandler](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/server.go#L85-L107>)
 
-DriveHandler is the OPTIONAL v2 drive surface. A Handler that also implements DriveHandler gains the plan\-import/plan\-set\-status/task\-approve/ worker\-kill commands; one that does not still serves the v1 observe surface, and the server answers a drive command with an unsupported\_command response. Keeping it a separate interface means existing v1 Handler implementations \(and their test doubles\) compile unchanged.
+DriveHandler is the OPTIONAL v2 drive surface. A Handler that also implements DriveHandler gains the plan\-import/plan\-set\-status/plan\-delete/ task\-approve/worker\-kill commands; one that does not still serves the v1 observe surface, and the server answers a drive command with an unsupported\_command response. Keeping it a separate interface means existing v1 Handler implementations \(and their test doubles\) compile unchanged.
 
 ```go
 type DriveHandler interface {
@@ -606,6 +619,7 @@ type DriveHandler interface {
     HandlePlanImport(ctx context.Context, args PlanImportArgs) (PlanImportReply, error)
     // HandlePlanSetStatus changes a plan's lifecycle status (validated).
     HandlePlanSetStatus(ctx context.Context, args PlanSetStatusArgs) (PlanSetStatusReply, error)
+    HandlePlanDelete(ctx context.Context, args PlanDeleteArgs) (PlanDeleteReply, error)
     // HandleTaskApprove clears the approval gate on a ready_pending_approval task.
     HandleTaskApprove(ctx context.Context, args TaskApproveArgs) error
     // HandleWorkerKill kills a running worker via kill-and-reclaim.
@@ -626,7 +640,7 @@ type DriveHandler interface {
 ```
 
 <a name="EnqueueArgs"></a>
-## type [EnqueueArgs](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/protocol.go#L173-L177>)
+## type [EnqueueArgs](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/protocol.go#L175-L179>)
 
 EnqueueArgs is the client's payload when pushing work via CmdEnqueue.
 
@@ -639,7 +653,7 @@ type EnqueueArgs struct {
 ```
 
 <a name="EnqueueReply"></a>
-## type [EnqueueReply](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/protocol.go#L181-L184>)
+## type [EnqueueReply](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/protocol.go#L183-L186>)
 
 EnqueueReply tells the client whether a new task was created or a duplicate was collapsed \(via FTS dedup in the db layer\).
 
@@ -681,7 +695,7 @@ type Handler interface {
 ```
 
 <a name="OKReply"></a>
-## type [OKReply](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/protocol.go#L306-L308>)
+## type [OKReply](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/protocol.go#L324-L326>)
 
 OKReply is the trivial success payload for drive commands that only need to confirm the action landed.
 
@@ -692,7 +706,7 @@ type OKReply struct {
 ```
 
 <a name="ObserveMessagesArgs"></a>
-## type [ObserveMessagesArgs](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/protocol.go#L318>)
+## type [ObserveMessagesArgs](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/protocol.go#L336>)
 
 ObserveMessagesArgs aliases the transport\-neutral message metadata query.
 
@@ -701,7 +715,7 @@ type ObserveMessagesArgs = observe.MessageQuery
 ```
 
 <a name="ObserveMessagesReply"></a>
-## type [ObserveMessagesReply](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/protocol.go#L321>)
+## type [ObserveMessagesReply](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/protocol.go#L339>)
 
 ObserveMessagesReply is one versioned, content\-free message metadata page.
 
@@ -710,7 +724,7 @@ type ObserveMessagesReply = observe.MessagePage
 ```
 
 <a name="ObserveSnapshotArgs"></a>
-## type [ObserveSnapshotArgs](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/protocol.go#L312>)
+## type [ObserveSnapshotArgs](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/protocol.go#L330>)
 
 ObserveSnapshotArgs aliases the transport\-neutral safe snapshot query so IPC framing cannot silently drift from the CLI/other client DTO.
 
@@ -719,7 +733,7 @@ type ObserveSnapshotArgs = observe.SnapshotQuery
 ```
 
 <a name="ObserveSnapshotReply"></a>
-## type [ObserveSnapshotReply](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/protocol.go#L315>)
+## type [ObserveSnapshotReply](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/protocol.go#L333>)
 
 ObserveSnapshotReply is the versioned, content\-safe snapshot response.
 
@@ -728,7 +742,7 @@ type ObserveSnapshotReply = observe.Snapshot
 ```
 
 <a name="ObserveTaskDescriptionsArgs"></a>
-## type [ObserveTaskDescriptionsArgs](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/protocol.go#L325>)
+## type [ObserveTaskDescriptionsArgs](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/protocol.go#L343>)
 
 ObserveTaskDescriptionsArgs aliases the transport\-neutral per\-plan label query. Separate from ObserveSnapshotArgs on purpose — see observe.TaskDescriptions.
 
@@ -737,7 +751,7 @@ type ObserveTaskDescriptionsArgs = observe.TaskDescriptionsQuery
 ```
 
 <a name="ObserveTaskDescriptionsReply"></a>
-## type [ObserveTaskDescriptionsReply](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/protocol.go#L328>)
+## type [ObserveTaskDescriptionsReply](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/protocol.go#L346>)
 
 ObserveTaskDescriptionsReply carries one plan's author\-written task labels.
 
@@ -745,8 +759,32 @@ ObserveTaskDescriptionsReply carries one plan's author\-written task labels.
 type ObserveTaskDescriptionsReply = observe.TaskDescriptions
 ```
 
+<a name="PlanDeleteArgs"></a>
+## type [PlanDeleteArgs](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/protocol.go#L247-L249>)
+
+PlanDeleteArgs removes a plan and everything hanging off it \(CmdPlanDelete\).
+
+It exists because store.DeletePlan was implemented and tested with NO caller and no CLI surface, so accumulated runs could never be pruned. The concrete consequence: the operator task page saturates at MaxOperatorPageLimit, and a self\-test adds 12 tasks per run, so after \~16 runs the newest run is shown only PARTIALLY \-\- with nothing an operator could do about it.
+
+```go
+type PlanDeleteArgs struct {
+    PlanID string `json:"plan_id"`
+}
+```
+
+<a name="PlanDeleteReply"></a>
+## type [PlanDeleteReply](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/protocol.go#L252-L254>)
+
+PlanDeleteReply echoes the removed plan.
+
+```go
+type PlanDeleteReply struct {
+    PlanID string `json:"plan_id"`
+}
+```
+
 <a name="PlanImportArgs"></a>
-## type [PlanImportArgs](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/protocol.go#L224-L229>)
+## type [PlanImportArgs](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/protocol.go#L226-L231>)
 
 PlanImportArgs imports a markdown plan and activates it \(CmdPlanImport\). The server runs the same CreatePlan \+ activate logic the \`plan import\` CLI does, so the GUI needn't open the DB itself and there is one writer of record.
 
@@ -760,7 +798,7 @@ type PlanImportArgs struct {
 ```
 
 <a name="PlanImportReply"></a>
-## type [PlanImportReply](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/protocol.go#L232-L236>)
+## type [PlanImportReply](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/protocol.go#L234-L238>)
 
 PlanImportReply reports the created plan.
 
@@ -773,7 +811,7 @@ type PlanImportReply struct {
 ```
 
 <a name="PlanSetStatusArgs"></a>
-## type [PlanSetStatusArgs](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/protocol.go#L240-L243>)
+## type [PlanSetStatusArgs](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/protocol.go#L258-L261>)
 
 PlanSetStatusArgs changes a plan's lifecycle status \(CmdPlanSetStatus\), e.g. pause/resume/abandon. The server validates the transition.
 
@@ -785,7 +823,7 @@ type PlanSetStatusArgs struct {
 ```
 
 <a name="PlanSetStatusReply"></a>
-## type [PlanSetStatusReply](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/protocol.go#L246-L249>)
+## type [PlanSetStatusReply](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/protocol.go#L264-L267>)
 
 PlanSetStatusReply echoes the applied status.
 
@@ -797,7 +835,7 @@ type PlanSetStatusReply struct {
 ```
 
 <a name="ProjectConfigApplyArgs"></a>
-## type [ProjectConfigApplyArgs](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/protocol.go#L392-L398>)
+## type [ProjectConfigApplyArgs](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/protocol.go#L410-L416>)
 
 ProjectConfigApplyArgs upserts and deletes project config keys \(CmdProjectConfigApply\).
 
@@ -814,7 +852,7 @@ type ProjectConfigApplyArgs struct {
 ```
 
 <a name="ProjectConfigGetArgs"></a>
-## type [ProjectConfigGetArgs](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/protocol.go#L361-L366>)
+## type [ProjectConfigGetArgs](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/protocol.go#L379-L384>)
 
 ProjectConfigGetArgs asks for one project's stored config \(CmdProjectConfigGet\).
 
@@ -835,7 +873,7 @@ type ProjectConfigGetArgs struct {
 ```
 
 <a name="ProjectConfigGetReply"></a>
-## type [ProjectConfigGetReply](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/protocol.go#L373-L378>)
+## type [ProjectConfigGetReply](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/protocol.go#L391-L396>)
 
 ProjectConfigGetReply carries the stored config values verbatim.
 
@@ -851,7 +889,7 @@ type ProjectConfigGetReply struct {
 ```
 
 <a name="ProjectEnsureArgs"></a>
-## type [ProjectEnsureArgs](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/protocol.go#L278-L289>)
+## type [ProjectEnsureArgs](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/protocol.go#L296-L307>)
 
 ProjectEnsureArgs resolves the calling directory to a project, creating it when no fingerprint matches \(CmdProjectEnsure\).
 
@@ -873,7 +911,7 @@ type ProjectEnsureArgs struct {
 ```
 
 <a name="ProjectEnsureReply"></a>
-## type [ProjectEnsureReply](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/protocol.go#L293-L296>)
+## type [ProjectEnsureReply](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/protocol.go#L311-L314>)
 
 ProjectEnsureReply reports the resolved project and whether this call created it, so the client can tell the operator which happened.
 
@@ -885,7 +923,7 @@ type ProjectEnsureReply struct {
 ```
 
 <a name="ProjectFingerprint"></a>
-## type [ProjectFingerprint](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/protocol.go#L265-L268>)
+## type [ProjectFingerprint](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/protocol.go#L283-L286>)
 
 ProjectFingerprint is one identity signal for a project, computed by the CLIENT from its own working directory \(absolute path, git root commit, git remote\) and sent to the supervisor to resolve or create the project.
 
@@ -899,7 +937,7 @@ type ProjectFingerprint struct {
 ```
 
 <a name="QueryHandler"></a>
-## type [QueryHandler](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/server.go#L126-L139>)
+## type [QueryHandler](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/server.go#L128-L141>)
 
 QueryHandler is the OPTIONAL v3 content\-safe query surface. Keeping it separate preserves source and wire compatibility with v1/v2 handlers: a rolling old supervisor answers query commands with unsupported\_command instead of returning an unsafe fallback.
 
@@ -921,7 +959,7 @@ type QueryHandler interface {
 ```
 
 <a name="Request"></a>
-## type [Request](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/protocol.go#L110-L116>)
+## type [Request](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/protocol.go#L112-L118>)
 
 Request is a single command from a client to the repo service.
 
@@ -936,7 +974,7 @@ type Request struct {
 ```
 
 <a name="Response"></a>
-## type [Response](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/protocol.go#L121-L128>)
+## type [Response](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/protocol.go#L123-L130>)
 
 Response is the single\-shot reply shape. For streaming commands the server sends multiple Event frames followed by a final Response with Ok=true; mid\-stream errors send a Response with Ok=false.
 
@@ -952,7 +990,7 @@ type Response struct {
 ```
 
 <a name="Server"></a>
-## type [Server](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/server.go#L142-L177>)
+## type [Server](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/server.go#L144-L179>)
 
 Server is the repo\-service IPC server. One instance per repo service.
 
@@ -963,7 +1001,7 @@ type Server struct {
 ```
 
 <a name="Server.Start"></a>
-### func \(\*Server\) [Start](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/server.go#L310>)
+### func \(\*Server\) [Start](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/server.go#L312>)
 
 ```go
 func (s *Server) Start() error
@@ -972,7 +1010,7 @@ func (s *Server) Start() error
 Start binds the socket and begins accepting connections in a background goroutine. Safe to call once. Returns the listener error if bind fails. The heartbeat interval comes from ServerOptions.HeartbeatInterval \(set at NewServer\), not a parameter here — a single source of truth.
 
 <a name="Server.Stop"></a>
-### func \(\*Server\) [Stop](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/server.go#L328>)
+### func \(\*Server\) [Stop](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/server.go#L330>)
 
 ```go
 func (s *Server) Stop() error
@@ -981,7 +1019,7 @@ func (s *Server) Stop() error
 Stop shuts the server down and waits for goroutines to exit.
 
 <a name="ServerOptions"></a>
-## type [ServerOptions](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/server.go#L180-L200>)
+## type [ServerOptions](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/server.go#L182-L202>)
 
 ServerOptions configures a Server.
 
@@ -1010,7 +1048,7 @@ type ServerOptions struct {
 ```
 
 <a name="StatusReply"></a>
-## type [StatusReply](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/protocol.go#L144-L159>)
+## type [StatusReply](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/protocol.go#L146-L161>)
 
 StatusReply is the data payload for CmdStatus responses.
 
@@ -1036,7 +1074,7 @@ type StatusReply struct {
 ```
 
 <a name="StopArgs"></a>
-## type [StopArgs](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/protocol.go#L214-L217>)
+## type [StopArgs](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/protocol.go#L216-L219>)
 
 StopArgs controls the termination mode for CmdStop.
 
@@ -1048,7 +1086,7 @@ type StopArgs struct {
 ```
 
 <a name="StreamEvent"></a>
-## type [StreamEvent](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/protocol.go#L131-L133>)
+## type [StreamEvent](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/protocol.go#L133-L135>)
 
 StreamEvent is one frame emitted during a streaming command \(e.g. attach\).
 
@@ -1059,7 +1097,7 @@ type StreamEvent struct {
 ```
 
 <a name="TaskApproveArgs"></a>
-## type [TaskApproveArgs](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/protocol.go#L253-L256>)
+## type [TaskApproveArgs](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/protocol.go#L271-L274>)
 
 TaskApproveArgs clears the approval gate on a ready\_pending\_approval task \(CmdTaskApprove\), transitioning it to ready so dispatch can pick it up.
 
@@ -1071,7 +1109,7 @@ type TaskApproveArgs struct {
 ```
 
 <a name="WorkerKillArgs"></a>
-## type [WorkerKillArgs](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/protocol.go#L300-L302>)
+## type [WorkerKillArgs](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/protocol.go#L318-L320>)
 
 WorkerKillArgs kills a running worker \(CmdWorkerKill\) via the same kill\-and\-reclaim path a watchdog kill uses, so the task returns to ready.
 
@@ -1082,7 +1120,7 @@ type WorkerKillArgs struct {
 ```
 
 <a name="WorkerSummary"></a>
-## type [WorkerSummary](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/protocol.go#L162-L170>)
+## type [WorkerSummary](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/ipc/protocol.go#L164-L172>)
 
 WorkerSummary is the runtime\-facing status for one in\-flight worker.
 

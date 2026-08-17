@@ -118,7 +118,10 @@ func (s *Supervisor) HandlePlanSetStatus(ctx context.Context, args ipc.PlanSetSt
 	return ipc.PlanSetStatusReply{PlanID: args.PlanID, Status: string(target)}, nil
 }
 
-// HandlePlanDelete removes a plan and everything hanging off it.
+// HandlePlanDelete discovers and cancels active provider workers for a plan
+// before removing the plan and everything hanging off it. Failure to discover
+// workers aborts deletion; cancellation of an already-exited worker remains
+// best-effort and does not make an otherwise valid deletion fail.
 //
 // store.DeletePlan was implemented and tested with no caller and no CLI, so
 // accumulated runs could never be pruned -- and the operator task page
@@ -136,14 +139,18 @@ func (s *Supervisor) HandlePlanDelete(ctx context.Context, args ipc.PlanDeleteAr
 	// -- until its turn deadline, with its post-run writes then failing against
 	// rows that no longer exist.
 	//
-	// Best-effort per worker: KillWorker returns false when no live run is
-	// registered under that id, which is fine. The delete proceeds either way,
-	// because refusing here would make an abandoned plan undeletable.
-	if running, err := s.store.ListRunningWorkers(ctx); err == nil {
-		for _, w := range running {
-			if w.PlanID == args.PlanID {
-				s.orch.KillWorker(w.ID)
-			}
+	// Discovery must succeed before deletion. Otherwise a worker omitted by the
+	// failed query could keep spending tokens and mutating a checkout after its
+	// plan and task rows are gone.
+	running, err := s.store.ListRunningWorkers(ctx)
+	if err != nil {
+		return zero, fmt.Errorf("supervisor: list running workers: %w", err)
+	}
+	// Best-effort per discovered worker: KillWorker returns false when the live
+	// run has already exited, which is safe because discovery still completed.
+	for _, w := range running {
+		if w.PlanID == args.PlanID {
+			s.orch.KillWorker(w.ID)
 		}
 	}
 

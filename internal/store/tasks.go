@@ -53,15 +53,13 @@ type Task struct {
 	UpdatedAt         time.Time
 }
 
-// AttemptCount is how many claims this task has been GIVEN: retries it used up,
-// plus claims a reaper took back, plus the one it currently holds or finished
-// on -- neither counter includes the claim in hand.
+// AttemptCount returns RetryCount + ReclaimCount + 1. It is a derived estimate,
+// not authoritative accounting of every claim a task has been given.
 //
 // THE +1 IS UNCONDITIONAL, so this OVERCOUNTS a task that holds no claim: a
 // freshly created task reports 1 having been given none, and a requeued task
 // between attempts reports one more than it has had. That is a deliberate
-// simplification of a raw accessor, not a claim that the number is
-// status-aware -- an earlier version of this comment read as the latter.
+// simplification of a raw accessor; callers must not treat it as status-aware.
 //
 // Callers that render this to an operator MUST apply the status themselves.
 // observe.AttemptLabel is the one that does: it returns "" when
@@ -88,25 +86,15 @@ type Task struct {
 // arithmetic here.
 //
 // It is DERIVED rather than a fourth stored counter, so it cannot drift from
-// the two numbers it summarizes.
-//
-// It exists because neither counter alone answers "how many goes has this
-// had?", and reading only retry_count actively misleads. Observed on a live
-// self-test run, a task's history was claimed / claimed / failed_terminal /
-// claimed / reclaimed / claimed / reclaimed / claimed / failed_terminal --
-// five claims, two reclaims -- while retry_count read 0 throughout. The reaper
-// requeues without touching retry_count (only MarkFailed increments it), so a
-// task that burned real turns reads as untouched and the row disagrees with its
-// own event log.
+// the two numbers it summarizes. The deterministic reclaim test proves that
+// two reclaims produce a value of three under this formula; it does not make
+// the estimate complete claim accounting.
 //
 // Deliberately NOT wired into the retry-budget check. Whether a reclaim should
 // consume budget is a policy question -- arguably it should not, since the
 // worker died before the task got a fair turn -- and today's generosity is a
 // side effect of the reaper not knowing about retries rather than a decision.
-// This makes the truth visible without silently changing that policy.
-// The +1 was missing at first, so a task with 1 retry and 2 reclaims reported
-// three claims when it had had four, and a task succeeding on its FIRST claim
-// reported zero -- a count no reader would recognise.
+// This makes the stored counters visible without silently changing that policy.
 func (t Task) AttemptCount() int { return t.RetryCount + t.ReclaimCount + 1 }
 
 // EventPayload keeps event payloads structured so the CLI, TUI, and tests
