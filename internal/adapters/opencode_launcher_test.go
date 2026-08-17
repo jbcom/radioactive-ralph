@@ -128,26 +128,38 @@ func TestOpenCodeLauncherPendingExhaustionIsBoundedAndFailClosed(t *testing.T) {
 }
 
 func TestOpenCodeLauncherProgressRemainsInsideShortStallLease(t *testing.T) {
-	server, _, endpoint := startLauncherHookSequenceServer(t, []ipc.HookEventReply{
+	server, handler, endpoint := startLauncherHookSequenceServer(t, []ipc.HookEventReply{
 		{Allow: false, Reason: "verification_started"},
 		{Allow: true, Reason: "acceptance_passed"},
 	})
 	defer func() { _ = server.Stop() }()
 	binary := writeOpenCodeLauncherFixture(t, "#!/bin/sh\nexit 0\n")
 	opts := launcherOptions(t, binary, endpoint)
-	var stdout, stderr bytes.Buffer
-	opts.Stdout, opts.Stderr = &stdout, &stderr
+	var stdout bytes.Buffer
+	progress := newProgressSignalWriter(2)
+	progressTimedOut := make(chan struct{}, 1)
+	handler.afterFirst = func() {
+		if !progress.wait(2 * time.Second) {
+			progressTimedOut <- struct{}{}
+		}
+	}
+	opts.Stdout, opts.Stderr = &stdout, progress
 	code := runOpenCodeLauncher(opts, openCodeStopPolling{
-		interval:         20 * time.Millisecond,
-		progressInterval: 2 * time.Millisecond,
+		interval:         time.Millisecond,
+		progressInterval: 5 * time.Millisecond,
 		attempts:         2,
 	})
 	if code != 0 || stdout.Len() != 0 {
 		t.Fatalf("short-lease polling = code:%d stdout:%q", code, stdout.String())
 	}
-	if beats := strings.Count(stderr.String(), managedOpenCodeVerificationWait); beats < 2 {
+	if beats := strings.Count(progress.String(), managedOpenCodeVerificationWait); beats < 2 {
 		t.Fatalf("progress beats = %d in %q, want repeated progress inside poll sleep",
-			beats, stderr.String())
+			beats, progress.String())
+	}
+	select {
+	case <-progressTimedOut:
+		t.Fatal("verification progress did not reach the synchronized heartbeat boundary")
+	default:
 	}
 }
 
@@ -261,6 +273,52 @@ func TestOpenCodeLauncherRejectsPartialCoordinatesBeforeProviderStart(t *testing
 	}
 	if _, err := os.Stat(marker); !os.IsNotExist(err) {
 		t.Fatalf("provider launched with partial coordinates: %v", err)
+	}
+}
+
+func TestOpenCodeLauncherRejectsInvalidPreconditionsBeforeProviderStart(t *testing.T) {
+	marker := filepath.Join(t.TempDir(), "launched")
+	binary := writeOpenCodeLauncherFixture(t, "#!/bin/sh\n: > \"$RALPH_TEST_MARKER\"\n")
+	for _, tc := range []struct {
+		name   string
+		mutate func(*OpenCodeLaunchOptions)
+	}{
+		{
+			name: "negative verification progress interval",
+			mutate: func(opts *OpenCodeLaunchOptions) {
+				opts.VerificationProgressInterval = -time.Second
+			},
+		},
+		{
+			name: "non-absolute provider binary",
+			mutate: func(opts *OpenCodeLaunchOptions) {
+				opts.Binary = filepath.Base(binary)
+			},
+		},
+		{
+			name: "provider binary is not a regular executable",
+			mutate: func(opts *OpenCodeLaunchOptions) {
+				opts.Binary = t.TempDir()
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			opts := launcherOptions(t, binary, "/tmp/unused.sock")
+			opts.Env = append(opts.Env, "RALPH_TEST_MARKER="+marker)
+			tc.mutate(&opts)
+			var stdout, stderr bytes.Buffer
+			opts.Stdout, opts.Stderr = &stdout, &stderr
+			if code := RunOpenCodeLauncher(opts); code != 1 {
+				t.Fatalf("invalid precondition exit = %d, want 1", code)
+			}
+			if stdout.Len() != 0 || stderr.String() != managedOpenCodeLauncherFailure+"\n" {
+				t.Fatalf("invalid precondition output = stdout:%q stderr:%q",
+					stdout.String(), stderr.String())
+			}
+			if _, err := os.Stat(marker); !os.IsNotExist(err) {
+				t.Fatalf("provider started despite invalid precondition: %v", err)
+			}
+		})
 	}
 }
 
@@ -443,4 +501,43 @@ func writeOpenCodeLauncherFixture(t *testing.T, body string) string {
 		t.Fatalf("write fake OpenCode: %v", err)
 	}
 	return path
+}
+
+type progressSignalWriter struct {
+	mu       sync.Mutex
+	buffer   bytes.Buffer
+	target   int
+	beats    int
+	reached  chan struct{}
+	reachOne sync.Once
+}
+
+func newProgressSignalWriter(target int) *progressSignalWriter {
+	return &progressSignalWriter{target: target, reached: make(chan struct{})}
+}
+
+func (w *progressSignalWriter) Write(p []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	n, err := w.buffer.Write(p)
+	w.beats += strings.Count(string(p), managedOpenCodeVerificationWait)
+	if w.beats >= w.target {
+		w.reachOne.Do(func() { close(w.reached) })
+	}
+	return n, err
+}
+
+func (w *progressSignalWriter) String() string {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.buffer.String()
+}
+
+func (w *progressSignalWriter) wait(timeout time.Duration) bool {
+	select {
+	case <-w.reached:
+		return true
+	case <-time.After(timeout):
+		return false
+	}
 }

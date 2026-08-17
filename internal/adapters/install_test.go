@@ -150,6 +150,31 @@ func TestInstallReplacesBareCode127WithAbsoluteHookCommand(t *testing.T) {
 	}
 }
 
+func TestRenderedOpenCodeProgressHookSwallowsSpawnFailure(t *testing.T) {
+	bun, err := exec.LookPath("bun")
+	if err != nil {
+		t.Fatal("bun is required to execute the generated OpenCode plugin smoke")
+	}
+	missingHook := filepath.Join(t.TempDir(), "missing-radioactive-ralph")
+	generated, err := render(missingHook)
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	pluginPath := filepath.Join(t.TempDir(), "opencode-plugin.js")
+	if err := os.WriteFile(pluginPath, generated["opencode-plugin.js"], 0o600); err != nil {
+		t.Fatalf("write OpenCode plugin: %v", err)
+	}
+	script := `const plugin = await import(` + strconv.Quote(pluginPath) + `); ` +
+		`const hooks = await plugin.RadioactiveRalphEnforcement(); ` +
+		`await hooks["tool.execute.after"]({sessionID: "progress-only"});`
+	cmd := exec.Command(bun, "-e", script)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("progress-only plugin propagated a spawn failure: %v\n%s", err, out)
+	} else if len(out) != 0 {
+		t.Fatalf("progress-only plugin exposed spawn failure output: %q", out)
+	}
+}
+
 func TestInstallRejectsEmptyTargetWithoutMutatingWorkingDirectory(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("native Windows providers are disabled")

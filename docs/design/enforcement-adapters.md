@@ -95,7 +95,9 @@ notification, and OpenCode 1.18.18 can log a rejected plugin hook while
 `PostToolUse` progress. For a managed turn Ralph starts the real OpenCode CLI
 through an absolute, content-verified launcher, preserves any genuine provider
 nonzero or signal exit, and only after provider success synchronously submits
-the finite `Stop` event. A normal `verification_started` or
+the finite `Stop` event. A missing or failed progress-hook process is therefore
+non-fatal to the provider tool call; it cannot replace or weaken the launcher's
+fail-closed final check. A normal `verification_started` or
 `verification_pending` reply is polled for at most 12 minutes, covering the
 supervisor's bounded 10-minute acceptance check without turning pending work
 into a false provider failure. The wrapper emits only a static progress line

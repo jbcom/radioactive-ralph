@@ -137,11 +137,10 @@ func TestResolveManagedOpencodeLaunchUsesVerifiedAbsoluteWrapper(t *testing.T) {
 	if slices.Contains(launch.args, "--pure") {
 		t.Fatalf("managed args disable the reviewed plugin: %v", launch.args)
 	}
-	for _, required := range []string{bundle.OpenCodeHome, bundle.OpenCodeConfigDir} {
-		if !slices.Contains(launch.containmentWritePaths, required) {
-			t.Fatalf("managed containment paths = %v, want exact bootstrap path %q",
-				launch.containmentWritePaths, required)
-		}
+	wantContainmentWritePaths := []string{bundle.OpenCodeHome, bundle.OpenCodeConfigDir}
+	if !reflect.DeepEqual(launch.containmentWritePaths, wantContainmentWritePaths) {
+		t.Fatalf("managed containment paths = %v, want exact ordered paths %v",
+			launch.containmentWritePaths, wantContainmentWritePaths)
 	}
 	for _, forbidden := range []string{bundle.Target, bundle.Root, filepath.Dir(bundle.Root)} {
 		if slices.Contains(launch.containmentWritePaths, forbidden) {

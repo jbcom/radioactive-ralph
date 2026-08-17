@@ -303,10 +303,15 @@ timeout = 600
 `, strconv.Quote(command("codex", "PostToolUse")), strconv.Quote(command("codex", "Stop")))
 	opencode := fmt.Sprintf(`const hook = %s;
 const invoke = async (event, payload) => {
-  const child = Bun.spawn([hook, "hook", "event", "--adapter", "opencode", "--event", event], {
-    stdin: new Blob([JSON.stringify(payload)]), stdout: "pipe", stderr: "ignore", env: process.env,
-  });
-  await Promise.all([new Response(child.stdout).text(), child.exited]);
+  try {
+    const child = Bun.spawn([hook, "hook", "event", "--adapter", "opencode", "--event", event], {
+      stdin: new Blob([JSON.stringify(payload)]), stdout: "pipe", stderr: "ignore", env: process.env,
+    });
+    await Promise.all([new Response(child.stdout).text(), child.exited]);
+  } catch {
+    // PostToolUse is a best-effort progress signal. The absolute launcher owns
+    // synchronous final Stop authority and fails closed independently.
+  }
 };
 export const RadioactiveRalphEnforcement = async () => ({
   "tool.execute.after": async (input) => {

@@ -37,8 +37,13 @@ func TestLiveOpenCodeAdapterCompletionAuthority(t *testing.T) {
 	if err != nil {
 		t.Fatalf("absolute OpenCode path: %v", err)
 	}
-	version, err := exec.Command(openCode, "--version").Output() //nolint:gosec // operator-installed binary selected by explicit live gate
+	versionCtx, cancelVersion := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancelVersion()
+	version, err := exec.CommandContext(versionCtx, openCode, "--version").Output() //nolint:gosec // operator-installed binary selected by explicit live gate
 	if err != nil {
+		if versionCtx.Err() != nil {
+			t.Fatalf("OpenCode version probe exceeded live timeout: %v", versionCtx.Err())
+		}
 		t.Fatalf("OpenCode version: %v", err)
 	}
 	if got := strings.TrimSpace(string(version)); got != reviewedOpenCodeAdapterVersion {
