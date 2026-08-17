@@ -87,8 +87,9 @@ func TestOpenCodeLauncherPollsStartedAndPendingUntilAcceptancePasses(t *testing.
 	var stdout, stderr bytes.Buffer
 	opts.Stdout, opts.Stderr = &stdout, &stderr
 	code := runOpenCodeLauncher(opts, openCodeStopPolling{
-		interval: time.Millisecond,
-		attempts: 3,
+		interval:         time.Millisecond,
+		progressInterval: time.Hour,
+		attempts:         3,
 	})
 	if code != 0 || stdout.Len() != 0 {
 		t.Fatalf("polling launch = code:%d stdout:%q", code, stdout.String())
@@ -96,9 +97,8 @@ func TestOpenCodeLauncherPollsStartedAndPendingUntilAcceptancePasses(t *testing.
 	if got := handler.callCount(); got != 3 {
 		t.Fatalf("Stop calls = %d, want 3", got)
 	}
-	wantProgress := managedOpenCodeVerificationWait + "\n"
-	if stderr.String() != wantProgress {
-		t.Fatalf("polling progress = %q, want %q", stderr.String(), wantProgress)
+	if stderr.Len() != 0 {
+		t.Fatalf("short polling emitted premature progress: %q", stderr.String())
 	}
 }
 
@@ -112,8 +112,9 @@ func TestOpenCodeLauncherPendingExhaustionIsBoundedAndFailClosed(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	opts.Stdout, opts.Stderr = &stdout, &stderr
 	code := runOpenCodeLauncher(opts, openCodeStopPolling{
-		interval: time.Millisecond,
-		attempts: 3,
+		interval:         time.Millisecond,
+		progressInterval: time.Hour,
+		attempts:         3,
 	})
 	if code != 2 || stdout.String() != "{\"status\":\"verification_pending\"}\n" {
 		t.Fatalf("exhausted polling = code:%d stdout:%q", code, stdout.String())
@@ -121,8 +122,8 @@ func TestOpenCodeLauncherPendingExhaustionIsBoundedAndFailClosed(t *testing.T) {
 	if _, calls := handler.observed(); calls != 3 {
 		t.Fatalf("Stop calls = %d, want bounded 3", calls)
 	}
-	if strings.Count(stderr.String(), managedOpenCodeVerificationWait) != 1 {
-		t.Fatalf("bounded progress = %q", stderr.String())
+	if stderr.Len() != 0 {
+		t.Fatalf("short bounded polling emitted premature progress: %q", stderr.String())
 	}
 }
 

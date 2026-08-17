@@ -99,8 +99,9 @@ the finite `Stop` event. A normal `verification_started` or
 `verification_pending` reply is polled for at most 12 minutes, covering the
 supervisor's bounded 10-minute acceptance check without turning pending work
 into a false provider failure. The wrapper emits only a static progress line
-while it waits, at one third of the resolved provider stall lease, so even a
-short operator-configured lease cannot reap healthy verification. Unavailable,
+while it waits, starting before the first Stop RPC and recurring at one third
+of the resolved provider stall lease, so even a short operator-configured lease
+cannot reap healthy verification during IPC or acceptance work. Unavailable,
 timed-out, malformed, or failed verification
 returns the static OpenCode JSON protocol and exit 2. The managed launch adds
 only its exact, content-verified private home and config directories to the

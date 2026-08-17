@@ -135,12 +135,11 @@ func pollOpenCodeStop(opts OpenCodeLaunchOptions, env []string, polling openCode
 		pollCtx, cancel = context.WithTimeout(opts.Context, polling.timeout)
 	}
 	defer cancel()
-	var progress *openCodeVerificationProgress
-	defer func() {
-		if progress != nil {
-			progress.stop()
-		}
-	}()
+	// Start before the first Stop RPC. A local supervisor fault may consume the
+	// hook client's own timeout, which must not leave a shorter provider stall
+	// lease silent even before the first pending verdict arrives.
+	progress := startOpenCodeVerificationProgress(opts.Stderr, polling.progressInterval)
+	defer progress.stop()
 	for attempt := 0; attempt < polling.attempts; attempt++ {
 		var stdout, stderr bytes.Buffer
 		err := RunHook(
@@ -159,9 +158,6 @@ func pollOpenCodeStop(opts OpenCodeLaunchOptions, env []string, polling openCode
 		if attempt == polling.attempts-1 {
 			writeOpenCodeStatus(opts.Stdout, "verification_pending")
 			return 2
-		}
-		if progress == nil {
-			progress = startOpenCodeVerificationProgress(opts.Stderr, polling.progressInterval)
 		}
 		timer := time.NewTimer(polling.interval)
 		select {

@@ -21,7 +21,6 @@ func startOpenCodeVerificationProgress(
 		stopCh: make(chan struct{}),
 		doneCh: make(chan struct{}),
 	}
-	_, _ = fmt.Fprintln(output, managedOpenCodeVerificationWait)
 	go func() {
 		defer close(progress.doneCh)
 		ticker := time.NewTicker(interval)
