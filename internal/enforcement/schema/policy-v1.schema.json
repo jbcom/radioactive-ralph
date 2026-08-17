@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/jbcom/radioactive-ralph/schemas/enforcement-policy-v1.schema.json",
+  "title": "Radioactive Ralph enforcement policy v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "policy_id",
+    "retry_budget",
+    "no_progress_budget",
+    "acceptance"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "policy_id": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9._-]{0,63}$"
+    },
+    "retry_budget": { "type": "integer", "minimum": 0, "maximum": 1000 },
+    "no_progress_budget": { "type": "integer", "minimum": 0, "maximum": 1000 },
+    "acceptance": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 64,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "kind"],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9._-]{0,63}$"
+          },
+          "kind": {
+            "enum": [
+              "command_exit_zero",
+              "file_exists",
+              "checks_green",
+              "review_approved",
+              "exact_artifact_match"
+            ]
+          }
+        }
+      }
+    }
+  }
+}
