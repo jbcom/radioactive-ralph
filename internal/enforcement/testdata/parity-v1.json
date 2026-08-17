@@ -1,0 +1,146 @@
+{
+  "schema_version": 1,
+  "adapters": ["claude", "codex", "opencode"],
+  "cases": [
+    {
+      "name": "progress-resets-no-progress",
+      "request": {
+        "policy": {
+          "schema_version": 1,
+          "policy_id": "adapter-parity",
+          "retry_budget": 2,
+          "no_progress_budget": 2,
+          "acceptance": [
+            {"id": "tests", "kind": "command_exit_zero"},
+            {"id": "review", "kind": "review_approved"}
+          ]
+        },
+        "snapshot": {"state": "ACTIVE", "retry_count": 1, "no_progress_count": 2},
+        "event": {"action": "PROGRESS"}
+      },
+      "expected": {
+        "schema_version": 1,
+        "state": "ACTIVE",
+        "retry_count": 1,
+        "no_progress_count": 0,
+        "reason": "PROGRESS_RECORDED"
+      }
+    },
+    {
+      "name": "external-wait-recheck-is-due",
+      "request": {
+        "policy": {
+          "schema_version": 1,
+          "policy_id": "adapter-parity",
+          "retry_budget": 2,
+          "no_progress_budget": 2,
+          "acceptance": [
+            {"id": "tests", "kind": "command_exit_zero"},
+            {"id": "review", "kind": "review_approved"}
+          ]
+        },
+        "snapshot": {
+          "state": "WAIT_EXTERNAL",
+          "retry_count": 0,
+          "no_progress_count": 0,
+          "wait": {
+            "owner": "github",
+            "recheck_at": "2026-08-16T18:05:00Z",
+            "deadline": "2026-08-16T19:00:00Z"
+          }
+        },
+        "event": {"action": "RECHECK", "now": "2026-08-16T18:05:00Z"}
+      },
+      "expected": {
+        "schema_version": 1,
+        "state": "ACTIVE",
+        "retry_count": 0,
+        "no_progress_count": 0,
+        "reason": "WAIT_RECHECK_DUE"
+      }
+    },
+    {
+      "name": "explicit-acceptance-completes",
+      "request": {
+        "policy": {
+          "schema_version": 1,
+          "policy_id": "adapter-parity",
+          "retry_budget": 2,
+          "no_progress_budget": 2,
+          "acceptance": [
+            {"id": "tests", "kind": "command_exit_zero"},
+            {"id": "review", "kind": "review_approved"}
+          ]
+        },
+        "snapshot": {"state": "VERIFY", "retry_count": 0, "no_progress_count": 0},
+        "event": {
+          "action": "VERIFY",
+          "results": {
+            "tests": {"observed": true, "satisfied": true},
+            "review": {"observed": true, "satisfied": true}
+          }
+        }
+      },
+      "expected": {
+        "schema_version": 1,
+        "state": "COMPLETE",
+        "retry_count": 0,
+        "no_progress_count": 0,
+        "reason": "ACCEPTANCE_PASSED"
+      }
+    },
+    {
+      "name": "missing-acceptance-retries",
+      "request": {
+        "policy": {
+          "schema_version": 1,
+          "policy_id": "adapter-parity",
+          "retry_budget": 2,
+          "no_progress_budget": 2,
+          "acceptance": [
+            {"id": "tests", "kind": "command_exit_zero"},
+            {"id": "review", "kind": "review_approved"}
+          ]
+        },
+        "snapshot": {"state": "VERIFY", "retry_count": 0, "no_progress_count": 0},
+        "event": {
+          "action": "VERIFY",
+          "results": {
+            "tests": {"observed": true, "satisfied": true}
+          }
+        }
+      },
+      "expected": {
+        "schema_version": 1,
+        "state": "ACTIVE",
+        "retry_count": 1,
+        "no_progress_count": 0,
+        "reason": "ACCEPTANCE_FAILED"
+      }
+    },
+    {
+      "name": "no-progress-budget-blocks",
+      "request": {
+        "policy": {
+          "schema_version": 1,
+          "policy_id": "adapter-parity",
+          "retry_budget": 2,
+          "no_progress_budget": 2,
+          "acceptance": [
+            {"id": "tests", "kind": "command_exit_zero"},
+            {"id": "review", "kind": "review_approved"}
+          ]
+        },
+        "snapshot": {"state": "ACTIVE", "retry_count": 0, "no_progress_count": 2},
+        "event": {"action": "NO_PROGRESS"}
+      },
+      "expected": {
+        "schema_version": 1,
+        "state": "BLOCKED",
+        "retry_count": 0,
+        "no_progress_count": 3,
+        "reason": "NO_PROGRESS_BUDGET_EXHAUSTED"
+      }
+    }
+  ]
+}

@@ -31,6 +31,7 @@ internal/agentdetect
 internal/contain
 internal/contain/internal/containhelper
 internal/doctor
+internal/enforcement
 internal/genesis
 internal/gui
 internal/ipc
