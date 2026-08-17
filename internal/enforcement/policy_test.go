@@ -181,17 +181,53 @@ func TestTerminalStatesAreAbsorbing(t *testing.T) {
 func TestMalformedInputFailsClosedWithoutEcho(t *testing.T) {
 	const secretCanary = "ghp_super-secret-canary"
 	tests := []struct {
-		name string
-		data string
+		name     string
+		data     string
+		validate func(*testing.T, string)
 	}{
 		{name: "invalid JSON", data: `{` + secretCanary},
-		{name: "unknown field", data: readFixture(t, "canary-unknown-field-v1.json")},
-		{name: "unsupported version", data: readFixture(t, "canary-policy-v2.json")},
+		{
+			name: "unknown field",
+			data: readFixture(t, "canary-unknown-field-v1.json"),
+			validate: func(t *testing.T, data string) {
+				var fixture map[string]json.RawMessage
+				if err := json.Unmarshal([]byte(data), &fixture); err != nil {
+					t.Fatalf("unknown-field fixture is not valid JSON: %v", err)
+				}
+				var token string
+				if err := json.Unmarshal(fixture["provider_token"], &token); err != nil {
+					t.Fatalf("unknown-field fixture lacks string provider_token: %v", err)
+				}
+				if token != secretCanary {
+					t.Fatalf("provider_token = %q, want secret canary", token)
+				}
+			},
+		},
+		{
+			name: "unsupported version",
+			data: readFixture(t, "canary-policy-v2.json"),
+			validate: func(t *testing.T, data string) {
+				var fixture struct {
+					Policy struct {
+						SchemaVersion int `json:"schema_version"`
+					} `json:"policy"`
+				}
+				if err := json.Unmarshal([]byte(data), &fixture); err != nil {
+					t.Fatalf("version fixture is not valid JSON: %v", err)
+				}
+				if fixture.Policy.SchemaVersion != 2 {
+					t.Fatalf("fixture schema version = %d, want 2", fixture.Policy.SchemaVersion)
+				}
+			},
+		},
 		{name: "trailing JSON", data: validRequestJSON(t) + ` {"provider_token":"` + secretCanary + `"}`},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			if tt.validate != nil {
+				tt.validate(t, tt.data)
+			}
 			decision := EvaluateJSON([]byte(tt.data))
 			assertDecision(t, decision, StateBlocked, ReasonMalformedInput, 0, 0)
 			encoded, err := json.Marshal(decision)
@@ -201,6 +237,24 @@ func TestMalformedInputFailsClosedWithoutEcho(t *testing.T) {
 			if strings.Contains(string(encoded), secretCanary) {
 				t.Fatalf("decision echoed input canary: %s", encoded)
 			}
+		})
+	}
+}
+
+func TestDuplicateJSONPredicateResultsFailClosedInBothOrders(t *testing.T) {
+	tests := []struct {
+		name   string
+		first  bool
+		second bool
+	}{
+		{name: "passing then failing", first: true, second: false},
+		{name: "failing then passing", first: false, second: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			data := duplicatePredicateResultsJSON(tt.first, tt.second)
+			decision := EvaluateJSON([]byte(data))
+			assertDecision(t, decision, StateBlocked, ReasonMalformedInput, 0, 0)
 		})
 	}
 }
@@ -415,11 +469,41 @@ func validRequestJSON(t *testing.T) string {
 	return string(data)
 }
 
+func duplicatePredicateResultsJSON(first, second bool) string {
+	return `{
+		"policy": {
+			"schema_version": 1,
+			"policy_id": "adapter-parity",
+			"retry_budget": 2,
+			"no_progress_budget": 2,
+			"acceptance": [{"id": "tests", "kind": "command_exit_zero"}]
+		},
+		"snapshot": {"state": "VERIFY", "retry_count": 0, "no_progress_count": 0},
+		"event": {
+			"action": "VERIFY",
+			"results": {
+				"tests": {"observed": true, "satisfied": ` + boolJSON(first) + `},
+				"tests": {"observed": true, "satisfied": ` + boolJSON(second) + `}
+			}
+		}
+	}`
+}
+
+func boolJSON(value bool) string {
+	if value {
+		return "true"
+	}
+	return "false"
+}
+
 func decodeStrictFixture(t *testing.T, name string, target any) {
 	t.Helper()
 	decoder := json.NewDecoder(strings.NewReader(readFixture(t, name)))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(target); err != nil {
 		t.Fatalf("decode fixture %s: %v", name, err)
+	}
+	if err := rejectTrailingJSON(decoder); err != nil {
+		t.Fatalf("fixture %s has trailing JSON", name)
 	}
 }

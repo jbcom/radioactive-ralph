@@ -183,6 +183,9 @@ func PolicySchema() []byte {
 // EvaluateJSON strictly decodes and evaluates a request. Malformed JSON,
 // unknown fields, trailing values, and invalid semantics all fail closed.
 func EvaluateJSON(data []byte) Decision {
+	if rejectDuplicateJSONKeys(data) != nil {
+		return blockedMalformed()
+	}
 	var request Request
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
