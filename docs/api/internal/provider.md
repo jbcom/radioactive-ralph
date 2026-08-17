@@ -856,7 +856,7 @@ const (
 ```
 
 <a name="OpencodeRunner"></a>
-## type [OpencodeRunner](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/opencode.go#L37>)
+## type [OpencodeRunner](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/opencode.go#L38>)
 
 OpencodeRunner executes a single \`opencode run \-\-format json\` turn under Ralph's own pty via internal/agent, per spec §9 \("opencode bound via its local \`run\` path only"\) and §3 \(hybrid I/O\).
 
@@ -869,7 +869,7 @@ type OpencodeRunner struct{}
 ```
 
 <a name="OpencodeRunner.Run"></a>
-### func \(OpencodeRunner\) [Run](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/opencode.go#L58>)
+### func \(OpencodeRunner\) [Run](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/opencode.go#L59>)
 
 ```go
 func (OpencodeRunner) Run(ctx context.Context, binding Binding, req Request) (Result, error)

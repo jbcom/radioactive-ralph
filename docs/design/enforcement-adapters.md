@@ -99,11 +99,14 @@ the finite `Stop` event. A normal `verification_started` or
 `verification_pending` reply is polled for at most 12 minutes, covering the
 supervisor's bounded 10-minute acceptance check without turning pending work
 into a false provider failure. The wrapper emits only a static progress line
-while it waits. Unavailable, timed-out, malformed, or failed verification
+while it waits, at one third of the resolved provider stall lease, so even a
+short operator-configured lease cannot reap healthy verification. Unavailable,
+timed-out, malformed, or failed verification
 returns the static OpenCode JSON protocol and exit 2. The managed launch adds
 only its exact, content-verified private home and config directories to the
 containment write allowances OpenCode needs for package bootstrap; it never
-grants the adapter or release root. `HOME` and every XDG state root resolve
+retains the unmanaged real-state allowance or grants the adapter/release root.
+`HOME` and every XDG state root resolve
 inside that private home, so an inherited auth file, cached skill, model cache,
 or global config cannot silently enter a managed turn. No-tool runs take this
 same launcher finalization path, and sanitized `PATH` cannot produce the former

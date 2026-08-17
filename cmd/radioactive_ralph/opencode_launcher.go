@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/jbcom/radioactive-ralph/internal/adapters"
 )
@@ -18,21 +19,29 @@ func maybeRunOpenCodeLauncher(args []string) (bool, int) {
 	flags := flag.NewFlagSet("hook launch-opencode", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
 	var binary, adapterRoot string
+	var verificationProgressInterval time.Duration
 	flags.StringVar(&binary, "binary", "", "")
 	flags.StringVar(&adapterRoot, "adapter-root", "", "")
+	flags.DurationVar(
+		&verificationProgressInterval,
+		"verification-progress-interval",
+		0,
+		"",
+	)
 	if err := flags.Parse(args[3:]); err != nil || binary == "" {
 		fmt.Fprintln(os.Stderr, "Radioactive Ralph managed OpenCode launch failed.")
 		return true, 1
 	}
 
 	opts := adapters.OpenCodeLaunchOptions{
-		Context: context.Background(),
-		Binary:  binary,
-		Args:    flags.Args(),
-		Env:     os.Environ(),
-		Stdin:   os.Stdin,
-		Stdout:  os.Stdout,
-		Stderr:  os.Stderr,
+		Context:                      context.Background(),
+		Binary:                       binary,
+		Args:                         flags.Args(),
+		Env:                          os.Environ(),
+		Stdin:                        os.Stdin,
+		Stdout:                       os.Stdout,
+		Stderr:                       os.Stderr,
+		VerificationProgressInterval: verificationProgressInterval,
 	}
 	managed := os.Getenv(adapters.ManagedSessionEnv) != "" &&
 		os.Getenv(adapters.HookEndpointEnv) != ""

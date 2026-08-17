@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/jbcom/radioactive-ralph/internal/adapters"
 )
@@ -91,14 +92,17 @@ func TestResolveManagedOpencodeLaunchUsesVerifiedAbsoluteWrapper(t *testing.T) {
 	if err := os.WriteFile(realBinary, []byte("#!/bin/sh\n"), 0o700); err != nil {
 		t.Fatalf("write real OpenCode fixture: %v", err)
 	}
-	binding := Binding{Name: "opencode", Config: BindingConfig{Type: "opencode", Binary: "opencode"}}
+	legacyState := filepath.Join(t.TempDir(), "legacy-opencode-state")
+	binding := Binding{Name: "opencode", Config: BindingConfig{
+		Type: "opencode", Binary: "opencode", WritePaths: []string{legacyState},
+	}}
 	req := Request{UserPrompt: "managed prompt", ManagedSessionID: "session", HookEndpoint: "/socket"}
 	inv, err := ResolveInvocation(binding, req)
 	if err != nil {
 		t.Fatalf("ResolveInvocation: %v", err)
 	}
 	launch, err := resolveOpencodeLaunch(
-		binding, req, inv,
+		binding, req, inv, 300*time.Millisecond,
 		func(key string) string {
 			if key == adapters.AdapterRootEnv {
 				return target
@@ -124,7 +128,8 @@ func TestResolveManagedOpencodeLaunchUsesVerifiedAbsoluteWrapper(t *testing.T) {
 	}
 	wantPrefix := []string{
 		"hook", "launch-opencode", "--binary", realBinary,
-		"--adapter-root", bundle.Target, "--",
+		"--adapter-root", bundle.Target,
+		"--verification-progress-interval", "100ms", "--",
 	}
 	if len(launch.args) < len(wantPrefix) || !reflect.DeepEqual(launch.args[:len(wantPrefix)], wantPrefix) {
 		t.Fatalf("managed args prefix = %v, want %v", launch.args, wantPrefix)
@@ -144,17 +149,24 @@ func TestResolveManagedOpencodeLaunchUsesVerifiedAbsoluteWrapper(t *testing.T) {
 				forbidden, launch.containmentWritePaths)
 		}
 	}
+	if slices.Contains(launch.containmentWritePaths, legacyState) {
+		t.Fatalf("managed containment retained legacy real-state grant %q: %v",
+			legacyState, launch.containmentWritePaths)
+	}
 }
 
 func TestResolveUnmanagedOpencodeLaunchIsDirectAndPure(t *testing.T) {
-	binding := Binding{Name: "opencode", Config: BindingConfig{Type: "opencode", Binary: "opencode"}}
+	legacyState := filepath.Join(t.TempDir(), "legacy-opencode-state")
+	binding := Binding{Name: "opencode", Config: BindingConfig{
+		Type: "opencode", Binary: "opencode", WritePaths: []string{legacyState},
+	}}
 	req := Request{UserPrompt: "ordinary prompt"}
 	inv, err := ResolveInvocation(binding, req)
 	if err != nil {
 		t.Fatalf("ResolveInvocation: %v", err)
 	}
 	launch, err := resolveOpencodeLaunch(
-		binding, req, inv,
+		binding, req, inv, time.Second,
 		func(string) string { panic("unmanaged launch read adapter environment") },
 		func(string) (string, error) { panic("unmanaged launch resolved wrapper path") },
 	)
@@ -164,8 +176,9 @@ func TestResolveUnmanagedOpencodeLaunchIsDirectAndPure(t *testing.T) {
 	if launch.command != "opencode" || !slices.Contains(launch.args, "--pure") {
 		t.Fatalf("unmanaged launch = %q %v", launch.command, launch.args)
 	}
-	if launch.containmentWritePaths != nil {
-		t.Fatalf("unmanaged launch gained adapter write paths: %v", launch.containmentWritePaths)
+	if !reflect.DeepEqual(launch.containmentWritePaths, []string{legacyState}) {
+		t.Fatalf("unmanaged launch paths = %v, want declared %q",
+			launch.containmentWritePaths, legacyState)
 	}
 }
 
@@ -185,7 +198,7 @@ func TestResolveManagedOpencodeLaunchRejectsTamperedBundleBeforeBinaryLookup(t *
 		t.Fatalf("ResolveInvocation: %v", err)
 	}
 	_, err = resolveOpencodeLaunch(
-		binding, req, inv,
+		binding, req, inv, time.Second,
 		func(key string) string {
 			if key == adapters.AdapterRootEnv {
 				return target

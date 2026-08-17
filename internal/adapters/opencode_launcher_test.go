@@ -96,7 +96,7 @@ func TestOpenCodeLauncherPollsStartedAndPendingUntilAcceptancePasses(t *testing.
 	if got := handler.callCount(); got != 3 {
 		t.Fatalf("Stop calls = %d, want 3", got)
 	}
-	wantProgress := managedOpenCodeVerificationWait + "\n" + managedOpenCodeVerificationWait + "\n"
+	wantProgress := managedOpenCodeVerificationWait + "\n"
 	if stderr.String() != wantProgress {
 		t.Fatalf("polling progress = %q, want %q", stderr.String(), wantProgress)
 	}
@@ -121,8 +121,32 @@ func TestOpenCodeLauncherPendingExhaustionIsBoundedAndFailClosed(t *testing.T) {
 	if _, calls := handler.observed(); calls != 3 {
 		t.Fatalf("Stop calls = %d, want bounded 3", calls)
 	}
-	if strings.Count(stderr.String(), managedOpenCodeVerificationWait) != 2 {
+	if strings.Count(stderr.String(), managedOpenCodeVerificationWait) != 1 {
 		t.Fatalf("bounded progress = %q", stderr.String())
+	}
+}
+
+func TestOpenCodeLauncherProgressRemainsInsideShortStallLease(t *testing.T) {
+	server, _, endpoint := startLauncherHookSequenceServer(t, []ipc.HookEventReply{
+		{Allow: false, Reason: "verification_started"},
+		{Allow: true, Reason: "acceptance_passed"},
+	})
+	defer func() { _ = server.Stop() }()
+	binary := writeOpenCodeLauncherFixture(t, "#!/bin/sh\nexit 0\n")
+	opts := launcherOptions(t, binary, endpoint)
+	var stdout, stderr bytes.Buffer
+	opts.Stdout, opts.Stderr = &stdout, &stderr
+	code := runOpenCodeLauncher(opts, openCodeStopPolling{
+		interval:         20 * time.Millisecond,
+		progressInterval: 2 * time.Millisecond,
+		attempts:         2,
+	})
+	if code != 0 || stdout.Len() != 0 {
+		t.Fatalf("short-lease polling = code:%d stdout:%q", code, stdout.String())
+	}
+	if beats := strings.Count(stderr.String(), managedOpenCodeVerificationWait); beats < 2 {
+		t.Fatalf("progress beats = %d in %q, want repeated progress inside poll sleep",
+			beats, stderr.String())
 	}
 }
 

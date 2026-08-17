@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"time"
 
 	"github.com/jbcom/radioactive-ralph/internal/adapters"
 	"github.com/jbcom/radioactive-ralph/internal/agent"
@@ -78,7 +79,8 @@ func (OpencodeRunner) Run(ctx context.Context, binding Binding, req Request) (Re
 	if err != nil {
 		return Result{}, err
 	}
-	launch, err := resolveOpencodeLaunch(binding, req, invocation, os.Getenv, exec.LookPath)
+	launch, err := resolveOpencodeLaunch(
+		binding, req, invocation, limits.StallTimeout, os.Getenv, exec.LookPath)
 	if err != nil {
 		return Result{}, err
 	}
@@ -208,6 +210,7 @@ func resolveOpencodeLaunch(
 	binding Binding,
 	req Request,
 	invocation Invocation,
+	stallTimeout time.Duration,
 	getenv adapters.Environment,
 	lookPath opencodePathLookup,
 ) (opencodeLaunch, error) {
@@ -236,13 +239,21 @@ func resolveOpencodeLaunch(
 		"hook", "launch-opencode",
 		"--binary", realBinary,
 		"--adapter-root", bundle.Target,
+		"--verification-progress-interval", opencodeVerificationProgressInterval(stallTimeout).String(),
 		"--",
 	}, args...)
-	writePaths = append(writePaths, bundle.OpenCodeHome, bundle.OpenCodeConfigDir)
 	return opencodeLaunch{
 		command: bundle.Executable, args: args,
-		containmentWritePaths: writePaths,
+		containmentWritePaths: []string{bundle.OpenCodeHome, bundle.OpenCodeConfigDir},
 	}, nil
+}
+
+func opencodeVerificationProgressInterval(stallTimeout time.Duration) time.Duration {
+	interval := stallTimeout / 3
+	if interval <= 0 {
+		return time.Nanosecond
+	}
+	return interval
 }
 
 // opencodeEvent is one `opencode run --format json` stream event.

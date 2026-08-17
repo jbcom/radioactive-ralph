@@ -28,9 +28,10 @@ const (
 )
 
 type openCodeStopPolling struct {
-	interval time.Duration
-	attempts int
-	timeout  time.Duration
+	interval         time.Duration
+	progressInterval time.Duration
+	attempts         int
+	timeout          time.Duration
 }
 
 // OpenCodeLaunchOptions are the finite inputs to Ralph's managed OpenCode
@@ -46,6 +47,9 @@ type OpenCodeLaunchOptions struct {
 	Stdin     io.Reader
 	Stdout    io.Writer
 	Stderr    io.Writer
+	// VerificationProgressInterval must remain inside the parent provider's
+	// resolved stall lease so a healthy asynchronous verification is not reaped.
+	VerificationProgressInterval time.Duration
 }
 
 // RunOpenCodeLauncher runs the real provider first. A genuine provider
@@ -55,9 +59,10 @@ type OpenCodeLaunchOptions struct {
 // finite fail-closed protocol.
 func RunOpenCodeLauncher(opts OpenCodeLaunchOptions) int {
 	return runOpenCodeLauncher(opts, openCodeStopPolling{
-		interval: openCodeStopPollInterval,
-		attempts: openCodeStopPollAttempts,
-		timeout:  openCodeStopPollTimeout,
+		interval:         openCodeStopPollInterval,
+		progressInterval: opts.VerificationProgressInterval,
+		attempts:         openCodeStopPollAttempts,
+		timeout:          openCodeStopPollTimeout,
 	})
 }
 
@@ -80,6 +85,13 @@ func runOpenCodeLauncher(opts OpenCodeLaunchOptions, polling openCodeStopPolling
 	if (sessionID == "") != (endpoint == "") {
 		_ = block("opencode", opts.Stdout, opts.Stderr, "invalid_event")
 		return 2
+	}
+	if polling.progressInterval == 0 {
+		polling.progressInterval = openCodeStopPollInterval
+	}
+	if managed && polling.progressInterval < 0 {
+		_, _ = fmt.Fprintln(opts.Stderr, managedOpenCodeLauncherFailure)
+		return 1
 	}
 	if !filepath.IsAbs(opts.Binary) || !regularExecutable(opts.Binary) {
 		_, _ = fmt.Fprintln(opts.Stderr, managedOpenCodeLauncherFailure)
@@ -113,7 +125,7 @@ func runOpenCodeLauncher(opts OpenCodeLaunchOptions, polling openCodeStopPolling
 }
 
 func pollOpenCodeStop(opts OpenCodeLaunchOptions, env []string, polling openCodeStopPolling) int {
-	if polling.attempts <= 0 || polling.interval < 0 || polling.timeout < 0 {
+	if polling.attempts <= 0 || polling.interval < 0 || polling.progressInterval <= 0 || polling.timeout < 0 {
 		writeOpenCodeStatus(opts.Stdout, "supervisor_unavailable")
 		return 2
 	}
@@ -123,6 +135,12 @@ func pollOpenCodeStop(opts OpenCodeLaunchOptions, env []string, polling openCode
 		pollCtx, cancel = context.WithTimeout(opts.Context, polling.timeout)
 	}
 	defer cancel()
+	var progress *openCodeVerificationProgress
+	defer func() {
+		if progress != nil {
+			progress.stop()
+		}
+	}()
 	for attempt := 0; attempt < polling.attempts; attempt++ {
 		var stdout, stderr bytes.Buffer
 		err := RunHook(
@@ -142,7 +160,9 @@ func pollOpenCodeStop(opts OpenCodeLaunchOptions, env []string, polling openCode
 			writeOpenCodeStatus(opts.Stdout, "verification_pending")
 			return 2
 		}
-		_, _ = fmt.Fprintln(opts.Stderr, managedOpenCodeVerificationWait)
+		if progress == nil {
+			progress = startOpenCodeVerificationProgress(opts.Stderr, polling.progressInterval)
+		}
 		timer := time.NewTimer(polling.interval)
 		select {
 		case <-pollCtx.Done():

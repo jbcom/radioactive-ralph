@@ -85,7 +85,7 @@ func RunHook(ctx context.Context, adapter, event string, input io.Reader, stdout
 RunHook normalizes one provider event and asks the supervisor for a verdict. Unmanaged sessions are a strict no\-op, allowing globally configured hooks to coexist with ordinary user sessions. Managed failures block without echoing any raw JSON or environment value.
 
 <a name="RunOpenCodeLauncher"></a>
-## func [RunOpenCodeLauncher](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/adapters/opencode_launcher.go#L56>)
+## func [RunOpenCodeLauncher](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/adapters/opencode_launcher.go#L60>)
 
 ```go
 func RunOpenCodeLauncher(opts OpenCodeLaunchOptions) int
@@ -159,7 +159,7 @@ func Install(sourceExecutable, target string) (Manifest, error)
 Install builds a content\-addressed release beside target/current, then atomically switches the current symlink. No live provider config is mutated; deployment can merge the rendered fragments after review and feature probes.
 
 <a name="OpenCodeLaunchOptions"></a>
-## type [OpenCodeLaunchOptions](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/adapters/opencode_launcher.go#L38-L49>)
+## type [OpenCodeLaunchOptions](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/adapters/opencode_launcher.go#L39-L53>)
 
 OpenCodeLaunchOptions are the finite inputs to Ralph's managed OpenCode process wrapper. Provider arguments and streams pass through unchanged.
 
@@ -175,6 +175,9 @@ type OpenCodeLaunchOptions struct {
     Stdin     io.Reader
     Stdout    io.Writer
     Stderr    io.Writer
+    // VerificationProgressInterval must remain inside the parent provider's
+    // resolved stall lease so a healthy asynchronous verification is not reaped.
+    VerificationProgressInterval time.Duration
 }
 ```
 
