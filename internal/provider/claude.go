@@ -99,6 +99,10 @@ func (ClaudeRunner) Run(ctx context.Context, binding Binding, req Request) (Resu
 	if err != nil {
 		return Result{}, fmt.Errorf("provider: encode claude input: %w", err)
 	}
+	hookEnv, err := managedHookEnvironment(req)
+	if err != nil {
+		return Result{}, err
+	}
 
 	resultPath, cleanup, err := newResultFile("claude-result-*.jsonl")
 	if err != nil {
@@ -128,7 +132,7 @@ func (ClaudeRunner) Run(ctx context.Context, binding Binding, req Request) (Resu
 		// Ralph can still observe natural exit and preserve a later nonzero
 		// process status.
 		OneShotInput: input,
-		Env:          managedHookEnvironment(req),
+		Env:          hookEnv,
 	}
 	a, err := agent.Start(ctx, opts)
 	if err != nil {

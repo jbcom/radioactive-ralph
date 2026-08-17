@@ -21,7 +21,8 @@ provider credentials never cross the hook IPC boundary. An ordinary session
 without `RALPH_MANAGED_SESSION_ID` is a no-op and does not even read hook stdin.
 A provider launch that is not managed also strips stale inherited Ralph hook
 coordinates, so a contaminated service environment cannot accidentally enroll
-an ordinary turn.
+an ordinary turn. A launch with only one of the managed session or endpoint
+coordinates is rejected before the provider subprocess starts.
 A managed malformed event, missing executable, missing supervisor, protocol
 mismatch, or rejected verification fails closed with static output and exit
 code 2; input and environment values are never echoed.
@@ -67,8 +68,9 @@ bundle contains:
 - `manifest.json`
 
 The installer writes files under a private directory, syncs them before
-publication, verifies an existing content-addressed release byte-for-byte, and
-keeps prior releases for rollback. Generated commands point to
+publication, verifies an existing content-addressed release byte-for-byte
+through no-follow regular-file handles, and keeps prior releases for rollback.
+Generated commands point to
 `<directory>/current/bin/radioactive_ralph`, not a bare command on inherited
 `PATH`. This directly prevents the service/minimal-environment failure
 `PostToolUse hook exited with code 127`.

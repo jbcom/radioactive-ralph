@@ -8,8 +8,10 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -32,8 +34,8 @@ type Manifest struct {
 // atomically switches the current symlink. No live provider config is mutated;
 // deployment can merge the rendered fragments after review and feature probes.
 func Install(sourceExecutable, target string) (Manifest, error) {
-	if runtime.GOOS == "windows" {
-		return Manifest{}, fmt.Errorf("adapters: native Windows provider hooks are unsupported; use WSL")
+	if runtime.GOOS != "darwin" && runtime.GOOS != "linux" {
+		return Manifest{}, fmt.Errorf("adapters: provider hook installation is unsupported on %s; use macOS, Linux, or WSL", runtime.GOOS)
 	}
 	if strings.TrimSpace(target) == "" {
 		return Manifest{}, fmt.Errorf("adapters: target directory is required")
@@ -149,7 +151,15 @@ func writeSynced(path string, body []byte, mode os.FileMode) error {
 }
 
 func verifyRelease(releaseDir, digest string, files map[string][]byte) error {
-	executable, err := os.ReadFile(filepath.Join(releaseDir, "bin", "radioactive_ralph")) //nolint:gosec // installer-owned path
+	info, err := os.Lstat(releaseDir) //nolint:gosec // releaseDir is installer-owned and must itself be a real directory
+	if err != nil {
+		return fmt.Errorf("adapters: inspect existing release: %w", err)
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("adapters: existing content-addressed release is corrupt")
+	}
+	executable, err := readVerifiedReleaseFile(
+		filepath.Join(releaseDir, "bin", "radioactive_ralph"), -1)
 	if err != nil {
 		return fmt.Errorf("adapters: verify existing executable: %w", err)
 	}
@@ -158,7 +168,7 @@ func verifyRelease(releaseDir, digest string, files map[string][]byte) error {
 		return fmt.Errorf("adapters: existing content-addressed release is corrupt")
 	}
 	for name, want := range files {
-		got, err := os.ReadFile(filepath.Join(releaseDir, name)) //nolint:gosec // finite installer-owned file names
+		got, err := readVerifiedReleaseFile(filepath.Join(releaseDir, name), int64(len(want))+1)
 		if err != nil || !bytes.Equal(got, want) {
 			return fmt.Errorf("adapters: existing content-addressed release is corrupt")
 		}
@@ -166,21 +176,60 @@ func verifyRelease(releaseDir, digest string, files map[string][]byte) error {
 	return nil
 }
 
-func switchCurrent(target, releaseDir string) error {
+func readVerifiedReleaseFile(path string, limit int64) ([]byte, error) {
+	file, err := openReleaseFile(path)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = file.Close() }()
+	info, err := file.Stat()
+	if err != nil || !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("release entry is not a regular file")
+	}
+	reader := io.Reader(file)
+	if limit >= 0 {
+		reader = io.LimitReader(file, limit)
+	}
+	return io.ReadAll(reader)
+}
+
+func reserveName(target string) (string, error) {
 	marker, err := os.CreateTemp(target, ".current-*")
 	if err != nil {
-		return fmt.Errorf("adapters: reserve current link: %w", err)
+		return "", fmt.Errorf("adapters: reserve current link: %w", err)
 	}
 	tmp := marker.Name()
 	if err := marker.Close(); err != nil {
 		_ = os.Remove(tmp)
-		return fmt.Errorf("adapters: close current-link reservation: %w", err)
+		return "", fmt.Errorf("adapters: close current-link reservation: %w", err)
 	}
 	if err := os.Remove(tmp); err != nil {
-		return fmt.Errorf("adapters: remove current-link reservation: %w", err)
+		return "", fmt.Errorf("adapters: remove current-link reservation: %w", err)
 	}
-	if err := os.Symlink(releaseDir, tmp); err != nil {
+	return tmp, nil
+}
+
+func switchCurrent(target, releaseDir string) error {
+	var tmp string
+	linked := false
+	for attempt := 0; attempt < 8; attempt++ {
+		reserved, err := reserveName(target)
+		if err != nil {
+			return err
+		}
+		tmp = reserved
+		err = os.Symlink(releaseDir, tmp)
+		if err == nil {
+			linked = true
+			break
+		}
+		if errors.Is(err, fs.ErrExist) {
+			continue
+		}
 		return fmt.Errorf("adapters: create current link: %w", err)
+	}
+	if !linked {
+		return fmt.Errorf("adapters: create current link after retries: %w", fs.ErrExist)
 	}
 	if err := os.Rename(tmp, filepath.Join(target, "current")); err != nil {
 		_ = os.Remove(tmp)

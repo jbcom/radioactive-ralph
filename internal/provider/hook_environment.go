@@ -1,6 +1,7 @@
 package provider
 
 import (
+	"fmt"
 	"os"
 	"runtime"
 	"strings"
@@ -11,15 +12,18 @@ import (
 // managedHookEnvironment preserves the ordinary inherited process environment
 // while replacing only Ralph's two non-secret hook coordinates. It does not
 // invoke a login shell or serialize an environment snapshot.
-func managedHookEnvironment(req Request) []string {
+func managedHookEnvironment(req Request) ([]string, error) {
 	return managedHookEnvironmentFromGOOS(req, os.Environ(), runtime.GOOS)
 }
 
-func managedHookEnvironmentFrom(req Request, inherited []string) []string {
+func managedHookEnvironmentFrom(req Request, inherited []string) ([]string, error) {
 	return managedHookEnvironmentFromGOOS(req, inherited, runtime.GOOS)
 }
 
-func managedHookEnvironmentFromGOOS(req Request, inherited []string, goos string) []string {
+func managedHookEnvironmentFromGOOS(req Request, inherited []string, goos string) ([]string, error) {
+	if (req.ManagedSessionID == "") != (req.HookEndpoint == "") {
+		return nil, fmt.Errorf("provider: managed hook session and endpoint must be configured together")
+	}
 	env := make([]string, 0, len(inherited)+2)
 	removed := false
 	for _, entry := range inherited {
@@ -40,13 +44,13 @@ func managedHookEnvironmentFromGOOS(req Request, inherited []string, goos string
 		// nil is exec.Cmd's established "inherit exactly" contract. Preserve it
 		// only when there are no stale Ralph coordinates to remove.
 		if !removed {
-			return nil
+			return nil, nil
 		}
-		return env
+		return env, nil
 	}
 	env = append(env,
 		adapters.ManagedSessionEnv+"="+req.ManagedSessionID,
 		adapters.HookEndpointEnv+"="+req.HookEndpoint,
 	)
-	return env
+	return env, nil
 }

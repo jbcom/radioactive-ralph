@@ -10,26 +10,33 @@ import (
 func TestManagedHookEnvironmentReplacesCoordinatesOnce(t *testing.T) {
 	t.Setenv(adapters.ManagedSessionEnv, "stale-session")
 	t.Setenv(adapters.HookEndpointEnv, "stale-endpoint")
-	env := managedHookEnvironment(Request{
+	env, err := managedHookEnvironment(Request{
 		ManagedSessionID: "current-session",
 		HookEndpoint:     "/tmp/current.sock",
 	})
+	if err != nil {
+		t.Fatalf("managedHookEnvironment: %v", err)
+	}
 	assertOneEnvironmentValue(t, env, adapters.ManagedSessionEnv, "current-session")
 	assertOneEnvironmentValue(t, env, adapters.HookEndpointEnv, "/tmp/current.sock")
 }
 
 func TestManagedHookEnvironmentPreservesLegacyNil(t *testing.T) {
-	if got := managedHookEnvironmentFrom(Request{}, []string{"PATH=/usr/bin:/bin"}); got != nil {
+	got, err := managedHookEnvironmentFrom(Request{}, []string{"PATH=/usr/bin:/bin"})
+	if err != nil || got != nil {
 		t.Fatalf("unmanaged environment = %#v, want nil", got)
 	}
 }
 
 func TestManagedHookEnvironmentStripsInheritedCoordinatesFromUnmanagedTurn(t *testing.T) {
-	env := managedHookEnvironmentFrom(Request{}, []string{
+	env, err := managedHookEnvironmentFrom(Request{}, []string{
 		"PATH=/usr/bin:/bin",
 		adapters.ManagedSessionEnv + "=stale-session",
 		adapters.HookEndpointEnv + "=/tmp/stale.sock",
 	})
+	if err != nil {
+		t.Fatalf("managedHookEnvironmentFrom: %v", err)
+	}
 	if env == nil {
 		t.Fatal("filtered environment is nil; agent would inherit stale coordinates")
 	}
@@ -39,16 +46,34 @@ func TestManagedHookEnvironmentStripsInheritedCoordinatesFromUnmanagedTurn(t *te
 }
 
 func TestManagedHookEnvironmentStripsMixedCaseCoordinatesOnWindows(t *testing.T) {
-	env := managedHookEnvironmentFromGOOS(Request{}, []string{
+	env, err := managedHookEnvironmentFromGOOS(Request{}, []string{
 		"PATH=C:\\Windows\\System32",
 		"ralph_managed_session_id=stale-session",
 		"Ralph_Hook_Endpoint=stale-endpoint",
 	}, "windows")
+	if err != nil {
+		t.Fatalf("managedHookEnvironmentFromGOOS: %v", err)
+	}
 	if env == nil {
 		t.Fatal("filtered Windows environment is nil; agent would inherit stale coordinates")
 	}
 	if len(env) != 1 || env[0] != "PATH=C:\\Windows\\System32" {
 		t.Fatalf("filtered Windows environment = %#v", env)
+	}
+}
+
+func TestManagedHookEnvironmentRejectsPartialCoordinates(t *testing.T) {
+	for _, req := range []Request{
+		{ManagedSessionID: "session-canary"},
+		{HookEndpoint: "endpoint-canary"},
+	} {
+		env, err := managedHookEnvironmentFrom(req, []string{"PATH=/usr/bin:/bin"})
+		if err == nil || env != nil {
+			t.Fatalf("partial coordinates: env=%#v err=%v, want static rejection", env, err)
+		}
+		if strings.Contains(err.Error(), "canary") {
+			t.Fatalf("partial-coordinate error echoed value: %v", err)
+		}
 	}
 }
 

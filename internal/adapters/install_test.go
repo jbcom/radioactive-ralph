@@ -178,3 +178,37 @@ func TestInstallRejectsEmptyTargetWithoutMutatingWorkingDirectory(t *testing.T) 
 		t.Fatalf("empty target created installer state: %v", err)
 	}
 }
+
+func TestInstallRejectsSymlinkedExistingReleaseEntry(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("native Windows providers are disabled")
+	}
+	source := filepath.Join(t.TempDir(), "fake-ralph")
+	if err := os.WriteFile(source, []byte("#!/bin/sh\nexit 0\n"), 0o700); err != nil {
+		t.Fatalf("write fake executable: %v", err)
+	}
+	target := filepath.Join(t.TempDir(), "bundle")
+	manifest, err := Install(source, target)
+	if err != nil {
+		t.Fatalf("Install: %v", err)
+	}
+	release := filepath.Join(target, "releases", manifest.ExecutableSHA256)
+	entry := filepath.Join(release, "claude-hooks.json")
+	original, err := os.ReadFile(entry)
+	if err != nil {
+		t.Fatalf("read release entry: %v", err)
+	}
+	outside := filepath.Join(t.TempDir(), "outside.json")
+	if err := os.WriteFile(outside, original, 0o600); err != nil {
+		t.Fatalf("write symlink target: %v", err)
+	}
+	if err := os.Remove(entry); err != nil {
+		t.Fatalf("remove release entry: %v", err)
+	}
+	if err := os.Symlink(outside, entry); err != nil {
+		t.Fatalf("plant release symlink: %v", err)
+	}
+	if _, err := Install(source, target); err == nil || !strings.Contains(err.Error(), "release is corrupt") {
+		t.Fatalf("Install accepted symlinked release entry: %v", err)
+	}
+}

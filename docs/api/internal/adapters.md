@@ -69,7 +69,7 @@ type Environment func(string) string
 ```
 
 <a name="Manifest"></a>
-## type [Manifest](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/adapters/install.go#L25-L29>)
+## type [Manifest](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/adapters/install.go#L27-L31>)
 
 Manifest identifies one content\-addressed generated adapter release.
 
@@ -82,7 +82,7 @@ type Manifest struct {
 ```
 
 <a name="Install"></a>
-### func [Install](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/adapters/install.go#L34>)
+### func [Install](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/adapters/install.go#L36>)
 
 ```go
 func Install(sourceExecutable, target string) (Manifest, error)
