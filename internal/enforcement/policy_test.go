@@ -227,6 +227,16 @@ func TestSemanticValidationFailsClosed(t *testing.T) {
 				Owner: "ghp_super-secret-canary", RecheckAt: "2026-08-16T18:05:00Z", Deadline: "2026-08-16T19:00:00Z",
 			}}
 		}},
+		{name: "wait now is malformed", mutate: func(r *Request) {
+			r.Event = Event{Action: ActionWaitExternal, Now: "not-a-time", Wait: &WaitWindow{
+				Owner: WaitOwnerGitHub, RecheckAt: "2026-08-16T18:05:00Z", Deadline: "2026-08-16T19:00:00Z",
+			}}
+		}},
+		{name: "wait recheck is malformed", mutate: func(r *Request) {
+			r.Event = Event{Action: ActionWaitExternal, Now: "2026-08-16T18:00:00Z", Wait: &WaitWindow{
+				Owner: WaitOwnerGitHub, RecheckAt: "not-a-time", Deadline: "2026-08-16T19:00:00Z",
+			}}
+		}},
 		{name: "wait deadline already passed", mutate: func(r *Request) {
 			r.Event = Event{Action: ActionWaitExternal, Now: "2026-08-16T20:00:00Z", Wait: &WaitWindow{
 				Owner: "github", RecheckAt: "2026-08-16T18:05:00Z", Deadline: "2026-08-16T19:00:00Z",

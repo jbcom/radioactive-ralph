@@ -254,8 +254,14 @@ func evaluateWait(request Request) Decision {
 	if request.Event.Action != ActionRecheck {
 		return blockedFrom(snapshot, ReasonInvalidTransition)
 	}
-	now, _ := time.Parse(time.RFC3339, request.Event.Now)
-	recheckAt, deadline, _ := parseWait(snapshot.Wait)
+	now, err := time.Parse(time.RFC3339, request.Event.Now)
+	if err != nil {
+		return blockedMalformed()
+	}
+	recheckAt, deadline, err := parseWait(snapshot.Wait)
+	if err != nil {
+		return blockedMalformed()
+	}
 	if !now.Before(deadline) {
 		return blockedFrom(snapshot, ReasonWaitDeadlineExceeded)
 	}
@@ -356,8 +362,14 @@ func validateEvent(event Event, predicateIDs map[string]struct{}) error {
 			event.Results != nil {
 			return errMalformed
 		}
-		now, _ := time.Parse(time.RFC3339, event.Now)
-		recheckAt, deadline, _ := parseWait(event.Wait)
+		now, err := time.Parse(time.RFC3339, event.Now)
+		if err != nil {
+			return errMalformed
+		}
+		recheckAt, deadline, err := parseWait(event.Wait)
+		if err != nil {
+			return errMalformed
+		}
 		if !now.Before(recheckAt) || !now.Before(deadline) {
 			return errMalformed
 		}
