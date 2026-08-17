@@ -83,5 +83,7 @@ notification is later than Claude/Codex's synchronous Stop hook. Its generated
 plugin polls only the finite `verification_started`/`verification_pending`
 states and emits a static progress line every two seconds while it waits; that
 keeps Ralph's provider stall lease alive without exposing hook output. A failed,
-malformed, or unavailable verdict throws immediately. Ralph's
+malformed, or unavailable verdict throws immediately. Its twelve-minute hard
+cap leaves two minutes of transport/scheduling grace beyond Ralph's fixed
+ten-minute verification budget without allowing an infinite wait. Ralph's
 supervisor/reaper remains the load-bearing recovery authority.

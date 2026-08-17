@@ -23,6 +23,12 @@ import (
 // BundleVersion is the generated adapter artifact contract version.
 const BundleVersion = 1
 
+// openCodePollAttempts gives the asynchronous adapter a two-minute grace
+// window beyond the orchestrator's fixed ten-minute verification budget. A
+// same-length client deadline can miss a valid verdict at the budget boundary;
+// an unbounded loop would violate Ralph's never-block contract.
+const openCodePollAttempts = 360
+
 // Manifest identifies one content-addressed generated adapter release.
 type Manifest struct {
 	Version          int      `json:"version"`
@@ -301,7 +307,7 @@ export const RadioactiveRalphEnforcement = async () => ({
   },
   event: async ({ event }) => {
     if (event.type !== "session.idle") return;
-    for (let attempt = 0; attempt < 300; attempt++) {
+    for (let attempt = 0; attempt < %d; attempt++) {
       const result = await invoke("Stop", { hook_event_name: "Stop", session_id: event.properties.sessionID });
       if (result.code === 0) return;
       if (result.status !== "verification_started" && result.status !== "verification_pending") {
@@ -313,7 +319,7 @@ export const RadioactiveRalphEnforcement = async () => ({
     throw new Error("Radioactive Ralph completion verification timed out.");
   },
 });
-`, strconv.Quote(executable))
+`, strconv.Quote(executable), openCodePollAttempts)
 	return map[string][]byte{
 		"claude-hooks.json":  append(claudeJSON, '\n'),
 		"codex-hooks.toml":   []byte(codex),

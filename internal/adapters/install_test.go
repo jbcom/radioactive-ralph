@@ -89,6 +89,7 @@ func TestInstallReplacesBareCode127WithAbsoluteHookCommand(t *testing.T) {
 		!strings.Contains(string(opencodeRaw), `"tool.execute.after"`) ||
 		!strings.Contains(string(opencodeRaw), `event.type !== "session.idle"`) ||
 		!strings.Contains(string(opencodeRaw), `stdin: new Blob([JSON.stringify(payload)])`) ||
+		!strings.Contains(string(opencodeRaw), `attempt < 360`) ||
 		!strings.Contains(string(opencodeRaw), `Bun.sleep(2000)`) {
 		t.Fatalf("OpenCode plugin missing absolute commands/events: %s", opencodeRaw)
 	}
