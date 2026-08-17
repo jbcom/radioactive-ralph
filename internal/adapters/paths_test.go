@@ -3,6 +3,7 @@
 package adapters
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"strings"
@@ -38,6 +39,14 @@ func TestResolveCurrentBundleVerifiesExactRelease(t *testing.T) {
 		if strings.Contains(exact, string(filepath.Separator)+"current"+string(filepath.Separator)) {
 			t.Fatalf("verified execution path still traverses movable current link: %q", exact)
 		}
+	}
+	claudeHooks, err := os.ReadFile(filepath.Join(bundle.Root, "claude-hooks.json")) //nolint:gosec // test-owned exact release
+	if err != nil {
+		t.Fatalf("read generated hook fragment: %v", err)
+	}
+	currentExecutable := filepath.Join(target, "current", "bin", "radioactive_ralph")
+	if !bytes.Contains(claudeHooks, []byte(currentExecutable)) {
+		t.Fatalf("generated hooks do not carry atomic current selector %q", currentExecutable)
 	}
 
 	if err := os.WriteFile(filepath.Join(resolved, "opencode-plugin.js"), []byte("tampered"), 0o600); err != nil {

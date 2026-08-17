@@ -223,6 +223,10 @@ func resolveOpencodeLaunch(
 			containmentWritePaths: writePaths,
 		}, nil
 	}
+	progressInterval, err := opencodeVerificationProgressInterval(stallTimeout)
+	if err != nil {
+		return opencodeLaunch{}, err
+	}
 	bundle, err := adapters.CurrentBundleFromEnvironment(getenv)
 	if err != nil {
 		return opencodeLaunch{}, fmt.Errorf("provider: managed OpenCode adapter unavailable: %w", err)
@@ -239,7 +243,7 @@ func resolveOpencodeLaunch(
 		"hook", "launch-opencode",
 		"--binary", realBinary,
 		"--adapter-root", bundle.Target,
-		"--verification-progress-interval", opencodeVerificationProgressInterval(stallTimeout).String(),
+		"--verification-progress-interval", progressInterval.String(),
 		"--",
 	}, args...)
 	return opencodeLaunch{
@@ -248,12 +252,15 @@ func resolveOpencodeLaunch(
 	}, nil
 }
 
-func opencodeVerificationProgressInterval(stallTimeout time.Duration) time.Duration {
+func opencodeVerificationProgressInterval(stallTimeout time.Duration) (time.Duration, error) {
+	if stallTimeout <= 0 {
+		return 0, fmt.Errorf("provider: managed OpenCode stall timeout must be positive")
+	}
 	interval := stallTimeout / 3
 	if interval <= 0 {
-		return time.Nanosecond
+		return 0, fmt.Errorf("provider: managed OpenCode stall timeout is too short")
 	}
-	return interval
+	return interval, nil
 }
 
 // opencodeEvent is one `opencode run --format json` stream event.

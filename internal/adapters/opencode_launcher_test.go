@@ -256,6 +256,9 @@ func TestOpenCodeLauncherRejectsPartialCoordinatesBeforeProviderStart(t *testing
 	if code := RunOpenCodeLauncher(opts); code != 2 {
 		t.Fatalf("partial-coordinate exit = %d", code)
 	}
+	if got := stdout.String(); got != "{\"status\":\"invalid_event\"}\n" {
+		t.Fatalf("partial-coordinate protocol = %q, want finite invalid_event status", got)
+	}
 	if _, err := os.Stat(marker); !os.IsNotExist(err) {
 		t.Fatalf("provider launched with partial coordinates: %v", err)
 	}

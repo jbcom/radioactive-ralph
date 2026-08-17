@@ -105,6 +105,12 @@ func ResolveCurrentBundle(target string) (BundlePaths, error) {
 		info.Size() > maxExecutableBytes {
 		return BundlePaths{}, fmt.Errorf("adapters: current executable is invalid")
 	}
+	// render does not open or resolve this path. It embeds the atomic `current`
+	// selector into generated global hook fragments so a later reviewed release
+	// can replace them without rewriting user config. Every file read and every
+	// executable/resource returned below still comes from the already resolved,
+	// content-verified releaseDir; substituting executable here would instead
+	// freeze generated hooks to one old release and disagree with Install.
 	files, err := render(filepath.Join(current, "bin", "radioactive_ralph"))
 	if err != nil {
 		return BundlePaths{}, err

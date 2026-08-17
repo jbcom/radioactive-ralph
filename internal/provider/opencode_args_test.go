@@ -182,6 +182,18 @@ func TestResolveUnmanagedOpencodeLaunchIsDirectAndPure(t *testing.T) {
 	}
 }
 
+func TestOpencodeVerificationProgressIntervalFailsClosedForImpossibleLease(t *testing.T) {
+	for _, stall := range []time.Duration{-time.Second, 0, time.Nanosecond, 2 * time.Nanosecond} {
+		if interval, err := opencodeVerificationProgressInterval(stall); err == nil || interval != 0 {
+			t.Fatalf("stall %s resolved to (%s, %v), want fail-closed error", stall, interval, err)
+		}
+	}
+	if interval, err := opencodeVerificationProgressInterval(300 * time.Millisecond); err != nil ||
+		interval != 100*time.Millisecond {
+		t.Fatalf("300ms stall resolved to (%s, %v), want 100ms", interval, err)
+	}
+}
+
 func TestResolveManagedOpencodeLaunchRejectsTamperedBundleBeforeBinaryLookup(t *testing.T) {
 	target := installOpencodeLaunchTestBundle(t)
 	bundle, err := adapters.ResolveCurrentBundle(target)
