@@ -32,6 +32,9 @@ func (s *Supervisor) HandleHookEvent(
 		args.SessionID == "" {
 		return ipc.HookEventReply{Allow: false, Reason: "invalid_event"}, nil
 	}
+	if s.beforeHookEventLock != nil {
+		s.beforeHookEventLock(args)
+	}
 	eventLock := s.hookEventLock(args.SessionID)
 	eventLock.Lock()
 	defer eventLock.Unlock()

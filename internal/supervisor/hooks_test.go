@@ -165,12 +165,19 @@ func TestHandleHookEventSerializesProgressInvalidationBeforeStopVerdict(t *testi
 
 	invalidationEntered := make(chan struct{})
 	releaseInvalidation := make(chan struct{})
+	stopAttempted := make(chan struct{})
 	sup.beforeHookInvalidation = func() {
 		close(invalidationEntered)
 		<-releaseInvalidation
 	}
+	sup.beforeHookEventLock = func(args ipc.HookEventArgs) {
+		if args.Event == ipc.HookEventStop {
+			close(stopAttempted)
+		}
+	}
 	t.Cleanup(func() {
 		sup.beforeHookInvalidation = nil
+		sup.beforeHookEventLock = nil
 		select {
 		case <-releaseInvalidation:
 		default:
@@ -185,11 +192,7 @@ func TestHandleHookEventSerializesProgressInvalidationBeforeStopVerdict(t *testi
 		})
 		progressDone <- reply
 	}()
-	select {
-	case <-invalidationEntered:
-	case <-time.After(time.Second):
-		t.Fatal("progress hook did not reach invalidation seam")
-	}
+	<-invalidationEntered
 
 	stopDone := make(chan ipc.HookEventReply, 1)
 	go func() {
@@ -198,10 +201,11 @@ func TestHandleHookEventSerializesProgressInvalidationBeforeStopVerdict(t *testi
 		})
 		stopDone <- reply
 	}()
+	<-stopAttempted
 	select {
 	case reply := <-stopDone:
 		t.Fatalf("Stop raced past in-flight progress invalidation: %+v", reply)
-	case <-time.After(25 * time.Millisecond):
+	default:
 	}
 
 	close(releaseInvalidation)

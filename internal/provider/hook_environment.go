@@ -2,6 +2,7 @@ package provider
 
 import (
 	"os"
+	"runtime"
 	"strings"
 
 	"github.com/jbcom/radioactive-ralph/internal/adapters"
@@ -11,15 +12,24 @@ import (
 // while replacing only Ralph's two non-secret hook coordinates. It does not
 // invoke a login shell or serialize an environment snapshot.
 func managedHookEnvironment(req Request) []string {
-	return managedHookEnvironmentFrom(req, os.Environ())
+	return managedHookEnvironmentFromGOOS(req, os.Environ(), runtime.GOOS)
 }
 
 func managedHookEnvironmentFrom(req Request, inherited []string) []string {
-	prefixes := []string{adapters.ManagedSessionEnv + "=", adapters.HookEndpointEnv + "="}
+	return managedHookEnvironmentFromGOOS(req, inherited, runtime.GOOS)
+}
+
+func managedHookEnvironmentFromGOOS(req Request, inherited []string, goos string) []string {
 	env := make([]string, 0, len(inherited)+2)
 	removed := false
 	for _, entry := range inherited {
-		if strings.HasPrefix(entry, prefixes[0]) || strings.HasPrefix(entry, prefixes[1]) {
+		key, _, _ := strings.Cut(entry, "=")
+		managedKey := key == adapters.ManagedSessionEnv || key == adapters.HookEndpointEnv
+		if goos == "windows" {
+			managedKey = strings.EqualFold(key, adapters.ManagedSessionEnv) ||
+				strings.EqualFold(key, adapters.HookEndpointEnv)
+		}
+		if managedKey {
 			removed = true
 			continue
 		}

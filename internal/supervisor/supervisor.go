@@ -88,6 +88,8 @@ type Supervisor struct {
 	hookEventLocks [32]sync.Mutex
 	// beforeHookInvalidation is a deterministic concurrency seam for tests.
 	beforeHookInvalidation func()
+	// beforeHookEventLock observes that a request reached session serialization.
+	beforeHookEventLock func(ipc.HookEventArgs)
 
 	stopCh   chan struct{}
 	stopOnce *sync.Once

@@ -38,6 +38,20 @@ func TestManagedHookEnvironmentStripsInheritedCoordinatesFromUnmanagedTurn(t *te
 	}
 }
 
+func TestManagedHookEnvironmentStripsMixedCaseCoordinatesOnWindows(t *testing.T) {
+	env := managedHookEnvironmentFromGOOS(Request{}, []string{
+		"PATH=C:\\Windows\\System32",
+		"ralph_managed_session_id=stale-session",
+		"Ralph_Hook_Endpoint=stale-endpoint",
+	}, "windows")
+	if env == nil {
+		t.Fatal("filtered Windows environment is nil; agent would inherit stale coordinates")
+	}
+	if len(env) != 1 || env[0] != "PATH=C:\\Windows\\System32" {
+		t.Fatalf("filtered Windows environment = %#v", env)
+	}
+}
+
 func assertOneEnvironmentValue(t *testing.T, env []string, key, want string) {
 	t.Helper()
 	prefix := key + "="

@@ -55,7 +55,9 @@ func RunHook(
 		return block(adapter, stdout, stderr, "supervisor_unavailable")
 	}
 	defer func() { _ = client.Close() }()
-	reply, err := client.HookEvent(ctx, ipc.HookEventArgs{
+	hookCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	reply, err := client.HookEvent(hookCtx, ipc.HookEventArgs{
 		Adapter: adapter, Event: event, SessionID: sessionID,
 	})
 	if err != nil || !reply.Allow {
