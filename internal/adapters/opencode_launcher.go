@@ -89,6 +89,10 @@ func runOpenCodeLauncher(opts OpenCodeLaunchOptions, polling openCodeStopPolling
 		_ = block("opencode", opts.Stdout, opts.Stderr, "invalid_event")
 		return 2
 	}
+	if managed && !managedOpenCodeProviderSupported() {
+		_, _ = fmt.Fprintln(opts.Stderr, managedOpenCodeLauncherFailure)
+		return 1
+	}
 	if polling.progressInterval == 0 {
 		polling.progressInterval = openCodeStopPollInterval
 	}

@@ -11,6 +11,8 @@ import (
 	"time"
 )
 
+func managedOpenCodeProviderSupported() bool { return true }
+
 func configureOpenCodeProviderProcess(cmd *exec.Cmd) {
 	if cmd.SysProcAttr == nil {
 		cmd.SysProcAttr = &syscall.SysProcAttr{}

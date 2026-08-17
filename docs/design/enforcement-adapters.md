@@ -90,8 +90,10 @@ The managed launcher places the real provider in its own process group and
 reclaims every non-zombie member before submitting final `Stop`. Ralph owns the
 provider output pipes and waits for them to close after that proof. A provider
 that exits while a background tool keeps running therefore cannot mutate the
-checkout during or after acceptance; cleanup uncertainty fails closed without a `Stop`
-request.
+checkout during or after acceptance; cleanup uncertainty fails closed without
+a `Stop` request.
+Native Windows rejects managed OpenCode coordinates before starting the
+provider; this completion-authority path is supported on macOS, Linux, and WSL.
 
 The installer writes files under a private directory, syncs them before
 publication, verifies an existing content-addressed release byte-for-byte

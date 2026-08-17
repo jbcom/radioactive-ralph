@@ -8,6 +8,8 @@ import (
 	"os/exec"
 )
 
+func managedOpenCodeProviderSupported() bool { return false }
+
 func configureOpenCodeProviderProcess(*exec.Cmd) {}
 
 func reclaimOpenCodeProviderProcess(*os.Process) error {
