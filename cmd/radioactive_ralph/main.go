@@ -16,11 +16,13 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/signal"
 	"syscall"
 
+	"github.com/jbcom/radioactive-ralph/internal/adapters"
 	"github.com/jbcom/radioactive-ralph/internal/contain"
 	"github.com/jbcom/radioactive-ralph/internal/vconfig"
 	"github.com/spf13/cobra"
@@ -63,6 +65,9 @@ func run() int {
 
 	root := newRootCmd(ctx, maybeLaunchDesktopGUI)
 	if err := root.Execute(); err != nil {
+		if errors.Is(err, adapters.ErrBlocked) {
+			return 2
+		}
 		fmt.Fprintf(os.Stderr, "radioactive_ralph: %v\n", err)
 		return 1
 	}
@@ -128,6 +133,8 @@ func newRootCmd(ctx context.Context, launchDesktop desktopLaunchFunc) *cobra.Com
 	root.AddCommand(newMessagesCmd())
 	root.AddCommand(newCalibrationCmd())
 	root.AddCommand(newGUICmd())
+	root.AddCommand(newHookCmd())
+	root.AddCommand(newAdaptersCmd())
 
 	return root
 }

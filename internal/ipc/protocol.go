@@ -35,10 +35,10 @@ import (
 // drive commands (plan-import/plan-set-status/plan-delete/task-approve/
 // worker-kill) are v2;
 // safe project-scoped snapshot/message queries are v3; ProjectEnsure's
-// resolve-only mode is v4. A client omitting Request.ProtoVersion is treated as
+// resolve-only mode is v4; managed provider hook events are v5. A client omitting Request.ProtoVersion is treated as
 // v1 for back-compat.
 const (
-	ProtoVersion       = 4
+	ProtoVersion       = 5
 	DriveProtoVersion  = 2
 	QueryProtoVersion  = 3
 	AttachProtoVersion = 3
@@ -61,6 +61,7 @@ const (
 	// floor — a plain ProjectEnsure stays on DriveProtoVersion so a rolling
 	// client can still drive an otherwise-compatible older supervisor.
 	ResolveOnlyProtoVersion = 4
+	HookProtoVersion        = 5
 )
 
 // Command names for the JSON-line protocol.
@@ -97,7 +98,33 @@ const (
 	// protocol version rather than the read-only query one.
 	CmdCalibrationPut  = "calibration-put"
 	CmdCalibrationList = "calibration-list"
+
+	// v5 — secret-blind managed-provider hook signal plane.
+	CmdHookEvent = "hook-event"
 )
+
+const (
+	// HookEventPostToolUse is normalized tool progress.
+	HookEventPostToolUse = "PostToolUse"
+	// HookEventStop requests independent completion verification.
+	HookEventStop = "Stop"
+)
+
+// HookEventArgs is deliberately finite. Provider hook payloads can contain
+// prompts, tool arguments, transcripts, and credentials; adapters normalize
+// those payloads locally and send only these identifiers to the supervisor.
+type HookEventArgs struct {
+	Adapter   string `json:"adapter"`
+	Event     string `json:"event"`
+	SessionID string `json:"session_id"`
+}
+
+// HookEventReply is the supervisor's secret-blind hook verdict. Reason is one
+// of a closed set of static codes and never contains provider or shell output.
+type HookEventReply struct {
+	Allow  bool   `json:"allow"`
+	Reason string `json:"reason"`
+}
 
 // Stable machine-readable error classes carried in Response.Code so a client
 // (the GUI) can react programmatically instead of string-matching Error.

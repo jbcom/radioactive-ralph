@@ -81,6 +81,16 @@ type Supervisor struct {
 	// stable ordering that always dispatches the same head of the list.
 	dispatchCursor int
 
+	hookRunsMu sync.Mutex
+	hookRuns   map[hookRunKey]struct{}
+	// hookEventLocks serialize progress invalidation and Stop verdict reads for
+	// one managed session. Hash collisions only add harmless serialization.
+	hookEventLocks [32]sync.Mutex
+	// beforeHookInvalidation is a deterministic concurrency seam for tests.
+	beforeHookInvalidation func()
+	// beforeHookEventLock observes that a request reached session serialization.
+	beforeHookEventLock func(ipc.HookEventArgs)
+
 	stopCh   chan struct{}
 	stopOnce *sync.Once
 }

@@ -26,6 +26,7 @@ their public methods with signatures and associated doc comments.
 :hidden:
 cmd/radioactive_ralph
 internal/a2a
+internal/adapters
 internal/agent
 internal/agentdetect
 internal/contain

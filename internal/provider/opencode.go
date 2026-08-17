@@ -71,6 +71,10 @@ func (OpencodeRunner) Run(ctx context.Context, binding Binding, req Request) (Re
 		return Result{}, err
 	}
 	args := opencodeArgs(binding, req, invocation)
+	hookEnv, err := managedHookEnvironment(req)
+	if err != nil {
+		return Result{}, err
+	}
 
 	opts := agent.Options{
 		Command:               binding.Config.Binary,
@@ -82,6 +86,7 @@ func (OpencodeRunner) Run(ctx context.Context, binding Binding, req Request) (Re
 		// Count raw PTY reads so discarded/partial/non-JSON progress cannot
 		// refresh the watchdog indefinitely without consuming a hard budget.
 		MaxObservedOutputBytes: maxStructuredEvidenceBytes,
+		Env:                    hookEnv,
 	}
 	a, err := agent.Start(ctx, opts)
 	if err != nil {

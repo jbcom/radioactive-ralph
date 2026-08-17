@@ -110,6 +110,9 @@ func mechanicalAcceptanceCheck(ctx context.Context, dir string, acceptanceJSON s
 	if err := json.Unmarshal([]byte(acceptanceJSON), &acc); err != nil {
 		return false, "", fmt.Errorf("orch: unmarshal acceptance: %w", err)
 	}
+	if strings.TrimSpace(acc.Command) == "" && strings.TrimSpace(acc.FileExists) == "" {
+		return false, "explicit acceptance has no mechanical predicate", nil
+	}
 
 	checkDir := acc.Dir
 	if checkDir == "" {
@@ -127,6 +130,17 @@ func mechanicalAcceptanceCheck(ctx context.Context, dir string, acceptanceJSON s
 	}
 
 	return true, "", nil
+}
+
+func hasMechanicalAcceptance(acceptanceJSON string) bool {
+	if strings.TrimSpace(acceptanceJSON) == "" {
+		return false
+	}
+	var acc Acceptance
+	if err := json.Unmarshal([]byte(acceptanceJSON), &acc); err != nil {
+		return false
+	}
+	return strings.TrimSpace(acc.Command) != "" || strings.TrimSpace(acc.FileExists) != ""
 }
 
 func checkFileExists(dir, path string) (bool, string, error) {
@@ -249,6 +263,83 @@ func (o *Orchestrator) VerifyAndComplete(ctx context.Context, planID, taskID str
 	// is the ORCHESTRATOR-initiated path (verification it runs itself), where
 	// there is no separate reporter to attribute the result to.
 	return o.VerifyAndCompleteAs(ctx, planID, taskID, "", ev)
+}
+
+// CanStopAs is the synchronous Stop-hook gate for one Ralph-managed provider
+// turn. It independently re-runs the same acceptance checker used by
+// VerifyAndComplete, but does not mark the task: the provider still has to exit
+// and deliver bounded authoritative evidence, after which VerifyAndCompleteAs
+// repeats verification and records the verdict. The double check deliberately
+// closes the hook-to-process-exit race.
+//
+// Judgment-only tasks have no independent predicate. Empty evidence therefore
+// cannot satisfy their fallback and the hook fails closed; a hook or provider
+// assertion is never promoted into completion evidence.
+func (o *Orchestrator) CanStopAs(
+	ctx context.Context,
+	planID, taskID, reportingSession string,
+) (bool, error) {
+	task, err := o.store.GetTask(ctx, planID, taskID)
+	if err != nil {
+		return false, fmt.Errorf("orch: load task for stop verification: %w", err)
+	}
+	if reportingSession == "" || task.ClaimedBySession != reportingSession {
+		return false, nil
+	}
+	dir, err := o.projectDirFor(ctx, planID)
+	if err != nil {
+		return false, err
+	}
+	verifyCtx, cancel := context.WithTimeout(
+		context.WithoutCancel(ctx), o.effectiveVerificationBudget())
+	defer cancel()
+
+	var ok bool
+	err = o.beatWhile(verifyCtx, task.ClaimedByWorkerID, func() error {
+		var checkErr error
+		ok, _, checkErr = o.acceptanceCheck(
+			verifyCtx, dir, task.AcceptanceJSON, a2a.Evidence{})
+		return checkErr
+	})
+	if verifyCtx.Err() != nil {
+		return false, verifyCtx.Err()
+	}
+	if err != nil {
+		return false, err
+	}
+	if !ok {
+		return false, nil
+	}
+	if escaped := o.verifyTaskOutputContainment(verifyCtx, task, dir); escaped != "" {
+		return false, nil
+	}
+	return true, nil
+}
+
+// VerifyStopAsync runs the Stop acceptance check outside the IPC request. The
+// first Stop can therefore fail closed immediately instead of parking the
+// provider (and its watchdog stall lease) behind a long test suite. The work is
+// tracked by the orchestrator's existing shutdown drain.
+func (o *Orchestrator) VerifyStopAsync(
+	planID, taskID, reportingSession string,
+	done func(bool, error),
+) {
+	o.inflight.Add(1)
+	go func() {
+		defer o.inflight.Done()
+		allowed, err := false, error(nil)
+		defer func() {
+			if recover() != nil {
+				allowed = false
+				err = errors.New("orch: stop verification panicked")
+			}
+			if done != nil {
+				done(allowed, err)
+			}
+		}()
+		allowed, err = o.CanStopAs(
+			o.dispatchBaseCtx(), planID, taskID, reportingSession)
+	}()
 }
 
 // VerifyAndCompleteAs verifies evidence submitted BY reportingSession and

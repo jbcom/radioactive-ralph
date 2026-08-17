@@ -73,6 +73,7 @@ type Orchestrator struct {
 	acceptanceCheck AcceptanceChecker
 	persistBudget   time.Duration
 	verifyBudget    time.Duration
+	hookEndpoint    string
 
 	// containProviderWrites confines each provider turn to writing beneath the
 	// project directory, enforced by the kernel (internal/contain).
@@ -497,6 +498,12 @@ func WithAcceptanceChecker(c AcceptanceChecker) Option {
 	return func(o *Orchestrator) { o.acceptanceCheck = c }
 }
 
+// WithHookEndpoint injects the supervisor's local control socket into managed
+// provider processes. Empty preserves the pre-adapter environment.
+func WithHookEndpoint(endpoint string) Option {
+	return func(o *Orchestrator) { o.hookEndpoint = endpoint }
+}
+
 // effectivePersistBudget is the configured store-write budget, or the default.
 func (o *Orchestrator) effectivePersistBudget() time.Duration {
 	if o.persistBudget > 0 {
@@ -630,6 +637,23 @@ type dispatchedStep struct {
 	ref  plan.StepRef
 	step plan.Step
 	task *store.Task
+}
+
+func configureManagedHooks(
+	req *provider.Request,
+	sessionID, endpoint string,
+	tasks ...*store.Task,
+) {
+	if req == nil || sessionID == "" || endpoint == "" || len(tasks) == 0 {
+		return
+	}
+	for _, task := range tasks {
+		if task == nil || !hasMechanicalAcceptance(task.AcceptanceJSON) {
+			return
+		}
+	}
+	req.ManagedSessionID = sessionID
+	req.HookEndpoint = endpoint
 }
 
 // DispatchNext loads the plan for planID, asks the store what is ready right
@@ -2038,6 +2062,11 @@ func (o *Orchestrator) dispatchWorker(ctx context.Context, projectID, projectDir
 		TurnTimeout:     o.turnTimeout,
 		StallTimeout:    o.stallTimeout,
 	}
+	// A Stop hook can independently re-run explicit acceptance. A judgment-only
+	// task can be judged only after bounded assistant evidence returns, so it is
+	// deliberately left unmanaged by v1 rather than being trapped in a Stop
+	// loop or treating the hook itself as evidence.
+	configureManagedHooks(&req, sessionID, o.hookEndpoint, ds.task)
 	limits, err := provider.ResolveTurnLimits(binding, req)
 	if err != nil {
 		return fmt.Errorf("orch: resolve provider timeouts: %w", err)
@@ -2468,6 +2497,11 @@ func (o *Orchestrator) runFanoutGroup(ctx context.Context, projectID, projectDir
 		TurnTimeout:     o.turnTimeout,
 		StallTimeout:    o.stallTimeout,
 	}
+	tasks := make([]*store.Task, 0, len(claimed))
+	for _, ds := range claimed {
+		tasks = append(tasks, ds.task)
+	}
+	configureManagedHooks(&req, sessionID, o.hookEndpoint, tasks...)
 	limits, err := provider.ResolveTurnLimits(binding, req)
 	if err != nil {
 		return fmt.Errorf("orch: resolve provider timeouts: %w", err)

@@ -27,6 +27,13 @@ type Binding struct {
 type Request struct {
 	WorkingDir string
 
+	// ManagedSessionID and HookEndpoint are opaque control-plane coordinates
+	// injected only by Ralph's orchestrator. Generated global hooks no-op when
+	// they are absent and send finite events to the supervisor when present.
+	// They are never provider credentials and must never be logged.
+	ManagedSessionID string
+	HookEndpoint     string
+
 	// ContainmentRoot, when set, confines the provider process AND everything
 	// it spawns to writing beneath this absolute path, enforced by the kernel
 	// (see internal/contain).
