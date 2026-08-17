@@ -44,14 +44,14 @@ const BundleVersion = 1
 
 ## Variables
 
-<a name="ErrBlocked"></a>ErrBlocked is intentionally static. Callers translate it to exit code 2; it never wraps provider input, an environment value, or a socket error.
+<a name="ErrBlocked"></a>ErrBlocked is intentionally static. Callers translate it to exit code 2 for providers whose blocking protocol uses a nonzero exit; it never wraps provider input, an environment value, or a socket error.
 
 ```go
 var ErrBlocked = errors.New("managed hook blocked")
 ```
 
 <a name="RunHook"></a>
-## func [RunHook](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/adapters/hook.go#L34-L40>)
+## func [RunHook](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/adapters/hook.go#L35-L41>)
 
 ```go
 func RunHook(ctx context.Context, adapter, event string, input io.Reader, stdout, stderr io.Writer, getenv Environment) error
@@ -60,7 +60,7 @@ func RunHook(ctx context.Context, adapter, event string, input io.Reader, stdout
 RunHook normalizes one provider event and asks the supervisor for a verdict. Unmanaged sessions are a strict no\-op, allowing globally configured hooks to coexist with ordinary user sessions. Managed failures block without echoing any raw JSON or environment value.
 
 <a name="Environment"></a>
-## type [Environment](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/adapters/hook.go#L28>)
+## type [Environment](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/adapters/hook.go#L29>)
 
 Environment resolves one environment key for hook ingress.
 

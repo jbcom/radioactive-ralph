@@ -5,7 +5,6 @@ import (
 	"runtime"
 	"sync/atomic"
 	"testing"
-	"time"
 
 	"github.com/jbcom/radioactive-ralph/internal/a2a"
 	"github.com/jbcom/radioactive-ralph/internal/ipc"
@@ -120,11 +119,7 @@ func TestHandleHookEventDoesNotParkStopBehindAcceptance(t *testing.T) {
 	if err != nil || first.Allow || first.Reason != "verification_started" {
 		t.Fatalf("first Stop = %+v, err=%v", first, err)
 	}
-	select {
-	case <-started:
-	case <-time.After(time.Second):
-		t.Fatal("asynchronous acceptance did not start")
-	}
+	<-started
 
 	second, err := sup.HandleHookEvent(ctx, ipc.HookEventArgs{
 		Adapter: "claude", Event: ipc.HookEventStop, SessionID: sessionID,

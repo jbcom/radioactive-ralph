@@ -20,8 +20,9 @@ const (
 	maxHookInputBytes = 1 << 20
 )
 
-// ErrBlocked is intentionally static. Callers translate it to exit code 2;
-// it never wraps provider input, an environment value, or a socket error.
+// ErrBlocked is intentionally static. Callers translate it to exit code 2 for
+// providers whose blocking protocol uses a nonzero exit; it never wraps
+// provider input, an environment value, or a socket error.
 var ErrBlocked = errors.New("managed hook blocked")
 
 // Environment resolves one environment key for hook ingress.
@@ -96,9 +97,19 @@ func block(adapter string, stdout, stderr io.Writer, reasonCode string) error {
 	const reason = "Radioactive Ralph verification is not complete."
 	switch adapter {
 	case "claude":
-		_, _ = fmt.Fprintln(stderr, `{"decision":"block","reason":"Radioactive Ralph verification is not complete."}`)
+		// Ralph exits 2 for ErrBlocked. Claude treats stderr as the blocking
+		// reason on that path; structured stdout is for the exit-0 protocol.
+		_, _ = fmt.Fprintln(stderr, reason)
 	case "codex":
-		_, _ = fmt.Fprintln(stdout, `{"decision":"block","reason":"Radioactive Ralph verification is not complete."}`)
+		// Codex parses structured decisions on the exit-0 path. Returning
+		// ErrBlocked here would turn this into exit 2, where Codex instead
+		// expects a plain stderr reason.
+		encoded, _ := json.Marshal(struct {
+			Decision string `json:"decision"`
+			Reason   string `json:"reason"`
+		}{Decision: "block", Reason: reason})
+		_, _ = fmt.Fprintln(stdout, string(encoded))
+		return nil
 	case "opencode":
 		// The generated plugin consumes this finite code to decide whether to
 		// poll an asynchronous verification. It never includes provider input.

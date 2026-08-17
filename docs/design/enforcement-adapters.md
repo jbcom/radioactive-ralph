@@ -24,8 +24,11 @@ coordinates, so a contaminated service environment cannot accidentally enroll
 an ordinary turn. A launch with only one of the managed session or endpoint
 coordinates is rejected before the provider subprocess starts.
 A managed malformed event, missing executable, missing supervisor, protocol
-mismatch, or rejected verification fails closed with static output and exit
-code 2; input and environment values are never echoed.
+mismatch, or rejected verification fails closed with static output. Claude
+uses its exit-2/plain-stderr block contract, Codex uses its
+exit-0/structured-JSON decision contract, and the generated OpenCode plugin
+consumes a finite status plus nonzero exit. Input and environment values are
+never echoed.
 
 ## Completion authority
 
@@ -87,3 +90,10 @@ malformed, or unavailable verdict throws immediately. Its twelve-minute hard
 cap leaves two minutes of transport/scheduling grace beyond Ralph's fixed
 ten-minute verification budget without allowing an infinite wait. Ralph's
 supervisor/reaper remains the load-bearing recovery authority.
+
+The Linux CI leg also re-applies the guarded versioning, strict-decoding,
+coordinate, acceptance, ownership, live-binding, deduplication, and progress
+invalidation defects one at a time in isolated source trees. Each mutation
+must land at its exact source line, compile, and make its named regression test
+fail for the expected assertion before the ordinary suite can be considered
+meaningful.

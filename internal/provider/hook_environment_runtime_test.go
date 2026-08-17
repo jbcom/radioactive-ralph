@@ -3,6 +3,7 @@ package provider
 import (
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -27,6 +28,15 @@ func TestProviderRunnersRejectPartialHookCoordinatesBeforeLaunch(t *testing.T) {
 			marker := filepath.Join(t.TempDir(), "launched")
 			binary := writeFakeCLI(t, "partial-hook-"+tc.name+".sh",
 				"#!/bin/sh\nprintf launched > "+shellSingleQuote(marker)+"\n")
+			if out, err := exec.Command(binary).CombinedOutput(); err != nil {
+				t.Fatalf("sentinel control run: %v\n%s", err, out)
+			}
+			if _, err := os.Stat(marker); err != nil {
+				t.Fatalf("sentinel control did not create marker: %v", err)
+			}
+			if err := os.Remove(marker); err != nil {
+				t.Fatalf("reset sentinel marker: %v", err)
+			}
 			_, err := tc.runner.Run(context.Background(), Binding{
 				Name: tc.provider, BinaryFromLocal: tc.localPath,
 				Config: BindingConfig{Type: tc.provider, Binary: binary},

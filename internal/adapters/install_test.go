@@ -21,9 +21,10 @@ func TestInstallReplacesBareCode127WithAbsoluteHookCommand(t *testing.T) {
 	}
 
 	// Exact pre-fix reproduction: the old generated command depended on PATH.
-	// A service-style sanitized PATH cannot resolve it and the shell reports 127.
+	// A fresh empty PATH cannot resolve it and the shell reports 127.
+	emptyPath := t.TempDir()
 	old := exec.Command("/bin/sh", "-c", "radioactive_ralph hook event --adapter claude --event PostToolUse")
-	old.Env = []string{"PATH=/usr/bin:/bin"}
+	old.Env = []string{"PATH=" + emptyPath}
 	err := old.Run()
 	var exitErr *exec.ExitError
 	if !errors.As(err, &exitErr) || exitErr.ExitCode() != 127 {
@@ -93,21 +94,23 @@ func TestInstallReplacesBareCode127WithAbsoluteHookCommand(t *testing.T) {
 		!strings.Contains(string(opencodeRaw), `Bun.sleep(2000)`) {
 		t.Fatalf("OpenCode plugin missing absolute commands/events: %s", opencodeRaw)
 	}
-	if bun, err := exec.LookPath("bun"); err == nil {
-		pluginPath := filepath.Join(target, "current", "opencode-plugin.js")
-		script := `const plugin = await import(` + strconv.Quote(pluginPath) + `); ` +
-			`const hooks = await plugin.RadioactiveRalphEnforcement(); ` +
-			`await hooks["tool.execute.after"]({sessionID: "smoke"});`
-		cmd := exec.Command(bun, "-e", script)
-		if out, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("OpenCode Bun.spawn Blob smoke: %v\n%s", err, out)
-		}
+	bun, err := exec.LookPath("bun")
+	if err != nil {
+		t.Fatal("bun is required to execute the generated OpenCode plugin smoke")
+	}
+	pluginPath := filepath.Join(target, "current", "opencode-plugin.js")
+	script := `const plugin = await import(` + strconv.Quote(pluginPath) + `); ` +
+		`const hooks = await plugin.RadioactiveRalphEnforcement(); ` +
+		`await hooks["tool.execute.after"]({sessionID: "smoke"});`
+	cmd := exec.Command(bun, "-e", script)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("OpenCode Bun.spawn Blob smoke: %v\n%s", err, out)
 	}
 
 	// Post-fix smoke under the identical sanitized PATH. The command resolves
 	// through its absolute installed path and exits successfully.
 	smoke := exec.Command("/bin/sh", "-c", command)
-	smoke.Env = []string{"PATH=/usr/bin:/bin"}
+	smoke.Env = []string{"PATH=" + emptyPath}
 	smoke.Stdin = strings.NewReader(`{"hook_event_name":"PostToolUse"}`)
 	if out, err := smoke.CombinedOutput(); err != nil {
 		t.Fatalf("absolute hook smoke: %v\n%s", err, out)

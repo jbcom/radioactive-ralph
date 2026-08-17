@@ -23,6 +23,12 @@ func TestHookCommandReturnsBlockSentinelWithoutEcho(t *testing.T) {
 		t.Fatalf("Execute error = %v, want ErrBlocked", err)
 	}
 	output := stdout.String() + stderr.String()
+	if !strings.Contains(stderr.String(), "Radioactive Ralph verification is not complete.\n") {
+		t.Fatalf("Claude exit-2 reason missing from stderr: %q", stderr.String())
+	}
+	if stdout.Len() != 0 {
+		t.Fatalf("Claude exit-2 path unexpectedly wrote stdout: %q", stdout.String())
+	}
 	if strings.Contains(output, "secret-canary") || strings.Contains(output, "session-canary") {
 		t.Fatalf("hook output echoed input/environment: %q", output)
 	}
