@@ -3,6 +3,7 @@ package adapters
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -20,6 +21,7 @@ const (
 	openCodeConfigDirEnv            = "OPENCODE_CONFIG_DIR"
 	openCodeDisableProjectEnv       = "OPENCODE_DISABLE_PROJECT_CONFIG"
 	openCodePureEnv                 = "OPENCODE_PURE"
+	openCodeProcessScopeEnv         = "RADIOACTIVE_RALPH_PROCESS_SCOPE"
 	managedOpenCodeLauncherFailure  = "Radioactive Ralph managed OpenCode launch failed."
 	managedOpenCodeVerificationWait = "Radioactive Ralph verification is still pending."
 	openCodeStopPollInterval        = 2 * time.Second
@@ -55,8 +57,9 @@ type OpenCodeLaunchOptions struct {
 }
 
 // RunOpenCodeLauncher runs the real provider in a separately reclaimable
-// process group. A genuine provider failure is returned unchanged after every
-// descendant is gone. Only a successful, fully reaped managed run submits the
+// process group plus a per-launch descendant scope. A genuine provider failure
+// is returned unchanged after every descendant is gone. Only a successful,
+// fully reaped managed run submits the
 // synchronous Stop event and polls its finite status while verification runs;
 // unavailable, timed-out, or failed verification exits through OpenCode's
 // finite fail-closed protocol.
@@ -147,6 +150,19 @@ func runOpenCodeLauncher(opts OpenCodeLaunchOptions, polling openCodeStopPolling
 func runManagedOpenCodeProvider(
 	cmd *exec.Cmd, stdout, stderr io.Writer, outputDrainTimeout time.Duration,
 ) (runErr, controlErr error) {
+	processScope := make([]byte, 32)
+	if _, err := rand.Read(processScope); err != nil {
+		return nil, fmt.Errorf("create managed provider process scope: %w", err)
+	}
+	cmd.Env = replaceEnvironment(cmd.Env, map[string]string{
+		openCodeProcessScopeEnv: fmt.Sprintf("%x", processScope),
+	}, nil)
+	// The random scope is a process-lifetime capability, not provider input.
+	// Keep only the encoded form needed by the child-environment tracker and do
+	// not include it in errors, status payloads, or generated artifacts.
+	processScopeValue := environmentLookup(cmd.Env)(openCodeProcessScopeEnv)
+	clear(processScope)
+
 	stdoutReader, stdoutWriter, err := os.Pipe()
 	if err != nil {
 		return nil, fmt.Errorf("create managed provider stdout pipe: %w", err)
@@ -181,17 +197,30 @@ func runManagedOpenCodeProvider(
 	}
 	// The child owns the write handles after Start. Closing Ralph's duplicates
 	// lets the copy goroutines observe EOF after the direct child and every
-	// reclaimed group descendant have closed their inherited descriptors.
+	// reclaimed scoped descendant have closed their inherited descriptors.
 	_ = stdoutWriter.Close()
 	_ = stderrWriter.Close()
-	runErr = cmd.Wait()
-	// A successful direct-child wait is not a completion boundary: tools may
+	// Observe provider exit without reaping its process-group leader. The
+	// waitable leader anchors the numeric group identity until reclamation is
+	// complete, so cleanup cannot signal an unrelated group after PID reuse.
+	if err := waitOpenCodeProviderExit(cmd.Process); err != nil {
+		cleanupErr := reclaimOpenCodeProviderProcess(cmd.Process, processScopeValue)
+		runErr = cmd.Wait()
+		closePipes()
+		if cleanupErr != nil {
+			return runErr, fmt.Errorf("observe managed provider exit: %w; cleanup also failed: %v", err, cleanupErr)
+		}
+		return runErr, fmt.Errorf("observe managed provider exit: %w", err)
+	}
+	// A successful direct-child exit is not a completion boundary: tools may
 	// have left background descendants in the provider process group. Reap and
-	// prove that group absent before acceptance can observe the checkout.
-	if err := reclaimOpenCodeProviderProcess(cmd.Process); err != nil {
+	// prove that group absent before reaping the leader or running acceptance.
+	if err := reclaimOpenCodeProviderProcess(cmd.Process, processScopeValue); err != nil {
+		runErr = cmd.Wait()
 		closePipes()
 		return runErr, err
 	}
+	runErr = cmd.Wait()
 
 	timer := time.NewTimer(outputDrainTimeout)
 	defer timer.Stop()
@@ -420,11 +449,6 @@ func safeManagedOpenCodeDirectories(home, config string) bool {
 func pathExistsOrUnknown(path string) bool {
 	_, err := os.Lstat(path) //nolint:gosec // read-only check of a fixed child under operator-selected managed roots
 	return err == nil || !os.IsNotExist(err)
-}
-
-func regularExecutable(path string) bool {
-	info, err := os.Stat(path)
-	return err == nil && info.Mode().IsRegular() && info.Mode().Perm()&0o111 != 0
 }
 
 func environmentLookup(env []string) Environment {

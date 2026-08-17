@@ -856,26 +856,28 @@ const (
 ```
 
 <a name="OpencodeRunner"></a>
-## type [OpencodeRunner](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/opencode.go#L38>)
+## type [OpencodeRunner](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/opencode.go#L43>)
 
 OpencodeRunner executes a single \`opencode run \-\-format json\` turn under Ralph's own pty via internal/agent, per spec §9 \("opencode bound via its local \`run\` path only"\) and §3 \(hybrid I/O\).
 
-Verified against the installed \`opencode\` 1.18.3 CLI on 2026\-07\-16: \`opencode run \[message..\] \-\-format json\` emits one JSON object per line on stdout \(never a file — there is no output\-file flag\), each with a top\-level "type": "step\_start" | "text" | "step\_finish" | others. The assistant reply lives in \`type":"text"\` frames' part.text; token/cost usage lives in the \`type":"step\_finish"\` frame's part.tokens \(input/output/cache.read\) and part.cost. \`\-\-session\`/\`\-\-continue\` resumes a session, \`\-\-variant\` sets reasoning effort, \`\-\-dir\` sets the working directory, \`\-\-model\` takes \`provider/model\`.
+Historical parser\-contract evidence was captured against the installed \`opencode\` 1.18.3 CLI on 2026\-07\-16: \`opencode run \[message..\] \-\-format json\` emits one JSON object per line on stdout \(never a file — there is no output\-file flag\), each with a top\-level "type": "step\_start" | "text" | "step\_finish" | others. The assistant reply lives in \`type":"text"\` frames' part.text; token/cost usage lives in the \`type":"step\_finish"\` frame's part.tokens \(input/output/cache.read\) and part.cost. \`\-\-session\`/\`\-\-continue\` resumes a session, \`\-\-variant\` sets reasoning effort, \`\-\-dir\` sets the working directory, \`\-\-model\` takes \`provider/model\`.
 
 Like ClaudeRunner, there is no CLI\-native result\-file flag, so ResultPath is Ralph\-side: the runner tees recognized JSON frames from the pty's Output\(\) into a bounded ResultPath evidence file while parsing every text and step\_finish frame. It consumes until the CLI exits naturally after session idle, then validates the final step reason.
+
+Managed completion authority has a separate current support pin: the live adapter probe verifies OpenCode 1.18.18 before exercising no\-tool, tool, sanitized\-PATH, and fail\-closed launcher behavior.
 
 ```go
 type OpencodeRunner struct{}
 ```
 
 <a name="OpencodeRunner.Run"></a>
-### func \(OpencodeRunner\) [Run](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/opencode.go#L61-L63>)
+### func \(OpencodeRunner\) [Run](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/opencode.go#L67-L69>)
 
 ```go
 func (OpencodeRunner) Run(ctx context.Context, binding Binding, req Request) (result Result, retErr error)
 ```
 
-Run spawns \`opencode run \<prompt\> \-\-format json\` and blocks until the CLI exits naturally. A step\_finish with reason=tool\-calls is an intermediate model step; OpenCode 1.18.3 closes the actual run only after session.status becomes idle, so Ralph must consume the complete stream.
+Run spawns \`opencode run \<prompt\> \-\-format json\` and blocks until the CLI exits naturally. A step\_finish with reason=tool\-calls is an intermediate model step; the historical OpenCode 1.18.3 parser capture closes the actual run only after session.status becomes idle, so Ralph must consume the complete stream. The managed adapter support pin is 1.18.18.
 
 <a name="PromptKind"></a>
 ## type [PromptKind](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/prompt_kind.go#L50>)

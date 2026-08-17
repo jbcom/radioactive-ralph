@@ -20,7 +20,8 @@ import (
 // Ralph's own pty via internal/agent, per spec §9 ("opencode bound via its
 // local `run` path only") and §3 (hybrid I/O).
 //
-// Verified against the installed `opencode` 1.18.3 CLI on 2026-07-16:
+// Historical parser-contract evidence was captured against the installed
+// `opencode` 1.18.3 CLI on 2026-07-16:
 // `opencode run [message..] --format json` emits one JSON object per line
 // on stdout (never a file — there is no output-file flag), each with a
 // top-level "type": "step_start" | "text" | "step_finish" | others. The
@@ -35,6 +36,10 @@ import (
 // the pty's Output() into a bounded ResultPath evidence file while parsing
 // every text and step_finish frame. It consumes until the CLI exits naturally
 // after session idle, then validates the final step reason.
+//
+// Managed completion authority has a separate current support pin: the live
+// adapter probe verifies OpenCode 1.18.18 before exercising no-tool, tool,
+// sanitized-PATH, and fail-closed launcher behavior.
 type OpencodeRunner struct{}
 
 // ErrOpencodeReportedError is returned for a type=error session event. The
@@ -56,8 +61,9 @@ const minOpenCodeVerificationProgressInterval = 100 * time.Millisecond
 
 // Run spawns `opencode run <prompt> --format json` and blocks until the
 // CLI exits naturally. A step_finish with reason=tool-calls is an
-// intermediate model step; OpenCode 1.18.3 closes the actual run only after
-// session.status becomes idle, so Ralph must consume the complete stream.
+// intermediate model step; the historical OpenCode 1.18.3 parser capture
+// closes the actual run only after session.status becomes idle, so Ralph must
+// consume the complete stream. The managed adapter support pin is 1.18.18.
 func (OpencodeRunner) Run(
 	ctx context.Context, binding Binding, req Request,
 ) (result Result, retErr error) {

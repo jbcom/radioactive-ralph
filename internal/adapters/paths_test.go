@@ -83,6 +83,26 @@ func TestActiveCustomTargetIsDiscoveredWithoutShellEnvironment(t *testing.T) {
 	}
 }
 
+func TestAbsentActiveTargetPreservesNotExistAndSelectsDefault(t *testing.T) {
+	state := t.TempDir()
+	t.Setenv("RALPH_STATE_DIR", state)
+	missing := filepath.Join(state, activeTargetFile)
+	if _, err := readVerifiedReleaseFile(missing, maxActiveTargetSize); !os.IsNotExist(err) {
+		t.Fatalf("absent selector error = %v, want os.IsNotExist", err)
+	}
+	got, err := selectedTarget()
+	if err != nil {
+		t.Fatalf("select absent active target: %v", err)
+	}
+	want, err := DefaultTarget()
+	if err != nil {
+		t.Fatalf("resolve default target: %v", err)
+	}
+	if got != want {
+		t.Fatalf("absent selector target = %q, want default %q", got, want)
+	}
+}
+
 func TestExplicitAdapterRootOverridesActiveTarget(t *testing.T) {
 	t.Setenv("RALPH_STATE_DIR", t.TempDir())
 	source := filepath.Join(t.TempDir(), "radioactive_ralph")
@@ -211,6 +231,13 @@ func TestOpenCodeRuntimeAllowsStateButRejectsConfigurationEntrypoints(t *testing
 	if _, err := ResolveOpenCodeRuntime(bundle, runtimePaths.Root); err == nil ||
 		!strings.Contains(err.Error(), "not isolated") {
 		t.Fatalf("managed config content accepted: %v", err)
+	}
+}
+
+func TestPrepareOpenCodeRuntimeRejectsEmptyRoot(t *testing.T) {
+	if _, err := PrepareOpenCodeRuntime(BundlePaths{}); err == nil ||
+		!strings.Contains(err.Error(), "runtime root is required") {
+		t.Fatalf("empty OpenCode runtime root error = %v", err)
 	}
 }
 

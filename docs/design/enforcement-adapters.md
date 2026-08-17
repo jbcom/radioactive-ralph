@@ -107,13 +107,24 @@ Installing a bundle does **not** edit live Claude, Codex, or OpenCode user
 configuration. Deployment must first feature-probe the installed provider
 versions, merge the reviewed fragment without deleting unrelated hooks, replay
 the parity/canary fixtures, and only then enable it. OpenCode's plugin API does
-not provide process-level completion authority: `session.idle` is a
+not provide process-level completion authority. The current managed-adapter
+support guarantee is OpenCode 1.18.18, enforced by the explicit live version
+probe; the older 1.18.3 parser capture is historical protocol evidence only.
+`session.idle` is a
 notification, and OpenCode 1.18.18 can log a rejected plugin hook while
 `opencode run` still exits zero. The generated plugin therefore reports only
 `PostToolUse` progress. For a managed turn Ralph starts the real OpenCode CLI
-through an absolute, content-verified launcher, preserves any genuine provider
-nonzero or signal exit, and only after provider success synchronously submits
-the finite `Stop` event. A missing or failed progress-hook process is therefore
+through an absolute, content-verified launcher in its own process group and
+adds a random, per-launch process scope inherited by tools. After the provider
+exits, Ralph keeps the leader waitable while it reclaims both the original
+process group and any scope member that escaped with `setpgid(2)`, `setsid(2)`,
+or reparenting. Darwin audit tokens and Linux pidfds make each kill stable
+against PID reuse. Ralph never serializes or includes scope values in its hook
+payloads, errors, logs, or generated artifacts, and `Stop` is not submitted
+until the scope is proven empty. Ralph preserves any genuine provider nonzero
+or signal exit, and only
+after provider success synchronously submits the finite `Stop` event. A
+missing or failed progress-hook process is therefore
 non-fatal to the provider tool call; it cannot replace or weaken the launcher's
 fail-closed final check. A normal `verification_started` or
 `verification_pending` reply is polled for at most 12 minutes, covering the

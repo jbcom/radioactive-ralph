@@ -97,13 +97,18 @@ func TestLiveOpenCodeAdapterCompletionAuthority(t *testing.T) {
 	})
 
 	t.Run("no-tool run submits one final Stop", func(t *testing.T) {
+		const replyMarker = "Managed response observed"
 		handler.reset()
 		out, exitCode := runLiveOpenCodeLauncher(
 			t, bundle, openCode, "live-no-tool", endpoint,
-			"run", "Reply with exactly OK and do not use tools.", "--format", "json", "--dir", t.TempDir(),
+			"run", "Confirm in one short sentence that this managed adapter test produced a response. Include the words '"+replyMarker+"'. Do not use tools.",
+			"--format", "json", "--dir", t.TempDir(),
 		)
 		if exitCode != 0 {
 			t.Fatalf("no-tool completion = exit:%d output:%q", exitCode, out)
+		}
+		if !strings.Contains(out, replyMarker) {
+			t.Fatalf("no-tool provider output omitted reply marker: %q", out)
 		}
 		if post, stop := handler.counts(); post != 0 || stop != 1 {
 			t.Fatalf("no-tool hook counts = PostToolUse:%d Stop:%d, want 0/1", post, stop)
@@ -111,14 +116,23 @@ func TestLiveOpenCodeAdapterCompletionAuthority(t *testing.T) {
 	})
 
 	t.Run("tool turn reports progress then one final Stop", func(t *testing.T) {
+		const replyMarker = "RALPH_TOOL_REPLY_9C2D"
 		handler.reset()
+		workdir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(workdir, "expected-reply.txt"),
+			[]byte(replyMarker+"\n"), 0o600); err != nil {
+			t.Fatalf("write tool reply fixture: %v", err)
+		}
 		out, exitCode := runLiveOpenCodeLauncher(
 			t, bundle, openCode, "live-tool", endpoint,
-			"run", "Use the shell tool to run /usr/bin/printf RALPH_TOOL_PROBE, then reply briefly.",
-			"--format", "json", "--dir", t.TempDir(),
+			"run", "Use the shell tool to run /bin/cat expected-reply.txt in the current directory, then report the file content.",
+			"--format", "json", "--dir", workdir,
 		)
 		if exitCode != 0 {
 			t.Fatalf("tool completion = exit:%d output:%q", exitCode, out)
+		}
+		if !strings.Contains(out, replyMarker) {
+			t.Fatalf("tool provider output omitted reply marker: %q", out)
 		}
 		if post, stop := handler.counts(); post < 1 || stop != 1 {
 			t.Fatalf("tool hook counts = PostToolUse:%d Stop:%d, want at least 1/1", post, stop)
@@ -166,8 +180,13 @@ func runLiveOpenCodeLauncherWithEnv(
 	launcherArgs = append(launcherArgs, "--")
 	launcherArgs = append(launcherArgs, args...)
 	cmd := exec.CommandContext(ctx, bundle.Executable, launcherArgs...) //nolint:gosec // exact verified test bundle and operator-installed provider
+	decoyDir := t.TempDir()
+	decoy := filepath.Join(decoyDir, "opencode")
+	if err := os.WriteFile(decoy, []byte("#!/bin/sh\nprintf '0.0.0-decoy\\n'\n"), 0o700); err != nil {
+		t.Fatalf("write PATH decoy: %v", err)
+	}
 	env := liveOpenCodeEnvironment(os.Environ(), map[string]string{
-		"PATH": "/usr/bin:/bin",
+		"PATH": decoyDir + string(os.PathListSeparator) + "/usr/bin:/bin",
 	})
 	if session != "" || endpoint != "" {
 		env = liveOpenCodeEnvironment(env, map[string]string{

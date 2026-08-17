@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 )
@@ -19,6 +20,17 @@ func TestManagedOpenCodeLauncherRejectsNativeWindowsBeforeProviderStart(t *testi
 		t.Fatalf("resolve test executable: %v", err)
 	}
 	marker := filepath.Join(t.TempDir(), "provider-started")
+	control := exec.Command(executable, "-test.run=^TestManagedOpenCodeWindowsProviderHelper$") //nolint:gosec // test-owned executable
+	control.Env = append(os.Environ(), "RALPH_WINDOWS_PROVIDER_MARKER="+marker)
+	if output, err := control.CombinedOutput(); err != nil {
+		t.Fatalf("positive provider-start control: %v output=%q", err, output)
+	}
+	if content, err := os.ReadFile(marker); err != nil || string(content) != "started" { //nolint:gosec // test-owned marker
+		t.Fatalf("positive provider-start marker = %q err=%v", content, err)
+	}
+	if err := os.Remove(marker); err != nil {
+		t.Fatalf("reset positive provider-start marker: %v", err)
+	}
 	var stdout, stderr bytes.Buffer
 	code := RunOpenCodeLauncher(OpenCodeLaunchOptions{
 		Context: context.Background(),

@@ -22,6 +22,9 @@ type OpenCodeRuntimePaths struct {
 // managed provider launch. Call Cleanup after the provider and final Stop
 // decision have both completed.
 func PrepareOpenCodeRuntime(bundle BundlePaths) (OpenCodeRuntimePaths, error) {
+	if !filepath.IsAbs(bundle.OpenCodeRuntimeDir) {
+		return OpenCodeRuntimePaths{}, fmt.Errorf("adapters: OpenCode runtime root is required")
+	}
 	root, err := os.MkdirTemp(bundle.OpenCodeRuntimeDir, openCodeRuntimePrefix)
 	if err != nil {
 		return OpenCodeRuntimePaths{}, fmt.Errorf("adapters: create OpenCode runtime: %w", err)

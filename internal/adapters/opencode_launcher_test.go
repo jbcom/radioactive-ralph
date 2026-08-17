@@ -1,4 +1,4 @@
-//go:build !windows
+//go:build darwin || linux
 
 package adapters
 
@@ -70,8 +70,9 @@ func TestOpenCodeLauncherReapsProviderGroupBeforeFinalStop(t *testing.T) {
 	binary := writeOpenCodeLauncherFixture(t, "#!/bin/sh\n"+
 		"printf '%s\\n' \"$$\" > \"$RALPH_TEST_PGID\"\n"+
 		": > \"$RALPH_TEST_DESCENDANT\"\n"+
-		"( trap '' TERM; while :; do printf x >> \"$RALPH_TEST_DESCENDANT\"; /bin/sleep 0.01; done ) &\n"+
-		"exit 0\n")
+		"( trap '' TERM; printf x >> \"$RALPH_TEST_DESCENDANT\"; while :; do printf x >> \"$RALPH_TEST_DESCENDANT\"; /bin/sleep 0.01; done ) &\n"+
+		"for attempt in 1 2 3 4 5 6 7 8 9 10; do [ -s \"$RALPH_TEST_DESCENDANT\" ] && exit 0; /bin/sleep 0.01; done\n"+
+		"exit 42\n")
 	groupAliveAtStop := make(chan error, 1)
 	handler.afterFirst = func() {
 		raw, err := os.ReadFile(pidFile) //nolint:gosec // test-owned provider fixture
@@ -91,6 +92,10 @@ func TestOpenCodeLauncherReapsProviderGroupBeforeFinalStop(t *testing.T) {
 		before, err := os.ReadFile(marker) //nolint:gosec // test-owned descendant fixture
 		if err != nil {
 			groupAliveAtStop <- err
+			return
+		}
+		if len(before) == 0 {
+			groupAliveAtStop <- fmt.Errorf("descendant never wrote to the marker")
 			return
 		}
 		time.Sleep(50 * time.Millisecond)
@@ -118,6 +123,101 @@ func TestOpenCodeLauncherReapsProviderGroupBeforeFinalStop(t *testing.T) {
 	}
 	if got := handler.callCount(); got != 1 {
 		t.Fatalf("Stop calls = %d, want 1 after process-group cleanup", got)
+	}
+}
+
+func TestOpenCodeLauncherReapsSetsidDescendantBeforeFinalStop(t *testing.T) {
+	server, handler, endpoint := startLauncherHookSequenceServer(t, []ipc.HookEventReply{
+		{Allow: true, Reason: "acceptance_passed"},
+	})
+	defer func() { _ = server.Stop() }()
+
+	python, err := exec.LookPath("python3")
+	if err != nil {
+		t.Fatalf("resolve python3 setsid fixture: %v", err)
+	}
+	python, err = filepath.Abs(python)
+	if err != nil {
+		t.Fatalf("make python3 fixture absolute: %v", err)
+	}
+	tempDir := t.TempDir()
+	pidFile := filepath.Join(tempDir, "setsid-pid")
+	marker := filepath.Join(tempDir, "setsid-writes")
+	binary := writeOpenCodeLauncherFixture(t, "#!/bin/sh\n"+
+		"\"$RALPH_TEST_PYTHON\" -c 'import os,time; os.setsid(); open(os.environ[\"RALPH_TEST_SETSID_PID\"], \"w\").write(str(os.getpid())); exec(\"while True:\\n open(os.environ[\\\"RALPH_TEST_SETSID_MARKER\\\"], \\\"a\\\").write(\\\"x\\\")\\n time.sleep(0.01)\")' &\n"+
+		"for attempt in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do [ -s \"$RALPH_TEST_SETSID_PID\" ] && exit 0; /bin/sleep 0.01; done\n"+
+		"exit 42\n")
+	escapedAtStop := make(chan error, 1)
+	handler.afterFirst = func() {
+		rawPID, err := os.ReadFile(pidFile) //nolint:gosec // test-owned escaped-descendant fixture
+		if err != nil {
+			escapedAtStop <- err
+			return
+		}
+		pid, err := strconv.Atoi(strings.TrimSpace(string(rawPID)))
+		if err != nil || pid <= 1 {
+			escapedAtStop <- fmt.Errorf("escaped descendant pid = %q: %w", rawPID, err)
+			return
+		}
+		before, err := os.ReadFile(marker) //nolint:gosec // test-owned escaped-descendant fixture
+		if err != nil {
+			escapedAtStop <- err
+			return
+		}
+		if len(before) == 0 {
+			escapedAtStop <- fmt.Errorf("setsid descendant never wrote to the marker")
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+		after, err := os.ReadFile(marker) //nolint:gosec // test-owned escaped-descendant fixture
+		if err != nil {
+			escapedAtStop <- err
+			return
+		}
+		if !bytes.Equal(before, after) {
+			escapedAtStop <- fmt.Errorf("setsid descendant mutated state during Stop")
+			return
+		}
+		escapedAtStop <- nil
+	}
+
+	var stderr bytes.Buffer
+	opts := launcherOptions(t, binary, endpoint)
+	opts.Env = append(opts.Env,
+		"RALPH_TEST_PYTHON="+python,
+		"RALPH_TEST_SETSID_PID="+pidFile,
+		"RALPH_TEST_SETSID_MARKER="+marker,
+	)
+	opts.Stdout = io.Discard
+	opts.Stderr = &stderr
+	code := runOpenCodeLauncher(opts,
+		openCodeStopPolling{interval: time.Millisecond, attempts: 2, timeout: time.Second})
+	if code != 0 {
+		t.Fatalf("managed setsid descendant launch exit = %d stderr=%q", code, stderr.String())
+	}
+	if err := <-escapedAtStop; err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestWaitOpenCodeProviderExitLeavesLeaderWaitable(t *testing.T) {
+	binary := writeOpenCodeLauncherFixture(t, "#!/bin/sh\nexit 0\n")
+	cmd := exec.CommandContext(context.Background(), binary) //nolint:gosec // test-owned absolute fixture
+	configureOpenCodeProviderProcess(cmd)
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("start provider fixture: %v", err)
+	}
+	if err := waitOpenCodeProviderExit(cmd.Process); err != nil {
+		t.Fatalf("observe provider exit without reaping: %v", err)
+	}
+	if err := syscall.Kill(cmd.Process.Pid, 0); err != nil {
+		t.Fatalf("provider leader was reaped before reclamation: %v", err)
+	}
+	if err := cmd.Wait(); err != nil {
+		t.Fatalf("reap observed provider: %v", err)
+	}
+	if err := syscall.Kill(cmd.Process.Pid, 0); !errors.Is(err, syscall.ESRCH) {
+		t.Fatalf("reaped provider remains addressable: %v", err)
 	}
 }
 

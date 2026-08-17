@@ -10,7 +10,23 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+
+	"golang.org/x/sys/unix"
 )
+
+func waitOpenCodeProviderExit(process *os.Process) error {
+	if process == nil || process.Pid <= 1 {
+		return fmt.Errorf("invalid provider process")
+	}
+	var info unix.Siginfo
+	for {
+		err := unix.Waitid(unix.P_PID, process.Pid, &info, unix.WEXITED|unix.WNOWAIT, nil)
+		if errors.Is(err, unix.EINTR) {
+			continue
+		}
+		return err
+	}
+}
 
 func openCodeProviderGroupLive(group int) (bool, error) {
 	entries, err := os.ReadDir("/proc")

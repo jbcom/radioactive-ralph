@@ -17,6 +17,7 @@ Package agent runs a single AI\-agent CLI subprocess under Ralph's own pty, so R
 
 - [Constants](<#constants>)
 - [Variables](<#variables>)
+- [func ReclaimProcessScope\(envKey, envValue string, excludedPID int, timeout time.Duration\) error](<#ReclaimProcessScope>)
 - [func RetentionBudgetForLineBytes\(lineBytes int\) int](<#RetentionBudgetForLineBytes>)
 - [func Watch\(ctx context.Context, a \*Agent, cfg WatchdogConfig\) \<\-chan Signal](<#Watch>)
 - [type Agent](<#Agent>)
@@ -122,6 +123,17 @@ var ErrProcessTermination = errors.New("agent: direct-child termination failed")
 ```go
 var ErrProcessTreeCleanup = ErrProcessSessionCleanup
 ```
+
+<a name="ReclaimProcessScope"></a>
+## func [ReclaimProcessScope](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/agent/process_scope.go#L21>)
+
+```go
+func ReclaimProcessScope(envKey, envValue string, excludedPID int, timeout time.Duration) error
+```
+
+ReclaimProcessScope kills and proves absent every same\-user process carrying the exact environment scope inherited from a managed provider launch. Unlike process groups and sessions, the scope survives setpgid\(2\), setsid\(2\), and reparenting. Platform implementations acquire a stable kernel handle before signalling so a recycled numeric PID cannot target an unrelated process.
+
+The scope value is intentionally never included in an error. Callers must use a cryptographically random, per\-launch value and must not serialize it.
 
 <a name="RetentionBudgetForLineBytes"></a>
 ## func [RetentionBudgetForLineBytes](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/agent/output_retention.go#L58>)
