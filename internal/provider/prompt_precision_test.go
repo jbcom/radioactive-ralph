@@ -38,6 +38,7 @@ func TestPromptPatternsRejectErrorText(t *testing.T) {
 		"The phrase 'do you want to' appears in the provider output.",
 		"The log records do you want to as an example.",
 		"A diagnostic may say do you want to without asking.",
+		"Do you want to continue is the example shown in documentation.",
 	}
 	for _, line := range mustNotMatch {
 		for _, re := range DefaultPromptPatterns {
@@ -75,6 +76,7 @@ func TestPromptPatternsRejectErrorText(t *testing.T) {
 		"Allow this?",
 		"Do you want to proceed?",
 		"  Do you want to deploy now?",
+		"Do you want to overwrite config.toml?",
 		"Overwrite existing file? [Y/n]",
 		"Press enter to continue",
 		"Which database should I target?",

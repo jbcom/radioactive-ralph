@@ -7,10 +7,11 @@ import "regexp"
 // matched diagnostics and prose that merely mentioned "do you want to", which
 // made the watchdog kill a working provider turn.
 //
-// Some CLIs omit the final question mark, so end-of-line remains sufficient;
-// a full stop, characteristic of quoted prose and diagnostics, is deliberately
-// rejected.
-const doYouWantToPromptExpression = `(?im)^\s*do you want to\b[^.\n]{0,160}(?:\?\s*)?$`
+// Some CLIs omit the final question mark, so a non-punctuation character at
+// end-of-line is also a prompt boundary. A terminal full stop, characteristic
+// of quoted prose and diagnostics, is deliberately rejected. Internal periods
+// remain valid so prompts can name files such as config.toml.
+const doYouWantToPromptExpression = `(?im)^[\t ]*do you want to\b(?:[^\r\n]{0,159}\?[\t ]*|[^\r\n]{0,159}[^\s.!?][\t ]*)$`
 
 var doYouWantToPromptPattern = regexp.MustCompile(doYouWantToPromptExpression)
 

@@ -53,6 +53,7 @@ func TestDoYouWantToMentionIsNotAConfirmation(t *testing.T) {
 		"The phrase 'do you want to' appears in the provider output.",
 		"The log records do you want to as an example.",
 		"A diagnostic may say do you want to without asking.",
+		"Do you want to continue is the example shown in documentation.",
 	} {
 		if got := ClassifyPromptKind(line); got != PromptKindUnknown {
 			t.Errorf("ClassifyPromptKind(%q) = %q, want %q", line, got, PromptKindUnknown)
