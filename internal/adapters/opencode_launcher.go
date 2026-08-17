@@ -1,6 +1,7 @@
 package adapters
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -11,15 +12,26 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 )
 
 const (
-	openCodeConfigContentEnv       = "OPENCODE_CONFIG_CONTENT"
-	openCodeConfigDirEnv           = "OPENCODE_CONFIG_DIR"
-	openCodeDisableProjectEnv      = "OPENCODE_DISABLE_PROJECT_CONFIG"
-	openCodePureEnv                = "OPENCODE_PURE"
-	managedOpenCodeLauncherFailure = "Radioactive Ralph managed OpenCode launch failed."
+	openCodeConfigContentEnv        = "OPENCODE_CONFIG_CONTENT"
+	openCodeConfigDirEnv            = "OPENCODE_CONFIG_DIR"
+	openCodeDisableProjectEnv       = "OPENCODE_DISABLE_PROJECT_CONFIG"
+	openCodePureEnv                 = "OPENCODE_PURE"
+	managedOpenCodeLauncherFailure  = "Radioactive Ralph managed OpenCode launch failed."
+	managedOpenCodeVerificationWait = "Radioactive Ralph verification is still pending."
+	openCodeStopPollInterval        = 2 * time.Second
+	openCodeStopPollAttempts        = 360
+	openCodeStopPollTimeout         = 12 * time.Minute
 )
+
+type openCodeStopPolling struct {
+	interval time.Duration
+	attempts int
+	timeout  time.Duration
+}
 
 // OpenCodeLaunchOptions are the finite inputs to Ralph's managed OpenCode
 // process wrapper. Provider arguments and streams pass through unchanged.
@@ -38,9 +50,18 @@ type OpenCodeLaunchOptions struct {
 
 // RunOpenCodeLauncher runs the real provider first. A genuine provider
 // failure is returned unchanged. Only a successful managed run submits the
-// synchronous Stop event; unavailable, pending, or failed verification exits
-// through OpenCode's finite fail-closed protocol.
+// synchronous Stop event and polls its finite status while verification runs;
+// unavailable, timed-out, or failed verification exits through OpenCode's
+// finite fail-closed protocol.
 func RunOpenCodeLauncher(opts OpenCodeLaunchOptions) int {
+	return runOpenCodeLauncher(opts, openCodeStopPolling{
+		interval: openCodeStopPollInterval,
+		attempts: openCodeStopPollAttempts,
+		timeout:  openCodeStopPollTimeout,
+	})
+}
+
+func runOpenCodeLauncher(opts OpenCodeLaunchOptions, polling openCodeStopPolling) int {
 	if opts.Context == nil {
 		opts.Context = context.Background()
 	}
@@ -88,15 +109,76 @@ func RunOpenCodeLauncher(opts OpenCodeLaunchOptions) int {
 	if !managed {
 		return 0
 	}
-	err := RunHook(
-		opts.Context, "opencode", "Stop",
-		strings.NewReader(`{"hook_event_name":"Stop"}`),
-		opts.Stdout, opts.Stderr, environmentLookup(env),
-	)
-	if err != nil {
+	return pollOpenCodeStop(opts, env, polling)
+}
+
+func pollOpenCodeStop(opts OpenCodeLaunchOptions, env []string, polling openCodeStopPolling) int {
+	if polling.attempts <= 0 || polling.interval < 0 || polling.timeout < 0 {
+		writeOpenCodeStatus(opts.Stdout, "supervisor_unavailable")
 		return 2
 	}
-	return 0
+	pollCtx := opts.Context
+	cancel := func() {}
+	if polling.timeout > 0 {
+		pollCtx, cancel = context.WithTimeout(opts.Context, polling.timeout)
+	}
+	defer cancel()
+	for attempt := 0; attempt < polling.attempts; attempt++ {
+		var stdout, stderr bytes.Buffer
+		err := RunHook(
+			pollCtx, "opencode", "Stop",
+			strings.NewReader(`{"hook_event_name":"Stop"}`),
+			&stdout, &stderr, environmentLookup(env),
+		)
+		if err == nil {
+			return 0
+		}
+		status := parseOpenCodeStatus(stdout.Bytes())
+		if status != "verification_started" && status != "verification_pending" {
+			writeOpenCodeStatus(opts.Stdout, status)
+			return 2
+		}
+		if attempt == polling.attempts-1 {
+			writeOpenCodeStatus(opts.Stdout, "verification_pending")
+			return 2
+		}
+		_, _ = fmt.Fprintln(opts.Stderr, managedOpenCodeVerificationWait)
+		timer := time.NewTimer(polling.interval)
+		select {
+		case <-pollCtx.Done():
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
+			}
+			writeOpenCodeStatus(opts.Stdout, "supervisor_unavailable")
+			return 2
+		case <-timer.C:
+		}
+	}
+	writeOpenCodeStatus(opts.Stdout, "supervisor_unavailable")
+	return 2
+}
+
+func parseOpenCodeStatus(raw []byte) string {
+	var message struct {
+		Status string `json:"status"`
+	}
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&message); err != nil || decoder.Decode(&struct{}{}) != io.EOF ||
+		message.Status == "" || finiteOpenCodeStatus(message.Status) != message.Status {
+		return "supervisor_unavailable"
+	}
+	return message.Status
+}
+
+func writeOpenCodeStatus(output io.Writer, status string) {
+	encoded, _ := json.Marshal(struct {
+		Status string `json:"status"`
+	}{Status: finiteOpenCodeStatus(status)})
+	_, _ = fmt.Fprintln(output, string(encoded))
 }
 
 func managedOpenCodeEnvironment(opts OpenCodeLaunchOptions) ([]string, error) {
@@ -119,17 +201,9 @@ func managedOpenCodeEnvironment(opts OpenCodeLaunchOptions) ([]string, error) {
 		return nil, fmt.Errorf("managed OpenCode configuration is not isolated")
 	}
 
-	lookup := environmentLookup(opts.Env)
-	originalHome := lookup("HOME")
-	if !filepath.IsAbs(originalHome) {
-		return nil, fmt.Errorf("managed OpenCode HOME is invalid")
-	}
-	dataHome := xdgEnvironmentPath(lookup("XDG_DATA_HOME"), filepath.Join(originalHome, ".local", "share"))
-	cacheHome := xdgEnvironmentPath(lookup("XDG_CACHE_HOME"), filepath.Join(originalHome, ".cache"))
-	stateHome := xdgEnvironmentPath(lookup("XDG_STATE_HOME"), filepath.Join(originalHome, ".local", "state"))
-	if dataHome == "" || cacheHome == "" || stateHome == "" {
-		return nil, fmt.Errorf("managed OpenCode XDG path is invalid")
-	}
+	dataHome := filepath.Join(opts.Home, ".local", "share")
+	cacheHome := filepath.Join(opts.Home, ".cache")
+	stateHome := filepath.Join(opts.Home, ".local", "state")
 	pluginURL := (&url.URL{Scheme: "file", Path: opts.Plugin}).String()
 	config, err := json.Marshal(struct {
 		Plugin []string `json:"plugin"`
@@ -180,16 +254,6 @@ func safeManagedOpenCodeDirectories(home, config string) bool {
 func pathExistsOrUnknown(path string) bool {
 	_, err := os.Lstat(path) //nolint:gosec // read-only check of a fixed child under operator-selected managed roots
 	return err == nil || !os.IsNotExist(err)
-}
-
-func xdgEnvironmentPath(current, fallback string) string {
-	if current == "" {
-		current = fallback
-	}
-	if !filepath.IsAbs(current) {
-		return ""
-	}
-	return filepath.Clean(current)
 }
 
 func regularExecutable(path string) bool {

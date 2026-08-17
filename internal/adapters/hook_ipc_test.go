@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"sync"
 	"testing"
 
 	"github.com/jbcom/radioactive-ralph/internal/ipc"
@@ -43,12 +44,13 @@ func TestRunHookSendsOnlyFiniteNormalizedFields(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RunHook: %v", err)
 	}
-	if handler.got != (ipc.HookEventArgs{
+	got, _ := handler.observed()
+	if got != (ipc.HookEventArgs{
 		Adapter: "claude", Event: "PostToolUse", SessionID: "managed-session",
 	}) {
-		t.Fatalf("normalized args = %+v", handler.got)
+		t.Fatalf("normalized args = %+v", got)
 	}
-	encoded, err := json.Marshal(handler.got)
+	encoded, err := json.Marshal(got)
 	if err != nil {
 		t.Fatalf("marshal normalized args: %v", err)
 	}
@@ -58,15 +60,24 @@ func TestRunHookSendsOnlyFiniteNormalizedFields(t *testing.T) {
 }
 
 type recordingHookHandler struct {
+	mu    sync.Mutex
 	reply ipc.HookEventReply
 	got   ipc.HookEventArgs
 	calls int
 }
 
 func (h *recordingHookHandler) HandleHookEvent(_ context.Context, args ipc.HookEventArgs) (ipc.HookEventReply, error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
 	h.calls++
 	h.got = args
 	return h.reply, nil
+}
+
+func (h *recordingHookHandler) observed() (ipc.HookEventArgs, int) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.got, h.calls
 }
 
 func (*recordingHookHandler) HandleStatus(context.Context) (ipc.StatusReply, error) {

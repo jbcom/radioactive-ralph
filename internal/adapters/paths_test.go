@@ -31,7 +31,10 @@ func TestResolveCurrentBundleVerifiesExactRelease(t *testing.T) {
 	if err != nil || bundle.Root != resolved || filepath.Base(bundle.Root) != manifest.ExecutableSHA256 {
 		t.Fatalf("exact release = bundle:%q current:%q err=%v", bundle.Root, resolved, err)
 	}
-	for _, exact := range []string{bundle.Executable, bundle.OpenCodePlugin} {
+	for _, exact := range []string{
+		bundle.Executable, bundle.OpenCodePlugin,
+		bundle.OpenCodeHome, bundle.OpenCodeConfigDir,
+	} {
 		if strings.Contains(exact, string(filepath.Separator)+"current"+string(filepath.Separator)) {
 			t.Fatalf("verified execution path still traverses movable current link: %q", exact)
 		}

@@ -95,8 +95,17 @@ notification, and OpenCode 1.18.18 can log a rejected plugin hook while
 `PostToolUse` progress. For a managed turn Ralph starts the real OpenCode CLI
 through an absolute, content-verified launcher, preserves any genuine provider
 nonzero or signal exit, and only after provider success synchronously submits
-the finite `Stop` event. Unavailable, pending, malformed, or failed verification
-returns the static OpenCode JSON protocol and exit 2. No-tool runs take this
+the finite `Stop` event. A normal `verification_started` or
+`verification_pending` reply is polled for at most 12 minutes, covering the
+supervisor's bounded 10-minute acceptance check without turning pending work
+into a false provider failure. The wrapper emits only a static progress line
+while it waits. Unavailable, timed-out, malformed, or failed verification
+returns the static OpenCode JSON protocol and exit 2. The managed launch adds
+only its exact, content-verified private home and config directories to the
+containment write allowances OpenCode needs for package bootstrap; it never
+grants the adapter or release root. `HOME` and every XDG state root resolve
+inside that private home, so an inherited auth file, cached skill, model cache,
+or global config cannot silently enter a managed turn. No-tool runs take this
 same launcher finalization path, and sanitized `PATH` cannot produce the former
 bare-hook code-127 failure. Ralph's supervisor/reaper remains the load-bearing
 recovery authority.

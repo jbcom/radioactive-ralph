@@ -97,7 +97,7 @@ func TestResolveManagedOpencodeLaunchUsesVerifiedAbsoluteWrapper(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ResolveInvocation: %v", err)
 	}
-	command, args, err := resolveOpencodeLaunch(
+	launch, err := resolveOpencodeLaunch(
 		binding, req, inv,
 		func(key string) string {
 			if key == adapters.AdapterRootEnv {
@@ -119,18 +119,30 @@ func TestResolveManagedOpencodeLaunchUsesVerifiedAbsoluteWrapper(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ResolveCurrentBundle: %v", err)
 	}
-	if command != bundle.Executable || !filepath.IsAbs(command) {
-		t.Fatalf("managed command = %q, want absolute %q", command, bundle.Executable)
+	if launch.command != bundle.Executable || !filepath.IsAbs(launch.command) {
+		t.Fatalf("managed command = %q, want absolute %q", launch.command, bundle.Executable)
 	}
 	wantPrefix := []string{
 		"hook", "launch-opencode", "--binary", realBinary,
 		"--adapter-root", bundle.Target, "--",
 	}
-	if len(args) < len(wantPrefix) || !reflect.DeepEqual(args[:len(wantPrefix)], wantPrefix) {
-		t.Fatalf("managed args prefix = %v, want %v", args, wantPrefix)
+	if len(launch.args) < len(wantPrefix) || !reflect.DeepEqual(launch.args[:len(wantPrefix)], wantPrefix) {
+		t.Fatalf("managed args prefix = %v, want %v", launch.args, wantPrefix)
 	}
-	if slices.Contains(args, "--pure") {
-		t.Fatalf("managed args disable the reviewed plugin: %v", args)
+	if slices.Contains(launch.args, "--pure") {
+		t.Fatalf("managed args disable the reviewed plugin: %v", launch.args)
+	}
+	for _, required := range []string{bundle.OpenCodeHome, bundle.OpenCodeConfigDir} {
+		if !slices.Contains(launch.containmentWritePaths, required) {
+			t.Fatalf("managed containment paths = %v, want exact bootstrap path %q",
+				launch.containmentWritePaths, required)
+		}
+	}
+	for _, forbidden := range []string{bundle.Target, bundle.Root, filepath.Dir(bundle.Root)} {
+		if slices.Contains(launch.containmentWritePaths, forbidden) {
+			t.Fatalf("managed containment paths include broad release path %q: %v",
+				forbidden, launch.containmentWritePaths)
+		}
 	}
 }
 
@@ -141,7 +153,7 @@ func TestResolveUnmanagedOpencodeLaunchIsDirectAndPure(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ResolveInvocation: %v", err)
 	}
-	command, args, err := resolveOpencodeLaunch(
+	launch, err := resolveOpencodeLaunch(
 		binding, req, inv,
 		func(string) string { panic("unmanaged launch read adapter environment") },
 		func(string) (string, error) { panic("unmanaged launch resolved wrapper path") },
@@ -149,8 +161,11 @@ func TestResolveUnmanagedOpencodeLaunchIsDirectAndPure(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolveOpencodeLaunch: %v", err)
 	}
-	if command != "opencode" || !slices.Contains(args, "--pure") {
-		t.Fatalf("unmanaged launch = %q %v", command, args)
+	if launch.command != "opencode" || !slices.Contains(launch.args, "--pure") {
+		t.Fatalf("unmanaged launch = %q %v", launch.command, launch.args)
+	}
+	if launch.containmentWritePaths != nil {
+		t.Fatalf("unmanaged launch gained adapter write paths: %v", launch.containmentWritePaths)
 	}
 }
 
@@ -169,7 +184,7 @@ func TestResolveManagedOpencodeLaunchRejectsTamperedBundleBeforeBinaryLookup(t *
 	if err != nil {
 		t.Fatalf("ResolveInvocation: %v", err)
 	}
-	_, _, err = resolveOpencodeLaunch(
+	_, err = resolveOpencodeLaunch(
 		binding, req, inv,
 		func(key string) string {
 			if key == adapters.AdapterRootEnv {

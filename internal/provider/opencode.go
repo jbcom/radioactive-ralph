@@ -78,17 +78,17 @@ func (OpencodeRunner) Run(ctx context.Context, binding Binding, req Request) (Re
 	if err != nil {
 		return Result{}, err
 	}
-	command, args, err := resolveOpencodeLaunch(binding, req, invocation, os.Getenv, exec.LookPath)
+	launch, err := resolveOpencodeLaunch(binding, req, invocation, os.Getenv, exec.LookPath)
 	if err != nil {
 		return Result{}, err
 	}
 
 	opts := agent.Options{
-		Command:               command,
-		Args:                  args,
+		Command:               launch.command,
+		Args:                  launch.args,
 		Dir:                   req.WorkingDir,
 		ContainmentRoot:       req.ContainmentRoot,
-		ContainmentWritePaths: BindingWritePaths(binding),
+		ContainmentWritePaths: launch.containmentWritePaths,
 		ResultPath:            resultPath,
 		// Count raw PTY reads so discarded/partial/non-JSON progress cannot
 		// refresh the watchdog indefinitely without consuming a hard budget.
@@ -198,29 +198,39 @@ func (OpencodeRunner) Run(ctx context.Context, binding Binding, req Request) (Re
 
 type opencodePathLookup func(string) (string, error)
 
+type opencodeLaunch struct {
+	command               string
+	args                  []string
+	containmentWritePaths []string
+}
+
 func resolveOpencodeLaunch(
 	binding Binding,
 	req Request,
 	invocation Invocation,
 	getenv adapters.Environment,
 	lookPath opencodePathLookup,
-) (string, []string, error) {
+) (opencodeLaunch, error) {
 	managed := req.ManagedSessionID != "" && req.HookEndpoint != ""
 	args := opencodeArgs(binding, req, invocation, managed)
+	writePaths := BindingWritePaths(binding)
 	if !managed {
-		return binding.Config.Binary, args, nil
+		return opencodeLaunch{
+			command: binding.Config.Binary, args: args,
+			containmentWritePaths: writePaths,
+		}, nil
 	}
 	bundle, err := adapters.CurrentBundleFromEnvironment(getenv)
 	if err != nil {
-		return "", nil, fmt.Errorf("provider: managed OpenCode adapter unavailable: %w", err)
+		return opencodeLaunch{}, fmt.Errorf("provider: managed OpenCode adapter unavailable: %w", err)
 	}
 	realBinary, err := lookPath(binding.Config.Binary)
 	if err != nil {
-		return "", nil, fmt.Errorf("provider: resolve OpenCode binary: %w", err)
+		return opencodeLaunch{}, fmt.Errorf("provider: resolve OpenCode binary: %w", err)
 	}
 	realBinary, err = filepath.Abs(realBinary)
 	if err != nil {
-		return "", nil, fmt.Errorf("provider: resolve absolute OpenCode binary: %w", err)
+		return opencodeLaunch{}, fmt.Errorf("provider: resolve absolute OpenCode binary: %w", err)
 	}
 	args = append([]string{
 		"hook", "launch-opencode",
@@ -228,7 +238,11 @@ func resolveOpencodeLaunch(
 		"--adapter-root", bundle.Target,
 		"--",
 	}, args...)
-	return bundle.Executable, args, nil
+	writePaths = append(writePaths, bundle.OpenCodeHome, bundle.OpenCodeConfigDir)
+	return opencodeLaunch{
+		command: bundle.Executable, args: args,
+		containmentWritePaths: writePaths,
+	}, nil
 }
 
 // opencodeEvent is one `opencode run --format json` stream event.

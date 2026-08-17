@@ -85,13 +85,13 @@ func RunHook(ctx context.Context, adapter, event string, input io.Reader, stdout
 RunHook normalizes one provider event and asks the supervisor for a verdict. Unmanaged sessions are a strict no\-op, allowing globally configured hooks to coexist with ordinary user sessions. Managed failures block without echoing any raw JSON or environment value.
 
 <a name="RunOpenCodeLauncher"></a>
-## func [RunOpenCodeLauncher](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/adapters/opencode_launcher.go#L43>)
+## func [RunOpenCodeLauncher](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/adapters/opencode_launcher.go#L56>)
 
 ```go
 func RunOpenCodeLauncher(opts OpenCodeLaunchOptions) int
 ```
 
-RunOpenCodeLauncher runs the real provider first. A genuine provider failure is returned unchanged. Only a successful managed run submits the synchronous Stop event; unavailable, pending, or failed verification exits through OpenCode's finite fail\-closed protocol.
+RunOpenCodeLauncher runs the real provider first. A genuine provider failure is returned unchanged. Only a successful managed run submits the synchronous Stop event and polls its finite status while verification runs; unavailable, timed\-out, or failed verification exits through OpenCode's finite fail\-closed protocol.
 
 <a name="BundlePaths"></a>
 ## type [BundlePaths](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/adapters/paths.go#L27-L34>)
@@ -159,7 +159,7 @@ func Install(sourceExecutable, target string) (Manifest, error)
 Install builds a content\-addressed release beside target/current, then atomically switches the current symlink. No live provider config is mutated; deployment can merge the rendered fragments after review and feature probes.
 
 <a name="OpenCodeLaunchOptions"></a>
-## type [OpenCodeLaunchOptions](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/adapters/opencode_launcher.go#L26-L37>)
+## type [OpenCodeLaunchOptions](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/adapters/opencode_launcher.go#L38-L49>)
 
 OpenCodeLaunchOptions are the finite inputs to Ralph's managed OpenCode process wrapper. Provider arguments and streams pass through unchanged.
 

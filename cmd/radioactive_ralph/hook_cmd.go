@@ -8,6 +8,10 @@ import (
 )
 
 func newHookCmd() *cobra.Command {
+	// launch-opencode is intentionally not a Cobra subcommand. run() dispatches
+	// that internal, generated-adapter-only argv before Cobra so a genuine
+	// provider signal or nonzero exit survives unchanged; exposing a second
+	// Cobra execution path would give the same argv two different exit contracts.
 	cmd := &cobra.Command{
 		Use:    "hook",
 		Short:  "Provider hook ingress for generated enforcement adapters",

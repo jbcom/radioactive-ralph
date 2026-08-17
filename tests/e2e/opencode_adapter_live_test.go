@@ -176,11 +176,11 @@ func runLiveOpenCodeLauncherWithEnv(
 	if err == nil {
 		return output.String(), 0
 	}
+	if ctx.Err() != nil {
+		t.Fatalf("OpenCode launcher exceeded live timeout: %v", ctx.Err())
+	}
 	if exitErr, ok := err.(*exec.ExitError); ok {
 		return output.String(), exitErr.ExitCode()
-	}
-	if ctx.Err() != nil {
-		t.Fatalf("OpenCode launcher exceeded live timeout")
 	}
 	t.Fatalf("run OpenCode launcher: %v", err)
 	return "", -1

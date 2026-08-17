@@ -4,6 +4,7 @@ package main
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 
@@ -39,7 +40,17 @@ func TestOpenCodeLauncherDispatchRejectsPartialCoordinatesBeforeBundleLookup(t *
 	t.Setenv(adapters.ManagedSessionEnv, "partial-session")
 	t.Setenv(adapters.HookEndpointEnv, "")
 	marker := filepath.Join(t.TempDir(), "launched")
-	binary := writeLauncherCommandFixture(t, "#!/bin/sh\n/usr/bin/touch '"+marker+"'\n")
+	binary := writeLauncherCommandFixture(t, "#!/bin/sh\n: > \"$RALPH_TEST_MARKER\"\n")
+	t.Setenv("RALPH_TEST_MARKER", marker)
+	if err := exec.Command(binary).Run(); err != nil { //nolint:gosec // test-owned executable fixture
+		t.Fatalf("control launch: %v", err)
+	}
+	if _, err := os.Stat(marker); err != nil {
+		t.Fatalf("control launch did not create marker: %v", err)
+	}
+	if err := os.Remove(marker); err != nil {
+		t.Fatalf("remove control marker: %v", err)
+	}
 	handled, code := maybeRunOpenCodeLauncher([]string{
 		"radioactive_ralph", "hook", "launch-opencode", "--binary", binary,
 		"--adapter-root", filepath.Join(t.TempDir(), "missing"),

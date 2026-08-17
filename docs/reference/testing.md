@@ -117,11 +117,15 @@ provider account; release validation is stricter and should pass without
 provider skips for the shipped bindings before a stable tag.
 
 Set `RALPH_OPENCODE_ADAPTER_LIVE=1` to run the separately gated OpenCode
-completion-authority probe. It requires authenticated OpenCode 1.18.18 and
-proves unmanaged passthrough, unavailable-supervisor failure, no-tool Stop,
+completion-authority probe. The operator's OpenCode 1.18.18 installation must
+already be authenticated. The probe is Unix-only and unavailable on Windows;
+it proves unmanaged passthrough, unavailable-supervisor failure, no-tool Stop,
 tool progress plus Stop, sanitized `PATH`, and secret-blind output through a
-fresh isolated adapter bundle. Version drift fails closed and requires review
-before the pinned probe is updated.
+fresh isolated adapter bundle. Hermetic launcher tests separately prove the
+normal started-to-pending-to-passed polling sequence, bounded pending timeout,
+context cancellation, and the exact two managed bootstrap paths added to a
+contained turn. Version drift fails closed and requires review before the
+pinned probe is updated.
 
 ## Current test focus
 
