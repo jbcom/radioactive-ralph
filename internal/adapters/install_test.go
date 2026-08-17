@@ -159,6 +159,17 @@ func TestRenderedOpenCodeProgressHookSwallowsSpawnFailure(t *testing.T) {
 		t.Fatal("bun is required to execute the generated OpenCode plugin smoke")
 	}
 	missingHook := filepath.Join(t.TempDir(), "missing-radioactive-ralph")
+	if _, err := os.Stat(missingHook); !os.IsNotExist(err) {
+		t.Fatalf("missing-hook fixture unexpectedly exists: %v", err)
+	}
+	controlScript := `try { Bun.spawn([` + strconv.Quote(missingHook) +
+		`]); process.exit(0); } catch { process.exit(7); }`
+	control := exec.Command(bun, "-e", controlScript)
+	controlErr := control.Run()
+	var controlExit *exec.ExitError
+	if !errors.As(controlErr, &controlExit) || controlExit.ExitCode() != 7 {
+		t.Fatalf("missing-hook control did not produce a Bun spawn failure: %v", controlErr)
+	}
 	generated, err := render(missingHook)
 	if err != nil {
 		t.Fatalf("render: %v", err)
