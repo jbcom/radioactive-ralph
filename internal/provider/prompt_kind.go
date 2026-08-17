@@ -10,8 +10,11 @@ import "regexp"
 // Some CLIs omit the final question mark, so a non-punctuation character at
 // end-of-line is also a prompt boundary. A terminal full stop, characteristic
 // of quoted prose and diagnostics, is deliberately rejected. Internal periods
-// remain valid so prompts can name files such as config.toml.
-const doYouWantToPromptExpression = `(?im)^[\t ]*do you want to\b(?:[^\r\n]{0,159}\?[\t ]*|[^\r\n]{0,159}[^\s.!?][\t ]*)$`
+// remain valid so prompts can name files such as config.toml. Do not cap the
+// question length: providers may include more than 160 characters of context,
+// while the single-line boundary and Go's linear-time regexp engine already
+// keep matching bounded by the observed output line.
+const doYouWantToPromptExpression = `(?im)^[\t ]*do you want to\b(?:[^\r\n]*\?[\t ]*|[^\r\n]*[^\s.!?][\t ]*)$`
 
 var (
 	parenConfirmPromptPattern   = regexp.MustCompile(`(?i)\(y/n\)`)

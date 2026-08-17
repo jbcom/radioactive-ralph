@@ -1,6 +1,13 @@
 package provider
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
+
+func longDoYouWantToPrompt() string {
+	return "Do you want to deploy " + strings.Repeat("carefully ", 20) + "now?"
+}
 
 // TestPromptPatternsRejectErrorText fixes a false positive that has been
 // mislabelling ordinary failures as blocked turns.
@@ -77,6 +84,7 @@ func TestPromptPatternsRejectErrorText(t *testing.T) {
 		"Do you want to proceed?",
 		"  Do you want to deploy now?",
 		"Do you want to overwrite config.toml?",
+		longDoYouWantToPrompt(),
 		"Overwrite existing file? [Y/n]",
 		"Press enter to continue",
 		"Which database should I target?",
@@ -125,6 +133,7 @@ func TestEachPositiveCaseIsolatesOnePattern(t *testing.T) {
 		"Do you want to overwrite it",
 		"  Do you want to deploy now?",
 		"Do you want to overwrite config.toml?",
+		longDoYouWantToPrompt(),
 		"Overwrite existing file? [Y/n]",
 		"Press enter to continue",
 		"Which database should I target?",

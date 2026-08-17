@@ -32,6 +32,7 @@ func TestPromptKindIsAClosedTaxonomy(t *testing.T) {
 		{"bracketed confirm", "Continue with deploy? [Y/n]", PromptKindConfirm},
 		{"press enter", "Press enter to continue", PromptKindConfirm},
 		{"question confirmation", "Do you want to deploy now?", PromptKindConfirm},
+		{"long question confirmation", longDoYouWantToPrompt(), PromptKindConfirm},
 		{"open question", "Which database should I target?", PromptKindClarification},
 		// Unmatched text must NOT be guessed at. An unknown kind is honest; a
 		// wrong one sends the operator to the wrong response.
@@ -51,15 +52,16 @@ func TestPromptKindIsAClosedTaxonomy(t *testing.T) {
 // expressions remain discriminating. If several expressions satisfy a case,
 // removing the intended one can leave classification tests falsely green.
 func TestPromptKindPositiveIsolatesOnePattern(t *testing.T) {
-	const line = "Do you want to deploy now?"
-	var hits int
-	for _, pattern := range promptKindPatterns {
-		if pattern.re.MatchString(line) {
-			hits++
+	for _, line := range []string{"Do you want to deploy now?", longDoYouWantToPrompt()} {
+		var hits int
+		for _, pattern := range promptKindPatterns {
+			if pattern.re.MatchString(line) {
+				hits++
+			}
 		}
-	}
-	if hits != 1 {
-		t.Fatalf("%q matches %d classifier patterns, want exactly 1", line, hits)
+		if hits != 1 {
+			t.Fatalf("%q matches %d classifier patterns, want exactly 1", line, hits)
+		}
 	}
 }
 
