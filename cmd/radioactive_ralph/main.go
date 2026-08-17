@@ -44,6 +44,13 @@ func main() {
 // code. Extracted from main so signal-context cleanup always runs before
 // the process actually exits.
 func run() int {
+	// Managed OpenCode finalization must preserve the real provider's exit and
+	// signal status exactly, before Cobra or the supervisor signal context can
+	// translate it into a generic command error.
+	if handled, exitCode := maybeRunOpenCodeLauncher(os.Args); handled {
+		return exitCode
+	}
+
 	// FIRST, before flags, config, or logging. A containment-helper
 	// re-invocation exists only to apply its sandbox and exec the provider;
 	// anything done before that either escapes the restriction or is thrown

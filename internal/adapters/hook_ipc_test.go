@@ -60,9 +60,11 @@ func TestRunHookSendsOnlyFiniteNormalizedFields(t *testing.T) {
 type recordingHookHandler struct {
 	reply ipc.HookEventReply
 	got   ipc.HookEventArgs
+	calls int
 }
 
 func (h *recordingHookHandler) HandleHookEvent(_ context.Context, args ipc.HookEventArgs) (ipc.HookEventReply, error) {
+	h.calls++
 	h.got = args
 	return h.reply, nil
 }

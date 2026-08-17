@@ -88,10 +88,10 @@ func TestInstallReplacesBareCode127WithAbsoluteHookCommand(t *testing.T) {
 	}
 	if !strings.Contains(string(opencodeRaw), wantAbsolute) ||
 		!strings.Contains(string(opencodeRaw), `"tool.execute.after"`) ||
-		!strings.Contains(string(opencodeRaw), `event.type !== "session.idle"`) ||
 		!strings.Contains(string(opencodeRaw), `stdin: new Blob([JSON.stringify(payload)])`) ||
-		!strings.Contains(string(opencodeRaw), `attempt < 360`) ||
-		!strings.Contains(string(opencodeRaw), `Bun.sleep(2000)`) {
+		!strings.Contains(string(opencodeRaw), `invoke("PostToolUse"`) ||
+		strings.Contains(string(opencodeRaw), `session.idle`) ||
+		strings.Contains(string(opencodeRaw), `invoke("Stop"`) {
 		t.Fatalf("OpenCode plugin missing absolute commands/events: %s", opencodeRaw)
 	}
 	bun, err := exec.LookPath("bun")
@@ -101,6 +101,7 @@ func TestInstallReplacesBareCode127WithAbsoluteHookCommand(t *testing.T) {
 	pluginPath := filepath.Join(target, "current", "opencode-plugin.js")
 	script := `const plugin = await import(` + strconv.Quote(pluginPath) + `); ` +
 		`const hooks = await plugin.RadioactiveRalphEnforcement(); ` +
+		`if (JSON.stringify(Object.keys(hooks)) !== JSON.stringify(["tool.execute.after"])) throw new Error("unexpected hooks"); ` +
 		`await hooks["tool.execute.after"]({sessionID: "smoke"});`
 	cmd := exec.Command(bun, "-e", script)
 	if out, err := cmd.CombinedOutput(); err != nil {

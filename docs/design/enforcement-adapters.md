@@ -26,9 +26,9 @@ coordinates is rejected before the provider subprocess starts.
 A managed malformed event, missing executable, missing supervisor, protocol
 mismatch, or rejected verification fails closed with static output. Claude
 uses its exit-2/plain-stderr block contract, Codex uses its
-exit-0/structured-JSON decision contract, and the generated OpenCode plugin
-consumes a finite status plus nonzero exit. Input and environment values are
-never echoed.
+exit-0/structured-JSON decision contract, and the Ralph-managed OpenCode
+launcher uses a finite JSON status plus exit 2. Input and environment values
+are never echoed.
 
 ## Completion authority
 
@@ -70,6 +70,13 @@ bundle contains:
 - `opencode-plugin.js`
 - `manifest.json`
 
+It also owns a private isolated runtime home and configuration root for managed
+OpenCode launches. OpenCode may bootstrap package/cache state there, but Ralph
+rejects every documented config, plugin, command, agent, mode, skill, and
+compatible global-skill discovery entry point before each launch. Ralph disables
+project config and supplies exactly the reviewed generated plugin through the
+finite environment config; ordinary unmanaged OpenCode runs remain transparent.
+
 The installer writes files under a private directory, syncs them before
 publication, verifies an existing content-addressed release byte-for-byte
 through no-follow regular-file handles, and keeps prior releases for rollback.
@@ -81,15 +88,18 @@ Generated commands point to
 Installing a bundle does **not** edit live Claude, Codex, or OpenCode user
 configuration. Deployment must first feature-probe the installed provider
 versions, merge the reviewed fragment without deleting unrelated hooks, replay
-the parity/canary fixtures, and only then enable it. OpenCode's `session.idle`
-notification is later than Claude/Codex's synchronous Stop hook. Its generated
-plugin polls only the finite `verification_started`/`verification_pending`
-states and emits a static progress line every two seconds while it waits; that
-keeps Ralph's provider stall lease alive without exposing hook output. A failed,
-malformed, or unavailable verdict throws immediately. Its twelve-minute hard
-cap leaves two minutes of transport/scheduling grace beyond Ralph's fixed
-ten-minute verification budget without allowing an infinite wait. Ralph's
-supervisor/reaper remains the load-bearing recovery authority.
+the parity/canary fixtures, and only then enable it. OpenCode's plugin API does
+not provide process-level completion authority: `session.idle` is a
+notification, and OpenCode 1.18.18 can log a rejected plugin hook while
+`opencode run` still exits zero. The generated plugin therefore reports only
+`PostToolUse` progress. For a managed turn Ralph starts the real OpenCode CLI
+through an absolute, content-verified launcher, preserves any genuine provider
+nonzero or signal exit, and only after provider success synchronously submits
+the finite `Stop` event. Unavailable, pending, malformed, or failed verification
+returns the static OpenCode JSON protocol and exit 2. No-tool runs take this
+same launcher finalization path, and sanitized `PATH` cannot produce the former
+bare-hook code-127 failure. Ralph's supervisor/reaper remains the load-bearing
+recovery authority.
 
 The Linux CI leg also re-applies the guarded versioning, strict-decoding,
 coordinate, acceptance, ownership, live-binding, deduplication, and progress

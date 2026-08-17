@@ -111,14 +111,26 @@ func block(adapter string, stdout, stderr io.Writer, reasonCode string) error {
 		_, _ = fmt.Fprintln(stdout, string(encoded))
 		return nil
 	case "opencode":
-		// The generated plugin consumes this finite code to decide whether to
-		// poll an asynchronous verification. It never includes provider input.
+		// The managed launcher consumes only this reviewed finite vocabulary.
+		// Never reflect a malformed/future supervisor reason into provider output.
 		encoded, _ := json.Marshal(struct {
 			Status string `json:"status"`
-		}{Status: reasonCode})
+		}{Status: finiteOpenCodeStatus(reasonCode)})
 		_, _ = fmt.Fprintln(stdout, string(encoded))
 	default:
 		_, _ = fmt.Fprintln(stderr, reason)
 	}
 	return ErrBlocked
+}
+
+func finiteOpenCodeStatus(reason string) string {
+	switch reason {
+	case "invalid_event", "internal_error", "not_managed", "adapter_mismatch",
+		"worker_missing", "ownership_changed", "verification_started",
+		"verification_pending", "verification_failed", "verification_required",
+		"supervisor_unavailable":
+		return reason
+	default:
+		return "supervisor_unavailable"
+	}
 }

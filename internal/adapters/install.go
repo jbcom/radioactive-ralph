@@ -23,12 +23,6 @@ import (
 // BundleVersion is the generated adapter artifact contract version.
 const BundleVersion = 1
 
-// openCodePollAttempts gives the asynchronous adapter a two-minute grace
-// window beyond the orchestrator's fixed ten-minute verification budget. A
-// same-length client deadline can miss a valid verdict at the budget boundary;
-// an unbounded loop would violate Ralph's never-block contract.
-const openCodePollAttempts = 360
-
 // Manifest identifies one content-addressed generated adapter release.
 type Manifest struct {
 	Version          int      `json:"version"`
@@ -102,13 +96,13 @@ func Install(sourceExecutable, target string) (Manifest, error) {
 		if err := os.Rename(stage, releaseDir); err != nil { //nolint:gosec // both paths are installer-owned children of releasesDir
 			// A concurrent identical installer may have published the same
 			// content-addressed release first. Accept only an exact byte match.
-			if verifyErr := verifyRelease(releaseDir, digest, files); verifyErr != nil {
+			if verifyErr := verifyRelease(releaseDir, digest, int64(len(raw)), files); verifyErr != nil {
 				return Manifest{}, fmt.Errorf("adapters: publish release: %w", err)
 			}
 		}
 	} else if err != nil {
 		return Manifest{}, fmt.Errorf("adapters: inspect release: %w", err)
-	} else if err := verifyRelease(releaseDir, digest, files); err != nil {
+	} else if err := verifyRelease(releaseDir, digest, int64(len(raw)), files); err != nil {
 		return Manifest{}, err
 	}
 
@@ -122,6 +116,11 @@ func writeRelease(stage string, executable []byte, files map[string][]byte) erro
 	binDir := filepath.Join(stage, "bin")
 	if err := os.MkdirAll(binDir, 0o700); err != nil {
 		return fmt.Errorf("adapters: create bin directory: %w", err)
+	}
+	for _, name := range []string{"opencode-managed-home", "opencode-managed-config"} {
+		if err := os.Mkdir(filepath.Join(stage, name), 0o700); err != nil {
+			return fmt.Errorf("adapters: create managed OpenCode directory: %w", err)
+		}
 	}
 	if err := writeSynced(filepath.Join(binDir, "radioactive_ralph"), executable, 0o700); err != nil {
 		return err
@@ -156,7 +155,7 @@ func writeSynced(path string, body []byte, mode os.FileMode) error {
 	return nil
 }
 
-func verifyRelease(releaseDir, digest string, files map[string][]byte) error {
+func verifyRelease(releaseDir, digest string, executableSize int64, files map[string][]byte) error {
 	info, err := os.Lstat(releaseDir) //nolint:gosec // releaseDir is installer-owned and must itself be a real directory
 	if err != nil {
 		return fmt.Errorf("adapters: inspect existing release: %w", err)
@@ -165,12 +164,25 @@ func verifyRelease(releaseDir, digest string, files map[string][]byte) error {
 		return fmt.Errorf("adapters: existing content-addressed release is corrupt")
 	}
 	executable, err := readVerifiedReleaseFile(
-		filepath.Join(releaseDir, "bin", "radioactive_ralph"), -1)
+		filepath.Join(releaseDir, "bin", "radioactive_ralph"), executableSize+1)
 	if err != nil {
 		return fmt.Errorf("adapters: verify existing executable: %w", err)
 	}
 	sum := sha256.Sum256(executable)
 	if hex.EncodeToString(sum[:]) != digest {
+		return fmt.Errorf("adapters: existing content-addressed release is corrupt")
+	}
+	for _, name := range []string{"opencode-managed-home", "opencode-managed-config"} {
+		dir := filepath.Join(releaseDir, name)
+		entry, err := os.Lstat(dir) //nolint:gosec // fixed installer-owned child under the operator-selected release root
+		if err != nil || !entry.IsDir() || entry.Mode().Perm() != 0o700 {
+			return fmt.Errorf("adapters: existing content-addressed release is corrupt")
+		}
+	}
+	if !safeManagedOpenCodeDirectories(
+		filepath.Join(releaseDir, "opencode-managed-home"),
+		filepath.Join(releaseDir, "opencode-managed-config"),
+	) {
 		return fmt.Errorf("adapters: existing content-addressed release is corrupt")
 	}
 	for name, want := range files {
@@ -294,32 +306,14 @@ const invoke = async (event, payload) => {
   const child = Bun.spawn([hook, "hook", "event", "--adapter", "opencode", "--event", event], {
     stdin: new Blob([JSON.stringify(payload)]), stdout: "pipe", stderr: "ignore", env: process.env,
   });
-  const output = await new Response(child.stdout).text();
-  const code = await child.exited;
-  let status = "unknown";
-  try { status = JSON.parse(output).status ?? "unknown"; } catch {}
-  return { code, status };
+  await Promise.all([new Response(child.stdout).text(), child.exited]);
 };
 export const RadioactiveRalphEnforcement = async () => ({
   "tool.execute.after": async (input) => {
-    const result = await invoke("PostToolUse", { hook_event_name: "PostToolUse", session_id: input.sessionID });
-    if (result.code !== 0) throw new Error("Radioactive Ralph progress recording failed.");
-  },
-  event: async ({ event }) => {
-    if (event.type !== "session.idle") return;
-    for (let attempt = 0; attempt < %d; attempt++) {
-      const result = await invoke("Stop", { hook_event_name: "Stop", session_id: event.properties.sessionID });
-      if (result.code === 0) return;
-      if (result.status !== "verification_started" && result.status !== "verification_pending") {
-        throw new Error("Radioactive Ralph completion verification did not pass.");
-      }
-      console.error("[radioactive-ralph] completion verification pending");
-      await Bun.sleep(2000);
-    }
-    throw new Error("Radioactive Ralph completion verification timed out.");
+    await invoke("PostToolUse", { hook_event_name: "PostToolUse", session_id: input.sessionID });
   },
 });
-`, strconv.Quote(executable), openCodePollAttempts)
+`, strconv.Quote(executable))
 	return map[string][]byte{
 		"claude-hooks.json":  append(claudeJSON, '\n'),
 		"codex-hooks.toml":   []byte(codex),

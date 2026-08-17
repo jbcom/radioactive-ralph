@@ -116,6 +116,13 @@ supported CLI is detected on `PATH`. Default CI never depends on a live
 provider account; release validation is stricter and should pass without
 provider skips for the shipped bindings before a stable tag.
 
+Set `RALPH_OPENCODE_ADAPTER_LIVE=1` to run the separately gated OpenCode
+completion-authority probe. It requires authenticated OpenCode 1.18.18 and
+proves unmanaged passthrough, unavailable-supervisor failure, no-tool Stop,
+tool progress plus Stop, sanitized `PATH`, and secret-blind output through a
+fresh isolated adapter bundle. Version drift fails closed and requires review
+before the pinned probe is updated.
+
 ## Current test focus
 
 - `internal/store` schema/migration correctness and spend accounting

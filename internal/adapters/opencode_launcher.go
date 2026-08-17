@@ -1,0 +1,230 @@
+package adapters
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/url"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"sort"
+	"strings"
+)
+
+const (
+	openCodeConfigContentEnv       = "OPENCODE_CONFIG_CONTENT"
+	openCodeConfigDirEnv           = "OPENCODE_CONFIG_DIR"
+	openCodeDisableProjectEnv      = "OPENCODE_DISABLE_PROJECT_CONFIG"
+	openCodePureEnv                = "OPENCODE_PURE"
+	managedOpenCodeLauncherFailure = "Radioactive Ralph managed OpenCode launch failed."
+)
+
+// OpenCodeLaunchOptions are the finite inputs to Ralph's managed OpenCode
+// process wrapper. Provider arguments and streams pass through unchanged.
+type OpenCodeLaunchOptions struct {
+	Context   context.Context
+	Binary    string
+	Plugin    string
+	Home      string
+	ConfigDir string
+	Args      []string
+	Env       []string
+	Stdin     io.Reader
+	Stdout    io.Writer
+	Stderr    io.Writer
+}
+
+// RunOpenCodeLauncher runs the real provider first. A genuine provider
+// failure is returned unchanged. Only a successful managed run submits the
+// synchronous Stop event; unavailable, pending, or failed verification exits
+// through OpenCode's finite fail-closed protocol.
+func RunOpenCodeLauncher(opts OpenCodeLaunchOptions) int {
+	if opts.Context == nil {
+		opts.Context = context.Background()
+	}
+	if opts.Stdin == nil {
+		opts.Stdin = os.Stdin
+	}
+	if opts.Stdout == nil {
+		opts.Stdout = os.Stdout
+	}
+	if opts.Stderr == nil {
+		opts.Stderr = os.Stderr
+	}
+	lookup := environmentLookup(opts.Env)
+	sessionID, endpoint := lookup(ManagedSessionEnv), lookup(HookEndpointEnv)
+	managed := sessionID != "" && endpoint != ""
+	if (sessionID == "") != (endpoint == "") {
+		_ = block("opencode", opts.Stdout, opts.Stderr, "invalid_event")
+		return 2
+	}
+	if !filepath.IsAbs(opts.Binary) || !regularExecutable(opts.Binary) {
+		_, _ = fmt.Fprintln(opts.Stderr, managedOpenCodeLauncherFailure)
+		return 1
+	}
+	env := opts.Env
+	if managed {
+		var err error
+		env, err = managedOpenCodeEnvironment(opts)
+		if err != nil {
+			_, _ = fmt.Fprintln(opts.Stderr, managedOpenCodeLauncherFailure)
+			return 1
+		}
+	}
+	cmd := exec.CommandContext(opts.Context, opts.Binary, opts.Args...) //nolint:gosec // binary is an absolute, operator-resolved provider binding
+	cmd.Env = env
+	cmd.Stdin = opts.Stdin
+	cmd.Stdout = opts.Stdout
+	cmd.Stderr = opts.Stderr
+	if err := cmd.Run(); err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			return providerExitCode(exitErr)
+		}
+		_, _ = fmt.Fprintln(opts.Stderr, managedOpenCodeLauncherFailure)
+		return 1
+	}
+	if !managed {
+		return 0
+	}
+	err := RunHook(
+		opts.Context, "opencode", "Stop",
+		strings.NewReader(`{"hook_event_name":"Stop"}`),
+		opts.Stdout, opts.Stderr, environmentLookup(env),
+	)
+	if err != nil {
+		return 2
+	}
+	return 0
+}
+
+func managedOpenCodeEnvironment(opts OpenCodeLaunchOptions) ([]string, error) {
+	for _, path := range []string{opts.Plugin, opts.Home, opts.ConfigDir} {
+		if !filepath.IsAbs(path) {
+			return nil, fmt.Errorf("managed OpenCode path is not absolute")
+		}
+	}
+	pluginInfo, err := os.Stat(opts.Plugin)
+	if err != nil || !pluginInfo.Mode().IsRegular() {
+		return nil, fmt.Errorf("managed OpenCode plugin is invalid")
+	}
+	for _, path := range []string{opts.Home, opts.ConfigDir} {
+		info, statErr := os.Stat(path)
+		if statErr != nil || !info.IsDir() {
+			return nil, fmt.Errorf("managed OpenCode directory is invalid")
+		}
+	}
+	if !safeManagedOpenCodeDirectories(opts.Home, opts.ConfigDir) {
+		return nil, fmt.Errorf("managed OpenCode configuration is not isolated")
+	}
+
+	lookup := environmentLookup(opts.Env)
+	originalHome := lookup("HOME")
+	if !filepath.IsAbs(originalHome) {
+		return nil, fmt.Errorf("managed OpenCode HOME is invalid")
+	}
+	dataHome := xdgEnvironmentPath(lookup("XDG_DATA_HOME"), filepath.Join(originalHome, ".local", "share"))
+	cacheHome := xdgEnvironmentPath(lookup("XDG_CACHE_HOME"), filepath.Join(originalHome, ".cache"))
+	stateHome := xdgEnvironmentPath(lookup("XDG_STATE_HOME"), filepath.Join(originalHome, ".local", "state"))
+	if dataHome == "" || cacheHome == "" || stateHome == "" {
+		return nil, fmt.Errorf("managed OpenCode XDG path is invalid")
+	}
+	pluginURL := (&url.URL{Scheme: "file", Path: opts.Plugin}).String()
+	config, err := json.Marshal(struct {
+		Plugin []string `json:"plugin"`
+	}{Plugin: []string{pluginURL}})
+	if err != nil {
+		return nil, fmt.Errorf("encode managed OpenCode config: %w", err)
+	}
+
+	replacements := map[string]string{
+		"HOME":                    opts.Home,
+		"XDG_CONFIG_HOME":         opts.ConfigDir,
+		"XDG_DATA_HOME":           dataHome,
+		"XDG_CACHE_HOME":          cacheHome,
+		"XDG_STATE_HOME":          stateHome,
+		openCodeConfigContentEnv:  string(config),
+		openCodeConfigDirEnv:      opts.ConfigDir,
+		openCodeDisableProjectEnv: "1",
+	}
+	remove := map[string]bool{
+		"OPENCODE_CONFIG": true,
+		openCodePureEnv:   true,
+	}
+	return replaceEnvironment(opts.Env, replacements, remove), nil
+}
+
+// OpenCode bootstraps package metadata and node_modules under its private
+// config root. Those runtime files are allowed, but every documented config,
+// extension, and compatible global-skill entry point is rejected. The only
+// enabled plugin must therefore come from OPENCODE_CONFIG_CONTENT.
+func safeManagedOpenCodeDirectories(home, config string) bool {
+	for _, name := range []string{
+		"config.json", "opencode.json", "opencode.jsonc",
+		"plugin", "plugins", "command", "commands", "agent", "agents",
+		"mode", "modes", "skill", "skills", "tool", "tools",
+	} {
+		if pathExistsOrUnknown(filepath.Join(config, name)) {
+			return false
+		}
+	}
+	for _, name := range []string{".opencode", ".claude", ".agents"} {
+		if pathExistsOrUnknown(filepath.Join(home, name)) {
+			return false
+		}
+	}
+	return true
+}
+
+func pathExistsOrUnknown(path string) bool {
+	_, err := os.Lstat(path) //nolint:gosec // read-only check of a fixed child under operator-selected managed roots
+	return err == nil || !os.IsNotExist(err)
+}
+
+func xdgEnvironmentPath(current, fallback string) string {
+	if current == "" {
+		current = fallback
+	}
+	if !filepath.IsAbs(current) {
+		return ""
+	}
+	return filepath.Clean(current)
+}
+
+func regularExecutable(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.Mode().IsRegular() && info.Mode().Perm()&0o111 != 0
+}
+
+func environmentLookup(env []string) Environment {
+	values := make(map[string]string, len(env))
+	for _, entry := range env {
+		key, value, ok := strings.Cut(entry, "=")
+		if ok {
+			values[key] = value
+		}
+	}
+	return func(key string) string { return values[key] }
+}
+
+func replaceEnvironment(env []string, replacements map[string]string, remove map[string]bool) []string {
+	result := make([]string, 0, len(env)+len(replacements))
+	for _, entry := range env {
+		key, _, _ := strings.Cut(entry, "=")
+		if _, replace := replacements[key]; replace || remove[key] {
+			continue
+		}
+		result = append(result, entry)
+	}
+	keys := make([]string, 0, len(replacements))
+	for key := range replacements {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		value := replacements[key]
+		result = append(result, key+"="+value)
+	}
+	return result
+}

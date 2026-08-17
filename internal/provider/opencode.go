@@ -7,7 +7,11 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"os"
+	"os/exec"
+	"path/filepath"
 
+	"github.com/jbcom/radioactive-ralph/internal/adapters"
 	"github.com/jbcom/radioactive-ralph/internal/agent"
 )
 
@@ -70,14 +74,17 @@ func (OpencodeRunner) Run(ctx context.Context, binding Binding, req Request) (Re
 	if err != nil {
 		return Result{}, err
 	}
-	args := opencodeArgs(binding, req, invocation)
 	hookEnv, err := managedHookEnvironment(req)
+	if err != nil {
+		return Result{}, err
+	}
+	command, args, err := resolveOpencodeLaunch(binding, req, invocation, os.Getenv, exec.LookPath)
 	if err != nil {
 		return Result{}, err
 	}
 
 	opts := agent.Options{
-		Command:               binding.Config.Binary,
+		Command:               command,
 		Args:                  args,
 		Dir:                   req.WorkingDir,
 		ContainmentRoot:       req.ContainmentRoot,
@@ -189,6 +196,41 @@ func (OpencodeRunner) Run(ctx context.Context, binding Binding, req Request) (Re
 	}, nil
 }
 
+type opencodePathLookup func(string) (string, error)
+
+func resolveOpencodeLaunch(
+	binding Binding,
+	req Request,
+	invocation Invocation,
+	getenv adapters.Environment,
+	lookPath opencodePathLookup,
+) (string, []string, error) {
+	managed := req.ManagedSessionID != "" && req.HookEndpoint != ""
+	args := opencodeArgs(binding, req, invocation, managed)
+	if !managed {
+		return binding.Config.Binary, args, nil
+	}
+	bundle, err := adapters.CurrentBundleFromEnvironment(getenv)
+	if err != nil {
+		return "", nil, fmt.Errorf("provider: managed OpenCode adapter unavailable: %w", err)
+	}
+	realBinary, err := lookPath(binding.Config.Binary)
+	if err != nil {
+		return "", nil, fmt.Errorf("provider: resolve OpenCode binary: %w", err)
+	}
+	realBinary, err = filepath.Abs(realBinary)
+	if err != nil {
+		return "", nil, fmt.Errorf("provider: resolve absolute OpenCode binary: %w", err)
+	}
+	args = append([]string{
+		"hook", "launch-opencode",
+		"--binary", realBinary,
+		"--adapter-root", bundle.Target,
+		"--",
+	}, args...)
+	return bundle.Executable, args, nil
+}
+
 // opencodeEvent is one `opencode run --format json` stream event.
 type opencodeEvent struct {
 	Type      string       `json:"type"`
@@ -260,15 +302,15 @@ func parseOpencodeEvent(line []byte) (ev opencodeEvent, ok bool) {
 // opencodeArgs builds the opencode command line.
 //
 // Extracted so the argv is testable without spawning a CLI.
-func opencodeArgs(binding Binding, req Request, invocation Invocation) []string {
+func opencodeArgs(binding Binding, req Request, invocation Invocation, managed bool) []string {
 	args := []string{
 		"run", combinePrompt(req), "--format", "json",
-		// Run without external plugins. A supervised turn must be reproducible
-		// from the plan alone: a plugin installed in the operator's environment
-		// would silently change what the agent can do, and the same plan would
-		// then behave differently on two machines for reasons nothing records.
-		// This is a determinism choice, not a permission one.
-		"--pure",
+	}
+	if !managed {
+		// Ordinary turns stay pure. Managed turns instead run through Ralph's
+		// absolute launcher, which isolates OpenCode to one reviewed plugin and
+		// disables both project and user plugin discovery.
+		args = append(args, "--pure")
 	}
 	if req.WorkingDir != "" {
 		args = append(args, "--dir", req.WorkingDir)

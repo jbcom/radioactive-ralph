@@ -17,10 +17,16 @@ Package adapters renders and installs the provider\-specific edge of Ralph's can
 
 - [Constants](<#constants>)
 - [Variables](<#variables>)
+- [func DefaultTarget\(\) \(string, error\)](<#DefaultTarget>)
 - [func RunHook\(ctx context.Context, adapter, event string, input io.Reader, stdout, stderr io.Writer, getenv Environment\) error](<#RunHook>)
+- [func RunOpenCodeLauncher\(opts OpenCodeLaunchOptions\) int](<#RunOpenCodeLauncher>)
+- [type BundlePaths](<#BundlePaths>)
+  - [func CurrentBundleFromEnvironment\(getenv Environment\) \(BundlePaths, error\)](<#CurrentBundleFromEnvironment>)
+  - [func ResolveCurrentBundle\(target string\) \(BundlePaths, error\)](<#ResolveCurrentBundle>)
 - [type Environment](<#Environment>)
 - [type Manifest](<#Manifest>)
   - [func Install\(sourceExecutable, target string\) \(Manifest, error\)](<#Install>)
+- [type OpenCodeLaunchOptions](<#OpenCodeLaunchOptions>)
 
 
 ## Constants
@@ -33,6 +39,16 @@ const (
     ManagedSessionEnv = "RALPH_MANAGED_SESSION_ID"
     // HookEndpointEnv carries the local supervisor socket path.
     HookEndpointEnv = "RALPH_HOOK_ENDPOINT"
+)
+```
+
+<a name="AdapterRootEnv"></a>
+
+```go
+const (
+    // AdapterRootEnv is a non-secret deployment override for the generated
+    // adapter bundle. Production defaults to the user-level Ralph state root.
+    AdapterRootEnv = "RALPH_ADAPTER_ROOT"
 )
 ```
 
@@ -50,6 +66,15 @@ const BundleVersion = 1
 var ErrBlocked = errors.New("managed hook blocked")
 ```
 
+<a name="DefaultTarget"></a>
+## func [DefaultTarget](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/adapters/paths.go#L37>)
+
+```go
+func DefaultTarget() (string, error)
+```
+
+DefaultTarget returns the canonical user\-level adapter installation root.
+
 <a name="RunHook"></a>
 ## func [RunHook](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/adapters/hook.go#L35-L41>)
 
@@ -58,6 +83,49 @@ func RunHook(ctx context.Context, adapter, event string, input io.Reader, stdout
 ```
 
 RunHook normalizes one provider event and asks the supervisor for a verdict. Unmanaged sessions are a strict no\-op, allowing globally configured hooks to coexist with ordinary user sessions. Managed failures block without echoing any raw JSON or environment value.
+
+<a name="RunOpenCodeLauncher"></a>
+## func [RunOpenCodeLauncher](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/adapters/opencode_launcher.go#L43>)
+
+```go
+func RunOpenCodeLauncher(opts OpenCodeLaunchOptions) int
+```
+
+RunOpenCodeLauncher runs the real provider first. A genuine provider failure is returned unchanged. Only a successful managed run submits the synchronous Stop event; unavailable, pending, or failed verification exits through OpenCode's finite fail\-closed protocol.
+
+<a name="BundlePaths"></a>
+## type [BundlePaths](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/adapters/paths.go#L27-L34>)
+
+BundlePaths are the verified executable and OpenCode resources in the atomically selected adapter release.
+
+```go
+type BundlePaths struct {
+    Target            string
+    Root              string
+    Executable        string
+    OpenCodePlugin    string
+    OpenCodeHome      string
+    OpenCodeConfigDir string
+}
+```
+
+<a name="CurrentBundleFromEnvironment"></a>
+### func [CurrentBundleFromEnvironment](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/adapters/paths.go#L47>)
+
+```go
+func CurrentBundleFromEnvironment(getenv Environment) (BundlePaths, error)
+```
+
+CurrentBundleFromEnvironment resolves and verifies the active release. The environment surface is one explicit non\-secret path, never a shell snapshot.
+
+<a name="ResolveCurrentBundle"></a>
+### func [ResolveCurrentBundle](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/adapters/paths.go#L62>)
+
+```go
+func ResolveCurrentBundle(target string) (BundlePaths, error)
+```
+
+ResolveCurrentBundle verifies that current selects one exact content\- addressed release rendered for this target. A missing, stale, symlinked, or tampered entry fails closed before a managed provider starts.
 
 <a name="Environment"></a>
 ## type [Environment](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/adapters/hook.go#L29>)
@@ -69,7 +137,7 @@ type Environment func(string) string
 ```
 
 <a name="Manifest"></a>
-## type [Manifest](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/adapters/install.go#L33-L37>)
+## type [Manifest](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/adapters/install.go#L27-L31>)
 
 Manifest identifies one content\-addressed generated adapter release.
 
@@ -82,12 +150,32 @@ type Manifest struct {
 ```
 
 <a name="Install"></a>
-### func [Install](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/adapters/install.go#L42>)
+### func [Install](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/adapters/install.go#L36>)
 
 ```go
 func Install(sourceExecutable, target string) (Manifest, error)
 ```
 
 Install builds a content\-addressed release beside target/current, then atomically switches the current symlink. No live provider config is mutated; deployment can merge the rendered fragments after review and feature probes.
+
+<a name="OpenCodeLaunchOptions"></a>
+## type [OpenCodeLaunchOptions](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/adapters/opencode_launcher.go#L26-L37>)
+
+OpenCodeLaunchOptions are the finite inputs to Ralph's managed OpenCode process wrapper. Provider arguments and streams pass through unchanged.
+
+```go
+type OpenCodeLaunchOptions struct {
+    Context   context.Context
+    Binary    string
+    Plugin    string
+    Home      string
+    ConfigDir string
+    Args      []string
+    Env       []string
+    Stdin     io.Reader
+    Stdout    io.Writer
+    Stderr    io.Writer
+}
+```
 
 Generated by [gomarkdoc](<https://github.com/princjef/gomarkdoc>)
