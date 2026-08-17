@@ -3,16 +3,15 @@ package ipc
 import (
 	"context"
 	"encoding/json"
-	"path/filepath"
 	"strings"
 	"testing"
 )
 
 func TestHookIPCIsVersionedStrictAndSecretBlind(t *testing.T) {
-	endpoint := filepath.Join(t.TempDir(), "hook.sock")
+	endpoint, heartbeat := ServiceEndpoint(t.TempDir())
 	handler := &hookTestHandler{}
 	server, err := NewServer(ServerOptions{
-		SocketPath: endpoint, HeartbeatPath: endpoint + ".alive", Handler: handler,
+		SocketPath: endpoint, HeartbeatPath: heartbeat, Handler: handler,
 	})
 	if err != nil {
 		t.Fatalf("NewServer: %v", err)

@@ -4,15 +4,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"path/filepath"
 	"testing"
 
 	"github.com/jbcom/radioactive-ralph/internal/ipc"
 )
 
 func TestRunHookSendsOnlyFiniteNormalizedFields(t *testing.T) {
-	endpoint := filepath.Join(t.TempDir(), "hook.sock")
-	heartbeat := endpoint + ".alive"
+	endpoint, heartbeat := ipc.ServiceEndpoint(t.TempDir())
 	handler := &recordingHookHandler{reply: ipc.HookEventReply{
 		Allow: true, Reason: "progress_recorded",
 	}}
