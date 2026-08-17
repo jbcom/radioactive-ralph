@@ -95,7 +95,7 @@ type Decision struct {
 ```
 
 <a name="Evaluate"></a>
-### func [Evaluate](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/enforcement/policy.go#L200>)
+### func [Evaluate](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/enforcement/policy.go#L203>)
 
 ```go
 func Evaluate(request Request) Decision
