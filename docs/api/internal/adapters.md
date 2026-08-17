@@ -17,6 +17,7 @@ Package adapters renders and installs the provider\-specific edge of Ralph's can
 
 - [Constants](<#constants>)
 - [Variables](<#variables>)
+- [func ActivateTarget\(target string\) error](<#ActivateTarget>)
 - [func DefaultTarget\(\) \(string, error\)](<#DefaultTarget>)
 - [func RunHook\(ctx context.Context, adapter, event string, input io.Reader, stdout, stderr io.Writer, getenv Environment\) error](<#RunHook>)
 - [func RunOpenCodeLauncher\(opts OpenCodeLaunchOptions\) int](<#RunOpenCodeLauncher>)
@@ -70,8 +71,17 @@ const BundleVersion = 1
 var ErrBlocked = errors.New("managed hook blocked")
 ```
 
+<a name="ActivateTarget"></a>
+## func [ActivateTarget](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/adapters/paths.go#L55>)
+
+```go
+func ActivateTarget(target string) error
+```
+
+ActivateTarget atomically records the verified non\-secret bundle target used when RALPH\_ADAPTER\_ROOT is unset. Install remains side\-effect\-free beyond its requested target; the CLI calls this only after a successful installation.
+
 <a name="DefaultTarget"></a>
-## func [DefaultTarget](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/adapters/paths.go#L36>)
+## func [DefaultTarget](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/adapters/paths.go#L44>)
 
 ```go
 func DefaultTarget() (string, error)
@@ -98,7 +108,7 @@ func RunOpenCodeLauncher(opts OpenCodeLaunchOptions) int
 RunOpenCodeLauncher runs the real provider first. A genuine provider failure is returned unchanged. Only a successful managed run submits the synchronous Stop event and polls its finite status while verification runs; unavailable, timed\-out, or failed verification exits through OpenCode's finite fail\-closed protocol.
 
 <a name="BundlePaths"></a>
-## type [BundlePaths](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/adapters/paths.go#L27-L33>)
+## type [BundlePaths](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/adapters/paths.go#L35-L41>)
 
 BundlePaths are the verified executable and OpenCode resources in the atomically selected adapter release.
 
@@ -113,16 +123,16 @@ type BundlePaths struct {
 ```
 
 <a name="CurrentBundleFromEnvironment"></a>
-### func [CurrentBundleFromEnvironment](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/adapters/paths.go#L46>)
+### func [CurrentBundleFromEnvironment](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/adapters/paths.go#L106>)
 
 ```go
 func CurrentBundleFromEnvironment(getenv Environment) (BundlePaths, error)
 ```
 
-CurrentBundleFromEnvironment resolves and verifies the active release. The environment surface is one explicit non\-secret path, never a shell snapshot.
+CurrentBundleFromEnvironment resolves and verifies the active release. An explicit non\-secret environment path overrides the atomically selected CLI install target; neither surface captures a shell snapshot.
 
 <a name="ResolveCurrentBundle"></a>
-### func [ResolveCurrentBundle](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/adapters/paths.go#L61>)
+### func [ResolveCurrentBundle](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/adapters/paths.go#L149>)
 
 ```go
 func ResolveCurrentBundle(target string) (BundlePaths, error)

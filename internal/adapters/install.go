@@ -197,6 +197,9 @@ func readVerifiedReleaseFile(path string, limit int64) ([]byte, error) {
 	if err != nil || !info.Mode().IsRegular() {
 		return nil, fmt.Errorf("release entry is not a regular file")
 	}
+	if limit >= 0 && info.Size() > limit {
+		return nil, fmt.Errorf("release entry exceeds the size limit")
+	}
 	reader := io.Reader(file)
 	if limit >= 0 {
 		reader = io.LimitReader(file, limit)

@@ -61,7 +61,12 @@ fanout is therefore entirely unmanaged rather than partially gated.
 ## Installation boundary
 
 `radioactive_ralph adapters install --target <directory>` builds a
-content-addressed release and atomically switches `<directory>/current`. The
+content-addressed release, atomically switches `<directory>/current`, and then
+atomically records that verified non-secret directory as Ralph's active adapter
+target. Managed launches discover a custom install without an extra shell
+environment dependency. An explicit `RALPH_ADAPTER_ROOT` remains the
+deployment override and takes precedence; a malformed or symlinked active
+selector fails closed instead of silently falling back. The
 bundle contains:
 
 - `bin/radioactive_ralph`

@@ -57,6 +57,117 @@ func TestResolveCurrentBundleVerifiesExactRelease(t *testing.T) {
 	}
 }
 
+func TestActiveCustomTargetIsDiscoveredWithoutShellEnvironment(t *testing.T) {
+	t.Setenv("RALPH_STATE_DIR", t.TempDir())
+	source := filepath.Join(t.TempDir(), "radioactive_ralph")
+	if err := os.WriteFile(source, []byte("#!/bin/sh\nexit 0\n"), 0o700); err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+	target := filepath.Join(t.TempDir(), "custom-adapters")
+	if _, err := Install(source, target); err != nil {
+		t.Fatalf("Install: %v", err)
+	}
+	if err := ActivateTarget(target); err != nil {
+		t.Fatalf("ActivateTarget: %v", err)
+	}
+	bundle, err := CurrentBundleFromEnvironment(func(string) string { return "" })
+	if err != nil {
+		t.Fatalf("CurrentBundleFromEnvironment: %v", err)
+	}
+	want, err := filepath.Abs(target)
+	if err != nil {
+		t.Fatalf("resolve target: %v", err)
+	}
+	if bundle.Target != want {
+		t.Fatalf("active target = %q, want %q", bundle.Target, want)
+	}
+}
+
+func TestExplicitAdapterRootOverridesActiveTarget(t *testing.T) {
+	t.Setenv("RALPH_STATE_DIR", t.TempDir())
+	source := filepath.Join(t.TempDir(), "radioactive_ralph")
+	if err := os.WriteFile(source, []byte("#!/bin/sh\nexit 0\n"), 0o700); err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+	active, explicit := filepath.Join(t.TempDir(), "active"), filepath.Join(t.TempDir(), "explicit")
+	for _, target := range []string{active, explicit} {
+		if _, err := Install(source, target); err != nil {
+			t.Fatalf("Install(%q): %v", target, err)
+		}
+	}
+	if err := ActivateTarget(active); err != nil {
+		t.Fatalf("ActivateTarget: %v", err)
+	}
+	bundle, err := CurrentBundleFromEnvironment(func(key string) string {
+		if key == AdapterRootEnv {
+			return explicit
+		}
+		return ""
+	})
+	if err != nil {
+		t.Fatalf("CurrentBundleFromEnvironment: %v", err)
+	}
+	want, err := filepath.Abs(explicit)
+	if err != nil {
+		t.Fatalf("resolve explicit target: %v", err)
+	}
+	if bundle.Target != want {
+		t.Fatalf("selected target = %q, want explicit %q", bundle.Target, want)
+	}
+}
+
+func TestMalformedOrSymlinkedActiveTargetFailsClosed(t *testing.T) {
+	for _, test := range []struct {
+		name  string
+		setup func(t *testing.T, path string)
+	}{
+		{
+			name: "malformed",
+			setup: func(t *testing.T, path string) {
+				t.Helper()
+				if err := os.WriteFile(path, []byte(`{"version":1,"target":"relative"}`), 0o600); err != nil {
+					t.Fatalf("write malformed selector: %v", err)
+				}
+			},
+		},
+		{
+			name: "symlink",
+			setup: func(t *testing.T, path string) {
+				t.Helper()
+				outside := filepath.Join(t.TempDir(), "selector.json")
+				if err := os.WriteFile(outside, []byte(`{"version":1,"target":"/tmp"}`), 0o600); err != nil {
+					t.Fatalf("write outside selector: %v", err)
+				}
+				if err := os.Symlink(outside, path); err != nil {
+					t.Fatalf("symlink selector: %v", err)
+				}
+			},
+		},
+		{
+			name: "oversized-valid-prefix",
+			setup: func(t *testing.T, path string) {
+				t.Helper()
+				prefix := []byte(`{"version":1,"target":"/tmp"}`)
+				body := make([]byte, 0, len(prefix)+maxActiveTargetSize)
+				body = append(body, prefix...)
+				body = append(body, bytes.Repeat([]byte(" "), maxActiveTargetSize)...)
+				if err := os.WriteFile(path, body, 0o600); err != nil {
+					t.Fatalf("write oversized selector: %v", err)
+				}
+			},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			state := t.TempDir()
+			t.Setenv("RALPH_STATE_DIR", state)
+			test.setup(t, filepath.Join(state, activeTargetFile))
+			if _, err := CurrentBundleFromEnvironment(func(string) string { return "" }); err == nil {
+				t.Fatal("invalid active target silently fell back")
+			}
+		})
+	}
+}
+
 func TestOpenCodeRuntimeAllowsStateButRejectsConfigurationEntrypoints(t *testing.T) {
 	source := filepath.Join(t.TempDir(), "radioactive_ralph")
 	if err := os.WriteFile(source, []byte("#!/bin/sh\nexit 0\n"), 0o700); err != nil {
@@ -200,6 +311,37 @@ func TestOpenCodeRuntimeCleanupRestoresTraversalWithoutFollowingSymlinks(t *test
 	}
 	if _, err := os.Stat(outsideMarker); err != nil {
 		t.Fatalf("cleanup followed runtime symlink: %v", err)
+	}
+}
+
+func TestOpenCodeRuntimeCleanupRejectsRootSymlinkWithoutTouchingTarget(t *testing.T) {
+	parent := t.TempDir()
+	outside := t.TempDir()
+	before, err := os.Stat(outside)
+	if err != nil {
+		t.Fatalf("stat outside directory before cleanup: %v", err)
+	}
+	marker := filepath.Join(outside, "keep")
+	if err := os.WriteFile(marker, []byte("keep\n"), 0o600); err != nil {
+		t.Fatalf("write outside marker: %v", err)
+	}
+	root := filepath.Join(parent, "launch-swapped")
+	if err := os.Symlink(outside, root); err != nil {
+		t.Fatalf("replace runtime with symlink: %v", err)
+	}
+	err = (OpenCodeRuntimePaths{Root: root, parent: parent}).Cleanup()
+	if err == nil {
+		t.Fatal("symlinked runtime root was accepted")
+	}
+	if _, err := os.Stat(marker); err != nil {
+		t.Fatalf("cleanup followed runtime root symlink: %v", err)
+	}
+	info, err := os.Stat(outside)
+	if err != nil {
+		t.Fatalf("stat outside directory: %v", err)
+	}
+	if info.Mode().Perm() != before.Mode().Perm() {
+		t.Fatalf("cleanup changed outside mode: got=%v want=%v", info.Mode().Perm(), before.Mode().Perm())
 	}
 }
 

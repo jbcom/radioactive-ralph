@@ -79,18 +79,7 @@ func (r OpenCodeRuntimePaths) Cleanup() error {
 	if r.parent == "" || !isOpenCodeRuntimeChild(r.parent, r.Root) {
 		return fmt.Errorf("adapters: invalid OpenCode runtime cleanup target")
 	}
-	if err := filepath.WalkDir(r.Root, func(path string, entry os.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			return walkErr
-		}
-		if entry.IsDir() {
-			return os.Chmod(path, 0o700) //nolint:gosec // exact launch-private directory; WalkDir never follows symlinks
-		}
-		return nil
-	}); err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("adapters: restore OpenCode runtime traversal: %w", err)
-	}
-	if err := os.RemoveAll(r.Root); err != nil {
+	if err := cleanupOpenCodeRuntime(r.parent, r.Root); err != nil {
 		return fmt.Errorf("adapters: remove OpenCode runtime: %w", err)
 	}
 	return nil

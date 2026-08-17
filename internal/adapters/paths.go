@@ -18,9 +18,17 @@ const (
 	// adapter bundle. Production defaults to the user-level Ralph state root.
 	AdapterRootEnv = "RALPH_ADAPTER_ROOT"
 
-	maxManifestBytes   = 16 << 10
-	maxExecutableBytes = 256 << 20
+	activeTargetVersion = 1
+	activeTargetFile    = "active-adapter-target.json"
+	maxActiveTargetSize = 8 << 10
+	maxManifestBytes    = 16 << 10
+	maxExecutableBytes  = 256 << 20
 )
+
+type activeTargetSelection struct {
+	Version int    `json:"version"`
+	Target  string `json:"target"`
+}
 
 // BundlePaths are the verified executable and OpenCode resources in the
 // atomically selected adapter release.
@@ -41,18 +49,98 @@ func DefaultTarget() (string, error) {
 	return filepath.Join(root, "adapters"), nil
 }
 
-// CurrentBundleFromEnvironment resolves and verifies the active release. The
-// environment surface is one explicit non-secret path, never a shell snapshot.
+// ActivateTarget atomically records the verified non-secret bundle target used
+// when RALPH_ADAPTER_ROOT is unset. Install remains side-effect-free beyond its
+// requested target; the CLI calls this only after a successful installation.
+func ActivateTarget(target string) error {
+	bundle, err := ResolveCurrentBundle(target)
+	if err != nil {
+		return fmt.Errorf("adapters: verify active target: %w", err)
+	}
+	root, err := xdg.StateRoot()
+	if err != nil {
+		return fmt.Errorf("adapters: resolve active target state: %w", err)
+	}
+	if err := os.MkdirAll(root, 0o700); err != nil {
+		return fmt.Errorf("adapters: create active target state: %w", err)
+	}
+	selection := activeTargetSelection{Version: activeTargetVersion, Target: bundle.Target}
+	body, err := json.Marshal(selection)
+	if err != nil {
+		return fmt.Errorf("adapters: encode active target: %w", err)
+	}
+	body = append(body, '\n')
+	stage, err := os.CreateTemp(root, ".active-adapter-target-*")
+	if err != nil {
+		return fmt.Errorf("adapters: stage active target: %w", err)
+	}
+	stagePath := stage.Name()
+	defer func() { _ = os.Remove(stagePath) }()
+	if err := stage.Chmod(0o600); err != nil {
+		_ = stage.Close()
+		return fmt.Errorf("adapters: restrict active target: %w", err)
+	}
+	if _, err := stage.Write(body); err != nil {
+		_ = stage.Close()
+		return fmt.Errorf("adapters: write active target: %w", err)
+	}
+	if err := stage.Sync(); err != nil {
+		_ = stage.Close()
+		return fmt.Errorf("adapters: sync active target: %w", err)
+	}
+	if err := stage.Close(); err != nil {
+		return fmt.Errorf("adapters: close active target: %w", err)
+	}
+	if err := os.Rename(stagePath, filepath.Join(root, activeTargetFile)); err != nil {
+		return fmt.Errorf("adapters: publish active target: %w", err)
+	}
+	if err := syncDirectory(root); err != nil {
+		return fmt.Errorf("adapters: sync active target state: %w", err)
+	}
+	return nil
+}
+
+// CurrentBundleFromEnvironment resolves and verifies the active release. An
+// explicit non-secret environment path overrides the atomically selected CLI
+// install target; neither surface captures a shell snapshot.
 func CurrentBundleFromEnvironment(getenv Environment) (BundlePaths, error) {
 	target := strings.TrimSpace(getenv(AdapterRootEnv))
 	if target == "" {
 		var err error
-		target, err = DefaultTarget()
+		target, err = selectedTarget()
 		if err != nil {
-			return BundlePaths{}, fmt.Errorf("adapters: resolve default target: %w", err)
+			return BundlePaths{}, err
 		}
 	}
 	return ResolveCurrentBundle(target)
+}
+
+func selectedTarget() (string, error) {
+	root, err := xdg.StateRoot()
+	if err != nil {
+		return "", fmt.Errorf("adapters: resolve active target state: %w", err)
+	}
+	path := filepath.Join(root, activeTargetFile)
+	raw, err := readVerifiedReleaseFile(path, maxActiveTargetSize)
+	if err != nil {
+		if os.IsNotExist(err) {
+			target, defaultErr := DefaultTarget()
+			if defaultErr != nil {
+				return "", fmt.Errorf("adapters: resolve default target: %w", defaultErr)
+			}
+			return target, nil
+		}
+		return "", fmt.Errorf("adapters: read active target: %w", err)
+	}
+	var selection activeTargetSelection
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&selection); err != nil || decoder.Decode(&struct{}{}) != io.EOF ||
+		selection.Version != activeTargetVersion || strings.TrimSpace(selection.Target) == "" ||
+		!filepath.IsAbs(selection.Target) {
+		return "", fmt.Errorf("adapters: active target selection is invalid")
+	}
+	return selection.Target, nil
 }
 
 // ResolveCurrentBundle verifies that current selects one exact content-

@@ -28,6 +28,9 @@ func newAdaptersCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			if err := adapters.ActivateTarget(target); err != nil {
+				return err
+			}
 			encoded, err := json.Marshal(manifest)
 			if err != nil {
 				return fmt.Errorf("encode adapter manifest: %w", err)
