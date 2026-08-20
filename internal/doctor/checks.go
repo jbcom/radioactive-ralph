@@ -220,9 +220,10 @@ func checkServicePlatformFor(goos string) Check {
 			Name:     "service platform",
 			Severity: WARN,
 			Detail: "native Windows supports the foreground control plane and SID-bound named pipes; " +
-				"SCM install/start and provider PTYs are unsupported",
-			Remediate: "run `radioactive_ralph --supervisor` for the native control plane, " +
-				"or use WSL2 with `systemd --user` for provider-backed execution",
+				"SCM install/start is unsupported (see the Windows SCM safety design spec). Provider " +
+				"dispatch runs through a managed WSL2 distro instead of a native pty -- see the " +
+				"\"wsl dispatch\" check for its status",
+			Remediate: "run `radioactive_ralph --supervisor` for the native control plane",
 		}
 	default:
 		return Check{
@@ -232,6 +233,37 @@ func checkServicePlatformFor(goos string) Check {
 			Remediate: "use macOS or Linux for the full repo-service runtime",
 		}
 	}
+}
+
+// checkWSLDispatch reports the state of the managed "radioactive-ralph" WSL2
+// distro that Windows provider dispatch runs inside (see
+// internal/wsldistro and internal/agent/pty_start_windows.go). OK/skip on
+// every non-Windows platform; on Windows, WARN until the distro is actually
+// registered -- nothing yet auto-provisions it (see the design spec's open
+// question on when that should happen), so a not-yet-registered distro is
+// today's expected state, not a failure.
+func checkWSLDispatch(ctx context.Context, cfg RunOptions) Check {
+	st := cfg.checkWSLDistro(ctx)
+	if !st.Applicable {
+		return Check{Name: "wsl dispatch", Severity: OK, Detail: st.Detail}
+	}
+	if !st.WSLAvailable {
+		return Check{
+			Name:      "wsl dispatch",
+			Severity:  WARN,
+			Detail:    st.Detail,
+			Remediate: "install WSL2 (`wsl --install`) for provider-backed dispatch on Windows",
+		}
+	}
+	if !st.DistroRegistered {
+		return Check{
+			Name:      "wsl dispatch",
+			Severity:  WARN,
+			Detail:    st.Detail,
+			Remediate: "distro auto-provisioning is not yet wired into any command; see the WSL2 dispatch design spec",
+		}
+	}
+	return Check{Name: "wsl dispatch", Severity: OK, Detail: st.Detail}
 }
 
 // checkStateDir verifies the XDG state root — where the one user-level SQLite DB
