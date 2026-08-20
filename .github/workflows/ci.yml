@@ -771,6 +771,7 @@ jobs:
             packaging/linux/build-appimage.sh \
             packaging/publish-cli-manifests.sh \
             packaging/macos/push-version-branch.sh \
+            packaging/wsl/build-rootfs.sh \
             docs/install.sh \
             scripts/ci/test_install_signature_policy.sh \
             scripts/ci/dmg_stale_devices.sh \
