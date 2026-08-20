@@ -207,6 +207,7 @@ func runManagedOpenCodeProvider(
 		cleanupErr := reclaimOpenCodeProviderProcess(cmd.Process, processScopeValue)
 		runErr = cmd.Wait()
 		closePipes()
+		drainOpenCodeCopyResults(copyResults)
 		if cleanupErr != nil {
 			return runErr, fmt.Errorf("observe managed provider exit: %w; cleanup also failed: %v", err, cleanupErr)
 		}
@@ -218,6 +219,7 @@ func runManagedOpenCodeProvider(
 	if err := reclaimOpenCodeProviderProcess(cmd.Process, processScopeValue); err != nil {
 		runErr = cmd.Wait()
 		closePipes()
+		drainOpenCodeCopyResults(copyResults)
 		return runErr, err
 	}
 	runErr = cmd.Wait()
@@ -229,16 +231,31 @@ func runManagedOpenCodeProvider(
 		case copyErr := <-copyResults:
 			if copyErr != nil {
 				closePipes()
+				drainOpenCodeCopyResults(copyResults)
 				return runErr, fmt.Errorf("copy managed provider output: %w", copyErr)
 			}
 		case <-timer.C:
 			closePipes()
+			drainOpenCodeCopyResults(copyResults)
 			return runErr, fmt.Errorf("managed provider output remained open after cleanup")
 		}
 	}
 	_ = stdoutReader.Close()
 	_ = stderrReader.Close()
 	return runErr, nil
+}
+
+// drainOpenCodeCopyResults consumes remaining copy goroutine results without
+// blocking, so the caller can safely write to the shared stdout/stderr writers
+// after runManagedOpenCodeProvider returns an error.
+func drainOpenCodeCopyResults(copyResults chan error) {
+	for {
+		select {
+		case <-copyResults:
+		default:
+			return
+		}
+	}
 }
 
 func pollOpenCodeStop(opts OpenCodeLaunchOptions, env []string, polling openCodeStopPolling) int {
