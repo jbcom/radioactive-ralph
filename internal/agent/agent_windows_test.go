@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"os"
 	"os/exec"
 	"strings"
 	"testing"
@@ -52,7 +53,7 @@ func wslTestDistro(t *testing.T) string {
 	}
 	// wsl.exe emits raw UTF-16LE even with -q (confirmed directly: no BOM,
 	// "\r\n" as 0d 00 0a 00) -- decode properly rather than assume ASCII.
-	text := decodeUTF16LE(out)
+	text := decodeUTF16LE(t, out)
 	for _, line := range strings.Split(text, "\n") {
 		name := strings.TrimSpace(line)
 		if name != "" {
@@ -70,9 +71,17 @@ func wslTestDistro(t *testing.T) string {
 // pairs included) would be silently corrupted or produce no match at all,
 // causing this test to false-skip rather than run. utf16.Decode handles
 // surrogate pairs correctly.
-func decodeUTF16LE(b []byte) string {
+func decodeUTF16LE(t *testing.T, b []byte) string {
+	t.Helper()
 	if len(b)%2 != 0 {
-		b = b[:len(b)-1] // defensive: drop a dangling odd trailing byte
+		// This should never happen for real UTF-16LE output -- an odd
+		// length means something upstream is already wrong (a truncated
+		// read, a genuinely different encoding, etc.), and silently
+		// dropping the last byte could produce a garbled distro name that
+		// causes a false skip rather than a loud failure. Review feedback:
+		// make this visible instead of swallowing it.
+		t.Logf("decodeUTF16LE: odd-length input (%d bytes); dropping the dangling trailing byte 0x%02x", len(b), b[len(b)-1])
+		b = b[:len(b)-1]
 	}
 	units := make([]uint16, 0, len(b)/2)
 	for i := 0; i+1 < len(b); i += 2 {
@@ -126,5 +135,29 @@ collect:
 	}
 	if !bytes.Contains(got.Bytes(), []byte("hello-from-agent-test")) {
 		t.Fatalf("child did not echo the written input; got %q", got.String())
+	}
+}
+
+// TestWslDispatchPTYWriteReturnsExactSentinelWhenOneShot verifies the exact
+// error identity a Write on a one-shot-input agent's ptyMaster returns, per
+// review feedback: the one-shot path (agent.go sets cmd.Stdin to a
+// bytes.Reader and never creates a stdin pipe, so wslDispatchPTY.in is nil)
+// must fail with ErrOneShotInputClosed specifically, not a generic "write
+// failed" -- callers (WriteInput -> WriteAll -> Write) distinguish this
+// sentinel from a real I/O failure.
+func TestWslDispatchPTYWriteReturnsExactSentinelWhenOneShot(t *testing.T) {
+	outR, outW, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe: %v", err)
+	}
+	t.Cleanup(func() { _ = outR.Close(); _ = outW.Close() })
+
+	p := &wslDispatchPTY{out: outW, in: nil} // one-shot case: no stdin pipe
+	n, err := p.Write([]byte("anything"))
+	if n != 0 {
+		t.Fatalf("Write n = %d, want 0", n)
+	}
+	if !errors.Is(err, ErrOneShotInputClosed) {
+		t.Fatalf("Write err = %v, want ErrOneShotInputClosed exactly", err)
 	}
 }

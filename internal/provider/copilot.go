@@ -188,10 +188,20 @@ func (c *copilotResultCollector) consume(line []byte) {
 	case "assistant.message":
 		var data copilotAssistantMessageData
 		if err := json.Unmarshal(f.Data, &data); err == nil {
-			// Copilot emits at most one non-ephemeral assistant.message per
-			// turn in every case observed; last-write-wins matches
-			// claude/codex's own "final message" semantics if that ever
-			// changes.
+			// Last-write-wins, not accumulation (unlike claude's runner,
+			// which does accumulate). This is deliberate, not merely
+			// "matches what's been observed so far": the trailing "result"
+			// frame's exitCode is the authoritative completion signal for
+			// this runner (see succeeded()/failed() below), and
+			// assistant.message is documented and observed as the turn's
+			// FINAL answer, not an intermediate step in a visible reasoning
+			// trace the way, say, assistant.reasoning_delta frames are (see
+			// this file's package doc for the full frame-type evidence).
+			// If a future Copilot release starts emitting genuinely
+			// separate multi-step assistant.message frames within one
+			// turn, this would need to switch to accumulation like
+			// claude's -- flagged here so that's a deliberate future
+			// decision, not a silent regression nobody notices.
 			c.assistantText = data.Content
 		}
 	case "result":

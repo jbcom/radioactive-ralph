@@ -15,7 +15,10 @@ that runs on the other end of that dispatch.
 
 ## Building
 
-Requires Docker (a release-pipeline dependency, never an install-time one for end users):
+Requires Docker (a release-pipeline dependency, never an install-time one for end users), and on
+Windows specifically requires **Git-Bash or WSL** to run `build-rootfs.sh` at all — the script's
+shebang is `#!/usr/bin/env bash` and it uses `pwd -W` (a Git-Bash-specific extension) for the
+Docker volume-mount path; plain PowerShell/cmd cannot run it:
 
 ```bash
 ./build-rootfs.sh

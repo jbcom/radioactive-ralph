@@ -33,9 +33,11 @@ trap 'docker rm -f "$container_id" >/dev/null 2>&1 || true' EXIT
 
 # Docker Desktop's volume mounts need a real Windows-style path on Windows;
 # a Git-Bash-style /c/... path silently resolves to nothing inside the
-# container ("Directory nonexistent"). `pwd -W` gives that path on
-# Windows/Git-Bash and falls back to plain `pwd` everywhere else (same
-# idiom already used by .hooks/post-commit in this workspace).
+# container ("Directory nonexistent"). `pwd -W` (a Git-Bash-specific
+# extension -- this script requires Git-Bash or WSL to run on Windows at
+# all, see README.md) gives that Windows-style path there and falls back
+# to plain `pwd` everywhere else (macOS/Linux, or WSL where the path is
+# already correct as-is).
 host_dir="$(pwd -W 2>/dev/null || pwd)"
 
 docker export "$container_id" | docker run --rm -i \
