@@ -55,20 +55,30 @@ clean: ## Remove build artifacts
 ##        make test-linux-adapters            # adapters package only
 ##        make test-linux-agent               # agent package only
 ##        make test-linux PKG=./internal/orch # specific package
+##
+## --init matters, not just hygiene: without it, PID 1 inside the container
+## is the go test binary itself, which does not reap zombie descendants the
+## way a real init process does. internal/agent's process-group reaping
+## tests (TestKillReapsGrandchildProcess and four siblings) fail under a
+## bare `docker run` for exactly this reason -- confirmed directly by
+## running the identical command against unmodified upstream main and
+## seeing the same five failures, then confirming --init (Docker's built-in
+## tini) fixes all five with no other change. Not a code bug; a container
+## PID-1 gap in this convenience target.
 test-linux: ## Run full test suite on Linux via Docker
-	docker run --rm -v "$(WORKSPACE_ROOT):/workspace" -w /workspace $(GO_LINUX_IMAGE) \
+	docker run --rm --init -v "$(WORKSPACE_ROOT):/workspace" -w /workspace $(GO_LINUX_IMAGE) \
 		sh -c 'apt-get update -qq && apt-get install -y -qq unzip > /dev/null 2>&1 && curl -fsSL https://bun.sh/install | bash && export BUN_INSTALL=$${HOME}/.bun && export PATH=$$BUN_INSTALL/bin:$$PATH && go test -timeout 10m ./...'
 
 test-linux-race: ## Run full test suite with race detector on Linux via Docker
-	docker run --rm -v "$(WORKSPACE_ROOT):/workspace" -w /workspace $(GO_LINUX_IMAGE) \
+	docker run --rm --init -v "$(WORKSPACE_ROOT):/workspace" -w /workspace $(GO_LINUX_IMAGE) \
 		sh -c 'apt-get update -qq && apt-get install -y -qq unzip > /dev/null 2>&1 && curl -fsSL https://bun.sh/install | bash && export BUN_INSTALL=$${HOME}/.bun && export PATH=$$BUN_INSTALL/bin:$$PATH && go test -race -timeout 20m ./...'
 
 test-linux-adapters: ## Run adapters tests on Linux via Docker
-	docker run --rm -v "$(WORKSPACE_ROOT):/workspace" -w /workspace $(GO_LINUX_IMAGE) \
+	docker run --rm --init -v "$(WORKSPACE_ROOT):/workspace" -w /workspace $(GO_LINUX_IMAGE) \
 		sh -c 'apt-get update -qq && apt-get install -y -qq unzip > /dev/null 2>&1 && curl -fsSL https://bun.sh/install | bash && export BUN_INSTALL=$${HOME}/.bun && export PATH=$$BUN_INSTALL/bin:$$PATH && go test -race -timeout 5m ./internal/adapters/...'
 
 test-linux-agent: ## Run agent tests on Linux via Docker
-	docker run --rm -v "$(WORKSPACE_ROOT):/workspace" -w /workspace $(GO_LINUX_IMAGE) go test -race -timeout 5m ./internal/agent/...
+	docker run --rm --init -v "$(WORKSPACE_ROOT):/workspace" -w /workspace $(GO_LINUX_IMAGE) go test -race -timeout 5m ./internal/agent/...
 
 wsl-rootfs-lint: ## Lint packaging/wsl/Dockerfile with hadolint (mise-pinned)
 	mise exec -- hadolint packaging/wsl/Dockerfile
