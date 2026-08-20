@@ -5,6 +5,8 @@ package agent
 import (
 	"os"
 	"os/exec"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"testing"
@@ -22,7 +24,24 @@ func TestReclaimProcessScopeRejectsMalformedInputWithoutEcho(t *testing.T) {
 	}
 }
 
+// linuxEnvironReadable reports whether /proc/self/environ is readable for
+// processes in other sessions. On GitHub Actions runners (YAMA ptrace_scope=1),
+// /proc/PID/environ is EACCES after Setsid(), so the reclaim test cannot
+// verify the scope marker. Skip rather than fail on a restricted kernel.
+func linuxEnvironReadable(t *testing.T) {
+	t.Helper()
+	// Only relevant on Linux; Darwin uses sysctl, not /proc.
+	if filepath.Separator != '/' {
+		return
+	}
+	self := strconv.Itoa(os.Getpid())
+	if _, err := os.ReadFile(filepath.Join("/proc", self, "environ")); err != nil {
+		t.Skipf("kernel restricts /proc/PID/environ: %v", err)
+	}
+}
+
 func TestReclaimProcessScopeKillsSetsidMember(t *testing.T) {
+	linuxEnvironReadable(t)
 	testExecutable, err := os.Executable()
 	if err != nil {
 		t.Fatalf("resolve test executable: %v", err)
@@ -52,6 +71,7 @@ func TestReclaimProcessScopeKillsSetsidMember(t *testing.T) {
 }
 
 func TestReclaimProcessScopeRequiresExactValue(t *testing.T) {
+	linuxEnvironReadable(t)
 	testExecutable, err := os.Executable()
 	if err != nil {
 		t.Fatalf("resolve test executable: %v", err)

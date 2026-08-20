@@ -9,7 +9,6 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
-	"strings"
 	"syscall"
 	"time"
 
@@ -84,12 +83,12 @@ func linuxProcessHasScope(pid int, want []byte) (bool, error) {
 	if err != nil {
 		// On Linux with YAMA ptrace_scope > 0 (e.g. GitHub Actions runners),
 		// /proc/PID/environ is EACCES for processes in a different session
-		// even when they share the same UID. Fall back to a stable pidfd
-		// handle (confirms same-UID) plus the session-leader signal from
-		// /proc/PID/stat (always world-readable): a same-UID session leader
-		// that is not the excluded PID is a managed-launch setsid child.
+		// even when they share the same UID. We cannot safely determine
+		// whether this process belongs to the managed launch scope without
+		// reading its environment, so fail closed rather than risking killing
+		// an unrelated same-UID session leader.
 		if errors.Is(err, os.ErrPermission) {
-			return linuxProcessHasScopeViaStat(pid, want)
+			return false, fmt.Errorf("agent: cannot verify managed process scope member %d (environ unreadable): %w", pid, err)
 		}
 		return false, fmt.Errorf("agent: read managed process scope member %d: %w", pid, err)
 	}
@@ -99,44 +98,6 @@ func linuxProcessHasScope(pid int, want []byte) (bool, error) {
 		}
 	}
 	return false, nil
-}
-
-// linuxProcessHasScopeViaStat is the EACCES fallback for /proc/PID/environ.
-// It confirms same-UID via PidfdOpen (which succeeds regardless of
-// ptrace_scope), then reads /proc/PID/stat (always world-readable) to get
-// the session ID. A same-UID session leader (SID == PID) that is not PID 1
-// is a managed-launch setsid descendant.
-func linuxProcessHasScopeViaStat(pid int, _ []byte) (bool, error) {
-	fd, err := unix.PidfdOpen(pid, 0)
-	if errors.Is(err, unix.ESRCH) {
-		return false, nil
-	}
-	if err != nil {
-		return false, nil // not same-UID or unreachable; skip
-	}
-	defer func() { _ = unix.Close(fd) }()
-
-	statContent, err := os.ReadFile(filepath.Join("/proc", strconv.Itoa(pid), "stat")) //nolint:gosec // PID is an enumerated integer.
-	if errors.Is(err, os.ErrNotExist) || errors.Is(err, syscall.ESRCH) {
-		return false, nil
-	}
-	if err != nil {
-		return false, fmt.Errorf("agent: stat managed process scope member %d: %w", pid, err)
-	}
-	endCommand := strings.LastIndex(string(statContent), ") ")
-	if endCommand < 0 {
-		return false, nil
-	}
-	fields := strings.Fields(string(statContent[endCommand+2:]))
-	if len(fields) < 5 {
-		return false, nil
-	}
-	sid, err := strconv.Atoi(fields[4])
-	if err != nil {
-		return false, nil
-	}
-	// A session leader (SID == PID) created by Setsid in a managed launch.
-	return sid == pid && pid > 1, nil
 }
 
 func signalLinuxProcessScopeMember(pid int, entry string) error {

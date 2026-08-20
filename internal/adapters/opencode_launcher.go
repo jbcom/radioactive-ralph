@@ -207,7 +207,7 @@ func runManagedOpenCodeProvider(
 		cleanupErr := reclaimOpenCodeProviderProcess(cmd.Process, processScopeValue)
 		runErr = cmd.Wait()
 		closePipes()
-		drainOpenCodeCopyResults(copyResults)
+		waitOpenCodeCopyGoroutines(copyResults)
 		if cleanupErr != nil {
 			return runErr, fmt.Errorf("observe managed provider exit: %w; cleanup also failed: %v", err, cleanupErr)
 		}
@@ -219,7 +219,7 @@ func runManagedOpenCodeProvider(
 	if err := reclaimOpenCodeProviderProcess(cmd.Process, processScopeValue); err != nil {
 		runErr = cmd.Wait()
 		closePipes()
-		drainOpenCodeCopyResults(copyResults)
+		waitOpenCodeCopyGoroutines(copyResults)
 		return runErr, err
 	}
 	runErr = cmd.Wait()
@@ -231,12 +231,12 @@ func runManagedOpenCodeProvider(
 		case copyErr := <-copyResults:
 			if copyErr != nil {
 				closePipes()
-				drainOpenCodeCopyResults(copyResults)
+				waitOpenCodeCopyGoroutines(copyResults)
 				return runErr, fmt.Errorf("copy managed provider output: %w", copyErr)
 			}
 		case <-timer.C:
 			closePipes()
-			drainOpenCodeCopyResults(copyResults)
+			waitOpenCodeCopyGoroutines(copyResults)
 			return runErr, fmt.Errorf("managed provider output remained open after cleanup")
 		}
 	}
@@ -245,14 +245,20 @@ func runManagedOpenCodeProvider(
 	return runErr, nil
 }
 
-// drainOpenCodeCopyResults consumes remaining copy goroutine results without
-// blocking, so the caller can safely write to the shared stdout/stderr writers
-// after runManagedOpenCodeProvider returns an error.
-func drainOpenCodeCopyResults(copyResults chan error) {
-	for {
+// waitOpenCodeCopyGoroutines blocks until both copy goroutines have exited
+// or a short bounded timeout expires. Unlike a non-blocking drain, this
+// closes the pipes first (which unblocks the read side of io.Copy) and
+// then waits for the goroutines to actually return, preventing a data
+// race between the caller writing to the shared stderr writer and a
+// lingering copy goroutine. The timeout is a safety valve for a writer
+// that blocks indefinitely (e.g. a test's blockingOpenCodeWriter).
+func waitOpenCodeCopyGoroutines(copyResults chan error) {
+	timeout := time.NewTimer(200 * time.Millisecond)
+	defer timeout.Stop()
+	for completed := 0; completed < 2; completed++ {
 		select {
 		case <-copyResults:
-		default:
+		case <-timeout.C:
 			return
 		}
 	}
