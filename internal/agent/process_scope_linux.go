@@ -106,7 +106,7 @@ func linuxProcessHasScope(pid int, want []byte) (bool, error) {
 // ptrace_scope), then reads /proc/PID/stat (always world-readable) to get
 // the session ID. A same-UID session leader (SID == PID) that is not PID 1
 // is a managed-launch setsid descendant.
-func linuxProcessHasScopeViaStat(pid int, want []byte) (bool, error) {
+func linuxProcessHasScopeViaStat(pid int, _ []byte) (bool, error) {
 	fd, err := unix.PidfdOpen(pid, 0)
 	if errors.Is(err, unix.ESRCH) {
 		return false, nil
