@@ -71,6 +71,12 @@ func (w *wslDispatchPTY) Close() error {
 // value is never actually used for anything.
 func (w *wslDispatchPTY) Fd() uintptr { return w.out.Fd() }
 
+// Stat forwards to the output pipe, matching *os.File's behavior on Unix
+// (ptyMaster.Stat exists because Unix tests call a.ptmx.Stat() to observe
+// the pty master's post-close state; there is no equivalent Windows test
+// today, but the interface method must still be satisfied).
+func (w *wslDispatchPTY) Stat() (os.FileInfo, error) { return w.out.Stat() }
+
 func startPTY(cmd *exec.Cmd, oneShotInput bool) (ptyMaster, error) {
 	wslPath, err := exec.LookPath("wsl.exe")
 	if err != nil {

@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf16"
 )
 
 // TestStartReturnsErrWSLNotFoundWhenWslExeMissing replaces the old
@@ -49,8 +50,9 @@ func wslTestDistro(t *testing.T) string {
 	if err != nil {
 		t.Skipf("wsl.exe -l -q failed (%v); skipping WSL dispatch integration test", err)
 	}
-	// wsl.exe emits UTF-16LE even with -q; decode enough to find a name.
-	text := decodeUTF16ish(out)
+	// wsl.exe emits raw UTF-16LE even with -q (confirmed directly: no BOM,
+	// "\r\n" as 0d 00 0a 00) -- decode properly rather than assume ASCII.
+	text := decodeUTF16LE(out)
 	for _, line := range strings.Split(text, "\n") {
 		name := strings.TrimSpace(line)
 		if name != "" {
@@ -61,17 +63,22 @@ func wslTestDistro(t *testing.T) string {
 	return ""
 }
 
-// decodeUTF16ish strips NUL bytes from wsl.exe's UTF-16LE console output --
-// good enough to recover ASCII distro names without pulling in a full
-// UTF-16 decoder for one test helper.
-func decodeUTF16ish(b []byte) string {
-	out := make([]byte, 0, len(b))
-	for _, c := range b {
-		if c != 0 {
-			out = append(out, c)
-		}
+// decodeUTF16LE decodes wsl.exe's raw UTF-16LE console output (confirmed
+// directly against the real binary: no BOM). A prior version of this helper
+// stripped NUL bytes instead, which only happens to work for pure-ASCII
+// content; a real distro name containing a non-ASCII character (surrogate
+// pairs included) would be silently corrupted or produce no match at all,
+// causing this test to false-skip rather than run. utf16.Decode handles
+// surrogate pairs correctly.
+func decodeUTF16LE(b []byte) string {
+	if len(b)%2 != 0 {
+		b = b[:len(b)-1] // defensive: drop a dangling odd trailing byte
 	}
-	return string(out)
+	units := make([]uint16, 0, len(b)/2)
+	for i := 0; i+1 < len(b); i += 2 {
+		units = append(units, uint16(b[i])|uint16(b[i+1])<<8)
+	}
+	return string(utf16.Decode(units))
 }
 
 // TestStartDispatchesOneShotInputThroughWSL is the real, non-mocked proof

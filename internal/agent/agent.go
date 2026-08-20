@@ -145,6 +145,7 @@ type ptyMaster interface {
 	io.Writer
 	io.Closer
 	Fd() uintptr
+	Stat() (os.FileInfo, error)
 }
 
 // Agent is a pty-owned agent subprocess.
