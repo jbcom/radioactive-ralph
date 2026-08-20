@@ -6,7 +6,7 @@ require (
 	fyne.io/fyne/v2 v2.8.0
 	github.com/BurntSushi/toml v1.6.0
 	github.com/Microsoft/go-winio v0.6.2
-	github.com/a2aproject/a2a-go/v2 v2.3.1
+	github.com/a2aproject/a2a-go/v2 v2.4.0
 	github.com/charmbracelet/bubbletea v1.3.10
 	github.com/charmbracelet/lipgloss v1.1.0
 	github.com/charmbracelet/x/exp/teatest v0.0.0-20260713092006-0d683c34c74b
@@ -17,9 +17,9 @@ require (
 	github.com/mattn/go-isatty v0.0.24
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/viper v1.21.0
-	github.com/yuin/goldmark v1.8.4
+	github.com/yuin/goldmark v1.8.5
 	golang.org/x/sys v0.47.0
-	modernc.org/sqlite v1.54.0
+	modernc.org/sqlite v1.56.0
 )
 
 require (
@@ -49,7 +49,6 @@ require (
 	github.com/go-text/typesetting v0.3.4 // indirect
 	github.com/go-viper/mapstructure/v2 v2.4.0 // indirect
 	github.com/godbus/dbus/v5 v5.2.2 // indirect
-	github.com/google/pprof v0.0.0-20260402051712-545e8a4df936 // indirect
 	github.com/hack-pad/go-indexeddb v0.3.2 // indirect
 	github.com/hack-pad/safejs v0.1.0 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
@@ -84,7 +83,7 @@ require (
 	golang.org/x/net v0.56.0 // indirect
 	golang.org/x/text v0.38.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
-	modernc.org/libc v1.74.1 // indirect
+	modernc.org/libc v1.74.4 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.11.0 // indirect
 )
