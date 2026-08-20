@@ -411,3 +411,48 @@ post-merge review lenses came back clean: security-auditor (bounded resources,
 parameterized SQL, correct scoping) and code-simplifier (one stale-comment
 delete). A `govulncheck` sweep found 0 CVEs with all direct deps current. Specs:
 `…-events-cli-design.md`, `…-tui-macro-live-events-design.md`.
+
+## Completion enforcement adapters (v0.33+)
+
+Cross-adapter enforcement policy landing in three waves: the canonical
+enforcement policy (#375) defining how `ManagedSessionID` + `HookEndpoint`
+coordinates gate task completion; the generated completion-enforcement
+adapters (#378) shipping claude-hooks.json, codex-hooks.toml, and
+opencode-plugin.js from a content-addressed release with symlink-swap
+atomic current-target; and the managed OpenCode launcher (#379) making
+Ralph the process-level completion authority for OpenCode — the real
+OpenCode CLI runs first, provider failures remain genuine, and successful
+managed runs cannot return success until the supervisor-owned finite Stop
+check allows them. The launcher isolates HOME and every XDG state root
+from global/project config, rejects documented discovery entry points,
+and grants containment only the exact verified managed home/config
+directories. A fail-closed EACCES path on Linux handles YAMA
+ptrace_scope restrictions on /proc/PID/environ. Spec:
+`docs/superpowers/specs/2026-07-26-windows-scm-safety-disable-design.md`
+(Windows SCM gate unchanged).
+
+## Provider pool resilience (v0.33+)
+
+Provider cooldown tracking (#380): when a provider fails with
+`provider_auth` or `provider_rejected`, it enters exponential-backoff
+cooldown (1h→2h→4h→8h→24h); pool rotation skips cooled providers, and
+when all are cooled picks the earliest-expiring one. Per-provider model
+overrides flow through the binding resolver to the CLI's `--model` flag.
+`--inherit-shell-env` on `service install` captures the user's login
+shell environment so provider CLIs work under launchd/systemd (the #1
+cause of opaque auth failures). Platform-specific env capture: Unix runs
+`$SHELL -l -c env`, Windows uses `os.Environ()` directly (the process
+environment IS the user's full environment on Windows).
+
+## GitHub OSS hardening (v0.34+)
+
+CodeQL Go scanning added to the matrix (the biggest free security-coverage
+gap — govulncheck only finds CVEs in dependencies, not first-party code).
+Dependency-review-action gates PRs that introduce vulnerable deps. Issue
+templates (bug report with provider/mode/doctor fields, feature request),
+PR template with testing doctrine checklist, CONTRIBUTING.md,
+CODE_OF_CONDUCT.md, and .github/release.yml for auto-generated release
+notes. Repo topics, homepage URL, Discussions enabled, Wiki disabled.
+Default workflow permissions set to `read`; fork PR security: no
+`pull_request_target`, no secrets in CI, `can_approve_pull_request_reviews`
+disabled.
