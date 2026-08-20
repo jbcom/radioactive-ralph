@@ -153,6 +153,7 @@ func Run(ctx context.Context, opts ...Option) Report {
 		checkCodexAuth,
 		checkCodexMetering,
 		checkOpencodeVersion,
+		checkCopilotVersion,
 		checkGhVersion,
 		checkGhAuth,
 		checkServicePlatform,

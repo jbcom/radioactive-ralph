@@ -37,6 +37,8 @@ func fakeRunner(m map[string]struct {
 				return "logged in", nil
 			case "opencode --version":
 				return "opencode 1.18.3", nil
+			case "copilot --version":
+				return "GitHub Copilot CLI 1.0.80.", nil
 			}
 		}
 		if !ok {

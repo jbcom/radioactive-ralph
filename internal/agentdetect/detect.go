@@ -115,6 +115,11 @@ var candidates = []candidate{
 		reason: "opencode run --format json runs a fully local agent session bound via its local `run` path; radioactive_ralph ships a runner (internal/provider.OpencodeRunner)",
 	},
 	{
+		name:   "copilot",
+		status: Supported,
+		reason: "copilot -p runs a fully local agent loop + tool execution (hosted model inference only, same shape as claude/codex/opencode, not a remote-delegated session like cursor-agent below); radioactive_ralph ships a runner (internal/provider.CopilotRunner). Verified directly (2026-08-20) against the installed @github/copilot 1.0.80 CLI.",
+	},
+	{
 		name:   "gemini",
 		status: Deprecated,
 		reason: "CLI deprecated 2026-06-18, backend 410 Gone",
