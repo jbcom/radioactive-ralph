@@ -107,3 +107,6 @@ fyne-cross/
 .codex-*
 .rr-accept.*
 .tmp-*
+
+# Built by packaging/wsl/build-rootfs.sh -- a release artifact, not source.
+packaging/wsl/rootfs.tar.gz

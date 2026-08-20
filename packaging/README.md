@@ -8,6 +8,11 @@ Native packaging assets and notes. See the design spec at
 - `linux/radioactive-ralph.desktop` — the freedesktop launcher entry for the
   GUI (`Exec=radioactive_ralph gui`). Shipped in the AppImage and validated in
   CI with `desktop-file-validate`; `.deb`/`.rpm` packages remain CLI-only.
+- `wsl/` — the Dockerfile, `wsl.conf`, and `build-rootfs.sh` that produce
+  `rootfs.tar.gz` for the bundled `radioactive-ralph` WSL2 distro (see
+  `docs/superpowers/specs/2026-08-20-windows-wsl2-dispatch-design.md`). Built
+  once per release, not on end-user machines — Docker is a release-pipeline
+  dependency here, never an install-time one.
 
 ## What is built where
 
@@ -26,9 +31,12 @@ Native packaging assets and notes. See the design spec at
 GUI Linux delivery is the AppImage.)
 
 Native Windows packages expose only the foreground supervisor/client control
-plane. SCM install/start and provider-backed workers are disabled; functional
-provider execution on a Windows machine uses the Linux build inside WSL2 with
-`systemd --user`.
+plane; SCM install/start stays disabled (see the Windows SCM safety design
+spec — unrelated to and unchanged by the point below). Provider-backed
+dispatch on Windows now routes through a bundled, auto-provisioned
+`radioactive-ralph` WSL2 distro (`wsl/`, per the WSL2 dispatch design spec) —
+built and imported automatically, not the manual "set up WSL2 + `systemd
+--user` yourself" story this table previously pointed at.
 
 ## Icon
 
