@@ -1,0 +1,69 @@
+name: Bug report
+description: Report a defect in radioactive-ralph
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to file a bug report. If this is a
+        security issue, please see SECURITY.md instead of filing a public issue.
+  - type: dropdown
+    id: mode
+    attributes:
+      label: Mode
+      description: How were you running Ralph?
+      options:
+        - Supervisor (radioactive_ralph --supervisor)
+        - Client (radioactive_ralph)
+        - GUI (radioactive_ralph gui)
+        - Other
+    validations:
+      required: true
+  - type: dropdown
+    id: provider
+    attributes:
+      label: Provider
+      description: Which provider CLI was the turn dispatched to?
+      options:
+        - claude
+        - codex
+        - opencode
+        - copilot
+        - N/A
+    validations:
+      required: false
+  - type: input
+    id: os
+    attributes:
+      label: Operating system
+      placeholder: macOS 15.2 / Ubuntu 24.04 / Windows 11 (WSL2)
+    validations:
+      required: true
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: A clear description of the defect. Include the plan step if applicable.
+    validations:
+      required: true
+  - type: textarea
+    id: doctor
+    attributes:
+      label: Doctor output
+      description: Paste the output of `radioactive_ralph doctor`. This helps confirm provider detection and platform support.
+      render: shell
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant log output
+      description: Event stream or supervisor logs. Redact secrets.
+      render: shell
+  - type: textarea
+    id: repro
+    attributes:
+      label: Reproduction steps
+      description: Minimal steps to reproduce the behavior.
+      placeholder: |
+        1. Start supervisor: `radioactive_ralph --supervisor`
+        2. Import plan: `radioactive_ralph plan import <file>`
+        3. ...

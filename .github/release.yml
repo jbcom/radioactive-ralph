@@ -1,0 +1,14 @@
+changelog:
+  exclude:
+    labels: [dependencies, chore]
+  categories:
+    - title: Breaking Changes
+      labels: [breaking]
+    - title: Features
+      labels: [feat]
+    - title: Fixes
+      labels: [fix]
+    - title: Documentation
+      labels: [docs]
+    - title: Internal
+      labels: [refactor, test, ci, build, perf]
