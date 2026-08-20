@@ -152,6 +152,7 @@ var shippedProviderBinaries = map[string]bool{
 	"claude":   true,
 	"codex":    true,
 	"opencode": true,
+	"copilot":  true,
 }
 
 // NewRunner returns the runtime implementation for a provider type.
@@ -163,6 +164,8 @@ func NewRunner(binding Binding) (Runner, error) {
 		return CodexRunner{}, nil
 	case "opencode":
 		return OpencodeRunner{}, nil
+	case "copilot":
+		return CopilotRunner{}, nil
 	case declarativePlainStdout, declarativeLastMessageFile, declarativeStreamJSON:
 		return DeclarativeRunner{}, nil
 	default:
@@ -178,6 +181,8 @@ func builtInProvider(name string) (BindingConfig, bool) {
 		return defaultCodexProvider(), true
 	case "opencode":
 		return defaultOpencodeProvider(), true
+	case "copilot":
+		return defaultCopilotProvider(), true
 	default:
 		return BindingConfig{}, false
 	}

@@ -169,6 +169,26 @@ func checkOpencodeVersion(ctx context.Context, cfg RunOptions) Check {
 	})
 }
 
+// checkCopilotVersion warns when the copilot CLI is absent. copilot is a
+// first-class supported provider (internal/provider.CopilotRunner), so
+// doctor reports on it alongside claude/codex/opencode. No auth check is
+// registered alongside it: unlike claude/codex, copilot has no dedicated
+// non-interactive "am I logged in" subcommand (confirmed via `copilot login
+// --help`, checked 2026-08-20) -- auth is an OS credential-store token or an
+// env var (COPILOT_GITHUB_TOKEN/GH_TOKEN/GITHUB_TOKEN), neither of which
+// this doctor check can verify without either running a real turn or
+// guessing at undocumented internals. Left absent rather than faked.
+func checkCopilotVersion(ctx context.Context, cfg RunOptions) Check {
+	return checkProviderVersion(ctx, cfg, providerVersionCheck{
+		Name:          "copilot",
+		Binary:        "copilot",
+		VersionArgs:   []string{"--version"},
+		MissingLevel:  WARN,
+		MissingDetail: "copilot CLI not found on PATH",
+		MissingFix:    "install GitHub Copilot CLI (`npm install -g @github/copilot`) so the `copilot` provider binding is usable",
+	})
+}
+
 // checkGhVersion warns when the GitHub CLI is absent — present
 // because most variants use `gh pr ...` internally, but non-fatal so
 // Ralph can still run on machines without it.

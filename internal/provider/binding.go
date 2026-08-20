@@ -261,6 +261,37 @@ func defaultOpencodeProvider() BindingConfig {
 	}
 }
 
+// defaultCopilotProvider is GitHub Copilot CLI's capability record.
+//
+// NativeFanout: false, UNCONFIRMED -- same "no evidence found, not a
+// verified negative" status as codex. Evidence (installed `@github/copilot`
+// 1.0.80 CLI's --help, checked 2026-08-20): `--agent <agent>` selects ONE
+// custom agent persona for the whole session; there is no `--agents`/`agent
+// create`/`agent list`-style surface the way claude's and opencode's own
+// `--help` document. If a future release adds one, flip this and cite it.
+//
+// SupportsContainment: left at the unset default (capable) but genuinely
+// UNTESTED, not verified either way -- unlike codex/opencode's entries
+// above, this was not run under real containment (macOS Seatbelt / Linux
+// Landlock), which this Windows dev machine cannot exercise directly.
+// WritePaths declares ~/.copilot on the strength of directly observing the
+// CLI READ from there during a real invocation (`~/.copilot/skills/*`,
+// session/model state) -- a real signal it needs write access too, not a
+// guess from nothing, but not the same as codex's bisected, reproduced
+// containment failure. Confirm under real containment before trusting this
+// the way codex's entry is trusted.
+//
+// Verified directly (not from documentation) that copilot's -p/--prompt
+// takes the prompt as a plain argument, not stdin -- see copilot.go's
+// package doc for the full evidence trail on its --output-format json shape
+// and failure-mode behavior.
+func defaultCopilotProvider() BindingConfig {
+	return BindingConfig{
+		Type: "copilot", Binary: "copilot", NativeFanout: false,
+		WritePaths: []string{"~/.copilot"},
+	}
+}
+
 // defaultAgyProvider is agy's capability record. agy is a local-only
 // provider (tool execution and file I/O are local; inference is served
 // from Google's cloud, same as claude/codex use their hosted endpoints).
