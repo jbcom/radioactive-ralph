@@ -88,10 +88,10 @@ func TestInstallReplacesBareCode127WithAbsoluteHookCommand(t *testing.T) {
 	}
 	if !strings.Contains(string(opencodeRaw), wantAbsolute) ||
 		!strings.Contains(string(opencodeRaw), `"tool.execute.after"`) ||
-		!strings.Contains(string(opencodeRaw), `event.type !== "session.idle"`) ||
 		!strings.Contains(string(opencodeRaw), `stdin: new Blob([JSON.stringify(payload)])`) ||
-		!strings.Contains(string(opencodeRaw), `attempt < 360`) ||
-		!strings.Contains(string(opencodeRaw), `Bun.sleep(2000)`) {
+		!strings.Contains(string(opencodeRaw), `invoke("PostToolUse"`) ||
+		strings.Contains(string(opencodeRaw), `session.idle`) ||
+		strings.Contains(string(opencodeRaw), `invoke("Stop"`) {
 		t.Fatalf("OpenCode plugin missing absolute commands/events: %s", opencodeRaw)
 	}
 	bun, err := exec.LookPath("bun")
@@ -101,6 +101,7 @@ func TestInstallReplacesBareCode127WithAbsoluteHookCommand(t *testing.T) {
 	pluginPath := filepath.Join(target, "current", "opencode-plugin.js")
 	script := `const plugin = await import(` + strconv.Quote(pluginPath) + `); ` +
 		`const hooks = await plugin.RadioactiveRalphEnforcement(); ` +
+		`if (JSON.stringify(Object.keys(hooks)) !== JSON.stringify(["tool.execute.after"])) throw new Error("unexpected hooks"); ` +
 		`await hooks["tool.execute.after"]({sessionID: "smoke"});`
 	cmd := exec.Command(bun, "-e", script)
 	if out, err := cmd.CombinedOutput(); err != nil {
@@ -146,6 +147,45 @@ func TestInstallReplacesBareCode127WithAbsoluteHookCommand(t *testing.T) {
 	}
 	if _, err := Install(source, target); err == nil || !strings.Contains(err.Error(), "release is corrupt") {
 		t.Fatalf("Install accepted a poisoned content-addressed release: %v", err)
+	}
+}
+
+func TestRenderedOpenCodeProgressHookSwallowsSpawnFailure(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("native Windows providers are disabled")
+	}
+	bun, err := exec.LookPath("bun")
+	if err != nil {
+		t.Fatal("bun is required to execute the generated OpenCode plugin smoke")
+	}
+	missingHook := filepath.Join(t.TempDir(), "missing-radioactive-ralph")
+	if _, err := os.Stat(missingHook); !os.IsNotExist(err) {
+		t.Fatalf("missing-hook fixture unexpectedly exists: %v", err)
+	}
+	controlScript := `try { Bun.spawn([` + strconv.Quote(missingHook) +
+		`]); process.exit(0); } catch { process.exit(7); }`
+	control := exec.Command(bun, "-e", controlScript)
+	controlErr := control.Run()
+	var controlExit *exec.ExitError
+	if !errors.As(controlErr, &controlExit) || controlExit.ExitCode() != 7 {
+		t.Fatalf("missing-hook control did not produce a Bun spawn failure: %v", controlErr)
+	}
+	generated, err := render(missingHook)
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	pluginPath := filepath.Join(t.TempDir(), "opencode-plugin.js")
+	if err := os.WriteFile(pluginPath, generated["opencode-plugin.js"], 0o600); err != nil {
+		t.Fatalf("write OpenCode plugin: %v", err)
+	}
+	script := `const plugin = await import(` + strconv.Quote(pluginPath) + `); ` +
+		`const hooks = await plugin.RadioactiveRalphEnforcement(); ` +
+		`await hooks["tool.execute.after"]({sessionID: "progress-only"});`
+	cmd := exec.Command(bun, "-e", script)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("progress-only plugin propagated a spawn failure: %v\n%s", err, out)
+	} else if len(out) != 0 {
+		t.Fatalf("progress-only plugin exposed spawn failure output: %q", out)
 	}
 }
 
@@ -214,5 +254,27 @@ func TestInstallRejectsSymlinkedExistingReleaseEntry(t *testing.T) {
 	}
 	if _, err := Install(source, target); err == nil || !strings.Contains(err.Error(), "release is corrupt") {
 		t.Fatalf("Install accepted symlinked release entry: %v", err)
+	}
+}
+
+func TestInstallRejectsSymlinkedRuntimeRoot(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("native Windows providers are disabled")
+	}
+	source := filepath.Join(t.TempDir(), "fake-ralph")
+	if err := os.WriteFile(source, []byte("#!/bin/sh\nexit 0\n"), 0o700); err != nil {
+		t.Fatalf("write fake executable: %v", err)
+	}
+	target := filepath.Join(t.TempDir(), "bundle")
+	if err := os.Mkdir(target, 0o700); err != nil {
+		t.Fatalf("create bundle target: %v", err)
+	}
+	outside := t.TempDir()
+	if err := os.Symlink(outside, filepath.Join(target, "runtime")); err != nil {
+		t.Fatalf("plant runtime symlink: %v", err)
+	}
+	if _, err := Install(source, target); err == nil ||
+		!strings.Contains(err.Error(), "runtime root is invalid") {
+		t.Fatalf("Install accepted symlinked runtime root: %v", err)
 	}
 }

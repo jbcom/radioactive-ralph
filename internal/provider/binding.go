@@ -240,7 +240,7 @@ func defaultCodexProvider() BindingConfig {
 
 // defaultOpencodeProvider is opencode's capability record.
 //
-// NativeFanout: true. Evidence (installed `opencode` 1.18.3 on
+// NativeFanout: true. Historical evidence (installed `opencode` 1.18.3 on
 // 2026-07-16): `opencode run --agent <agent>` selects among agents, and
 // `opencode agent create`/`opencode agent list` manage a native
 // multi-agent surface independent of Ralph's own worker-spawning — the CLI

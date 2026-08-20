@@ -26,9 +26,9 @@ coordinates is rejected before the provider subprocess starts.
 A managed malformed event, missing executable, missing supervisor, protocol
 mismatch, or rejected verification fails closed with static output. Claude
 uses its exit-2/plain-stderr block contract, Codex uses its
-exit-0/structured-JSON decision contract, and the generated OpenCode plugin
-consumes a finite status plus nonzero exit. Input and environment values are
-never echoed.
+exit-0/structured-JSON decision contract, and the Ralph-managed OpenCode
+launcher uses a finite JSON status plus exit 2. Input and environment values
+are never echoed.
 
 ## Completion authority
 
@@ -61,7 +61,12 @@ fanout is therefore entirely unmanaged rather than partially gated.
 ## Installation boundary
 
 `radioactive_ralph adapters install --target <directory>` builds a
-content-addressed release and atomically switches `<directory>/current`. The
+content-addressed release, atomically switches `<directory>/current`, and then
+atomically records that verified non-secret directory as Ralph's active adapter
+target. Managed launches discover a custom install without an extra shell
+environment dependency. An explicit `RALPH_ADAPTER_ROOT` remains the
+deployment override and takes precedence; a malformed or symlinked active
+selector fails closed instead of silently falling back. The
 bundle contains:
 
 - `bin/radioactive_ralph`
@@ -69,6 +74,26 @@ bundle contains:
 - `codex-hooks.toml`
 - `opencode-plugin.js`
 - `manifest.json`
+
+It also owns a private runtime parent outside the immutable release. Every
+managed OpenCode launch receives a unique 0700 home/config pair below that
+parent, and Ralph removes the pair after provider and final-Stop completion.
+Concurrent workers therefore never share writable config, package, or cache
+state. Cleanup restores traversal on launch-private directories without
+following symlinks and fails provider completion if removal cannot be proven,
+so copied credentials cannot be silently stranded. OpenCode may bootstrap package/cache state there, but Ralph
+rejects every documented config, plugin, command, agent, mode, skill, and
+compatible global-skill discovery entry point before each launch. Ralph disables
+project config and supplies exactly the reviewed generated plugin through the
+finite environment config; ordinary unmanaged OpenCode runs remain transparent.
+The managed launcher places the real provider in its own process group and
+reclaims every non-zombie member before submitting final `Stop`. Ralph owns the
+provider output pipes and waits for them to close after that proof. A provider
+that exits while a background tool keeps running therefore cannot mutate the
+checkout during or after acceptance; cleanup uncertainty fails closed without
+a `Stop` request.
+Native Windows rejects managed OpenCode coordinates before starting the
+provider; this completion-authority path is supported on macOS, Linux, and WSL.
 
 The installer writes files under a private directory, syncs them before
 publication, verifies an existing content-addressed release byte-for-byte
@@ -81,15 +106,50 @@ Generated commands point to
 Installing a bundle does **not** edit live Claude, Codex, or OpenCode user
 configuration. Deployment must first feature-probe the installed provider
 versions, merge the reviewed fragment without deleting unrelated hooks, replay
-the parity/canary fixtures, and only then enable it. OpenCode's `session.idle`
-notification is later than Claude/Codex's synchronous Stop hook. Its generated
-plugin polls only the finite `verification_started`/`verification_pending`
-states and emits a static progress line every two seconds while it waits; that
-keeps Ralph's provider stall lease alive without exposing hook output. A failed,
-malformed, or unavailable verdict throws immediately. Its twelve-minute hard
-cap leaves two minutes of transport/scheduling grace beyond Ralph's fixed
-ten-minute verification budget without allowing an infinite wait. Ralph's
-supervisor/reaper remains the load-bearing recovery authority.
+the parity/canary fixtures, and only then enable it. OpenCode's plugin API does
+not provide process-level completion authority. The current managed-adapter
+support guarantee is OpenCode 1.18.18, enforced by the explicit live version
+probe; the older 1.18.3 parser capture is historical protocol evidence only.
+`session.idle` is a
+notification, and OpenCode 1.18.18 can log a rejected plugin hook while
+`opencode run` still exits zero. The generated plugin therefore reports only
+`PostToolUse` progress. For a managed turn Ralph starts the real OpenCode CLI
+through an absolute, content-verified launcher in its own process group and
+adds a random, per-launch process scope inherited by tools. After the provider
+exits, Ralph keeps the leader waitable while it reclaims both the original
+process group and any scope member that escaped with `setpgid(2)`, `setsid(2)`,
+or reparenting. Darwin audit tokens and Linux pidfds make each kill stable
+against PID reuse. Ralph never serializes or includes scope values in its hook
+payloads, errors, logs, or generated artifacts, and `Stop` is not submitted
+until the scope is proven empty. Ralph preserves any genuine provider nonzero
+or signal exit, and only
+after provider success synchronously submits the finite `Stop` event. A
+missing or failed progress-hook process is therefore
+non-fatal to the provider tool call; it cannot replace or weaken the launcher's
+fail-closed final check. A normal `verification_started` or
+`verification_pending` reply is polled for at most 12 minutes, covering the
+supervisor's bounded 10-minute acceptance check without turning pending work
+into a false provider failure. The wrapper emits only a static progress line
+while it waits. The first line is synchronous before the first Stop RPC; later
+lines recur at one third of the resolved provider stall lease. Managed OpenCode
+fails closed when that interval would be below 100 milliseconds (a stall lease
+below 300 milliseconds), bounding heartbeat volume under the provider's raw
+PTY evidence cap. Unavailable,
+timed-out, malformed, or failed verification
+returns the static OpenCode JSON protocol and exit 2. The managed launch adds
+only its exact launch-private home and config directories to the containment
+write allowances OpenCode needs for package bootstrap; it never
+retains the unmanaged real-state allowance or grants the adapter/release root.
+`HOME` and every XDG state root resolve
+inside that private home. Ralph copies only the documented, bounded regular
+`XDG_DATA_HOME/opencode/auth.json` credential file into the ephemeral data root
+with mode 0600 so an ordinarily authenticated OpenCode remains authenticated;
+credential bytes never enter generated artifacts, arguments, logs, or finite
+failure output. Cached skills, model state, and global config do not enter the
+managed turn. No-tool runs take this
+same launcher finalization path, and sanitized `PATH` cannot produce the former
+bare-hook code-127 failure. Ralph's supervisor/reaper remains the load-bearing
+recovery authority.
 
 The Linux CI leg also re-applies the guarded versioning, strict-decoding,
 coordinate, acceptance, ownership, live-binding, deduplication, and progress
