@@ -259,9 +259,12 @@ func checkServicePlatformFor(goos string) Check {
 // distro that Windows provider dispatch runs inside (see
 // internal/wsldistro and internal/agent/pty_start_windows.go). OK/skip on
 // every non-Windows platform; on Windows, WARN until the distro is actually
-// registered -- nothing yet auto-provisions it (see the design spec's open
-// question on when that should happen), so a not-yet-registered distro is
-// today's expected state, not a failure.
+// registered. wsldistro.EnsureRegistered auto-provisions it lazily on the
+// first real dispatch (from a rootfs.tar.gz bundled next to the release
+// binary), so a not-yet-registered distro here is expected right after
+// install and self-resolves on first use of a provider -- doctor itself
+// does not trigger provisioning, since doing so from a dev checkout with no
+// bundled rootfs would just fail loudly for no reason.
 func checkWSLDispatch(ctx context.Context, cfg RunOptions) Check {
 	st := cfg.checkWSLDistro(ctx)
 	if !st.Applicable {
@@ -280,7 +283,7 @@ func checkWSLDispatch(ctx context.Context, cfg RunOptions) Check {
 			Name:      "wsl dispatch",
 			Severity:  WARN,
 			Detail:    st.Detail,
-			Remediate: "distro auto-provisioning is not yet wired into any command; see the WSL2 dispatch design spec",
+			Remediate: "will auto-provision from a bundled rootfs.tar.gz on first provider dispatch; run a provider once, or see the WSL2 dispatch design spec if that fails",
 		}
 	}
 	return Check{Name: "wsl dispatch", Severity: OK, Detail: st.Detail}
