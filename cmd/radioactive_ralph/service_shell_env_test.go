@@ -2,6 +2,7 @@ package main
 
 import (
 	"os"
+	"runtime"
 	"testing"
 )
 
@@ -16,8 +17,13 @@ func TestCaptureLoginShellEnvReturnsMap(t *testing.T) {
 	if len(env) == 0 {
 		t.Fatal("expected non-empty env map from login shell")
 	}
-	if env["HOME"] == "" {
-		t.Error("HOME is missing from login shell env")
+	// Windows uses USERPROFILE where Unix uses HOME; both mean "user home dir".
+	homeKey := "HOME"
+	if runtime.GOOS == "windows" {
+		homeKey = "USERPROFILE"
+	}
+	if env[homeKey] == "" {
+		t.Errorf("%s is missing from login shell env", homeKey)
 	}
 	if env["PATH"] == "" {
 		t.Error("PATH is missing from login shell env")
