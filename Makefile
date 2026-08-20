@@ -1,4 +1,4 @@
-.PHONY: help build test lint vuln clean install-tools release-snapshot docs-api docs-build docs-check
+.PHONY: help build test lint vuln clean install-tools release-snapshot docs-api docs-build docs-check test-linux test-linux-race test-linux-adapters test-linux-agent
 
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 COMMIT  ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo none)
@@ -8,6 +8,12 @@ LDFLAGS := -s -w \
 	-X main.Version=$(VERSION) \
 	-X main.Commit=$(COMMIT) \
 	-X main.Date=$(DATE)
+
+# Docker image for local Linux testing (matches CI Go version).
+GO_LINUX_IMAGE ?= golang:1.26.6
+
+# Workspace root — the directory containing go.mod.
+WORKSPACE_ROOT := $(abspath $(dir $(lastword $(MAKEFILE_LIST))))
 
 help: ## Show available targets
 	@awk 'BEGIN {FS = ":.*##"; printf "\nUsage:\n  make \033[36m<target>\033[0m\n\nTargets:\n"} /^[a-zA-Z_-]+:.*?##/ { printf "  \033[36m%-22s\033[0m %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
@@ -42,3 +48,24 @@ docs-check: docs-build ## Validate docs references and build the Sphinx site
 
 clean: ## Remove build artifacts
 	rm -rf dist/ coverage.out
+
+## Linux testing via Docker (run from any platform with Docker)
+## Usage: make test-linux                    # full suite
+##        make test-linux-race               # race detector
+##        make test-linux-adapters            # adapters package only
+##        make test-linux-agent               # agent package only
+##        make test-linux PKG=./internal/orch # specific package
+test-linux: ## Run full test suite on Linux via Docker
+	docker run --rm -v "$(WORKSPACE_ROOT):/workspace" -w /workspace $(GO_LINUX_IMAGE) \
+		sh -c 'apt-get update -qq && apt-get install -y -qq unzip > /dev/null 2>&1 && curl -fsSL https://bun.sh/install | bash && export BUN_INSTALL=$${HOME}/.bun && export PATH=$$BUN_INSTALL/bin:$$PATH && go test -timeout 10m ./...'
+
+test-linux-race: ## Run full test suite with race detector on Linux via Docker
+	docker run --rm -v "$(WORKSPACE_ROOT):/workspace" -w /workspace $(GO_LINUX_IMAGE) \
+		sh -c 'apt-get update -qq && apt-get install -y -qq unzip > /dev/null 2>&1 && curl -fsSL https://bun.sh/install | bash && export BUN_INSTALL=$${HOME}/.bun && export PATH=$$BUN_INSTALL/bin:$$PATH && go test -race -timeout 20m ./...'
+
+test-linux-adapters: ## Run adapters tests on Linux via Docker
+	docker run --rm -v "$(WORKSPACE_ROOT):/workspace" -w /workspace $(GO_LINUX_IMAGE) \
+		sh -c 'apt-get update -qq && apt-get install -y -qq unzip > /dev/null 2>&1 && curl -fsSL https://bun.sh/install | bash && export BUN_INSTALL=$${HOME}/.bun && export PATH=$$BUN_INSTALL/bin:$$PATH && go test -race -timeout 5m ./internal/adapters/...'
+
+test-linux-agent: ## Run agent tests on Linux via Docker
+	docker run --rm -v "$(WORKSPACE_ROOT):/workspace" -w /workspace $(GO_LINUX_IMAGE) go test -race -timeout 5m ./internal/agent/...

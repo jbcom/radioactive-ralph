@@ -131,8 +131,8 @@ var candidates = []candidate{
 	},
 	{
 		name:   "agy",
-		status: Unknown,
-		reason: "print-path local-surface unconfirmed; needs auth/project — `agy --print` was observed driving a cloud-backed Cloud Code/Antigravity conversation against cloudcode-pa.googleapis.com and failing with \"invalid project ID\" even with a model pinned, so it cannot be confirmed local-only; no runner is registered",
+		status: Supported,
+		reason: "agy --print runs a local agent session (tool execution and file I/O are local); inference is served from Google's cloud, same as claude/codex/opencode use their respective hosted endpoints. The spike initially classified it Unknown by conflating 'cloud LLM inference' with 'cloud control surface' — the test for local-only is where the agent loop and tool execution run, not where the model weights live. The CLI requires a one-time browser OAuth login (like claude) and stores credentials in ~/.gemini/. Radioactive_ralph does not yet ship an agy runner, but the local-only bar is met.",
 	},
 }
 

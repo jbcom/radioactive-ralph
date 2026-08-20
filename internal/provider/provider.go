@@ -182,3 +182,10 @@ func builtInProvider(name string) (BindingConfig, bool) {
 		return BindingConfig{}, false
 	}
 }
+
+// BuiltInProvider is the exported form of builtInProvider, so the binding
+// resolver in cmd/radioactive_ralph can merge per-provider config overrides
+// onto the built-in defaults without duplicating the switch.
+func BuiltInProvider(name string) (BindingConfig, bool) {
+	return builtInProvider(name)
+}
