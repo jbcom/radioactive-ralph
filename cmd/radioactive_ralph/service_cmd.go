@@ -3,7 +3,6 @@ package main
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -233,16 +232,9 @@ func parseEnvPairs(pairs []string) (map[string]string, error) {
 // _), session-specific values (OLDPWD, PWD), and variables that are
 // meaningless to a background service (TERM, SSH_*, DISPLAY, WINDOWID).
 func captureLoginShellEnv() (map[string]string, error) {
-	shell := os.Getenv("SHELL")
-	if shell == "" {
-		shell = "/bin/sh"
-	}
-	//nolint:gosec // shell is the user's login shell from $SHELL; the command is a fixed literal ("env"), not user input
-	cmd := exec.Command(shell, "-l", "-c", "env")
-	cmd.Stdin = nil
-	output, err := cmd.Output()
+	output, err := captureLoginShellEnvRaw()
 	if err != nil {
-		return nil, fmt.Errorf("run %s -l -c env: %w", shell, err)
+		return nil, err
 	}
 	env := map[string]string{}
 	for _, line := range strings.Split(string(output), "\n") {

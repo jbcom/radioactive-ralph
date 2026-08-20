@@ -101,7 +101,7 @@ mutate_and_expect_failure \
   'partial coordinates:'
 
 mutate_and_expect_failure \
-  explicit-acceptance-gate internal/orch/orchestrator.go 651 \
+  explicit-acceptance-gate internal/orch/orchestrator.go 675 \
   $'\t\tif task == nil || !hasMechanicalAcceptance(task.AcceptanceJSON) {' \
   $'\t\tif task == nil {' \
   ./internal/orch TestConfigureManagedHooksRequiresExplicitAcceptanceForEveryTask \
