@@ -2,6 +2,7 @@ package ipc
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -76,9 +77,10 @@ type Handler interface {
 }
 
 // DriveHandler is the OPTIONAL v2 drive surface. A Handler that also
-// implements DriveHandler gains the plan-import/plan-set-status/task-approve/
-// worker-kill commands; one that does not still serves the v1 observe surface,
-// and the server answers a drive command with an unsupported_command response.
+// implements DriveHandler gains the plan-import/plan-set-status/plan-delete/
+// task-approve/worker-kill commands; one that does not still serves the v1
+// observe surface, and the server answers a drive command with an
+// unsupported_command response.
 // Keeping it a separate interface means existing v1 Handler implementations
 // (and their test doubles) compile unchanged.
 type DriveHandler interface {
@@ -137,6 +139,12 @@ type QueryHandler interface {
 		ctx context.Context,
 		args ObserveTaskDescriptionsArgs,
 	) (*ObserveTaskDescriptionsReply, error)
+}
+
+// HookHandler is the OPTIONAL v5 managed-provider hook signal plane. Keeping
+// it separate lets an older/embedded handler fail with unsupported_command.
+type HookHandler interface {
+	HandleHookEvent(context.Context, HookEventArgs) (HookEventReply, error)
 }
 
 // Server is the repo-service IPC server. One instance per repo service.
@@ -599,6 +607,9 @@ func (s *Server) handleConn(conn net.Conn) {
 	case CmdCalibrationPut, CmdCalibrationList:
 		s.dispatchCalibration(ctx, conn, req)
 
+	case CmdHookEvent:
+		s.dispatchHook(ctx, conn, req)
+
 	default:
 		s.writeResponse(conn, Response{
 			Ok:    false,
@@ -606,6 +617,29 @@ func (s *Server) handleConn(conn net.Conn) {
 			Code:  CodeUnsupportedCommand,
 		})
 	}
+}
+
+func (s *Server) dispatchHook(ctx context.Context, conn net.Conn, req Request) {
+	if req.ProtoVersion < HookProtoVersion {
+		s.writeResponse(conn, Response{Ok: false, Code: CodeUnsupportedCommand,
+			Error: fmt.Sprintf("hook command requires protocol v%d", HookProtoVersion)})
+		return
+	}
+	handler, ok := s.handler.(HookHandler)
+	if !ok {
+		s.writeResponse(conn, Response{Ok: false, Code: CodeUnsupportedCommand,
+			Error: "hook command not supported by this supervisor"})
+		return
+	}
+	var args HookEventArgs
+	decoder := json.NewDecoder(bytes.NewReader(req.Args))
+	decoder.DisallowUnknownFields()
+	if len(req.Args) == 0 || decoder.Decode(&args) != nil || decoder.Decode(&struct{}{}) != io.EOF {
+		s.writeResponse(conn, Response{Ok: false, Code: CodeInvalidArgs, Error: "invalid hook args"})
+		return
+	}
+	reply, err := handler.HandleHookEvent(ctx, args)
+	s.writeResult(conn, reply, err)
 }
 
 // dispatchQuery routes v3 safe-query commands. A lower-version request is

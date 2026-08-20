@@ -18,6 +18,8 @@ depend on.
 | [Exact provider identity](./exact-provider-identity.md) | What identifies one invocation, why strict binding compares the resolved model, and what the record does not prove |
 | [Plan-adaptive concurrency](./plan-adaptive-concurrency.md) | How readiness, leaf-group partitioning, and output reservations decide what runs at once |
 | [Provider write containment](./provider-write-containment.md) | What actually stops a provider writing outside the checkout, and where that guarantee does not yet hold |
+| [Canonical enforcement policy](./enforcement-policy.md) | Shared finite lifecycle, acceptance predicates, waits, budgets, and adapter parity |
+| [Generated enforcement adapters](./enforcement-adapters.md) | Absolute hook commands, managed-session boundary, atomic bundles, and Stop verification |
 
 ```{toctree}
 :hidden:
@@ -30,4 +32,6 @@ deterministic-execution
 exact-provider-identity
 plan-adaptive-concurrency
 provider-write-containment
+enforcement-policy
+enforcement-adapters
 ```

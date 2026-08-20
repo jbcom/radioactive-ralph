@@ -116,6 +116,10 @@ func (CodexRunner) Run(ctx context.Context, binding Binding, req Request) (Resul
 		return Result{}, err
 	}
 	args := append(codexArgs(binding, req, invocation, outPath, schemaPath), combinePrompt(req))
+	hookEnv, err := managedHookEnvironment(req)
+	if err != nil {
+		return Result{}, err
+	}
 
 	a, err := agent.Start(ctx, agent.Options{
 		Command:                 binding.Config.Binary,
@@ -127,6 +131,7 @@ func (CodexRunner) Run(ctx context.Context, binding Binding, req Request) (Resul
 		MaxOutputRetentionBytes: agent.RetentionBudgetForLineBytes(codexRetainedJSONLLineBytes),
 		OversizeOutputPolicy:    agent.DiscardOversizeOutput,
 		MaxObservedOutputBytes:  maxStructuredEvidenceBytes,
+		Env:                     hookEnv,
 	})
 	if err != nil {
 		return Result{}, fmt.Errorf("provider: start codex agent: %w", err)

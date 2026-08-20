@@ -73,6 +73,7 @@ type Orchestrator struct {
 	acceptanceCheck AcceptanceChecker
 	persistBudget   time.Duration
 	verifyBudget    time.Duration
+	hookEndpoint    string
 
 	// containProviderWrites confines each provider turn to writing beneath the
 	// project directory, enforced by the kernel (internal/contain).
@@ -168,7 +169,24 @@ type Orchestrator struct {
 	// reads it concurrently from the tick / HandleEnqueue.
 	baseCtxMu sync.RWMutex
 	baseCtx   context.Context
+
+	// failureCallback, when set, is invoked after every provider turn outcome
+	// (success or failure). The supervisor uses it to track provider cooldowns:
+	// when a provider fails with provider_auth or provider_rejected (the
+	// categories that rate-limit/credit-exhaustion messages map to), it enters
+	// a cooldown so the pool rotation skips it until its limits reset. A
+	// successful turn clears the cooldown. Without this, a multi-provider pool
+	// has no way to degrade gracefully when one provider's credits run out —
+	// the failed provider keeps getting dispatched and failing, wasting the
+	// retry budget and blocking parallel groups.
+	failureCallback FailureCallback
 }
+
+// FailureCallback is invoked after every provider turn outcome. success is
+// true when the turn completed and passed verification. When success is
+// false, failure carries the classified failure (never nil). The callback
+// must not block — it runs inline on the dispatch goroutine.
+type FailureCallback func(binding provider.Binding, failure provider.Failure, success bool)
 
 // WithProviderWriteContainment confines every provider turn to writing beneath
 // the project directory.
@@ -212,6 +230,13 @@ type ContainmentResolver func(ctx context.Context, projectID string) bool
 // the orchestrator is stored config the orchestrator ignores.
 func WithContainmentResolver(resolve ContainmentResolver) Option {
 	return func(o *Orchestrator) { o.containmentResolver = resolve }
+}
+
+// WithFailureCallback registers a callback invoked after every provider turn
+// outcome. The supervisor uses it to track provider cooldowns for pool
+// rotation; see FailureCallback's doc for the contract.
+func WithFailureCallback(cb FailureCallback) Option {
+	return func(o *Orchestrator) { o.failureCallback = cb }
 }
 
 // containmentRootFor returns the write boundary for a turn in projectDir, and
@@ -497,6 +522,12 @@ func WithAcceptanceChecker(c AcceptanceChecker) Option {
 	return func(o *Orchestrator) { o.acceptanceCheck = c }
 }
 
+// WithHookEndpoint injects the supervisor's local control socket into managed
+// provider processes. Empty preserves the pre-adapter environment.
+func WithHookEndpoint(endpoint string) Option {
+	return func(o *Orchestrator) { o.hookEndpoint = endpoint }
+}
+
 // effectivePersistBudget is the configured store-write budget, or the default.
 func (o *Orchestrator) effectivePersistBudget() time.Duration {
 	if o.persistBudget > 0 {
@@ -630,6 +661,23 @@ type dispatchedStep struct {
 	ref  plan.StepRef
 	step plan.Step
 	task *store.Task
+}
+
+func configureManagedHooks(
+	req *provider.Request,
+	sessionID, endpoint string,
+	tasks ...*store.Task,
+) {
+	if req == nil || sessionID == "" || endpoint == "" || len(tasks) == 0 {
+		return
+	}
+	for _, task := range tasks {
+		if task == nil || !hasMechanicalAcceptance(task.AcceptanceJSON) {
+			return
+		}
+	}
+	req.ManagedSessionID = sessionID
+	req.HookEndpoint = endpoint
 }
 
 // DispatchNext loads the plan for planID, asks the store what is ready right
@@ -2038,6 +2086,11 @@ func (o *Orchestrator) dispatchWorker(ctx context.Context, projectID, projectDir
 		TurnTimeout:     o.turnTimeout,
 		StallTimeout:    o.stallTimeout,
 	}
+	// A Stop hook can independently re-run explicit acceptance. A judgment-only
+	// task can be judged only after bounded assistant evidence returns, so it is
+	// deliberately left unmanaged by v1 rather than being trapped in a Stop
+	// loop or treating the hook itself as evidence.
+	configureManagedHooks(&req, sessionID, o.hookEndpoint, ds.task)
 	limits, err := provider.ResolveTurnLimits(binding, req)
 	if err != nil {
 		return fmt.Errorf("orch: resolve provider timeouts: %w", err)
@@ -2140,6 +2193,11 @@ func (o *Orchestrator) dispatchWorker(ctx context.Context, projectID, projectDir
 		// mid-run and possibly reassigned the task) is benign — the current
 		// owner keeps its work; we just release this now-defunct worker.
 		failure := provider.ClassifyFailure(runErr)
+		// Notify the failure callback so the cooldown tracker can record
+		// this provider as potentially rate-limited/credit-exhausted.
+		if o.failureCallback != nil {
+			o.failureCallback(binding, failure, false)
+		}
 		// RECORD WHY, before the worker is released. This is the producer side:
 		// wiring only AbsorbDecisionLog would have read a file nothing writes,
 		// which is the same "correct thing nothing calls" defect being fixed.
@@ -2196,6 +2254,13 @@ func (o *Orchestrator) dispatchWorker(ctx context.Context, projectID, projectDir
 	verifyErr := func() error {
 		if _, err := o.VerifyAndCompleteAs(persistCtx, planID, ds.task.ID, sessionID, ev); err != nil {
 			return fmt.Errorf("orch: verify and complete: %w", err)
+		}
+		// Verification passed — the turn produced real work. Notify the
+		// failure callback with success=true so the cooldown tracker can
+		// clear this provider's cooldown (if any). A provider that was in
+		// cooldown after a prior rate-limit failure is now confirmed healthy.
+		if o.failureCallback != nil {
+			o.failureCallback(binding, provider.Failure{}, true)
 		}
 		return nil
 	}()
@@ -2468,6 +2533,11 @@ func (o *Orchestrator) runFanoutGroup(ctx context.Context, projectID, projectDir
 		TurnTimeout:     o.turnTimeout,
 		StallTimeout:    o.stallTimeout,
 	}
+	tasks := make([]*store.Task, 0, len(claimed))
+	for _, ds := range claimed {
+		tasks = append(tasks, ds.task)
+	}
+	configureManagedHooks(&req, sessionID, o.hookEndpoint, tasks...)
 	limits, err := provider.ResolveTurnLimits(binding, req)
 	if err != nil {
 		return fmt.Errorf("orch: resolve provider timeouts: %w", err)
@@ -2524,6 +2594,9 @@ func (o *Orchestrator) runFanoutGroup(ctx context.Context, projectID, projectDir
 	}
 	if runErr != nil {
 		failure := provider.ClassifyFailure(runErr)
+		if o.failureCallback != nil {
+			o.failureCallback(binding, failure, false)
+		}
 		// RECORD WHY, before the worker is released. This is the producer side:
 		// wiring only AbsorbDecisionLog would have read a file nothing writes,
 		// which is the same "correct thing nothing calls" defect being fixed.
@@ -2654,6 +2727,13 @@ func (o *Orchestrator) runFanoutGroup(ctx context.Context, projectID, projectDir
 	// A FRESH budget, not persistCtx: see the note on the failure path above.
 	_ = o.absorbDecisionLogDetached(ctx, projectID, planID, fanoutLogTaskID(claimed), workerID)
 	_ = o.store.ClearWorkerTask(persistCtx, workerID, "idle")
+	// Notify the failure callback: a fan-out turn that produced verifiable
+	// work for at least some tasks is a success for cooldown purposes, even
+	// if individual tasks' verification failed (those failures are per-task,
+	// not per-provider — the provider itself is healthy).
+	if o.failureCallback != nil && verifyErr == nil {
+		o.failureCallback(binding, provider.Failure{}, true)
+	}
 	return verifyErr
 }
 

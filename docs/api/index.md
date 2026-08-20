@@ -26,11 +26,13 @@ their public methods with signatures and associated doc comments.
 :hidden:
 cmd/radioactive_ralph
 internal/a2a
+internal/adapters
 internal/agent
 internal/agentdetect
 internal/contain
 internal/contain/internal/containhelper
 internal/doctor
+internal/enforcement
 internal/genesis
 internal/gui
 internal/ipc

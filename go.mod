@@ -1,9 +1,10 @@
 module github.com/jbcom/radioactive-ralph
 
-go 1.26.4
+go 1.26.6
 
 require (
 	fyne.io/fyne/v2 v2.8.0
+	github.com/BurntSushi/toml v1.6.0
 	github.com/Microsoft/go-winio v0.6.2
 	github.com/a2aproject/a2a-go/v2 v2.3.1
 	github.com/charmbracelet/bubbletea v1.3.10
@@ -23,7 +24,6 @@ require (
 
 require (
 	fyne.io/systray v1.12.2 // indirect
-	github.com/BurntSushi/toml v1.6.0 // indirect
 	github.com/FyshOS/fancyfs v0.0.1 // indirect
 	github.com/anthonynsimon/bild v0.14.0 // indirect
 	github.com/aymanbagabas/go-osc52/v2 v2.0.1 // indirect

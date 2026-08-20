@@ -7,7 +7,12 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"time"
 
+	"github.com/jbcom/radioactive-ralph/internal/adapters"
 	"github.com/jbcom/radioactive-ralph/internal/agent"
 )
 
@@ -15,7 +20,8 @@ import (
 // Ralph's own pty via internal/agent, per spec §9 ("opencode bound via its
 // local `run` path only") and §3 (hybrid I/O).
 //
-// Verified against the installed `opencode` 1.18.3 CLI on 2026-07-16:
+// Historical parser-contract evidence was captured against the installed
+// `opencode` 1.18.3 CLI on 2026-07-16:
 // `opencode run [message..] --format json` emits one JSON object per line
 // on stdout (never a file — there is no output-file flag), each with a
 // top-level "type": "step_start" | "text" | "step_finish" | others. The
@@ -30,6 +36,10 @@ import (
 // the pty's Output() into a bounded ResultPath evidence file while parsing
 // every text and step_finish frame. It consumes until the CLI exits naturally
 // after session idle, then validates the final step reason.
+//
+// Managed completion authority has a separate current support pin: the live
+// adapter probe verifies OpenCode 1.18.18 before exercising no-tool, tool,
+// sanitized-PATH, and fail-closed launcher behavior.
 type OpencodeRunner struct{}
 
 // ErrOpencodeReportedError is returned for a type=error session event. The
@@ -47,11 +57,16 @@ var ErrOpencodeMissingFinish = errors.New("provider: opencode exited without a s
 // aggregate usage.
 var ErrOpencodeInvalidUsage = errors.New("provider: opencode reported invalid usage")
 
+const minOpenCodeVerificationProgressInterval = 100 * time.Millisecond
+
 // Run spawns `opencode run <prompt> --format json` and blocks until the
 // CLI exits naturally. A step_finish with reason=tool-calls is an
-// intermediate model step; OpenCode 1.18.3 closes the actual run only after
-// session.status becomes idle, so Ralph must consume the complete stream.
-func (OpencodeRunner) Run(ctx context.Context, binding Binding, req Request) (Result, error) {
+// intermediate model step; the historical OpenCode 1.18.3 parser capture
+// closes the actual run only after session.status becomes idle, so Ralph must
+// consume the complete stream. The managed adapter support pin is 1.18.18.
+func (OpencodeRunner) Run(
+	ctx context.Context, binding Binding, req Request,
+) (result Result, retErr error) {
 	limits, err := ResolveTurnLimits(binding, req)
 	if err != nil {
 		return Result{}, err
@@ -70,18 +85,28 @@ func (OpencodeRunner) Run(ctx context.Context, binding Binding, req Request) (Re
 	if err != nil {
 		return Result{}, err
 	}
-	args := opencodeArgs(binding, req, invocation)
+	hookEnv, err := managedHookEnvironment(req)
+	if err != nil {
+		return Result{}, err
+	}
+	launch, err := resolveOpencodeLaunch(
+		binding, req, invocation, limits.StallTimeout, os.Getenv, exec.LookPath)
+	if err != nil {
+		return Result{}, err
+	}
+	defer cleanupOpenCodeLaunch(&result, &retErr, launch.cleanup)
 
 	opts := agent.Options{
-		Command:               binding.Config.Binary,
-		Args:                  args,
+		Command:               launch.command,
+		Args:                  launch.args,
 		Dir:                   req.WorkingDir,
 		ContainmentRoot:       req.ContainmentRoot,
-		ContainmentWritePaths: BindingWritePaths(binding),
+		ContainmentWritePaths: launch.containmentWritePaths,
 		ResultPath:            resultPath,
 		// Count raw PTY reads so discarded/partial/non-JSON progress cannot
 		// refresh the watchdog indefinitely without consuming a hard budget.
 		MaxObservedOutputBytes: maxStructuredEvidenceBytes,
+		Env:                    hookEnv,
 	}
 	a, err := agent.Start(ctx, opts)
 	if err != nil {
@@ -184,6 +209,90 @@ func (OpencodeRunner) Run(ctx context.Context, binding Binding, req Request) (Re
 	}, nil
 }
 
+type opencodePathLookup func(string) (string, error)
+
+type opencodeLaunch struct {
+	command               string
+	args                  []string
+	containmentWritePaths []string
+	runtimeRoot           string
+	cleanup               func() error
+}
+
+func cleanupOpenCodeLaunch(result *Result, retErr *error, cleanup func() error) {
+	if cleanup == nil {
+		return
+	}
+	if cleanupErr := cleanup(); cleanupErr != nil {
+		*result = Result{}
+		*retErr = errors.Join(
+			*retErr, fmt.Errorf("provider: clean managed OpenCode runtime: %w", cleanupErr))
+	}
+}
+
+func resolveOpencodeLaunch(
+	binding Binding,
+	req Request,
+	invocation Invocation,
+	stallTimeout time.Duration,
+	getenv adapters.Environment,
+	lookPath opencodePathLookup,
+) (opencodeLaunch, error) {
+	managed := req.ManagedSessionID != "" && req.HookEndpoint != ""
+	args := opencodeArgs(binding, req, invocation, managed)
+	writePaths := BindingWritePaths(binding)
+	if !managed {
+		return opencodeLaunch{
+			command: binding.Config.Binary, args: args,
+			containmentWritePaths: writePaths,
+		}, nil
+	}
+	progressInterval, err := opencodeVerificationProgressInterval(stallTimeout)
+	if err != nil {
+		return opencodeLaunch{}, err
+	}
+	bundle, err := adapters.CurrentBundleFromEnvironment(getenv)
+	if err != nil {
+		return opencodeLaunch{}, fmt.Errorf("provider: managed OpenCode adapter unavailable: %w", err)
+	}
+	realBinary, err := lookPath(binding.Config.Binary)
+	if err != nil {
+		return opencodeLaunch{}, fmt.Errorf("provider: resolve OpenCode binary: %w", err)
+	}
+	realBinary, err = filepath.Abs(realBinary)
+	if err != nil {
+		return opencodeLaunch{}, fmt.Errorf("provider: resolve absolute OpenCode binary: %w", err)
+	}
+	runtimePaths, err := adapters.PrepareOpenCodeRuntime(bundle)
+	if err != nil {
+		return opencodeLaunch{}, fmt.Errorf("provider: prepare managed OpenCode runtime: %w", err)
+	}
+	args = append([]string{
+		"hook", "launch-opencode",
+		"--binary", realBinary,
+		"--adapter-root", bundle.Target,
+		"--runtime-root", runtimePaths.Root,
+		"--verification-progress-interval", progressInterval.String(),
+		"--",
+	}, args...)
+	return opencodeLaunch{
+		command: bundle.Executable, args: args, runtimeRoot: runtimePaths.Root,
+		containmentWritePaths: []string{runtimePaths.Home, runtimePaths.ConfigDir},
+		cleanup:               runtimePaths.Cleanup,
+	}, nil
+}
+
+func opencodeVerificationProgressInterval(stallTimeout time.Duration) (time.Duration, error) {
+	if stallTimeout <= 0 {
+		return 0, fmt.Errorf("provider: managed OpenCode stall timeout must be positive")
+	}
+	interval := stallTimeout / 3
+	if interval < minOpenCodeVerificationProgressInterval {
+		return 0, fmt.Errorf("provider: managed OpenCode stall timeout is too short")
+	}
+	return interval, nil
+}
+
 // opencodeEvent is one `opencode run --format json` stream event.
 type opencodeEvent struct {
 	Type      string       `json:"type"`
@@ -255,15 +364,15 @@ func parseOpencodeEvent(line []byte) (ev opencodeEvent, ok bool) {
 // opencodeArgs builds the opencode command line.
 //
 // Extracted so the argv is testable without spawning a CLI.
-func opencodeArgs(binding Binding, req Request, invocation Invocation) []string {
+func opencodeArgs(binding Binding, req Request, invocation Invocation, managed bool) []string {
 	args := []string{
 		"run", combinePrompt(req), "--format", "json",
-		// Run without external plugins. A supervised turn must be reproducible
-		// from the plan alone: a plugin installed in the operator's environment
-		// would silently change what the agent can do, and the same plan would
-		// then behave differently on two machines for reasons nothing records.
-		// This is a determinism choice, not a permission one.
-		"--pure",
+	}
+	if !managed {
+		// Ordinary turns stay pure. Managed turns instead run through Ralph's
+		// absolute launcher, which isolates OpenCode to one reviewed plugin and
+		// disables both project and user plugin discovery.
+		args = append(args, "--pure")
 	}
 	if req.WorkingDir != "" {
 		args = append(args, "--dir", req.WorkingDir)

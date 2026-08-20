@@ -17,6 +17,7 @@ Package agent runs a single AI\-agent CLI subprocess under Ralph's own pty, so R
 
 - [Constants](<#constants>)
 - [Variables](<#variables>)
+- [func ReclaimProcessScope\(envKey, envValue string, excludedPID int, timeout time.Duration\) error](<#ReclaimProcessScope>)
 - [func RetentionBudgetForLineBytes\(lineBytes int\) int](<#RetentionBudgetForLineBytes>)
 - [func Watch\(ctx context.Context, a \*Agent, cfg WatchdogConfig\) \<\-chan Signal](<#Watch>)
 - [type Agent](<#Agent>)
@@ -123,6 +124,17 @@ var ErrProcessTermination = errors.New("agent: direct-child termination failed")
 var ErrProcessTreeCleanup = ErrProcessSessionCleanup
 ```
 
+<a name="ReclaimProcessScope"></a>
+## func [ReclaimProcessScope](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/agent/process_scope.go#L21>)
+
+```go
+func ReclaimProcessScope(envKey, envValue string, excludedPID int, timeout time.Duration) error
+```
+
+ReclaimProcessScope kills and proves absent every same\-user process carrying the exact environment scope inherited from a managed provider launch. Unlike process groups and sessions, the scope survives setpgid\(2\), setsid\(2\), and reparenting. Platform implementations acquire a stable kernel handle before signalling so a recycled numeric PID cannot target an unrelated process.
+
+The scope value is intentionally never included in an error. Callers must use a cryptographically random, per\-launch value and must not serialize it.
+
 <a name="RetentionBudgetForLineBytes"></a>
 ## func [RetentionBudgetForLineBytes](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/agent/output_retention.go#L58>)
 
@@ -133,7 +145,7 @@ func RetentionBudgetForLineBytes(lineBytes int) int
 RetentionBudgetForLineBytes returns the aggregate transport budget needed for a valid retained\-line threshold, or zero when the threshold is outside the supported range.
 
 <a name="Watch"></a>
-## func [Watch](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/agent/watchdog.go#L56>)
+## func [Watch](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/agent/watchdog.go#L72>)
 
 ```go
 func Watch(ctx context.Context, a *Agent, cfg WatchdogConfig) <-chan Signal
@@ -349,7 +361,7 @@ const (
 ```
 
 <a name="Signal"></a>
-## type [Signal](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/agent/watchdog.go#L25-L35>)
+## type [Signal](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/agent/watchdog.go#L25-L40>)
 
 Signal is one watchdog observation about an agent.
 
@@ -360,6 +372,11 @@ type Signal struct {
     // byte slice; Watch neither converts nor copies arbitrary provider output.
     // Prompt, Stall, and Exited signals are content-free.
     Line []byte
+    // PromptKind is the caller-classified kind of an interactive prompt,
+    // present only for Prompt and only when ClassifyPrompt is configured. It is
+    // the caller's own constant -- never a slice of the matched line -- so it
+    // can cross to operator surfaces where the line itself cannot.
+    PromptKind string
     // Discarded marks Line as a bounded prefix of a record drained under
     // DiscardOversizeOutput. It is for provider framing only and was not
     // retained as ordinary pane output.
@@ -388,7 +405,7 @@ const (
 ```
 
 <a name="WatchdogConfig"></a>
-## type [WatchdogConfig](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/agent/watchdog.go#L38-L51>)
+## type [WatchdogConfig](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/agent/watchdog.go#L43-L67>)
 
 WatchdogConfig tunes stall and prompt detection.
 
@@ -396,6 +413,17 @@ WatchdogConfig tunes stall and prompt detection.
 type WatchdogConfig struct {
     StallTimeout   time.Duration
     PromptPatterns []*regexp.Regexp
+
+    // ClassifyPrompt, when set, maps the matched line to a caller-owned KIND
+    // carried on the Prompt signal. Optional: nil means the signal carries no
+    // kind, exactly as before.
+    //
+    // The classifier lives with the CALLER because the taxonomy is the
+    // caller's -- internal/provider owns it, and provider imports agent, so it
+    // cannot be resolved here. Only the caller's constant travels back; the
+    // matched line never leaves this loop, which is what keeps provider text
+    // off downstream surfaces.
+    ClassifyPrompt func(line []byte) string
 
     // SkipPromptMatchOnJSONLines, when true, suppresses prompt-pattern
     // matching for any output line that is a valid JSON value. Stream-json

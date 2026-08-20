@@ -105,20 +105,24 @@ func TestDefaultCodexProviderNativeFanoutUnconfirmed(t *testing.T) {
 	}
 }
 
-// TestDefaultAgyProviderDocumentsUnwiredCapability pins the shape of the
-// agy capability record kept only for documentation purposes (see agy.go
-// for the spike finding: agy --print requires a cloud project and is not
-// local-only). It intentionally has no runner and is not reachable from
-// NewRunner/builtInProvider/shippedProviderBinaries.
-func TestDefaultAgyProviderDocumentsUnwiredCapability(t *testing.T) {
+// TestDefaultAgyProviderShape pins the shape of the agy capability record.
+// agy is classified Supported (local-only: tool execution is local, inference
+// is cloud-hosted like claude/codex). No runner is registered yet — the
+// stream-json framing differs from opencode's and needs a dedicated parser.
+// The capability record exists so detection/doctor report it correctly
+// and so a future runner can be wired without re-deriving the binding shape.
+func TestDefaultAgyProviderShape(t *testing.T) {
 	cfg := defaultAgyProvider()
 	if cfg.Type != "agy" || cfg.Binary != "agy" {
 		t.Errorf("defaultAgyProvider() = %+v, want Type/Binary=agy", cfg)
 	}
 	if cfg.NativeFanout {
-		t.Error("agy NativeFanout should be false — unverified, and agy is Unknown/unwired anyway")
+		t.Error("agy NativeFanout should be false — unverified")
+	}
+	if len(cfg.WritePaths) == 0 {
+		t.Error("agy should declare WritePaths for ~/.gemini/antigravity-cli (conversation state, cache, logs)")
 	}
 	if _, err := NewRunner(Binding{Config: cfg}); err == nil {
-		t.Error("NewRunner should refuse an agy binding — no runner is registered for it")
+		t.Error("NewRunner should refuse an agy binding — no runner is registered yet (needs a dedicated stream-json parser)")
 	}
 }

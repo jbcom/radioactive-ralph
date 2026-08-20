@@ -6,8 +6,11 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
+	"github.com/jbcom/radioactive-ralph/internal/ipc"
 	"github.com/jbcom/radioactive-ralph/internal/orch"
+	"github.com/jbcom/radioactive-ralph/internal/provider"
 	"github.com/jbcom/radioactive-ralph/internal/rlog"
 	"github.com/jbcom/radioactive-ralph/internal/store"
 	"github.com/jbcom/radioactive-ralph/internal/supervisor"
@@ -68,10 +71,14 @@ func runSupervisorMode(ctx context.Context, logFormat string) error {
 	// Without this the key is inert — vconfig parses it and nothing consults it,
 	// so an operator who enables containment gets none and no indication that
 	// the setting did nothing. A config that lies is worse than a missing one.
+	cooldowns := NewProviderCooldowns(time.Now)
 	orchestratorOptions := []orch.Option{
-		orch.WithBindingResolver(storeBindingResolver(st)),
+		orch.WithBindingResolver(storeBindingResolver(st, cooldowns)),
 		orch.WithContainmentResolver(storeContainmentResolver(st)),
+		orch.WithFailureCallback(cooldownFailureCallback(cooldowns)),
 	}
+	hookEndpoint, _ := ipc.ServiceEndpoint(stateRoot)
+	orchestratorOptions = append(orchestratorOptions, orch.WithHookEndpoint(hookEndpoint))
 	if maxParallel > 0 {
 		orchestratorOptions = append(orchestratorOptions, orch.WithMaxParallel(maxParallel))
 	}
@@ -92,6 +99,22 @@ func runSupervisorMode(ctx context.Context, logFormat string) error {
 }
 
 // supervisorMaxParallel converts the launchd/systemd-friendly environment
+
+// cooldownFailureCallback returns an orch.FailureCallback that records
+// provider cooldowns after auth/rejected failures, and clears them after
+// successful turns. The orchestrator calls it after every turn outcome,
+// so the cooldown tracker stays in sync with real provider health without
+// any external probing loop.
+func cooldownFailureCallback(cooldowns *ProviderCooldowns) orch.FailureCallback {
+	return func(binding provider.Binding, failure provider.Failure, success bool) {
+		if success {
+			cooldowns.RecordSuccess(binding.Name)
+			return
+		}
+		cooldowns.RecordFailure(binding.Name, failure)
+	}
+}
+
 // setting into the orchestrator's process-wide emergency worker ceiling.
 // Unset preserves the legacy unbounded default; neither mode is adaptive or a
 // recommended optimum. A present value must be positive so a typo cannot

@@ -27,9 +27,11 @@ Package supervisor implements the \`\-\-supervisor\` process: the single durable
   - [func \(s \*Supervisor\) HandleCalibrationList\(ctx context.Context\) \(ipc.CalibrationListReply, error\)](<#Supervisor.HandleCalibrationList>)
   - [func \(s \*Supervisor\) HandleCalibrationPut\(ctx context.Context, args ipc.CalibrationPutArgs\) \(ipc.CalibrationPutReply, error\)](<#Supervisor.HandleCalibrationPut>)
   - [func \(s \*Supervisor\) HandleEnqueue\(ctx context.Context, args ipc.EnqueueArgs\) \(ipc.EnqueueReply, error\)](<#Supervisor.HandleEnqueue>)
+  - [func \(s \*Supervisor\) HandleHookEvent\(ctx context.Context, args ipc.HookEventArgs\) \(ipc.HookEventReply, error\)](<#Supervisor.HandleHookEvent>)
   - [func \(s \*Supervisor\) HandleObserveMessages\(ctx context.Context, args ipc.ObserveMessagesArgs\) \(\*ipc.ObserveMessagesReply, error\)](<#Supervisor.HandleObserveMessages>)
   - [func \(s \*Supervisor\) HandleObserveSnapshot\(ctx context.Context, args ipc.ObserveSnapshotArgs\) \(\*ipc.ObserveSnapshotReply, error\)](<#Supervisor.HandleObserveSnapshot>)
   - [func \(s \*Supervisor\) HandleObserveTaskDescriptions\(ctx context.Context, args ipc.ObserveTaskDescriptionsArgs\) \(\*ipc.ObserveTaskDescriptionsReply, error\)](<#Supervisor.HandleObserveTaskDescriptions>)
+  - [func \(s \*Supervisor\) HandlePlanDelete\(ctx context.Context, args ipc.PlanDeleteArgs\) \(ipc.PlanDeleteReply, error\)](<#Supervisor.HandlePlanDelete>)
   - [func \(s \*Supervisor\) HandlePlanImport\(ctx context.Context, args ipc.PlanImportArgs\) \(ipc.PlanImportReply, error\)](<#Supervisor.HandlePlanImport>)
   - [func \(s \*Supervisor\) HandlePlanSetStatus\(ctx context.Context, args ipc.PlanSetStatusArgs\) \(ipc.PlanSetStatusReply, error\)](<#Supervisor.HandlePlanSetStatus>)
   - [func \(s \*Supervisor\) HandleProjectConfigApply\(ctx context.Context, args ipc.ProjectConfigApplyArgs\) error](<#Supervisor.HandleProjectConfigApply>)
@@ -66,7 +68,7 @@ func Find(runtimeDir string) (*ipc.Client, error)
 Find tries to connect to the supervisor socket under runtimeDir. A successful connect means a live supervisor answered — the returned \*ipc.Client is ready to use. Any failure \(connect refused, socket missing, or a stale socket nothing is listening behind\) collapses to ErrNoSupervisor: callers don't need to distinguish "never started" from "crashed," both mean the client should offer to start one \(spec §4\).
 
 <a name="Run"></a>
-## func [Run](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/supervisor/supervisor.go#L94>)
+## func [Run](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/supervisor/supervisor.go#L104>)
 
 ```go
 func Run(ctx context.Context, opts Options) error
@@ -138,7 +140,7 @@ type Options struct {
 ```
 
 <a name="Supervisor"></a>
-## type [Supervisor](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/supervisor/supervisor.go#L64-L86>)
+## type [Supervisor](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/supervisor/supervisor.go#L64-L96>)
 
 Supervisor is the small, boring control\-plane process described in spec §4/§13: pty ownership \+ IPC \+ store \+ reaper, PLUS \(as of Phase 6c\) real plan dispatch: HandleEnqueue drives internal/orch's DispatchNext instead of returning "not implemented". Orch itself — via the provider runners it dispatches onto internal/agent — owns every agent subprocess's lifetime \(start, watchdog supervision, kill\), so the supervisor holds no separate pty\-tracking map of its own; there is nothing left for the supervisor to additionally track or drain at shutdown.
 
@@ -149,7 +151,7 @@ type Supervisor struct {
 ```
 
 <a name="Supervisor.HandleAttach"></a>
-### func \(\*Supervisor\) [HandleAttach](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/supervisor/supervisor.go#L441>)
+### func \(\*Supervisor\) [HandleAttach](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/supervisor/supervisor.go#L451>)
 
 ```go
 func (s *Supervisor) HandleAttach(ctx context.Context, args ipc.AttachArgs, emit func(json.RawMessage) error) error
@@ -180,7 +182,7 @@ This is the PRODUCER the independence domain needs. Dispatch already records wha
 A conflict is surfaced as CodeConflict rather than overwriting. Silently replacing an alias's calibration would retroactively change what every task already recorded against that alias is believed to have run on — the audit trail would say tasks were independent on evidence that no longer exists.
 
 <a name="Supervisor.HandleEnqueue"></a>
-### func \(\*Supervisor\) [HandleEnqueue](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/supervisor/supervisor.go#L388>)
+### func \(\*Supervisor\) [HandleEnqueue](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/supervisor/supervisor.go#L398>)
 
 ```go
 func (s *Supervisor) HandleEnqueue(ctx context.Context, args ipc.EnqueueArgs) (ipc.EnqueueReply, error)
@@ -189,6 +191,15 @@ func (s *Supervisor) HandleEnqueue(ctx context.Context, args ipc.EnqueueArgs) (i
 HandleEnqueue drives one real dispatch pass via internal/orch instead of returning "not implemented": it lists every currently active/paused plan store\-wide \(spec: the supervisor is project\-agnostic — it has no notion of "the current project", so this checks every project's active work, not just one\) and calls DispatchNext on each, in plan order, until either every plan has been tried or maxEnqueueDispatchPlans is reached \(a bound so one enqueue call can never scan an unbounded number of plans\). It is NOT a blocking wait for any of that work to finish: DispatchNext claims each admitted step and launches its independently bounded provider turn asynchronously, so this IPC call never waits on a turn deadline or stall lease.
 
 args.Description/args.TaskID name the work the caller wanted enqueued, but a store task cannot be created without a plan\_id \(tasks.plan\_id is a NOT NULL foreign key\) and EnqueueArgs carries no plan reference — so HandleEnqueue's job today is exactly "wake up dispatch for whatever is already ready", the same effect an enqueue is meant to have \(make already\-known work actually run\), not "materialize a new ad hoc task with no plan to belong to". EnqueueReply.Inserted reports whether anything was actually dispatched; TaskID echoes args.TaskID \(or, if unset, the number of steps dispatched, best\-effort\) so a caller has some return value acknowledging its enqueue signal was acted upon.
+
+<a name="Supervisor.HandleHookEvent"></a>
+### func \(\*Supervisor\) [HandleHookEvent](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/supervisor/hooks.go#L26-L29>)
+
+```go
+func (s *Supervisor) HandleHookEvent(ctx context.Context, args ipc.HookEventArgs) (ipc.HookEventReply, error)
+```
+
+HandleHookEvent accepts only the finite identifiers emitted by generated adapters. Raw provider JSON never crosses this boundary. The supervisor maps Ralph's opaque managed session id back to the live store claim and remains the only authority that can decide whether a Stop is safe.
 
 <a name="Supervisor.HandleObserveMessages"></a>
 ### func \(\*Supervisor\) [HandleObserveMessages](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/supervisor/observe.go#L31-L34>)
@@ -219,8 +230,19 @@ HandleObserveTaskDescriptions serves one PLAN's author\-written task labels.
 
 Kept off HandleObserveSnapshot deliberately: a description is plan\-author free text that can contain filesystem paths, so the bulk snapshot stays content\-free and labels are fetched only by the human\-facing views. Scoped per plan rather than per task so a list view costs one round trip, not N.
 
+<a name="Supervisor.HandlePlanDelete"></a>
+### func \(\*Supervisor\) [HandlePlanDelete](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/supervisor/drive.go#L130>)
+
+```go
+func (s *Supervisor) HandlePlanDelete(ctx context.Context, args ipc.PlanDeleteArgs) (ipc.PlanDeleteReply, error)
+```
+
+HandlePlanDelete discovers and cancels active provider workers for a plan before removing the plan and everything hanging off it. Failure to discover workers aborts deletion; cancellation of an already\-exited worker remains best\-effort and does not make an otherwise valid deletion fail.
+
+store.DeletePlan was implemented and tested with no caller and no CLI, so accumulated runs could never be pruned \-\- and the operator task page saturates at MaxOperatorPageLimit, showing the newest run only partially with nothing an operator could do about it. This is the surface that reaches it.
+
 <a name="Supervisor.HandlePlanImport"></a>
-### func \(\*Supervisor\) [HandlePlanImport](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/supervisor/drive.go#L38>)
+### func \(\*Supervisor\) [HandlePlanImport](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/supervisor/drive.go#L48>)
 
 ```go
 func (s *Supervisor) HandlePlanImport(ctx context.Context, args ipc.PlanImportArgs) (ipc.PlanImportReply, error)
@@ -229,7 +251,7 @@ func (s *Supervisor) HandlePlanImport(ctx context.Context, args ipc.PlanImportAr
 HandlePlanImport creates a plan from markdown and activates it — the same logic the \`plan import\` CLI runs, moved server\-side.
 
 <a name="Supervisor.HandlePlanSetStatus"></a>
-### func \(\*Supervisor\) [HandlePlanSetStatus](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/supervisor/drive.go#L93>)
+### func \(\*Supervisor\) [HandlePlanSetStatus](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/supervisor/drive.go#L103>)
 
 ```go
 func (s *Supervisor) HandlePlanSetStatus(ctx context.Context, args ipc.PlanSetStatusArgs) (ipc.PlanSetStatusReply, error)
@@ -275,7 +297,7 @@ This exists so a client never opens the store to identify itself. The client com
 Resolve\-create\-touch is ONE command rather than three: there is a race between "not found" and "create", and three round trips would let two concurrent clients in the same directory each observe not\-found and both create a project for it.
 
 <a name="Supervisor.HandleReloadConfig"></a>
-### func \(\*Supervisor\) [HandleReloadConfig](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/supervisor/supervisor.go#L417>)
+### func \(\*Supervisor\) [HandleReloadConfig](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/supervisor/supervisor.go#L427>)
 
 ```go
 func (s *Supervisor) HandleReloadConfig(_ context.Context) error
@@ -284,7 +306,7 @@ func (s *Supervisor) HandleReloadConfig(_ context.Context) error
 HandleReloadConfig is a no\-op today: config reload semantics belong to vconfig's virtual\-layer resolution \(spec §5a\), which this minimal supervisor does not yet wire into a running process's live config.
 
 <a name="Supervisor.HandleStatus"></a>
-### func \(\*Supervisor\) [HandleStatus](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/supervisor/supervisor.go#L324>)
+### func \(\*Supervisor\) [HandleStatus](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/supervisor/supervisor.go#L334>)
 
 ```go
 func (s *Supervisor) HandleStatus(ctx context.Context) (ipc.StatusReply, error)
@@ -293,7 +315,7 @@ func (s *Supervisor) HandleStatus(ctx context.Context) (ipc.StatusReply, error)
 HandleStatus reports supervisor\-level liveness. ActiveWorkers and the per\-worker detail are sourced from the store's real worker rows \(store.ListRunningWorkers\) rather than an in\-process map: no in\-process structure could ever reflect this anyway, since agent subprocess lifetime is fully owned by whichever provider runner orch dispatched, not by the supervisor itself. A query failure degrades to an empty list / 0 count rather than failing the whole status reply — a transient error should never make \`status\` itself fail.
 
 <a name="Supervisor.HandleStop"></a>
-### func \(\*Supervisor\) [HandleStop](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/supervisor/supervisor.go#L409>)
+### func \(\*Supervisor\) [HandleStop](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/supervisor/supervisor.go#L419>)
 
 ```go
 func (s *Supervisor) HandleStop(_ context.Context, _ ipc.StopArgs) error
@@ -302,7 +324,7 @@ func (s *Supervisor) HandleStop(_ context.Context, _ ipc.StopArgs) error
 HandleStop breaks Run's select loop, which triggers shutdown. Graceful vs. immediate is not yet differentiated \(no in\-flight plan work exists yet to wait on\) — both simply request shutdown.
 
 <a name="Supervisor.HandleTaskApprove"></a>
-### func \(\*Supervisor\) [HandleTaskApprove](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/supervisor/drive.go#L112>)
+### func \(\*Supervisor\) [HandleTaskApprove](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/supervisor/drive.go#L167>)
 
 ```go
 func (s *Supervisor) HandleTaskApprove(ctx context.Context, args ipc.TaskApproveArgs) error
@@ -311,7 +333,7 @@ func (s *Supervisor) HandleTaskApprove(ctx context.Context, args ipc.TaskApprove
 HandleTaskApprove clears the approval gate on a ready\_pending\_approval task.
 
 <a name="Supervisor.HandleWorkerKill"></a>
-### func \(\*Supervisor\) [HandleWorkerKill](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/supervisor/drive.go#L135>)
+### func \(\*Supervisor\) [HandleWorkerKill](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/supervisor/drive.go#L190>)
 
 ```go
 func (s *Supervisor) HandleWorkerKill(ctx context.Context, args ipc.WorkerKillArgs) error

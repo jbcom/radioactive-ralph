@@ -1,0 +1,12 @@
+{
+  "policy": {
+    "schema_version": 1,
+    "policy_id": "adapter-parity",
+    "retry_budget": 2,
+    "no_progress_budget": 2,
+    "acceptance": [{"id": "tests", "kind": "command_exit_zero"}]
+  },
+  "snapshot": {"state": "ACTIVE", "retry_count": 0, "no_progress_count": 0},
+  "event": {"action": "PROGRESS"},
+  "provider_token": "ghp_super-secret-canary"
+}

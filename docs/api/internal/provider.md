@@ -57,7 +57,9 @@ Package provider adapts configured CLI backends into radioactive\_ralph's provid
   - [func \(l Local\) BinaryFor\(providerName string\) \(string, bool\)](<#Local.BinaryFor>)
 - [type Model](<#Model>)
 - [type OpencodeRunner](<#OpencodeRunner>)
-  - [func \(OpencodeRunner\) Run\(ctx context.Context, binding Binding, req Request\) \(Result, error\)](<#OpencodeRunner.Run>)
+  - [func \(OpencodeRunner\) Run\(ctx context.Context, binding Binding, req Request\) \(result Result, retErr error\)](<#OpencodeRunner.Run>)
+- [type PromptKind](<#PromptKind>)
+  - [func ClassifyPromptKind\(line string\) PromptKind](<#ClassifyPromptKind>)
 - [type Request](<#Request>)
 - [type Result](<#Result>)
 - [type Runner](<#Runner>)
@@ -174,16 +176,19 @@ var (
 
 ```go
 var DefaultPromptPatterns = []*regexp.Regexp{
-    regexp.MustCompile(`(?i)\(y/n\)`),
-    regexp.MustCompile(`(?i)\[y/n\]`),
-    regexp.MustCompile(`(?i)continue\?`),
-    regexp.MustCompile(`(?i)proceed\?`),
-    regexp.MustCompile(`(?i)permission`),
-    regexp.MustCompile(`(?i)approve`),
-    regexp.MustCompile(`(?i)allow this`),
-    regexp.MustCompile(`(?i)do you want to`),
-    regexp.MustCompile(`(?i)waiting for`),
-    regexp.MustCompile(`(?i)press enter`),
+    parenConfirmPromptPattern,
+    bracketConfirmPromptPattern,
+    continuePromptPattern,
+    proceedPromptPattern,
+
+    permissionPromptPattern,
+    approvalPromptPattern,
+    allowThisPromptPattern,
+    doYouWantToPromptPattern,
+    waitingForPromptPattern,
+    pressEnterPromptPattern,
+
+    clarificationPromptPattern,
 }
 ```
 
@@ -347,7 +352,7 @@ CheckRequirements verifies a binding satisfies every requirement.
 Every failing key is named at once. Reporting the first miss alone would turn one plan fix into N dispatch cycles, since the operator cannot see the rest until the one they fixed stops failing.
 
 <a name="DefaultWatchdogConfig"></a>
-## func [DefaultWatchdogConfig](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/watchdog.go#L83>)
+## func [DefaultWatchdogConfig](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/watchdog.go#L108>)
 
 ```go
 func DefaultWatchdogConfig() agent.WatchdogConfig
@@ -376,7 +381,7 @@ func KnownCapability(key string) bool
 KnownCapability reports whether key is in the closed vocabulary.
 
 <a name="StreamJSONWatchdogConfig"></a>
-## func [StreamJSONWatchdogConfig](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/watchdog.go#L99>)
+## func [StreamJSONWatchdogConfig](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/watchdog.go#L125>)
 
 ```go
 func StreamJSONWatchdogConfig() agent.WatchdogConfig
@@ -445,7 +450,7 @@ type Binding struct {
 ```
 
 <a name="ResolveBinding"></a>
-### func [ResolveBinding](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/provider.go#L106>)
+### func [ResolveBinding](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/provider.go#L113>)
 
 ```go
 func ResolveBinding(cfg File, local Local, fromConfig VariantFile) (Binding, error)
@@ -553,18 +558,23 @@ const (
 ```
 
 <a name="BlockedError"></a>
-## type [BlockedError](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/watchdog.go#L33-L35>)
+## type [BlockedError](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/watchdog.go#L33-L40>)
 
 BlockedError retains a typed, provider\-output\-free reason while preserving errors.Is\(err, ErrAgentBlocked\) compatibility.
 
 ```go
 type BlockedError struct {
     Reason BlockReason
+    // Kind is the closed-taxonomy kind of an interactive prompt, empty for any
+    // other reason. It answers "what was it asking for" without carrying the
+    // prompt text, which the content-safety boundary keeps off operator
+    // surfaces.
+    Kind PromptKind
 }
 ```
 
 <a name="BlockedError.Error"></a>
-### func \(\*BlockedError\) [Error](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/watchdog.go#L37>)
+### func \(\*BlockedError\) [Error](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/watchdog.go#L42>)
 
 ```go
 func (e *BlockedError) Error() string
@@ -573,7 +583,7 @@ func (e *BlockedError) Error() string
 
 
 <a name="BlockedError.Unwrap"></a>
-### func \(\*BlockedError\) [Unwrap](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/watchdog.go#L48>)
+### func \(\*BlockedError\) [Unwrap](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/watchdog.go#L53>)
 
 ```go
 func (e *BlockedError) Unwrap() error
@@ -640,7 +650,7 @@ func (DeclarativeRunner) Run(ctx context.Context, binding Binding, req Request) 
 Run executes one declarative provider turn.
 
 <a name="Failure"></a>
-## type [Failure](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/failure.go#L46-L50>)
+## type [Failure](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/failure.go#L64-L68>)
 
 Failure is the privacy\-safe durable representation of a provider error. Cause remains available transiently for errors.Is/debug logging, but Summary and Category are the only fields suitable for evidence or event persistence.
 
@@ -653,7 +663,7 @@ type Failure struct {
 ```
 
 <a name="ClassifyFailure"></a>
-### func [ClassifyFailure](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/failure.go#L97>)
+### func [ClassifyFailure](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/failure.go#L123>)
 
 ```go
 func ClassifyFailure(err error) Failure
@@ -662,7 +672,7 @@ func ClassifyFailure(err error) Failure
 ClassifyFailure converts a transient provider error to its durable, provider\-output\-free category and summary.
 
 <a name="Failure.Error"></a>
-### func \(Failure\) [Error](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/failure.go#L52>)
+### func \(Failure\) [Error](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/failure.go#L70>)
 
 ```go
 func (f Failure) Error() string
@@ -671,7 +681,7 @@ func (f Failure) Error() string
 
 
 <a name="Failure.RetryBudget"></a>
-### func \(Failure\) [RetryBudget](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/failure.go#L88>)
+### func \(Failure\) [RetryBudget](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/failure.go#L114>)
 
 ```go
 func (f Failure) RetryBudget(configured int) int
@@ -680,7 +690,7 @@ func (f Failure) RetryBudget(configured int) int
 RetryBudget returns the retry count dispatch should hand to the store for this failure: the caller's budget when the failure is worth retrying, and ZERO when it is not, which makes the task fail terminally on this attempt.
 
 <a name="Failure.Retryable"></a>
-### func \(Failure\) [Retryable](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/failure.go#L65>)
+### func \(Failure\) [Retryable](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/failure.go#L83>)
 
 ```go
 func (f Failure) Retryable() bool
@@ -693,7 +703,7 @@ This lives on the classification rather than in dispatch because the answer is a
 The default is RETRYABLE, matching the pre\-classification behavior — a category nobody has reasoned about should not silently become terminal.
 
 <a name="Failure.Unwrap"></a>
-### func \(Failure\) [Unwrap](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/failure.go#L53>)
+### func \(Failure\) [Unwrap](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/failure.go#L71>)
 
 ```go
 func (f Failure) Unwrap() error
@@ -718,8 +728,26 @@ const (
     FailureProcessCleanup FailureCategory = "process_cleanup"
     // FailureOutputLimit means a bounded output/evidence ceiling was crossed.
     FailureOutputLimit FailureCategory = "output_limit"
-    // FailureInteractivePrompt means the CLI requested operator input.
+    // FailureInteractivePrompt means the CLI requested operator input of an
+    // unrecognised shape. The three kind-specific codes below are preferred
+    // when the prompt classifier recognises one, because they carry the only
+    // thing an operator can act on: WHICH response the block needs.
+    //
+    // These are CATEGORIES rather than summary text on purpose. The operator
+    // projection rebuilds a failure from the category alone
+    // (observe.failureForEvent), so a specialised summary never crosses -- only
+    // a new constant does.
     FailureInteractivePrompt FailureCategory = "interactive_prompt"
+    // FailureInteractivePromptPermission means the provider asked to be ALLOWED
+    // to act. Usually answered by a write-path or binding grant, not a
+    // keystroke.
+    FailureInteractivePromptPermission FailureCategory = "interactive_prompt_permission"
+    // FailureInteractivePromptConfirm means a yes/no on an action the CLI
+    // already intended. Usually answered by a flag that suppresses the prompt.
+    FailureInteractivePromptConfirm FailureCategory = "interactive_prompt_confirm"
+    // FailureInteractivePromptClarification means an open question about the
+    // task. The step's scoped context was insufficient, so the PLAN needs work.
+    FailureInteractivePromptClarification FailureCategory = "interactive_prompt_clarification"
     // FailureStall means the renewable progress lease expired.
     FailureStall FailureCategory = "stall_timeout"
     // FailureTurnDeadline means the absolute turn deadline expired.
@@ -828,35 +856,90 @@ const (
 ```
 
 <a name="OpencodeRunner"></a>
-## type [OpencodeRunner](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/opencode.go#L33>)
+## type [OpencodeRunner](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/opencode.go#L43>)
 
 OpencodeRunner executes a single \`opencode run \-\-format json\` turn under Ralph's own pty via internal/agent, per spec §9 \("opencode bound via its local \`run\` path only"\) and §3 \(hybrid I/O\).
 
-Verified against the installed \`opencode\` 1.18.3 CLI on 2026\-07\-16: \`opencode run \[message..\] \-\-format json\` emits one JSON object per line on stdout \(never a file — there is no output\-file flag\), each with a top\-level "type": "step\_start" | "text" | "step\_finish" | others. The assistant reply lives in \`type":"text"\` frames' part.text; token/cost usage lives in the \`type":"step\_finish"\` frame's part.tokens \(input/output/cache.read\) and part.cost. \`\-\-session\`/\`\-\-continue\` resumes a session, \`\-\-variant\` sets reasoning effort, \`\-\-dir\` sets the working directory, \`\-\-model\` takes \`provider/model\`.
+Historical parser\-contract evidence was captured against the installed \`opencode\` 1.18.3 CLI on 2026\-07\-16: \`opencode run \[message..\] \-\-format json\` emits one JSON object per line on stdout \(never a file — there is no output\-file flag\), each with a top\-level "type": "step\_start" | "text" | "step\_finish" | others. The assistant reply lives in \`type":"text"\` frames' part.text; token/cost usage lives in the \`type":"step\_finish"\` frame's part.tokens \(input/output/cache.read\) and part.cost. \`\-\-session\`/\`\-\-continue\` resumes a session, \`\-\-variant\` sets reasoning effort, \`\-\-dir\` sets the working directory, \`\-\-model\` takes \`provider/model\`.
 
 Like ClaudeRunner, there is no CLI\-native result\-file flag, so ResultPath is Ralph\-side: the runner tees recognized JSON frames from the pty's Output\(\) into a bounded ResultPath evidence file while parsing every text and step\_finish frame. It consumes until the CLI exits naturally after session idle, then validates the final step reason.
+
+Managed completion authority has a separate current support pin: the live adapter probe verifies OpenCode 1.18.18 before exercising no\-tool, tool, sanitized\-PATH, and fail\-closed launcher behavior.
 
 ```go
 type OpencodeRunner struct{}
 ```
 
 <a name="OpencodeRunner.Run"></a>
-### func \(OpencodeRunner\) [Run](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/opencode.go#L54>)
+### func \(OpencodeRunner\) [Run](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/opencode.go#L67-L69>)
 
 ```go
-func (OpencodeRunner) Run(ctx context.Context, binding Binding, req Request) (Result, error)
+func (OpencodeRunner) Run(ctx context.Context, binding Binding, req Request) (result Result, retErr error)
 ```
 
-Run spawns \`opencode run \<prompt\> \-\-format json\` and blocks until the CLI exits naturally. A step\_finish with reason=tool\-calls is an intermediate model step; OpenCode 1.18.3 closes the actual run only after session.status becomes idle, so Ralph must consume the complete stream.
+Run spawns \`opencode run \<prompt\> \-\-format json\` and blocks until the CLI exits naturally. A step\_finish with reason=tool\-calls is an intermediate model step; the historical OpenCode 1.18.3 parser capture closes the actual run only after session.status becomes idle, so Ralph must consume the complete stream. The managed adapter support pin is 1.18.18.
+
+<a name="PromptKind"></a>
+## type [PromptKind](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/prompt_kind.go#L50>)
+
+PromptKind is the CLOSED taxonomy of what an interactive block was asking for. It is a fixed constant, never provider text.
+
+Known permission, confirmation, and clarification shapes map to their fixed kinds. An interactive line with no known shape uses PromptKindUnknown; the generic interactive\_prompt reason remains the safe fallback rather than guessing from provider prose.
+
+Surfacing the prompt itself is barred: only this closed set of fixed constants crosses to operator surfaces, never prose from an external process. This gives the operator the distinction without the text.
+
+```go
+type PromptKind string
+```
+
+<a name="PromptKindPermission"></a>
+
+```go
+const (
+    // PromptKindPermission is a request to be ALLOWED to act -- edit a file,
+    // run a command. Usually answerable by a policy change (a wider write path,
+    // a binding grant) rather than a human keystroke.
+    PromptKindPermission PromptKind = "permission"
+    // PromptKindConfirm is a yes/no on an action the CLI already intends. The
+    // cheapest class: usually a flag that suppresses the prompt.
+    PromptKindConfirm PromptKind = "confirm"
+    // PromptKindClarification is an open question about the task. The
+    // expensive class: it means the step's scoped context was insufficient, so
+    // the PLAN needs work, not the configuration.
+    PromptKindClarification PromptKind = "clarification"
+    // PromptKindUnknown means no pattern matched. Deliberately not guessed:
+    // a wrong kind sends the operator to the wrong response, which is worse
+    // than admitting the classifier did not recognise the shape.
+    PromptKindUnknown PromptKind = "unknown"
+)
+```
+
+<a name="ClassifyPromptKind"></a>
+### func [ClassifyPromptKind](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/prompt_kind.go#L96>)
+
+```go
+func ClassifyPromptKind(line string) PromptKind
+```
+
+ClassifyPromptKind derives the kind from a line of provider output.
+
+The INPUT is provider text; the OUTPUT is a fixed constant. That asymmetry is the point \-\- classification happens on Ralph's side of the boundary, and only the constant travels onward.
 
 <a name="Request"></a>
-## type [Request](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/provider.go#L27-L69>)
+## type [Request](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/provider.go#L27-L76>)
 
 Request is the provider\-neutral execution contract for one worker turn.
 
 ```go
 type Request struct {
     WorkingDir string
+
+    // ManagedSessionID and HookEndpoint are opaque control-plane coordinates
+    // injected only by Ralph's orchestrator. Generated global hooks no-op when
+    // they are absent and send finite events to the supervisor when present.
+    // They are never provider credentials and must never be logged.
+    ManagedSessionID string
+    HookEndpoint     string
 
     // ContainmentRoot, when set, confines the provider process AND everything
     // it spawns to writing beneath this absolute path, enforced by the kernel
@@ -901,7 +984,7 @@ type Request struct {
 ```
 
 <a name="Result"></a>
-## type [Result](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/provider.go#L88-L98>)
+## type [Result](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/provider.go#L95-L105>)
 
 Result captures the observable output of one provider turn.
 
@@ -920,7 +1003,7 @@ type Result struct {
 ```
 
 <a name="Runner"></a>
-## type [Runner](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/provider.go#L101-L103>)
+## type [Runner](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/provider.go#L108-L110>)
 
 Runner executes one provider turn.
 
@@ -931,7 +1014,7 @@ type Runner interface {
 ```
 
 <a name="NewRunner"></a>
-### func [NewRunner](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/provider.go#L151>)
+### func [NewRunner](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/provider.go#L158>)
 
 ```go
 func NewRunner(binding Binding) (Runner, error)
@@ -961,7 +1044,7 @@ func ResolveTurnLimits(binding Binding, req Request) (TurnLimits, error)
 ResolveTurnLimits resolves request overrides over binding configuration over safe defaults. Every result is positive and bounded.
 
 <a name="Usage"></a>
-## type [Usage](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/provider.go#L80-L85>)
+## type [Usage](<https://github.com/jbcom/radioactive-ralph/blob/main/internal/provider/provider.go#L87-L92>)
 
 Usage captures the token/cost accounting for one provider turn. Fields are zero when the provider does not report them. Coverage today: the claude and opencode runners populate Usage from their stream\-json frames; codex and declarative bindings report zero \(their CLIs surface usage differently and are not yet parsed\). CostUSD is authoritative when non\-zero; the runtime accumulates it for spend\-cap enforcement, so a capped variant on an unreported provider still requires a cap value but its cost is not yet metered. Extending codex parsing is the follow\-up to close that gap.
 
