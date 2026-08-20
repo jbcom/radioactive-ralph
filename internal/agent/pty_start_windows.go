@@ -22,19 +22,26 @@ package agent
 // docs/superpowers/specs/2026-08-20-windows-wsl2-dispatch-design.md.
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
+
+	"github.com/jbcom/radioactive-ralph/internal/wsldistro"
 )
 
 // RalphWSLDistroName is the dedicated, auto-provisioned WSL2 distro provider
-// turns dispatch into. Not yet wired to real user-facing configuration (see
-// the design spec's open questions) -- a package var, not a const, only so
-// tests in this package can point it at an already-registered distro
-// instead of the not-yet-provisioned default.
-var RalphWSLDistroName = "radioactive-ralph"
+// turns dispatch into. Defaults to wsldistro.DistroName (the same package
+// that owns auto-provisioning, see startPTY below) rather than duplicating
+// the literal -- a package var, not a const, only so tests in this package
+// can point it at an already-registered stand-in distro (e.g.
+// "docker-desktop") instead of the not-yet-provisioned default. When
+// overridden away from wsldistro.DistroName, auto-provisioning is skipped
+// entirely: an override means the caller is deliberately using an
+// already-registered distro, not asking Ralph to manage one.
+var RalphWSLDistroName = wsldistro.DistroName
 
 // ErrWSLNotFound is returned when wsl.exe is not on PATH. Distinct from
 // ErrPTYUnsupported: unlike the pty story, this is fixable by installing
@@ -81,6 +88,27 @@ func startPTY(cmd *exec.Cmd, oneShotInput bool) (ptyMaster, error) {
 	wslPath, err := exec.LookPath("wsl.exe")
 	if err != nil {
 		return nil, ErrWSLNotFound
+	}
+
+	// Auto-provisioning happens HERE, lazily, on first real dispatch
+	// attempt -- not eagerly at --init, which is deliberately kept
+	// lightweight and side-effect-minimal (see init_cmd.go's own doc
+	// comment on what --init does and doesn't touch). A fast no-op once
+	// registered (isRegistered is a single RegisteredDistros call); the
+	// one-time ~68MB import only happens the first time a turn actually
+	// needs to dispatch. Deliberately does not fall back to
+	// ErrPTYUnsupported-style silence on failure: a missing bundled rootfs
+	// or a failed import is a real, actionable error the operator needs to
+	// see, not something to paper over.
+	//
+	// Skipped entirely when RalphWSLDistroName has been overridden away
+	// from wsldistro.DistroName -- see that var's doc comment. Tests point
+	// it at an already-registered stand-in distro precisely so they don't
+	// need a real rootfs bundled next to the test binary.
+	if RalphWSLDistroName == wsldistro.DistroName {
+		if err := wsldistro.EnsureRegistered(context.Background()); err != nil {
+			return nil, fmt.Errorf("agent: provision %q WSL2 distro: %w", wsldistro.DistroName, err)
+		}
 	}
 
 	// cmd.Args[0] is the ORIGINAL, unresolved command name (e.g. "cat"), not
