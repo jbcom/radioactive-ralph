@@ -2,9 +2,7 @@
 
 package agent
 
-import "os"
-
-// disablePTYEcho is a no-op on native Windows: creack/pty is unsupported
-// there (Start returns ErrPTYUnsupported before this is reached), so there is
-// no pty line discipline to configure.
-func disablePTYEcho(_ *os.File) error { return nil }
+// disablePTYEcho is a no-op on native Windows: dispatch goes through
+// wsl.exe as a plain subprocess (see pty_start_windows.go), not a pty, so
+// there is no pty line discipline to configure.
+func disablePTYEcho(_ ptyMaster) error { return nil }

@@ -19,9 +19,12 @@ import (
 	"github.com/jbcom/radioactive-ralph/internal/contain"
 )
 
-// ErrPTYUnsupported is returned by Start on platforms where creack/pty cannot
-// allocate a pseudo-terminal. Native Windows operators run Ralph under WSL.
-var ErrPTYUnsupported = fmt.Errorf("agent: pty allocation is unsupported on %s; run radioactive-ralph under WSL on Windows", runtime.GOOS)
+// ErrPTYUnsupported is returned by Start on platforms where creack/pty
+// cannot allocate a pseudo-terminal. Windows is NOT one of these anymore:
+// it dispatches through wsl.exe instead of a pty at all (see
+// pty_start_windows.go). This applies to other, less common Unix-likes
+// creack/pty doesn't support.
+var ErrPTYUnsupported = fmt.Errorf("agent: pty allocation is unsupported on %s", runtime.GOOS)
 
 // ErrProcessExitObservationUnsupported reports a host on which Ralph cannot
 // observe child exit without reaping it.
@@ -127,11 +130,28 @@ type interruptiblePTY interface {
 	WriteAll(context.Context, []byte) error
 }
 
+// ptyMaster abstracts the channel a launched agent's stdio flows through: a
+// real pty master fd on Unix (naturally bidirectional -- one fd serves both
+// read and write), or a wrapper pairing two plain pipes for the Windows WSL2
+// dispatch path, where wsl.exe runs as an ordinary subprocess with no pty
+// involved at all (see pty_start_windows.go's package doc for why: ConPTY
+// cannot deliver a clean stdin EOF to a hosted child, confirmed as a real,
+// still-open upstream limitation, not something fixable here -- dispatching
+// through wsl.exe as a plain subprocess has correct Unix pipe/EOF semantics
+// instead). *os.File already satisfies this on Unix; no behavior change
+// there.
+type ptyMaster interface {
+	io.Reader
+	io.Writer
+	io.Closer
+	Fd() uintptr
+}
+
 // Agent is a pty-owned agent subprocess.
 type Agent struct {
 	ctx  context.Context
 	cmd  *exec.Cmd
-	ptmx *os.File
+	ptmx ptyMaster
 	pty  interruptiblePTY
 	opts Options
 
@@ -288,7 +308,7 @@ func Start(ctx context.Context, opts Options) (*Agent, error) {
 // cmd.Wait on a possibly-live child.
 func abortStartedProcess(
 	cmd *exec.Cmd,
-	ptmx *os.File,
+	ptmx ptyMaster,
 	primary error,
 	terminate func(*os.Process) terminationOutcome,
 ) error {

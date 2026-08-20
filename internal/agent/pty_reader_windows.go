@@ -5,24 +5,28 @@ package agent
 import (
 	"context"
 	"io"
-	"os"
 )
 
-// Native Windows pty execution is rejected by Start. Keep the compile-time
-// boundary explicit for cross-build validation.
-type windowsPTY struct{ file *os.File }
+// windowsPTY adapts a ptyMaster (wslDispatchPTY on Windows -- see
+// pty_start_windows.go) to interruptiblePTY's WriteAll contract. Unlike the
+// Unix nonblockingPTY, there is no readiness-polling/EAGAIN retry loop
+// needed here: these are plain blocking pipes to a real subprocess, not a
+// pty line discipline.
+type windowsPTY struct {
+	master ptyMaster
+}
 
 func newInterruptiblePTY(
-	file *os.File,
+	master ptyMaster,
 	_ <-chan struct{},
 	_ <-chan struct{},
 	_ func(),
 ) (interruptiblePTY, error) {
-	return &windowsPTY{file: file}, nil
+	return &windowsPTY{master: master}, nil
 }
 
 func (p *windowsPTY) Read(buffer []byte) (int, error) {
-	return p.file.Read(buffer)
+	return p.master.Read(buffer)
 }
 
 func (p *windowsPTY) WriteAll(ctx context.Context, buffer []byte) error {
@@ -30,7 +34,7 @@ func (p *windowsPTY) WriteAll(ctx context.Context, buffer []byte) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		n, err := p.file.Write(buffer)
+		n, err := p.master.Write(buffer)
 		if err != nil {
 			return err
 		}
