@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -21,6 +22,21 @@ import (
 
 	"github.com/jbcom/radioactive-ralph/internal/ipc"
 )
+
+// skipIfProcEnvironRestricted skips tests that exercise ReclaimProcessScope
+// when the kernel restricts /proc/PID/environ (YAMA ptrace_scope > 0 on
+// GitHub Actions runners). The fail-closed path returns an error on EACCES,
+// so these tests cannot pass on restricted kernels.
+func skipIfProcEnvironRestricted(t *testing.T) {
+	t.Helper()
+	if runtime.GOOS != "linux" {
+		return
+	}
+	self := strconv.Itoa(os.Getpid())
+	if _, err := os.ReadFile(filepath.Join("/proc", self, "environ")); err != nil {
+		t.Skipf("kernel restricts /proc/PID/environ: %v", err)
+	}
+}
 
 func TestOpenCodeLauncherUnmanagedIsTransparent(t *testing.T) {
 	binary := writeOpenCodeLauncherFixture(t, "#!/bin/sh\nprintf 'provider-stdout'\nprintf 'provider-stderr' >&2\nexit 17\n")
@@ -35,6 +51,7 @@ func TestOpenCodeLauncherUnmanagedIsTransparent(t *testing.T) {
 }
 
 func TestOpenCodeLauncherPreservesManagedProviderFailureWithoutStop(t *testing.T) {
+	skipIfProcEnvironRestricted(t)
 	server, handler, endpoint := startLauncherHookServer(t, ipc.HookEventReply{Allow: true})
 	defer func() { _ = server.Stop() }()
 	binary := writeOpenCodeLauncherFixture(t, "#!/bin/sh\nexit 23\n")
@@ -48,6 +65,7 @@ func TestOpenCodeLauncherPreservesManagedProviderFailureWithoutStop(t *testing.T
 }
 
 func TestOpenCodeLauncherPreservesManagedProviderSignalWithoutStop(t *testing.T) {
+	skipIfProcEnvironRestricted(t)
 	server, handler, endpoint := startLauncherHookServer(t, ipc.HookEventReply{Allow: true})
 	defer func() { _ = server.Stop() }()
 	binary := writeOpenCodeLauncherFixture(t, "#!/bin/sh\nkill -TERM $$\n")
@@ -61,6 +79,7 @@ func TestOpenCodeLauncherPreservesManagedProviderSignalWithoutStop(t *testing.T)
 }
 
 func TestOpenCodeLauncherReapsProviderGroupBeforeFinalStop(t *testing.T) {
+	skipIfProcEnvironRestricted(t)
 	server, handler, endpoint := startLauncherHookSequenceServer(t, []ipc.HookEventReply{
 		{Allow: true, Reason: "acceptance_passed"},
 	})
@@ -127,6 +146,7 @@ func TestOpenCodeLauncherReapsProviderGroupBeforeFinalStop(t *testing.T) {
 }
 
 func TestOpenCodeLauncherReapsSetsidDescendantBeforeFinalStop(t *testing.T) {
+	skipIfProcEnvironRestricted(t)
 	server, handler, endpoint := startLauncherHookSequenceServer(t, []ipc.HookEventReply{
 		{Allow: true, Reason: "acceptance_passed"},
 	})
@@ -222,6 +242,7 @@ func TestWaitOpenCodeProviderExitLeavesLeaderWaitable(t *testing.T) {
 }
 
 func TestManagedOpenCodeProviderOutputDrainIsFinite(t *testing.T) {
+	skipIfProcEnvironRestricted(t)
 	binary := writeOpenCodeLauncherFixture(t, "#!/bin/sh\nprintf output\n")
 	blocked := &blockingOpenCodeWriter{
 		started:  make(chan struct{}),
@@ -254,6 +275,7 @@ func TestManagedOpenCodeProviderOutputDrainIsFinite(t *testing.T) {
 }
 
 func TestOpenCodeLauncherFinalStopIsFiniteAndFailClosed(t *testing.T) {
+	skipIfProcEnvironRestricted(t)
 	binary := writeOpenCodeLauncherFixture(t, "#!/bin/sh\nexit 0\n")
 	for _, tc := range []struct {
 		name       string
@@ -288,6 +310,7 @@ func TestOpenCodeLauncherFinalStopIsFiniteAndFailClosed(t *testing.T) {
 }
 
 func TestOpenCodeLauncherPollsStartedAndPendingUntilAcceptancePasses(t *testing.T) {
+	skipIfProcEnvironRestricted(t)
 	server, handler, endpoint := startLauncherHookSequenceServer(t, []ipc.HookEventReply{
 		{Allow: false, Reason: "verification_started"},
 		{Allow: false, Reason: "verification_pending"},
@@ -315,6 +338,7 @@ func TestOpenCodeLauncherPollsStartedAndPendingUntilAcceptancePasses(t *testing.
 }
 
 func TestOpenCodeLauncherPendingExhaustionIsBoundedAndFailClosed(t *testing.T) {
+	skipIfProcEnvironRestricted(t)
 	server, handler, endpoint := startLauncherHookServer(t, ipc.HookEventReply{
 		Allow: false, Reason: "verification_pending",
 	})
@@ -340,6 +364,7 @@ func TestOpenCodeLauncherPendingExhaustionIsBoundedAndFailClosed(t *testing.T) {
 }
 
 func TestOpenCodeLauncherProgressRemainsInsideShortStallLease(t *testing.T) {
+	skipIfProcEnvironRestricted(t)
 	server, handler, endpoint := startLauncherHookSequenceServer(t, []ipc.HookEventReply{
 		{Allow: false, Reason: "verification_started"},
 		{Allow: true, Reason: "acceptance_passed"},
@@ -385,6 +410,7 @@ func TestOpenCodeLauncherProgressRemainsInsideShortStallLease(t *testing.T) {
 }
 
 func TestOpenCodeLauncherContextCancellationDuringPollingFailsClosed(t *testing.T) {
+	skipIfProcEnvironRestricted(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	server, handler, endpoint := startLauncherHookSequenceServer(t, []ipc.HookEventReply{
 		{Allow: false, Reason: "verification_started"},
@@ -427,6 +453,7 @@ func TestParseOpenCodeStatusIsStrictAndFinite(t *testing.T) {
 }
 
 func TestOpenCodeLauncherUnavailableSupervisorIsStaticSecretBlindAndPathIndependent(t *testing.T) {
+	skipIfProcEnvironRestricted(t)
 	binary := writeOpenCodeLauncherFixture(t, "#!/bin/sh\nexit 0\n")
 	opts := launcherOptions(t, binary, filepath.Join(t.TempDir(), "missing.sock"))
 	const secret = "ghp_launcher-secret-canary"
@@ -447,6 +474,7 @@ func TestOpenCodeLauncherUnavailableSupervisorIsStaticSecretBlindAndPathIndepend
 }
 
 func TestOpenCodeLauncherDoesNotEchoMalformedSupervisorReason(t *testing.T) {
+	skipIfProcEnvironRestricted(t)
 	const secret = "malformed-supervisor-secret-canary"
 	server, _, endpoint := startLauncherHookServer(t, ipc.HookEventReply{
 		Allow: false, Reason: secret,
@@ -545,6 +573,7 @@ func TestOpenCodeLauncherRejectsInvalidPreconditionsBeforeProviderStart(t *testi
 }
 
 func TestOpenCodeLauncherIsolatesOneReviewedPlugin(t *testing.T) {
+	skipIfProcEnvironRestricted(t)
 	server, _, endpoint := startLauncherHookServer(t, ipc.HookEventReply{Allow: true})
 	defer func() { _ = server.Stop() }()
 	opts := launcherOptions(t, "", endpoint)
@@ -572,6 +601,7 @@ func TestOpenCodeLauncherIsolatesOneReviewedPlugin(t *testing.T) {
 }
 
 func TestOpenCodeLauncherDoesNotExposeCallerStateRoots(t *testing.T) {
+	skipIfProcEnvironRestricted(t)
 	server, _, endpoint := startLauncherHookServer(t, ipc.HookEventReply{Allow: true})
 	defer func() { _ = server.Stop() }()
 	opts := launcherOptions(t, "", endpoint)
