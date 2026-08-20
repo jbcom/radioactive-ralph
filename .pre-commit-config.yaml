@@ -1,0 +1,13 @@
+# Scoped to packaging/wsl/ -- the WSL rootfs build tooling introduced by
+# docs/superpowers/specs/2026-08-20-windows-wsl2-dispatch-design.md. This repo's
+# actual code quality gates (go test, golangci-lint, go vet) run as documented in
+# AGENTS.md/STANDARDS.md and are not duplicated here.
+repos:
+  - repo: local
+    hooks:
+      - id: hadolint-wsl-dockerfile
+        name: hadolint (packaging/wsl/Dockerfile)
+        entry: mise exec -- hadolint
+        language: system
+        files: ^packaging/wsl/Dockerfile$
+        pass_filenames: true

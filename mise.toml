@@ -1,0 +1,11 @@
+# Pins tooling for building packaging/wsl/'s rootfs.tar.gz -- not a general
+# toolchain migration. Go/lint/test tooling stays exactly as documented in
+# AGENTS.md/STANDARDS.md (plain `go build`/`go test`/`golangci-lint`); this
+# file exists only because the WSL rootfs build needs Dockerfile linting and
+# image-size analysis tools that aren't part of that toolchain.
+[tools]
+hadolint = "latest"  # packaging/wsl/Dockerfile linting, run by pre-commit and CI
+dive = "latest"      # layer-by-layer image size analysis -- see packaging/wsl/README.md
+
+[settings]
+experimental = true  # required for some mise registry entries (hadolint/dive backends)

@@ -1,4 +1,4 @@
-.PHONY: help build test lint vuln clean install-tools release-snapshot docs-api docs-build docs-check test-linux test-linux-race test-linux-adapters test-linux-agent
+.PHONY: help build test lint vuln clean install-tools release-snapshot docs-api docs-build docs-check test-linux test-linux-race test-linux-adapters test-linux-agent wsl-rootfs wsl-rootfs-lint
 
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 COMMIT  ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo none)
@@ -69,3 +69,9 @@ test-linux-adapters: ## Run adapters tests on Linux via Docker
 
 test-linux-agent: ## Run agent tests on Linux via Docker
 	docker run --rm -v "$(WORKSPACE_ROOT):/workspace" -w /workspace $(GO_LINUX_IMAGE) go test -race -timeout 5m ./internal/agent/...
+
+wsl-rootfs-lint: ## Lint packaging/wsl/Dockerfile with hadolint (mise-pinned)
+	mise exec -- hadolint packaging/wsl/Dockerfile
+
+wsl-rootfs: wsl-rootfs-lint ## Build packaging/wsl/rootfs.tar.gz (requires Docker)
+	./packaging/wsl/build-rootfs.sh
