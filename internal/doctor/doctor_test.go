@@ -11,6 +11,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/jbcom/radioactive-ralph/internal/wsldistro"
 )
 
 // fakeRunner returns a runner that replies with predetermined output
@@ -66,7 +68,16 @@ func TestRunAllGreen(t *testing.T) {
 		"gh --version":     {out: "gh version 2.60.1"},
 		"gh auth status":   {out: "Logged in to github.com"},
 	})
-	r := Run(context.Background(), WithRunner(runner), WithMinClaudeVersion("2.0.0"))
+	r := Run(context.Background(), WithRunner(runner), WithMinClaudeVersion("2.0.0"),
+		// Hermetic: without this, checkWSLDispatch would reflect whatever
+		// real WSL state happens to exist on the machine running the test
+		// (it calls GoWSL/exec.LookPath directly, not something runCommand's
+		// exec-mocking seam covers), making this "all green" test flaky
+		// across machines instead of deterministic.
+		WithWSLDistroCheck(func(context.Context) wsldistro.Status {
+			return wsldistro.Status{Applicable: false, Detail: "not applicable (test double)"}
+		}),
+	)
 	if !r.Passed() {
 		t.Errorf("expected pass, got %d failures", r.FailCount)
 	}
@@ -394,14 +405,19 @@ func TestWindowsServicePlatformGuidanceIsHonest(t *testing.T) {
 	joined := check.Detail + "\n" + check.Remediate
 	for _, clause := range []string{
 		"SCM install/start",
-		"provider PTYs are unsupported",
+		"managed WSL2 distro",
 		"radioactive_ralph --supervisor",
-		"WSL2",
-		"systemd --user",
+		"wsl dispatch",
 	} {
 		if !strings.Contains(joined, clause) {
 			t.Fatalf("Windows service-platform guidance %q missing %q", joined, clause)
 		}
+	}
+	// Since 2026-08-20 (WSL2 dispatch design spec): provider dispatch on
+	// Windows works via wsl.exe, not creack/pty -- this guidance must not
+	// claim otherwise.
+	if strings.Contains(joined, "provider PTYs are unsupported") {
+		t.Fatalf("Windows service-platform guidance overstates the pty limitation: %q", joined)
 	}
 }
 
@@ -502,8 +518,8 @@ func TestFailureFooterIsPlatformSpecific(t *testing.T) {
 		"native Windows",
 		"radioactive_ralph --supervisor",
 		"radioactive_ralph` as the client",
-		"WSL2",
-		"provider-backed execution",
+		"managed WSL2 distro",
+		"wsl dispatch",
 	} {
 		if !strings.Contains(windows, clause) {
 			t.Errorf("Windows failure footer %q missing %q", windows, clause)
@@ -525,16 +541,20 @@ func TestSuccessFooterIsPlatformSpecific(t *testing.T) {
 	windows := successFooterForPlatform("windows")
 	for _, clause := range []string{
 		"Native Windows",
-		"only",
 		"foreground control plane",
 		"radioactive_ralph --supervisor",
 		"radioactive_ralph` client",
-		"WSL2",
-		"provider-backed execution",
+		"managed WSL2 distro",
+		"wsl dispatch",
 	} {
 		if !strings.Contains(windows, clause) {
 			t.Errorf("Windows success footer %q missing %q", windows, clause)
 		}
+	}
+	// Since 2026-08-20: Windows is no longer "only" the foreground control
+	// plane -- it dispatches providers too, through the managed distro.
+	if strings.Contains(windows, "ready only for") {
+		t.Errorf("Windows success footer understates dispatch support: %q", windows)
 	}
 	for _, forbidden := range []string{"service install", "Ralph's ready to run here."} {
 		if strings.Contains(windows, forbidden) {

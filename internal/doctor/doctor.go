@@ -19,6 +19,8 @@ import (
 	"runtime"
 	"sync"
 	"time"
+
+	"github.com/jbcom/radioactive-ralph/internal/wsldistro"
 )
 
 // Severity classifies a check outcome. Hard failures (FAIL) cause
@@ -85,6 +87,13 @@ type RunOptions struct {
 	// runCommand is swappable for tests. Exposed via lowercase so
 	// callers must use WithRunner option.
 	runCommand func(ctx context.Context, name string, args ...string) (string, error)
+
+	// checkWSLDistro is swappable for tests, same reasoning as runCommand:
+	// wsldistro.Check calls real Win32/registry APIs (GoWSL), not an
+	// external command runCommand could otherwise mock, so it needs its
+	// own seam to keep doctor's test suite hermetic instead of reflecting
+	// whatever WSL state happens to exist on the machine running the tests.
+	checkWSLDistro func(context.Context) wsldistro.Status
 }
 
 // Option configures Run.
@@ -111,6 +120,13 @@ func WithCommandTimeout(d time.Duration) Option {
 	return func(o *RunOptions) { o.CommandTimeout = d }
 }
 
+// WithWSLDistroCheck lets tests override the wsl-dispatch check's status
+// source, same reasoning as WithRunner: wsldistro.Check calls real
+// Win32/registry APIs, not something runCommand's exec-mocking seam covers.
+func WithWSLDistroCheck(fn func(context.Context) wsldistro.Status) Option {
+	return func(o *RunOptions) { o.checkWSLDistro = fn }
+}
+
 // Run executes every check and returns a consolidated report.
 // ctx is used to bound each subprocess invocation (default 15s each).
 // Checks run concurrently and are reported in a stable order.
@@ -121,6 +137,9 @@ func Run(ctx context.Context, opts ...Option) Report {
 	}
 	for _, o := range opts {
 		o(&cfg)
+	}
+	if cfg.checkWSLDistro == nil {
+		cfg.checkWSLDistro = wsldistro.Check
 	}
 	if cfg.runCommand == nil {
 		cfg.runCommand = realRunner
@@ -137,6 +156,7 @@ func Run(ctx context.Context, opts ...Option) Report {
 		checkGhVersion,
 		checkGhAuth,
 		checkServicePlatform,
+		checkWSLDispatch,
 		checkStateDir,
 		checkProgressLease,
 	}
@@ -185,14 +205,14 @@ func (r Report) WriteText(w io.Writer) {
 
 func successFooterForPlatform(goos string) string {
 	if goos == "windows" {
-		return "Native Windows is ready only for the foreground control plane (`radioactive_ralph --supervisor` plus the `radioactive_ralph` client); use WSL2 for provider-backed execution."
+		return "Native Windows runs the foreground control plane (`radioactive_ralph --supervisor` plus the `radioactive_ralph` client) and dispatches provider turns through a managed WSL2 distro (`wsl.exe`) instead of a native pty — see the \"wsl dispatch\" check above for its status."
 	}
 	return "Ralph's ready to run here."
 }
 
 func failureFooterForPlatform(goos string) string {
 	if goos == "windows" {
-		return "Resolve the FAIL items above. On native Windows, run the control plane in a foreground terminal with `radioactive_ralph --supervisor`, then use `radioactive_ralph` as the client; use WSL2 for provider-backed execution."
+		return "Resolve the FAIL items above. On native Windows, run the control plane in a foreground terminal with `radioactive_ralph --supervisor`, then use `radioactive_ralph` as the client; provider dispatch runs through a managed WSL2 distro (see the \"wsl dispatch\" check above)."
 	}
 	return "Resolve the FAIL items above, then start the supervisor with `radioactive_ralph service install`."
 }
