@@ -27,6 +27,16 @@ const providerConfigKey = "provider"
 // including NativeFanout.
 const providersConfigKey = "providers"
 
+// providerConfigTableKey is the TOML table namespace ([provider_config.<name>])
+// carrying per-provider BindingConfig overrides — model tier mappings
+// (haiku_model, sonnet_model, opus_model), effort mappings, and timeout
+// overrides. Without reading it, the resolver would select the right provider
+// NAME but discard every per-provider capability override, so a project
+// configuring opencode to use ollama/cloud models would see opencode run with
+// its built-in defaults instead. The key is a TABLE, not an array, so it does
+// not collide with the providers array in TOML.
+const providerConfigTableKey = "provider_config"
+
 const (
 	turnTimeoutConfigKey  = "turn_timeout"
 	stallTimeoutConfigKey = "stall_timeout"
@@ -45,7 +55,7 @@ const (
 // The per-project cursor is guarded because dispatches are asynchronous even
 // though DispatchNext currently serializes claim passes. Keeping the resolver
 // independently safe prevents a later caller from introducing a data race.
-func storeBindingResolver(st *store.Store) orch.BindingResolver {
+func storeBindingResolver(st *store.Store, cooldowns *ProviderCooldowns) orch.BindingResolver {
 	var mu sync.Mutex
 	nextByProject := map[string]uint64{}
 
@@ -53,6 +63,32 @@ func storeBindingResolver(st *store.Store) orch.BindingResolver {
 		names, pooled, err := resolveProviderNames(ctx, st, projectID)
 		if err != nil {
 			return provider.Binding{}, err
+		}
+
+		// Filter out providers whose cooldown hasn't expired. A provider in
+		// cooldown failed with provider_auth or provider_rejected (rate-limit
+		// / credit exhaustion), and its limits may not have reset yet. If ALL
+		// providers are in cooldown, pick the one with the earliest expiry so
+		// at least one dispatch can proceed as a probe once its cooldown ends.
+		active := cooldowns.Active()
+		if len(active) > 0 && len(names) > 1 {
+			filtered := make([]string, 0, len(names))
+			for _, n := range names {
+				if _, cooled := active[n]; !cooled {
+					filtered = append(filtered, n)
+				}
+			}
+			if len(filtered) == 0 {
+				// All providers are in cooldown — pick the earliest expiring
+				// one so a probe can run once its cooldown ends.
+				if earliest := cooldowns.EarliestExpiry(); earliest != "" {
+					filtered = []string{earliest}
+				}
+			}
+			if len(filtered) > 0 {
+				names = filtered
+				pooled = len(names) > 1
+			}
 		}
 
 		name := ""
@@ -66,8 +102,12 @@ func storeBindingResolver(st *store.Store) orch.BindingResolver {
 			mu.Unlock()
 		}
 
+		providerCfgs, err := resolveProviderConfigs(ctx, st, projectID)
+		if err != nil {
+			return provider.Binding{}, err
+		}
 		binding, err := provider.ResolveBinding(
-			provider.File{DefaultProvider: name},
+			provider.File{DefaultProvider: name, Providers: providerCfgs},
 			provider.Local{},
 			provider.VariantFile{},
 		)
@@ -105,6 +145,175 @@ func resolveProviderTimeouts(ctx context.Context, st *store.Store, projectID str
 		return "", "", err
 	}
 	return turnTimeout, stallTimeout, nil
+}
+
+// resolveProviderConfigs reads the [provider_config.<name>] table from the
+// effective config layers and returns a map of provider name to BindingConfig
+// overrides. The overrides are MERGED onto the built-in defaults — only the
+// keys present in the stored config replace the built-in fields, so an
+// operator who configures only haiku_model gets that override while every
+// other field (Binary, WritePaths, SupportsContainment, NativeFanout) comes
+// from the built-in capability record. Without this merge, a partial
+// override would zero out WritePaths and SupportsContainment, causing
+// containment to refuse the turn or crash the provider.
+//
+// The user and project layers are resolved independently (matching
+// resolveProviderNames' source-precedence) and merged last-writer-wins: a
+// project-level [provider_config.opencode] overrides a user-level one for the
+// keys it specifies, rather than replacing the whole table.
+func resolveProviderConfigs(ctx context.Context, st *store.Store, projectID string) (map[string]provider.BindingConfig, error) {
+	userCfg, err := vconfig.ResolveUser(ctx, st, "", "")
+	if err != nil {
+		return nil, fmt.Errorf("resolve user provider configs: %w", err)
+	}
+	projectCfg, err := vconfig.ResolveProjects(ctx, st, userCfg, projectID)
+	if err != nil {
+		return nil, fmt.Errorf("resolve project provider configs: %w", err)
+	}
+	merged := mergeProviderConfigTables(
+		extractProviderConfigTable(userCfg.Values),
+		extractProviderConfigTable(projectCfg.Values),
+	)
+	if len(merged) == 0 {
+		return nil, nil
+	}
+	out := make(map[string]provider.BindingConfig, len(merged))
+	for name, fields := range merged {
+		base, ok := provider.BuiltInProvider(name)
+		if !ok {
+			// An unknown provider name in provider_config is not a
+			// resolution error here — resolveProviderNames already
+			// validates the names. A stray entry that no dispatch
+			// selects is inert.
+			out[name] = bindingConfigFromFields(fields)
+			continue
+		}
+		out[name] = mergeBindingConfigOverrides(base, fields)
+	}
+	return out, nil
+}
+
+// extractProviderConfigTable reads the provider_config key from one config
+// layer's Values and coerces it to map[string]map[string]any. Returns nil
+// when the key is absent or not a table — a missing namespace is not an error.
+func extractProviderConfigTable(values map[string]any) map[string]map[string]any {
+	raw, ok := values[providerConfigTableKey]
+	if !ok {
+		return nil
+	}
+	table, ok := raw.(map[string]any)
+	if !ok {
+		return nil
+	}
+	out := make(map[string]map[string]any, len(table))
+	for name, fields := range table {
+		fm, ok := fields.(map[string]any)
+		if !ok {
+			continue
+		}
+		out[name] = fm
+	}
+	return out
+}
+
+// mergeProviderConfigTables merges a lower-precedence table (user) with a
+// higher-precedence one (project), field-by-field per provider. A provider
+// present in both gets its fields merged (project wins), not replaced.
+func mergeProviderConfigTables(layers ...map[string]map[string]any) map[string]map[string]any {
+	merged := map[string]map[string]any{}
+	for _, layer := range layers {
+		for name, fields := range layer {
+			existing := merged[name]
+			if existing == nil {
+				existing = map[string]any{}
+				merged[name] = existing
+			}
+			for k, v := range fields {
+				existing[k] = v
+			}
+		}
+	}
+	return merged
+}
+
+// bindingConfigFromFields builds a BindingConfig from the string fields the
+// [provider_config.<name>] table carries. Only the recognized keys are read;
+// unknown keys are silently ignored so a future BindingConfig field can be
+// added without breaking configs that predate it.
+func bindingConfigFromFields(fields map[string]any) provider.BindingConfig {
+	cfg := provider.BindingConfig{}
+	cfg.HaikuModel = fieldString(fields, "haiku_model")
+	cfg.SonnetModel = fieldString(fields, "sonnet_model")
+	cfg.OpusModel = fieldString(fields, "opus_model")
+	cfg.LowEffort = fieldString(fields, "low_effort")
+	cfg.MediumEffort = fieldString(fields, "medium_effort")
+	cfg.HighEffort = fieldString(fields, "high_effort")
+	cfg.MaxEffort = fieldString(fields, "max_effort")
+	cfg.TurnTimeout = fieldString(fields, "turn_timeout")
+	cfg.StallTimeout = fieldString(fields, "stall_timeout")
+	if s, ok := fields["native_fanout"]; ok {
+		if b, ok := s.(bool); ok {
+			cfg.NativeFanout = b
+		}
+	}
+	return cfg
+}
+
+// mergeBindingConfigOverrides applies the fields present in the
+// [provider_config.<name>] table onto a built-in BindingConfig, preserving
+// every unset field from the base. Without this, a partial override (e.g.
+// only haiku_model) would zero out WritePaths and SupportsContainment,
+// causing containment to refuse or crash a provider that the built-in
+// default correctly declared as capable.
+func mergeBindingConfigOverrides(base provider.BindingConfig, fields map[string]any) provider.BindingConfig {
+	cfg := base
+	if s := fieldString(fields, "haiku_model"); s != "" {
+		cfg.HaikuModel = s
+	}
+	if s := fieldString(fields, "sonnet_model"); s != "" {
+		cfg.SonnetModel = s
+	}
+	if s := fieldString(fields, "opus_model"); s != "" {
+		cfg.OpusModel = s
+	}
+	if s := fieldString(fields, "low_effort"); s != "" {
+		cfg.LowEffort = s
+	}
+	if s := fieldString(fields, "medium_effort"); s != "" {
+		cfg.MediumEffort = s
+	}
+	if s := fieldString(fields, "high_effort"); s != "" {
+		cfg.HighEffort = s
+	}
+	if s := fieldString(fields, "max_effort"); s != "" {
+		cfg.MaxEffort = s
+	}
+	if s := fieldString(fields, "turn_timeout"); s != "" {
+		cfg.TurnTimeout = s
+	}
+	if s := fieldString(fields, "stall_timeout"); s != "" {
+		cfg.StallTimeout = s
+	}
+	if s, ok := fields["native_fanout"]; ok {
+		if b, ok := s.(bool); ok {
+			cfg.NativeFanout = b
+		}
+	}
+	return cfg
+}
+
+// fieldString reads a string field from the provider config table, returning
+// "" for absent or non-string values. A non-string value for a model or effort
+// field is a config error, but failing the whole resolution for one bad field
+// would make a single typo block every dispatch — the built-in default fills
+// in instead, and the operator sees the wrong model rather than no model.
+func fieldString(fields map[string]any, key string) string {
+	v, ok := fields[key]
+	if !ok {
+		return ""
+	}
+	s, _ := v.(string)
+	return s
 }
 
 // layeredTimeoutValue resolves the last-writer-wins configured timeout across

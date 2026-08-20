@@ -56,6 +56,15 @@ func run() int {
 		return 0
 	}
 
+	// Managed OpenCode finalization must preserve the real provider's exit and
+	// signal status exactly, before Cobra or the supervisor signal context can
+	// translate it into a generic command error. It deliberately follows the
+	// containment-helper dispatch: a contained re-exec must establish its kernel
+	// boundary before it can reach this launcher argv.
+	if handled, exitCode := maybeRunOpenCodeLauncher(os.Args); handled {
+		return exitCode
+	}
+
 	if handled, exitCode := maybeRunWindowsService(); handled {
 		return exitCode
 	}

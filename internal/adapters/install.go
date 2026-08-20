@@ -23,12 +23,6 @@ import (
 // BundleVersion is the generated adapter artifact contract version.
 const BundleVersion = 1
 
-// openCodePollAttempts gives the asynchronous adapter a two-minute grace
-// window beyond the orchestrator's fixed ten-minute verification budget. A
-// same-length client deadline can miss a valid verdict at the budget boundary;
-// an unbounded loop would violate Ralph's never-block contract.
-const openCodePollAttempts = 360
-
 // Manifest identifies one content-addressed generated adapter release.
 type Manifest struct {
 	Version          int      `json:"version"`
@@ -62,6 +56,7 @@ func Install(sourceExecutable, target string) (Manifest, error) {
 	digest := hex.EncodeToString(sum[:])
 	releaseName := digest
 	releasesDir := filepath.Join(target, "releases")
+	runtimeDir := filepath.Join(target, "runtime")
 	releaseDir := filepath.Join(releasesDir, releaseName)
 	currentExecutable := filepath.Join(target, "current", "bin", "radioactive_ralph")
 
@@ -90,6 +85,16 @@ func Install(sourceExecutable, target string) (Manifest, error) {
 	if err := os.Chmod(releasesDir, 0o700); err != nil { //nolint:gosec // directories require execute permission to remain traversable
 		return Manifest{}, fmt.Errorf("adapters: restrict releases: %w", err)
 	}
+	if err := os.MkdirAll(runtimeDir, 0o700); err != nil {
+		return Manifest{}, fmt.Errorf("adapters: create runtime root: %w", err)
+	}
+	runtimeInfo, err := os.Lstat(runtimeDir) //nolint:gosec // fixed installer-owned child under the operator-selected target
+	if err != nil || !runtimeInfo.IsDir() {
+		return Manifest{}, fmt.Errorf("adapters: runtime root is invalid")
+	}
+	if err := os.Chmod(runtimeDir, 0o700); err != nil { //nolint:gosec // directories require execute permission to remain traversable
+		return Manifest{}, fmt.Errorf("adapters: restrict runtime root: %w", err)
+	}
 	if _, err := os.Stat(releaseDir); os.IsNotExist(err) { //nolint:gosec // releaseDir is intentionally below the operator-selected install root
 		stage, err := os.MkdirTemp(releasesDir, ".install-*")
 		if err != nil {
@@ -102,13 +107,13 @@ func Install(sourceExecutable, target string) (Manifest, error) {
 		if err := os.Rename(stage, releaseDir); err != nil { //nolint:gosec // both paths are installer-owned children of releasesDir
 			// A concurrent identical installer may have published the same
 			// content-addressed release first. Accept only an exact byte match.
-			if verifyErr := verifyRelease(releaseDir, digest, files); verifyErr != nil {
+			if verifyErr := verifyRelease(releaseDir, digest, int64(len(raw)), files); verifyErr != nil {
 				return Manifest{}, fmt.Errorf("adapters: publish release: %w", err)
 			}
 		}
 	} else if err != nil {
 		return Manifest{}, fmt.Errorf("adapters: inspect release: %w", err)
-	} else if err := verifyRelease(releaseDir, digest, files); err != nil {
+	} else if err := verifyRelease(releaseDir, digest, int64(len(raw)), files); err != nil {
 		return Manifest{}, err
 	}
 
@@ -156,7 +161,7 @@ func writeSynced(path string, body []byte, mode os.FileMode) error {
 	return nil
 }
 
-func verifyRelease(releaseDir, digest string, files map[string][]byte) error {
+func verifyRelease(releaseDir, digest string, executableSize int64, files map[string][]byte) error {
 	info, err := os.Lstat(releaseDir) //nolint:gosec // releaseDir is installer-owned and must itself be a real directory
 	if err != nil {
 		return fmt.Errorf("adapters: inspect existing release: %w", err)
@@ -165,7 +170,7 @@ func verifyRelease(releaseDir, digest string, files map[string][]byte) error {
 		return fmt.Errorf("adapters: existing content-addressed release is corrupt")
 	}
 	executable, err := readVerifiedReleaseFile(
-		filepath.Join(releaseDir, "bin", "radioactive_ralph"), -1)
+		filepath.Join(releaseDir, "bin", "radioactive_ralph"), executableSize+1)
 	if err != nil {
 		return fmt.Errorf("adapters: verify existing executable: %w", err)
 	}
@@ -191,6 +196,9 @@ func readVerifiedReleaseFile(path string, limit int64) ([]byte, error) {
 	info, err := file.Stat()
 	if err != nil || !info.Mode().IsRegular() {
 		return nil, fmt.Errorf("release entry is not a regular file")
+	}
+	if limit >= 0 && info.Size() > limit {
+		return nil, fmt.Errorf("release entry exceeds the size limit")
 	}
 	reader := io.Reader(file)
 	if limit >= 0 {
@@ -291,35 +299,22 @@ timeout = 600
 `, strconv.Quote(command("codex", "PostToolUse")), strconv.Quote(command("codex", "Stop")))
 	opencode := fmt.Sprintf(`const hook = %s;
 const invoke = async (event, payload) => {
-  const child = Bun.spawn([hook, "hook", "event", "--adapter", "opencode", "--event", event], {
-    stdin: new Blob([JSON.stringify(payload)]), stdout: "pipe", stderr: "ignore", env: process.env,
-  });
-  const output = await new Response(child.stdout).text();
-  const code = await child.exited;
-  let status = "unknown";
-  try { status = JSON.parse(output).status ?? "unknown"; } catch {}
-  return { code, status };
+  try {
+    const child = Bun.spawn([hook, "hook", "event", "--adapter", "opencode", "--event", event], {
+      stdin: new Blob([JSON.stringify(payload)]), stdout: "pipe", stderr: "ignore", env: process.env,
+    });
+    await Promise.all([new Response(child.stdout).text(), child.exited]);
+  } catch {
+    // PostToolUse is a best-effort progress signal. The absolute launcher owns
+    // synchronous final Stop authority and fails closed independently.
+  }
 };
 export const RadioactiveRalphEnforcement = async () => ({
   "tool.execute.after": async (input) => {
-    const result = await invoke("PostToolUse", { hook_event_name: "PostToolUse", session_id: input.sessionID });
-    if (result.code !== 0) throw new Error("Radioactive Ralph progress recording failed.");
-  },
-  event: async ({ event }) => {
-    if (event.type !== "session.idle") return;
-    for (let attempt = 0; attempt < %d; attempt++) {
-      const result = await invoke("Stop", { hook_event_name: "Stop", session_id: event.properties.sessionID });
-      if (result.code === 0) return;
-      if (result.status !== "verification_started" && result.status !== "verification_pending") {
-        throw new Error("Radioactive Ralph completion verification did not pass.");
-      }
-      console.error("[radioactive-ralph] completion verification pending");
-      await Bun.sleep(2000);
-    }
-    throw new Error("Radioactive Ralph completion verification timed out.");
+    await invoke("PostToolUse", { hook_event_name: "PostToolUse", session_id: input.sessionID });
   },
 });
-`, strconv.Quote(executable), openCodePollAttempts)
+`, strconv.Quote(executable))
 	return map[string][]byte{
 		"claude-hooks.json":  append(claudeJSON, '\n'),
 		"codex-hooks.toml":   []byte(codex),

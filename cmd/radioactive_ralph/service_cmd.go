@@ -77,6 +77,7 @@ func applyServiceHelpForPlatform(cmd *cobra.Command, goos string) {
 func newServiceInstallCmd() *cobra.Command {
 	var ralphBin string
 	var envPairs []string
+	var inheritShellEnv bool
 	cmd := &cobra.Command{
 		Use:          "install",
 		Short:        "Install the supervisor as a per-user auto-restarting service",
@@ -94,6 +95,18 @@ func newServiceInstallCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			if inheritShellEnv {
+				shellEnv, err := captureLoginShellEnv()
+				if err != nil {
+					return fmt.Errorf("capture login shell environment: %w", err)
+				}
+				// Shell env is the BASE; explicit --env overrides win on top.
+				for k, v := range shellEnv {
+					if _, explicit := extraEnv[k]; !explicit {
+						extraEnv[k] = v
+					}
+				}
+			}
 			if _, configured := extraEnv[maxParallelEnv]; configured {
 				if _, err := supervisorMaxParallel(func(key string) (string, bool) {
 					value, ok := extraEnv[key]
@@ -105,6 +118,11 @@ func newServiceInstallCmd() *cobra.Command {
 			if _, explicitlySet := extraEnv["PATH"]; !explicitlySet {
 				if inferredPath := serviceExecutionPath(bin, os.Getenv("PATH")); inferredPath != "" {
 					extraEnv["PATH"] = inferredPath
+				}
+			}
+			if _, explicitlySet := extraEnv["HOME"]; !explicitlySet {
+				if home, err := os.UserHomeDir(); err == nil {
+					extraEnv["HOME"] = home
 				}
 			}
 			opts := service.InstallOptions{RalphBin: bin, ExtraEnv: extraEnv}
@@ -131,6 +149,7 @@ func newServiceInstallCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&ralphBin, "bin", "", "path to the radioactive_ralph binary the service should exec (default: this process's own executable path)")
 	cmd.Flags().StringArrayVar(&envPairs, "env", nil, "extra KEY=VALUE environment variable for the service unit (repeatable)")
+	cmd.Flags().BoolVar(&inheritShellEnv, "inherit-shell-env", false, "capture the user's login shell environment and bake it into the service unit, so provider CLIs (claude, codex, opencode, agy) inherit the same HOME, PATH, keyring access, and env vars they'd get in a terminal")
 	return cmd
 }
 
@@ -193,6 +212,64 @@ func parseEnvPairs(pairs []string) (map[string]string, error) {
 		out[k] = v
 	}
 	return out, nil
+}
+
+// captureLoginShellEnv runs the user's login shell non-interactively to
+// capture the full environment a provider CLI would see in a terminal. This
+// is what makes `--inherit-shell-env` work: launchd starts agents with a
+// minimal environment (no HOME unless we set it, no PATH to Homebrew, no
+// keychain access context, no env vars from .zshrc/.bash_profile). Provider
+// CLIs — claude, codex, opencode, agy — all store auth credentials under
+// $HOME or in the macOS keychain, and several read config from env vars set
+// in the user's shell profile. Without the login environment, they can't
+// find their credentials and fail with opaque auth errors.
+//
+// The captured env is the BASE layer; explicit --env flags override on top,
+// so an operator can still pin a specific PATH or HOME while inheriting
+// everything else from the shell.
+//
+// A controlled set of variables is excluded: shell-internal state (SHLVL,
+// _), session-specific values (OLDPWD, PWD), and variables that are
+// meaningless to a background service (TERM, SSH_*, DISPLAY, WINDOWID).
+func captureLoginShellEnv() (map[string]string, error) {
+	output, err := captureLoginShellEnvRaw()
+	if err != nil {
+		return nil, err
+	}
+	env := map[string]string{}
+	for _, line := range strings.Split(string(output), "\n") {
+		if line == "" {
+			continue
+		}
+		k, v, ok := strings.Cut(line, "=")
+		if !ok || k == "" {
+			continue
+		}
+		if shouldExcludeFromShellEnv(k) {
+			continue
+		}
+		env[k] = v
+	}
+	return env, nil
+}
+
+// shellEnvExclude lists variables that are shell-internal, session-specific,
+// or meaningless to a background service. Excluding them keeps the service
+// unit clean and avoids overriding values launchd/systemd already set
+// correctly (like the service's own PWD).
+var shellEnvExclude = map[string]bool{
+	"SHLVL": true, "_": true, "OLDPWD": true, "PWD": true,
+	"TERM": true, "TERM_SESSION_ID": true,
+	"SSH_AUTH_SOCK": true, "SSH_CONNECTION": true,
+	"DISPLAY": true, "WINDOWID": true, "ITERM_PROFILE": true,
+	"ITERM_SESSION_ID": true, "__CFBundleIdentifier": true,
+	"LSCOLORS": true, "FPATH": true,
+	// launchd sets these itself; don't let the shell's values clobber them.
+	"LAUNCHED_BY": true,
+}
+
+func shouldExcludeFromShellEnv(key string) bool {
+	return shellEnvExclude[key]
 }
 
 func newServiceUninstallCmd() *cobra.Command {

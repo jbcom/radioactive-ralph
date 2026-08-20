@@ -240,7 +240,7 @@ func defaultCodexProvider() BindingConfig {
 
 // defaultOpencodeProvider is opencode's capability record.
 //
-// NativeFanout: true. Evidence (installed `opencode` 1.18.3 on
+// NativeFanout: true. Historical evidence (installed `opencode` 1.18.3 on
 // 2026-07-16): `opencode run --agent <agent>` selects among agents, and
 // `opencode agent create`/`opencode agent list` manage a native
 // multi-agent surface independent of Ralph's own worker-spawning — the CLI
@@ -261,16 +261,25 @@ func defaultOpencodeProvider() BindingConfig {
 	}
 }
 
-// defaultAgyProvider exists only for tests/documentation purposes: the agy
-// spike (see agy.go) concluded `agy --print` is NOT local-only — it drives
-// a cloud-backed Cloud Code/Antigravity conversation
-// (cloudcode-pa.googleapis.com) and fails without a resolvable cloud
-// project ID even when a model is pinned. Per spec §9 ("local-only" = no
-// cloud control surface in the loop), agy is therefore Unknown, not
-// Supported, and NO runner is registered for it (see agentdetect.Detect).
-// This constructor is kept only so the capability-record shape and
-// evidence are documented in one place next to its siblings; NewRunner
-// deliberately does not wire it up.
+// defaultAgyProvider is agy's capability record. agy is a local-only
+// provider (tool execution and file I/O are local; inference is served
+// from Google's cloud, same as claude/codex use their hosted endpoints).
+// See agy.go for the full correction of the initial spike's
+// misclassification.
+//
+// WritePaths: agy stores conversation state, cache, and logs under
+// ~/.gemini/antigravity-cli/, which must be writable under containment.
+//
+// No runner is registered yet (NewRunner does not wire an AgyRunner) — the
+// stream-json framing differs from opencode's and needs a dedicated
+// parser. The capability record exists so doctor/detection report agy
+// correctly and so a future runner can be wired without re-deriving the
+// binding shape.
 func defaultAgyProvider() BindingConfig {
-	return BindingConfig{Type: "agy", Binary: "agy", NativeFanout: false}
+	return BindingConfig{
+		Type:         "agy",
+		Binary:       "agy",
+		NativeFanout: false,
+		WritePaths:   []string{"~/.gemini/antigravity-cli"},
+	}
 }

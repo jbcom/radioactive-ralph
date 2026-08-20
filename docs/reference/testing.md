@@ -116,6 +116,20 @@ supported CLI is detected on `PATH`. Default CI never depends on a live
 provider account; release validation is stricter and should pass without
 provider skips for the shipped bindings before a stable tag.
 
+Set `RALPH_OPENCODE_ADAPTER_LIVE=1` to run the separately gated OpenCode
+completion-authority probe. The operator's OpenCode 1.18.18 installation must
+already be authenticated. The probe is Unix-only and unavailable on Windows;
+it proves unmanaged passthrough, unavailable-supervisor failure, no-tool Stop,
+tool progress plus Stop, sanitized `PATH`, and secret-blind output through a
+fresh isolated adapter bundle. Hermetic launcher tests separately prove the
+normal started-to-pending-to-passed polling sequence, bounded pending timeout,
+context cancellation, progress inside a short resolved stall lease, removal of
+the unmanaged real-state write grant, a synchronous initial heartbeat with a
+bounded recurring cadence, per-launch runtime uniqueness/cleanup, preservation
+of the documented auth file without output, and the exact two launch-private
+bootstrap paths added to a contained turn. Version drift fails closed and requires review
+before the pinned probe is updated.
+
 ## Current test focus
 
 - `internal/store` schema/migration correctness and spend accounting
