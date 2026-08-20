@@ -93,14 +93,34 @@ pty at all, execs `wsl.exe -d <distro> -- <cmd>` via plain `os/exec`, wired thro
 needed in the shared `agent.go` — this sidesteps the `ptyFile` interface refactor an earlier,
 abandoned ConPTY attempt required, because there is no pty here at all, just ordinary process I/O.
 
-### Windows-side authentication carries over via WSL interop (untested, high-confidence)
+### Windows-side authentication carries over via WSL interop (confirmed 2026-08-20)
 
-WSL2's interop lets a Linux-side process invoke a Windows `.exe` transparently (via `/mnt/c/...`
-or PATH interop), with real Linux-side process/pipe semantics governing the invocation even though
-the actual binary executing is the Windows one. This means the *actual* `claude`/`codex`/`copilot`
-CLI can be the existing Windows-side, already-authenticated install — no separate install or
-re-authentication inside the Ralph distro. Needs empirical verification before relying on it, but
-is the natural next step once basic distro dispatch is proven.
+Verified directly against a real, disposable `wsl.exe --import` of this repo's own
+`packaging/wsl/rootfs.tar.gz` (imported, tested, `--unregister`'d — not the release-managed
+distro): WSL2 interop registers Windows PE binaries in `binfmt_misc` (`WSLInterop`, magic `4d5a`),
+and `/mnt/c/...` is mounted per `wsl.conf`'s `[automount]`, so a Windows-side, already-authenticated
+`claude`/`copilot` install genuinely is reachable from inside the distro without a separate
+Linux-side install or re-auth. `/mnt/c/Windows/System32/cmd.exe /c "echo ..."` and a piped-stdin
+`findstr .` both round-tripped cleanly (data delivered, clean EOF, exit 0) — the same
+plain-pipe/no-ConPTY semantics this design's Windows→WSL direction already relies on, just in
+reverse.
+
+**Real gotcha, found empirically, not by reasoning**: `claude`/`copilot`'s actual Windows CLI
+entry point is an npm-generated `.cmd` shim (a plain batch script), not a PE `.exe` — and
+`binfmt_misc` only recognizes the `MZ` PE header. Invoking a `.cmd` shim's `/mnt/c/...` path
+*directly* from inside WSL does **not** invoke it as a Windows program at all; the Linux shell
+tries to interpret the batch script as a POSIX shell script instead, and **fails silently with
+exit code 0**, emitting garbage (`@ECHO: not found`, etc.) that looks superficially like output.
+This is a landmine for any dispatch code that shells out to a bare command name/path expecting
+`binfmt_misc`/`appendWindowsPath` to do the right thing. The actual working invocation routes
+through `cmd.exe /c "<path> <args>"` explicitly (confirmed: printed the real installed
+`2.1.237 (Claude Code)` version, not a stub) — any future interop-dispatch provider path must do
+the same, never a bare exec of the `.cmd` path.
+
+Not yet built: an actual provider-dispatch mode that uses this (today's `internal/agent` Windows
+path only dispatches *into* the distro; it does not yet reach back out to Windows-side CLIs from
+inside it). That's a distinct, separable feature — the open question below is now "how", not
+"whether".
 
 ## What this does NOT change
 
@@ -122,7 +142,11 @@ is the natural next step once basic distro dispatch is proven.
    existing "service platform" WARN.
 3. How the supervisor decides *when* to provision the distro (first native-Windows dispatch
    attempt vs. eagerly at `--init`).
-4. Interop-based Windows-side CLI invocation (see above) needs its own empirical validation pass.
+4. Interop-based Windows-side CLI invocation is now confirmed viable (see above, including the
+   `.cmd`-shim/`cmd.exe` gotcha) but not yet implemented as an actual dispatch mode — needs its
+   own design/PR to decide whether it's a `provider` option, a doctor-detected fallback, or
+   opt-in config, plus whether the `.cmd`-shim quoting/escaping through `cmd.exe /c` is robust
+   enough for arbitrary prompt content (only tested with trivial args so far).
 
 `github.com/ubuntu/gowsl` cloned to `Reference-Repos/GoWSL` for its docs/examples; its
 `examples/demo.go` confirms `Distro.Register(rootFsPath string)` takes exactly the kind of tarball
