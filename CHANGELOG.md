@@ -13,6 +13,66 @@ shipped. That means historical sections may still mention MCP, plugins,
 supervisors, or the archived Python implementation even though those are no
 longer part of the live contract.
 
+## [0.34.0](https://github.com/jbcom/radioactive-ralph/compare/v0.33.1...v0.34.0) (2026-08-20)
+
+
+### Features
+
+* add canonical cross-adapter enforcement policy ([#375](https://github.com/jbcom/radioactive-ralph/issues/375)) ([cabf63f](https://github.com/jbcom/radioactive-ralph/commit/cabf63f4a7394a3626df30c50e9ac07e32ae9c95))
+* add generated completion-enforcement adapters ([#378](https://github.com/jbcom/radioactive-ralph/issues/378)) ([306d618](https://github.com/jbcom/radioactive-ralph/commit/306d618dcf2c35999dad05b72b0ac90bc41ea233))
+* **cli:** add --plan to status, so a recent run stays readable ([#340](https://github.com/jbcom/radioactive-ralph/issues/340)) ([b84dbc9](https://github.com/jbcom/radioactive-ralph/commit/b84dbc975992f7d518ba84e3f54477e70e278184))
+* **cli:** add `plan delete`, wiring store.DeletePlan to an operator surface ([#339](https://github.com/jbcom/radioactive-ralph/issues/339)) ([f5bbac2](https://github.com/jbcom/radioactive-ralph/commit/f5bbac2f4f86434d9079d7ad7967f9e9a4308c87))
+* **cli:** list tasks in status output, and make the meso row readable ([#305](https://github.com/jbcom/radioactive-ralph/issues/305)) ([2d6cf70](https://github.com/jbcom/radioactive-ralph/commit/2d6cf70d06fbe8e73eca9109dd7ba4e2d150925a))
+* **cli:** say why a failed task failed ([#308](https://github.com/jbcom/radioactive-ralph/issues/308)) ([fba85ce](https://github.com/jbcom/radioactive-ralph/commit/fba85ce8bf81bcb2487ac3e67f48ff587c419ed5))
+* **contain:** default provider write containment ON ([#292](https://github.com/jbcom/radioactive-ralph/issues/292)) ([881c381](https://github.com/jbcom/radioactive-ralph/commit/881c3810a4ecc0e0c63d139a788cfb21d9a25900))
+* **contain:** kernel-enforced write containment for provider processes (macOS + Linux) ([#251](https://github.com/jbcom/radioactive-ralph/issues/251)) ([2311009](https://github.com/jbcom/radioactive-ralph/commit/23110099c3db5275280c85401f227a61111054e5))
+* **contain:** per-provider write allowances ([#296](https://github.com/jbcom/radioactive-ralph/issues/296) first half) ([#297](https://github.com/jbcom/radioactive-ralph/issues/297)) ([a22c847](https://github.com/jbcom/radioactive-ralph/commit/a22c8470f6a6c6bdc91ec1ff29ca253819c5e8d9))
+* **ipc:** let an operator record a provider calibration ([#263](https://github.com/jbcom/radioactive-ralph/issues/263)) ([9fe7d33](https://github.com/jbcom/radioactive-ralph/commit/9fe7d33bd249aeafaa092108364d470ec40e46a6))
+* **observe:** flag a plan that has no runnable work left ([#310](https://github.com/jbcom/radioactive-ralph/issues/310)) ([c865b98](https://github.com/jbcom/radioactive-ralph/commit/c865b989c6c669ccc843ee3234e63c163fb8a6a7))
+* **observe:** follow the dependency chain to the root failure ([#309](https://github.com/jbcom/radioactive-ralph/issues/309)) ([656496b](https://github.com/jbcom/radioactive-ralph/commit/656496bb8bc548f06aee76af5195c7dbc4535893))
+* **observe:** name the dependency that makes a task unreachable ([#307](https://github.com/jbcom/radioactive-ralph/issues/307)) ([59150e9](https://github.com/jbcom/radioactive-ralph/commit/59150e9b38a8a37fce8550688906eb29a76aabf9))
+* **observe:** project per-task provenance and ready-partition identity ([#304](https://github.com/jbcom/radioactive-ralph/issues/304)) ([6ea0489](https://github.com/jbcom/radioactive-ralph/commit/6ea0489c2a87f81c3023c5ba31fd455a0057b111))
+* **operator:** name the reclaim cause on the task row ([#323](https://github.com/jbcom/radioactive-ralph/issues/323)) ([ecf856f](https://github.com/jbcom/radioactive-ralph/commit/ecf856fe9a89a44f4fc3d037d3e96498e1fb44a4))
+* **orch:** dispatch walks the dependency graph ([#225](https://github.com/jbcom/radioactive-ralph/issues/225)) ([5f32231](https://github.com/jbcom/radioactive-ralph/commit/5f3223131a0ac0c82a0b90fccfd3cb364f753d59))
+* **orch:** enforce differentFrom at dispatch ([#272](https://github.com/jbcom/radioactive-ralph/issues/272)) ([bf77756](https://github.com/jbcom/radioactive-ralph/commit/bf777569ce4ce8740006f4cb7f8431973535b176))
+* **orch:** name a verification timeout instead of leaking a bare deadline ([#335](https://github.com/jbcom/radioactive-ralph/issues/335)) ([772cfca](https://github.com/jbcom/radioactive-ralph/commit/772cfcae0b4cf5627077b34e074e0d23d66ce1f1))
+* **orch:** record concurrent load on a failed turn ([#342](https://github.com/jbcom/radioactive-ralph/issues/342)) ([5d4a1f3](https://github.com/jbcom/radioactive-ralph/commit/5d4a1f36f67e9b8f168331b5660c54bee45b660b))
+* **orch:** record what each task actually ran on ([#262](https://github.com/jbcom/radioactive-ralph/issues/262)) ([10f1b51](https://github.com/jbcom/radioactive-ralph/commit/10f1b5170416f4e5ab71783e1dcda6cd5969d8a2))
+* **orch:** report dispatch-slot saturation instead of returning silently ([#257](https://github.com/jbcom/radioactive-ralph/issues/257)) ([05f547b](https://github.com/jbcom/radioactive-ralph/commit/05f547b4cb62540160adcf384d58f4962d34005d))
+* **orch:** wire the decision log into dispatch ([#336](https://github.com/jbcom/radioactive-ralph/issues/336)) ([a174f1e](https://github.com/jbcom/radioactive-ralph/commit/a174f1e52e49973b1c676317e0ab82242c4b71c6))
+* **plan:** enforce a declared per-task binding at dispatch ([#283](https://github.com/jbcom/radioactive-ralph/issues/283)) ([fab28dd](https://github.com/jbcom/radioactive-ralph/commit/fab28dd5ee7aca5e33f8fce9ff7037eeaa612284))
+* **plan:** validate differentFrom references at import ([#259](https://github.com/jbcom/radioactive-ralph/issues/259)) ([fde2352](https://github.com/jbcom/radioactive-ralph/commit/fde2352090b9082e091d2c481d3a39e39dc6f80e))
+* provider cooldown tracking, shell env inheritance, and binding model overrides ([#380](https://github.com/jbcom/radioactive-ralph/issues/380)) ([1bdae62](https://github.com/jbcom/radioactive-ralph/commit/1bdae6252b8e2793381ab3c8fa9556352778f62a))
+* **provider:** classify what an interactive block asked for ([#347](https://github.com/jbcom/radioactive-ralph/issues/347)) ([0f53c8b](https://github.com/jbcom/radioactive-ralph/commit/0f53c8b4b1437eb386dea543033f200013a058e4))
+* **provider:** declare per-binding containment capability, and honor it ([#290](https://github.com/jbcom/radioactive-ralph/issues/290)) ([ee6b1f8](https://github.com/jbcom/radioactive-ralph/commit/ee6b1f835d286bf48ac2bef835fd0af923fdfa9e))
+* **provider:** declare per-provider write paths; codex and opencode run contained ([#298](https://github.com/jbcom/radioactive-ralph/issues/298)) ([23694c3](https://github.com/jbcom/radioactive-ralph/commit/23694c3292d8bfc526841c80e257931d13d79c81))
+* **scripts:** a real self-test that has Ralph verify Ralph ([#311](https://github.com/jbcom/radioactive-ralph/issues/311)) ([0daabd9](https://github.com/jbcom/radioactive-ralph/commit/0daabd9c7bd1fab12c567c267e033dd25b7ff1e8))
+* **store:** add DeletePlan, the retention primitive accumulation needs ([#319](https://github.com/jbcom/radioactive-ralph/issues/319)) ([9df0b85](https://github.com/jbcom/radioactive-ralph/commit/9df0b85a5093fcc5c2314c10817002a7c04e9656))
+* **store:** decide that reclaims do not consume retry budget ([#328](https://github.com/jbcom/radioactive-ralph/issues/328)) ([9e5838e](https://github.com/jbcom/radioactive-ralph/commit/9e5838e9d1538d2dac56bfc5e934a63f2272d09b))
+* **store:** partition a ready wave by declared binding, not group alone ([#282](https://github.com/jbcom/radioactive-ralph/issues/282)) ([c621409](https://github.com/jbcom/radioactive-ralph/commit/c62140998c05d6158e0ba5654f2f6834df9c3751))
+* **store:** report attempts a reclaimed task actually got ([#327](https://github.com/jbcom/radioactive-ralph/issues/327)) ([4f648a7](https://github.com/jbcom/radioactive-ralph/commit/4f648a7e15e5b7acdb1e7998932195a54ec77ea6))
+
+
+### Bug Fixes
+
+* **agent:** bound session cleanup in wall-clock time, not poll attempts ([#275](https://github.com/jbcom/radioactive-ralph/issues/275)) ([adf21cd](https://github.com/jbcom/radioactive-ralph/commit/adf21cdbe84b7af30c18ce56c5d8e5e71abdc5a7)), closes [#273](https://github.com/jbcom/radioactive-ralph/issues/273)
+* **agent:** stop reporting a reaped process as a leaked session member ([#364](https://github.com/jbcom/radioactive-ralph/issues/364)) ([435b049](https://github.com/jbcom/radioactive-ralph/commit/435b049471b71cf2e8a636be1dc6215481838d13))
+* **ci:** survive a stale disk image when creating the DMG ([#361](https://github.com/jbcom/radioactive-ralph/issues/361)) ([948afe3](https://github.com/jbcom/radioactive-ralph/commit/948afe379b1d417605937a9147ce077e9f2b2163))
+* enforce OpenCode completion through managed launcher ([#379](https://github.com/jbcom/radioactive-ralph/issues/379)) ([2b4e27a](https://github.com/jbcom/radioactive-ralph/commit/2b4e27aa4aefffb2d522fdaf45818020fa084c56))
+* **observe:** only partition a task that is actually dispatchable ([#306](https://github.com/jbcom/radioactive-ralph/issues/306)) ([c6ccb02](https://github.com/jbcom/radioactive-ralph/commit/c6ccb02b10c62ab399508a2ce91bc9823c7eae10))
+* **orch:** refuse the real state root under test ([#353](https://github.com/jbcom/radioactive-ralph/issues/353)) ([ba561db](https://github.com/jbcom/radioactive-ralph/commit/ba561db181caa3a6176b882583223bf2e508c30f))
+* **packaging:** retry the appimagetool download, never the verification ([#270](https://github.com/jbcom/radioactive-ralph/issues/270)) ([0cd0166](https://github.com/jbcom/radioactive-ralph/commit/0cd0166bcaed20fade11171aa0a0844ba999ca90))
+* **provider:** categorize a claude failure that carries no api_error_status ([#278](https://github.com/jbcom/radioactive-ralph/issues/278)) ([e42e3ab](https://github.com/jbcom/radioactive-ralph/commit/e42e3ab762becb69a808cce8331fdd26968a644a))
+* **provider:** match a question asked, not a word mentioned ([#356](https://github.com/jbcom/radioactive-ralph/issues/356)) ([49817c4](https://github.com/jbcom/radioactive-ralph/commit/49817c4fcd09b5b946ddd20cd99f57763df96e56))
+* **provider:** send `message`, not `Message`, on claude's stream-json stdin ([#281](https://github.com/jbcom/radioactive-ralph/issues/281)) ([94b7955](https://github.com/jbcom/radioactive-ralph/commit/94b79553bb2a1ce7646d4a79bd345dbe91f618ff))
+* **review:** render the attempt label outside the reclaim branch ([#332](https://github.com/jbcom/radioactive-ralph/issues/332)) ([8dcac37](https://github.com/jbcom/radioactive-ralph/commit/8dcac37719309b2851698d1ce9067ee80176d1a3))
+* **scripts:** do not count a queue-superseded failure as actionable ([#271](https://github.com/jbcom/radioactive-ralph/issues/271)) ([28adeff](https://github.com/jbcom/radioactive-ralph/commit/28adeff515828c3b0c761adbb8200ab7f26e6537))
+* **scripts:** re-check a failing PR before halting the driver ([#268](https://github.com/jbcom/radioactive-ralph/issues/268)) ([5c5159a](https://github.com/jbcom/radioactive-ralph/commit/5c5159a2ed69d6098db86954f2e43d1aac79b942))
+* **self-test:** import a fresh run each time, not a stale one ([#312](https://github.com/jbcom/radioactive-ralph/issues/312)) ([f2e622d](https://github.com/jbcom/radioactive-ralph/commit/f2e622dc4c17013255de3cb439a244aa4a906ecd))
+* **self-test:** renew the progress lease on long silent steps ([#322](https://github.com/jbcom/radioactive-ralph/issues/322)) ([c65e1af](https://github.com/jbcom/radioactive-ralph/commit/c65e1affe07f4b75471d6599815cd1fe368f1099))
+* **self-test:** report tracked edits even when the run fails ([#316](https://github.com/jbcom/radioactive-ralph/issues/316)) ([07a469c](https://github.com/jbcom/radioactive-ralph/commit/07a469c9667bbb9d06c4270cd08ea310a58d8347))
+* tighten prompt detection and API contracts ([#376](https://github.com/jbcom/radioactive-ralph/issues/376)) ([5df8ae5](https://github.com/jbcom/radioactive-ralph/commit/5df8ae5b404313f8db98f0413a410bfe6d0884f5))
+
 ## [0.33.1](https://github.com/jbcom/radioactive-ralph/compare/v0.33.0...v0.33.1) (2026-07-28)
 
 
