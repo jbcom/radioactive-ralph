@@ -32,9 +32,17 @@ func skipIfProcEnvironRestricted(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		return
 	}
-	self := strconv.Itoa(os.Getpid())
-	if _, err := os.ReadFile(filepath.Join("/proc", self, "environ")); err != nil {
-		t.Skipf("kernel restricts /proc/PID/environ: %v", err)
+	// /proc/self/environ is always readable; the restriction is on OTHER
+	// processes' environ. Check YAMA ptrace_scope directly: if > 0, we cannot
+	// read environ of processes in other sessions.
+	scope, err := os.ReadFile("/proc/sys/kernel/yama/ptrace_scope")
+	if err != nil {
+		// If the file doesn't exist, assume no restriction.
+		return
+	}
+	val := strings.TrimSpace(string(scope))
+	if val != "0" {
+		t.Skipf("YAMA ptrace_scope=%s restricts /proc/PID/environ across sessions", val)
 	}
 }
 

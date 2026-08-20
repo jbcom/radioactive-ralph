@@ -5,8 +5,7 @@ package agent
 import (
 	"os"
 	"os/exec"
-	"path/filepath"
-	"strconv"
+	"runtime"
 	"strings"
 	"syscall"
 	"testing"
@@ -24,19 +23,28 @@ func TestReclaimProcessScopeRejectsMalformedInputWithoutEcho(t *testing.T) {
 	}
 }
 
-// linuxEnvironReadable reports whether /proc/self/environ is readable for
+// linuxEnvironReadable reports whether /proc/PID/environ is readable for
 // processes in other sessions. On GitHub Actions runners (YAMA ptrace_scope=1),
 // /proc/PID/environ is EACCES after Setsid(), so the reclaim test cannot
 // verify the scope marker. Skip rather than fail on a restricted kernel.
 func linuxEnvironReadable(t *testing.T) {
 	t.Helper()
 	// Only relevant on Linux; Darwin uses sysctl, not /proc.
-	if filepath.Separator != '/' {
+	if runtime.GOOS != "linux" {
 		return
 	}
-	self := strconv.Itoa(os.Getpid())
-	if _, err := os.ReadFile(filepath.Join("/proc", self, "environ")); err != nil {
-		t.Skipf("kernel restricts /proc/PID/environ: %v", err)
+	// /proc/self/environ is always readable; the restriction is on OTHER
+	// processes' environ. Check YAMA ptrace_scope directly: if > 0, we cannot
+	// read environ of processes in other sessions.
+	scope, err := os.ReadFile("/proc/sys/kernel/yama/ptrace_scope")
+	if err != nil {
+		// If the file doesn't exist (e.g. macOS), don't skip — the restriction
+		// is Linux-specific. Only skip on Linux when the file is missing.
+		return
+	}
+	val := strings.TrimSpace(string(scope))
+	if val != "0" {
+		t.Skipf("YAMA ptrace_scope=%s restricts /proc/PID/environ across sessions", val)
 	}
 }
 
