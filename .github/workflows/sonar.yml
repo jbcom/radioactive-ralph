@@ -1,6 +1,7 @@
 name: SonarQube
 
 on:
+  workflow_dispatch:
   push:
     branches: [main]
   pull_request:
@@ -13,8 +14,6 @@ permissions:
 jobs:
   analyze:
     name: SonarQube analysis
-    # The repository is ready for SonarQube Cloud. It remains intentionally
-    # inert until an administrator supplies the project identity and token.
     if: vars.SONAR_PROJECT_KEY != '' && vars.SONAR_ORGANIZATION != ''
     runs-on: ubuntu-latest
     env:
