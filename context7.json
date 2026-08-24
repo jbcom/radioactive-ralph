@@ -1,0 +1,13 @@
+{
+  "$schema": "https://context7.com/schema/context7.json",
+  "projectTitle": "Radioactive Ralph",
+  "description": "A durable local supervisor for non-interactive coding-agent work, with a read-only client and plan-verified completion.",
+  "branch": "main",
+  "folders": ["docs"],
+  "excludeFolders": ["docs/dist", "docs/node_modules"],
+  "rules": [
+    "Radioactive Ralph has one mutating supervisor and a dumb read-only client; do not describe personas or plugin variants.",
+    "Agent CLIs run non-interactively under Ralph-owned PTYs; durable plan state belongs in the user-level SQLite store, never in a repository runtime directory.",
+    "Plan completion is orchestrator-verified against acceptance criteria, not inferred from worker termination."
+  ]
+}
