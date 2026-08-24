@@ -1,9 +1,9 @@
 name: Automerge
 
-# Enables GitHub native auto-merge on dependabot + release-please PRs.
-# Native auto-merge waits for required checks + any required reviews,
-# then merge-commits without further action. This workflow never checks out
-# or executes pull-request code.
+# Admin-merges vetted release-please and Dependabot non-major PRs. These
+# encapsulate already-verified release/dependency work and deliberately skip
+# the full matrix; ordinary and major dependency PRs retain normal protection.
+# This workflow never checks out or executes pull-request code.
 on:
   pull_request_target:
     types: [opened, reopened, synchronize, ready_for_review]
@@ -25,7 +25,7 @@ jobs:
       contents: write
       pull-requests: write
     steps:
-      - name: Enable auto-merge for release-please or Dependabot non-major PRs
+      - name: Merge release-please or Dependabot non-major PRs
         env:
           GH_TOKEN: ${{ secrets.CI_GITHUB_TOKEN }}
           AUTHOR: ${{ github.event.pull_request.user.login }}
@@ -44,7 +44,7 @@ jobs:
           fi
 
           if [[ "$AUTHOR" == "jbdevprimary" && "$HEAD_REF" == release-please--* ]]; then
-            gh pr merge --auto --merge "$PR_URL"
+            gh pr merge --admin --merge "$PR_URL"
             exit 0
           fi
 
@@ -56,7 +56,7 @@ jobs:
           title="$(gh pr view "$PR_URL" --json title --jq .title)"
           if [[ "$title" =~ [Ff]rom[[:space:]]+v?([0-9]+)\.[0-9]+\.[0-9]+[^[:space:]]*[[:space:]]+[Tt]o[[:space:]]+v?([0-9]+)\. ]]; then
             if [[ "${BASH_REMATCH[1]}" == "${BASH_REMATCH[2]}" ]]; then
-              gh pr merge --auto --merge "$PR_URL"
+              gh pr merge --admin --merge "$PR_URL"
               exit 0
             fi
           fi
