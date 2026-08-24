@@ -2,7 +2,7 @@ name: Automerge
 
 # Enables GitHub native auto-merge on dependabot + release-please PRs.
 # Native auto-merge waits for required checks + any required reviews,
-# then squash-merges without further action. This workflow never checks out
+# then merge-commits without further action. This workflow never checks out
 # or executes pull-request code.
 on:
   pull_request:
@@ -29,8 +29,8 @@ jobs:
       contents: write
       pull-requests: write
     steps:
-      - name: Enable auto-merge (squash)
+      - name: Enable auto-merge (merge commit)
         env:
           GH_TOKEN: ${{ github.token }}
           PR_URL: ${{ github.event.pull_request.html_url }}
-        run: gh pr merge --auto --squash "$PR_URL"
+        run: gh pr merge --auto --merge "$PR_URL"
