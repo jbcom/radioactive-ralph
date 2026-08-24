@@ -1,13 +1,21 @@
 version: 2
 updates:
-  # The supported runtime is the repo-root Go module. The retained site/ and
-  # reference/ sources are intentionally non-installable historical archives.
+  # Keep both supported dependency surfaces current: the Go binary and the
+  # Sourcey documentation site.
   - package-ecosystem: gomod
     directory: /
     schedule:
       interval: weekly
     groups:
       minor-and-patch:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+  - package-ecosystem: npm
+    directory: /docs
+    schedule:
+      interval: weekly
+    groups:
+      docs:
         patterns: ["*"]
         update-types: ["minor", "patch"]
   - package-ecosystem: github-actions

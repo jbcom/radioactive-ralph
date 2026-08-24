@@ -768,7 +768,6 @@ jobs:
             scripts/verify-repo-claims.sh \
             scripts/self-test.sh \
             scripts/drive-open-prs.sh \
-            scripts/generate-api-docs.sh \
             scripts/record-demo.sh \
             scripts/validate-docs.sh \
             scripts/ci/smoke_launchd.sh \

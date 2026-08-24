@@ -32,9 +32,6 @@ RETIRED_INSTALL_SURFACES=(
   docs/api
   docs/conf.py
   docs/requirements.lock
-  reference/pyproject.toml
-  reference/tox.ini
-  reference/uv.lock
 )
 
 fail() {
@@ -151,7 +148,7 @@ done
 refs="$(mktemp)"
 trap 'rm -f "$refs"' EXIT
 
-search_o 'docs/plans/[A-Za-z0-9._/-]+\.md' README.md CLAUDE.md CHANGELOG.md reference docs \
+search_o 'docs/plans/[A-Za-z0-9._/-]+\.md' README.md CLAUDE.md CHANGELOG.md docs \
   | cut -d: -f3- | sort -u > "$refs"
 
 while IFS= read -r rel; do

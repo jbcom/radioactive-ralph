@@ -17,12 +17,10 @@ listed="$(sed -n '/shellcheck -x \\/,/^$/p' .github/workflows/ci.yml \
   | grep -oE '[a-z0-9/_.-]+\.sh' | sort -u)"
 # git ls-files, not `find scripts packaging docs`: a hardcoded directory list
 # makes tracked scripts elsewhere invisible to this gate, which is the same
-# blind spot one level up. Three were hiding — .claude/hooks/task-batch-flush.sh
-# and two under reference/.
+# blind spot one level up. Three were hiding, including
+# .claude/hooks/task-batch-flush.sh.
 #
-# EXCLUSIONS are explicit and justified, not incidental:
-#   reference/  — vendored prior art, not ours to fix.
-present="$(git ls-files '*.sh' | grep -vE '^reference/' | sort -u)"
+present="$(git ls-files '*.sh' | sort -u)"
 
 missing="$(comm -13 <(echo "$listed") <(echo "$present") || true)"
 if [[ -n "$missing" ]]; then
