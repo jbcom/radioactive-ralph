@@ -91,34 +91,45 @@ func extractGitHubInvocations(job string) []githubInvocation {
 			continue
 		}
 		for _, seg := range splitShellSegments(line) {
-			fields := strings.Fields(seg)
-			idx := -1
-			for i, f := range fields {
-				// Match the gh binary itself, including VAR=x gh ... and $(gh ...
-				trimmed := strings.TrimLeft(f, "\"'$(`")
-				if trimmed == "gh" {
-					idx = i
-					break
-				}
+			if invocation, ok := parseGitHubInvocation(seg); ok {
+				out = append(out, invocation)
 			}
-			if idx == -1 || idx+1 >= len(fields) {
-				continue
-			}
-			rest := fields[idx+1:]
-			var words []string
-			for _, r := range rest {
-				if !strings.HasPrefix(r, "-") {
-					words = append(words, strings.Trim(r, `"'`))
-				}
-				if len(words) == 2 {
-					break
-				}
-			}
-			sub := strings.Join(words, " ")
-			out = append(out, githubInvocation{subcommand: sub, args: rest, line: strings.TrimSpace(seg)})
 		}
 	}
 	return out
+}
+
+func parseGitHubInvocation(segment string) (githubInvocation, bool) {
+	fields := strings.Fields(segment)
+	for i, field := range fields {
+		// Match the gh binary itself, including VAR=x gh ... and $(gh ...
+		if strings.TrimLeft(field, "\"'$(`") != "gh" {
+			continue
+		}
+		if i+1 >= len(fields) {
+			return githubInvocation{}, false
+		}
+		args := fields[i+1:]
+		return githubInvocation{
+			subcommand: githubSubcommand(args),
+			args:       args,
+			line:       strings.TrimSpace(segment),
+		}, true
+	}
+	return githubInvocation{}, false
+}
+
+func githubSubcommand(args []string) string {
+	words := make([]string, 0, 2)
+	for _, arg := range args {
+		if !strings.HasPrefix(arg, "-") {
+			words = append(words, strings.Trim(arg, `"'`))
+		}
+		if len(words) == 2 {
+			break
+		}
+	}
+	return strings.Join(words, " ")
 }
 
 // splitShellSegments breaks a shell line on pipes, logical operators, and
