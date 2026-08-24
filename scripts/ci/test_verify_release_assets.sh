@@ -61,14 +61,7 @@ fi
 if [[ "$kind" == "api" ]]; then
   pattern="${*: -1}"
   pattern="${pattern#assets/}"
-  output=""
-  while (($#)); do
-    case "$1" in
-      --output) output="${2:?}"; shift 2 ;;
-      *) shift ;;
-    esac
-  done
-  [[ -n "$output" ]]
+  output="$FAKE_STATE_DIR/$pattern"
 else
   [[ "$subcommand" == "download" ]]
   pattern=""
@@ -138,6 +131,9 @@ case "$pattern" in
     fi
     ;;
 esac
+if [[ "$kind" == "api" ]]; then
+  cat "$output"
+fi
 FAKEGH
 chmod +x "$TMP/gh"
 
@@ -154,6 +150,8 @@ export EMPTY_SHA
 export GH_BIN="$TMP/gh"
 export COSIGN_BIN="$TMP/cosign"
 export RELEASE_GH_TOKEN=fake-release-token
+export FAKE_STATE_DIR="$TMP/state"
+mkdir "$FAKE_STATE_DIR"
 
 bash "$ROOT/scripts/ci/verify_release_assets.sh" 1.2.3
 

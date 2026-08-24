@@ -72,7 +72,7 @@ download_asset() {
   local asset="$1" output="$2" asset_api_url
   asset_api_url="$(jq -er --arg name "$asset" \
     '.assets[] | select(.name == $name) | .apiUrl' <<<"$release")"
-  release_gh api -H 'Accept: application/octet-stream' --output "$output" "$asset_api_url"
+  release_gh api -H 'Accept: application/octet-stream' "$asset_api_url" > "$output"
 }
 
 for asset in "${expected[@]}"; do
