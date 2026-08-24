@@ -13,6 +13,15 @@ shipped. That means historical sections may still mention MCP, plugins,
 supervisors, or the archived Python implementation even though those are no
 longer part of the live contract.
 
+## [0.35.3](https://github.com/jbcom/radioactive-ralph/compare/v0.35.2...v0.35.3) (2026-08-24)
+
+
+### Bug Fixes
+
+* **release:** inspect draft seal through gh ([2c40ca7](https://github.com/jbcom/radioactive-ralph/commit/2c40ca7047f9250775248c25591a4aba0a8bf0cf))
+* **release:** inspect draft seal through gh ([68929cd](https://github.com/jbcom/radioactive-ralph/commit/68929cda8f5e4d8e588bf57e95bd67de8ae07da3))
+* **release:** read draft promotion state through gh ([ffc16dd](https://github.com/jbcom/radioactive-ralph/commit/ffc16ddb02d32d61f8aa54110b647dcc8ef527e1))
+
 ## [0.35.2](https://github.com/jbcom/radioactive-ralph/compare/v0.35.1...v0.35.2) (2026-08-24)
 
 
