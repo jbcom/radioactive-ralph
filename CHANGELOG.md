@@ -13,6 +13,16 @@ shipped. That means historical sections may still mention MCP, plugins,
 supervisors, or the archived Python implementation even though those are no
 longer part of the live contract.
 
+## [0.35.1](https://github.com/jbcom/radioactive-ralph/compare/v0.35.0...v0.35.1) (2026-08-24)
+
+
+### Bug Fixes
+
+* avoid environment allocation overflow ([21bbb4a](https://github.com/jbcom/radioactive-ralph/commit/21bbb4af88dbfd7aa25484c339062fb1b670c8a0))
+* avoid environment allocation overflow ([a9d1937](https://github.com/jbcom/radioactive-ralph/commit/a9d193779d8aeb7f3690992c8fc4fc1526be6dcf))
+* **provider:** bound process cancellation wait ([84b5729](https://github.com/jbcom/radioactive-ralph/commit/84b5729e48b1ac0d3422bebb746a9814d134b257))
+* **release:** target GUI checksum upload ([3045cc1](https://github.com/jbcom/radioactive-ralph/commit/3045cc18e6b8f6300284244beebb6b509055f1b2))
+
 ## [0.35.0](https://github.com/jbcom/radioactive-ralph/compare/v0.34.0...v0.35.0) (2026-08-24)
 
 
