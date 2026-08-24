@@ -577,6 +577,7 @@ func TestReleaseToolingIsPinnedAndPermissionsAreLeastPrivilege(t *testing.T) {
 	signer := requireWorkflowJob(t, workflow, "sign-gui-checksums", path)
 	requireContains(t, signer, "contents: write", path)
 	requireContains(t, signer, "id-token: write", path)
+	requireContains(t, signer, `gh release upload "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY"`, path)
 	// 5 references: the admission presence check, the three immutable-release
 	// gates, and the admission draft read (which uses CI_GITHUB_TOKEN because the
 	// built-in token is contents: read and cannot see draft releases).

@@ -344,7 +344,10 @@ jobs:
             --bundle gui-checksums.txt.sigstore.json \
             gui-checksums.txt \
             --yes
-          gh release upload "$GITHUB_REF_NAME" \
+          # The signer operates in the downloaded-artifact directory, which is
+          # deliberately not a checkout. Make the release destination explicit
+          # rather than asking gh to infer it from a nonexistent .git directory.
+          gh release upload "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" \
             "${expected[@]}" \
             gui-checksums.txt \
             gui-checksums.txt.sigstore.json \
