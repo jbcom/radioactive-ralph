@@ -56,10 +56,10 @@ metadata_assets=(
 )
 expected=("${cli_assets[@]}" "${gui_assets[@]}" "${metadata_assets[@]}")
 
-actual_names="$(release_gh release view "v${VERSION}" \
+release="$(release_gh release view "v${VERSION}" \
   --repo "$RELEASE_REPO" \
-  --json assets \
-  --jq '.assets[].name' | LC_ALL=C sort)"
+  --json assets,targetCommitish)"
+actual_names="$(jq -r '.assets[].name' <<<"$release" | LC_ALL=C sort)"
 expected_names="$(printf '%s\n' "${expected[@]}" | LC_ALL=C sort)"
 [[ "$actual_names" == "$expected_names" ]] || {
   echo "release assets: uploaded asset set is not exact" >&2
@@ -68,11 +68,15 @@ expected_names="$(printf '%s\n' "${expected[@]}" | LC_ALL=C sort)"
   exit 1
 }
 
+download_asset() {
+  local asset="$1" output="$2" asset_api_url
+  asset_api_url="$(jq -er --arg name "$asset" \
+    '.assets[] | select(.name == $name) | .apiUrl' <<<"$release")"
+  release_gh api -H 'Accept: application/octet-stream' --output "$output" "$asset_api_url"
+}
+
 for asset in "${expected[@]}"; do
-  release_gh release download "v${VERSION}" \
-    --repo "$RELEASE_REPO" \
-    --pattern "$asset" \
-    --output "$work/$asset"
+  download_asset "$asset" "$work/$asset"
   [[ -f "$work/$asset" ]] || exit 1
 done
 
@@ -178,8 +182,7 @@ expected_package_names="$(printf '%s\n' \
   bucket/radioactive-ralph.json | LC_ALL=C sort)"
 [[ "$package_names" == "$expected_package_names" ]]
 
-release_target="$(release_gh release view "v${VERSION}" --repo "$RELEASE_REPO" \
-  --json targetCommitish --jq '.targetCommitish')"
+release_target="$(jq -er '.targetCommitish' <<<"$release")"
 jq -e \
   --arg version "$VERSION" \
   --arg source "$release_target" \

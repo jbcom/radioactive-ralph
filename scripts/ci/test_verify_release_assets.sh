@@ -11,13 +11,6 @@ cat > "$TMP/gh" <<'FAKEGH'
 set -euo pipefail
 kind="${1:?}"
 shift
-if [[ "$kind" == "api" ]]; then
-  printf 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n'
-  exit 0
-fi
-[[ "$kind" == "release" ]]
-subcommand="${1:?}"
-shift
 assets=(
   radioactive_ralph_1.2.3_darwin_amd64.tar.gz
   radioactive_ralph_1.2.3_darwin_arm64.tar.gz
@@ -43,27 +36,51 @@ assets=(
   release-seal.json
   release-seal.json.sigstore.json
 )
+if [[ "$kind" == "release" ]]; then
+  subcommand="${1:?}"
+  shift
+elif [[ "$kind" == "api" ]]; then
+  subcommand=api
+else
+  echo "fake gh: unexpected command $kind" >&2
+  exit 1
+fi
 if [[ "$subcommand" == "view" ]]; then
-  if [[ " $* " == *' targetCommitish '* ]]; then
-    printf 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n'
-    exit 0
-  fi
+  fixture_assets='[]'
   for asset in "${assets[@]}"; do
-    [[ "${FAKE_MISSING_ASSET:-}" == "$asset" ]] || printf '%s\n' "$asset"
+    [[ "${FAKE_MISSING_ASSET:-}" == "$asset" ]] ||
+      fixture_assets="$(jq -c --arg name "$asset" \
+        '. + [{name: $name, apiUrl: ("assets/" + $name)}]' <<<"$fixture_assets")"
   done
-  [[ "${FAKE_EXTRA_ASSET:-0}" == "1" ]] && printf 'attacker.bin\n'
+  [[ "${FAKE_EXTRA_ASSET:-0}" == "1" ]] &&
+    fixture_assets="$(jq -c '. + [{name: "attacker.bin", apiUrl: "assets/attacker.bin"}]' <<<"$fixture_assets")"
+  jq -n --arg target aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
+    --argjson assets "$fixture_assets" '{targetCommitish: $target, assets: $assets}'
   exit 0
 fi
-[[ "$subcommand" == "download" ]]
-pattern=""
-output=""
-while (($#)); do
-  case "$1" in
-    --pattern) pattern="${2:?}"; shift 2 ;;
-    --output) output="${2:?}"; shift 2 ;;
-    *) shift ;;
-  esac
-done
+if [[ "$kind" == "api" ]]; then
+  pattern="${*: -1}"
+  pattern="${pattern#assets/}"
+  output=""
+  while (($#)); do
+    case "$1" in
+      --output) output="${2:?}"; shift 2 ;;
+      *) shift ;;
+    esac
+  done
+  [[ -n "$output" ]]
+else
+  [[ "$subcommand" == "download" ]]
+  pattern=""
+  output=""
+  while (($#)); do
+    case "$1" in
+      --pattern) pattern="${2:?}"; shift 2 ;;
+      --output) output="${2:?}"; shift 2 ;;
+      *) shift ;;
+    esac
+  done
+fi
 case "$pattern" in
   checksums.txt)
     for asset in "${assets[@]:0:9}"; do
