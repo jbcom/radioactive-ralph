@@ -13,7 +13,14 @@ jobs:
     name: Auto-merge vetted release and dependency PRs
     runs-on: ubuntu-latest
     if: >
-      github.repository == 'jbcom/radioactive-ralph'
+      github.repository == 'jbcom/radioactive-ralph' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      (
+        (github.event.pull_request.user.login == 'dependabot[bot]' &&
+        startsWith(github.event.pull_request.head.ref, 'dependabot/')) ||
+        (github.event.pull_request.user.login == 'jbdevprimary' &&
+        startsWith(github.event.pull_request.head.ref, 'release-please--'))
+      )
     permissions:
       contents: write
       pull-requests: write
