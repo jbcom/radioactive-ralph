@@ -568,11 +568,17 @@ func TestReleaseToolingIsPinnedAndPermissionsAreLeastPrivilege(t *testing.T) {
 	requireContains(t, goreleaser, "contents: write", path)
 	requireContains(t, goreleaser, "id-token: write", path)
 
-	for _, name := range []string{"gui-bundles", "chocolatey", "verify-package-heads"} {
+	for _, name := range []string{"gui-bundles", "chocolatey"} {
 		job := requireWorkflowJob(t, workflow, name, path)
 		requireContains(t, job, "contents: read", path)
 		requireNotContains(t, job, "id-token: write", path)
 	}
+	verifyHeads := requireWorkflowJob(t, workflow, "verify-package-heads", path)
+	requireContains(t, verifyHeads, "contents: write", path)
+	requireNotContains(t, verifyHeads, "secrets.CI_GITHUB_TOKEN", path)
+	premerge := requireWorkflowJob(t, workflow, "premerge-package-smoke", path)
+	requireContains(t, premerge, "contents: write", path)
+	requireNotContains(t, premerge, "secrets.CI_GITHUB_TOKEN", path)
 	gui := requireWorkflowJob(t, workflow, "gui-bundles", path)
 	requireContains(t, gui, "actions: read", path)
 	requireNotContains(t, gui, "contents: write", path)
@@ -681,6 +687,8 @@ func TestCLIAndGUICasksHaveDistinctTokensAndFiles(t *testing.T) {
 	requireContains(t, publisher, "Casks/radioactive-ralph.rb", publisherPath)
 	requireContains(t, publisher, "bucket/radioactive-ralph.json", publisherPath)
 	requireContains(t, publisher, "package-manifests.tar.gz", publisherPath)
+	requireContains(t, publisher, `release view "v${VERSION}"`, publisherPath)
+	requireContains(t, publisher, `Accept: application/octet-stream`, publisherPath)
 	requireContains(t, publisher, `"$COSIGN_BIN" verify-blob`, publisherPath)
 	requireContains(t, publisher, `push-version-branch.sh" "$BRANCH"`, publisherPath)
 	requireNotContains(t, publisher, "git push --force-with-lease origin", publisherPath)

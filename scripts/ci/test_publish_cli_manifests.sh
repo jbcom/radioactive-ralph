@@ -33,16 +33,14 @@ cat > "$FAKE_GH" <<'FAKEGH'
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [[ "${1:-}" == "release" && "${2:-}" == "download" ]]; then
-  pattern=""
-  output=""
-  while (($#)); do
-    case "$1" in
-      --pattern) pattern="${2:?}"; shift 2 ;;
-      --output) output="${2:?}"; shift 2 ;;
-      *) shift ;;
-    esac
-  done
+if [[ "${1:-}" == "release" && "${2:-}" == "view" ]]; then
+  printf '%s\n' '{"assets":[{"name":"package-manifests.tar.gz","apiUrl":"assets/package-manifests.tar.gz"},{"name":"package-manifests.tar.gz.sigstore.json","apiUrl":"assets/package-manifests.tar.gz.sigstore.json"}]}'
+  exit 0
+fi
+
+if [[ "${1:-}" == "api" ]]; then
+  pattern="${*: -1}"
+  pattern="${pattern#assets/}"
   if [[ "$pattern" == "package-manifests.tar.gz" ]]; then
     payload="$(mktemp -d)"
     mkdir -p "$payload/Casks" "$payload/bucket"
@@ -50,12 +48,12 @@ if [[ "${1:-}" == "release" && "${2:-}" == "download" ]]; then
     printf 'cask "radioactive-ralph-gui" do\nend\n' \
       > "$payload/Casks/radioactive-ralph-gui.rb"
     printf '{"version":"1.2.3"}\n' > "$payload/bucket/radioactive-ralph.json"
-    tar -czf "$output" -C "$payload" \
+    tar -czf - -C "$payload" \
       Casks/radioactive-ralph.rb Casks/radioactive-ralph-gui.rb \
       bucket/radioactive-ralph.json
     rm -rf "$payload"
   else
-    printf '{"fixture":true}\n' > "$output"
+    printf '{"fixture":true}\n'
   fi
   exit 0
 fi
