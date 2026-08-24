@@ -13,6 +13,15 @@ shipped. That means historical sections may still mention MCP, plugins,
 supervisors, or the archived Python implementation even though those are no
 longer part of the live contract.
 
+## [0.35.5](https://github.com/jbcom/radioactive-ralph/compare/v0.35.4...v0.35.5) (2026-08-24)
+
+
+### Bug Fixes
+
+* **release:** authorize sealed draft verifier ([f8f2298](https://github.com/jbcom/radioactive-ralph/commit/f8f22985f19ba06593a6393fb54a9313db8f9e39))
+* **release:** authorize sealed draft verifier ([0ecee05](https://github.com/jbcom/radioactive-ralph/commit/0ecee05215b26c4d4831f965d024a15aa7922044))
+* **release:** scope draft verifier credential ([0e01c4b](https://github.com/jbcom/radioactive-ralph/commit/0e01c4b20b68d7728a5e8d93f19fbc5d9901e0f8))
+
 ## [0.35.4](https://github.com/jbcom/radioactive-ralph/compare/v0.35.3...v0.35.4) (2026-08-24)
 
 
