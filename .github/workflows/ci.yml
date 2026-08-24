@@ -53,6 +53,10 @@ jobs:
         os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # SonarCloud needs the complete history for blame and pull-request
+          # attribution; the other matrix legs use the same authoritative tree.
+          fetch-depth: 0
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
@@ -103,6 +107,13 @@ jobs:
         # internal/provider/race_budget_race_test.go -- the two numbers are one
         # decision split across two files, and only their SUM is meaningful.
         run: go test -race -timeout 20m -coverprofile=coverage.out -covermode=atomic ./...
+      - name: SonarCloud analysis
+        if: matrix.os == 'ubuntu-latest'
+        uses: SonarSource/sonarqube-scan-action@22918119ff8e1ca75a623e15c8296b6ea4fbe28f # v8.2.1
+        env:
+          # This is the Doppler-synced organization Actions secret. Never add a
+          # repository-scoped duplicate.
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
       - name: Enforcement adapter mutation proofs
         if: runner.os == 'Linux'
         run: bash scripts/ci/test_enforcement_adapter_mutations.sh
