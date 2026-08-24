@@ -13,6 +13,23 @@ shipped. That means historical sections may still mention MCP, plugins,
 supervisors, or the archived Python implementation even though those are no
 longer part of the live contract.
 
+## [0.35.0](https://github.com/jbcom/radioactive-ralph/compare/v0.34.0...v0.35.0) (2026-08-24)
+
+
+### Features
+
+* **agent:** dispatch Windows provider turns through wsl.exe instead of ConPTY ([39444d1](https://github.com/jbcom/radioactive-ralph/commit/39444d12509539b8083074158775a798d01b32af))
+* **doctor:** add wsl dispatch check and internal/wsldistro package ([6d83e20](https://github.com/jbcom/radioactive-ralph/commit/6d83e20f4eb0e2c4c44b459b294b8e4fb1e36043))
+* **packaging:** add WSL2 rootfs build tooling for bundled radioactive-ralph distro ([d1885af](https://github.com/jbcom/radioactive-ralph/commit/d1885af65b5b1ba0e7ce8df4a4db4ecc318ac19d))
+* **provider:** add GitHub Copilot CLI as a first-class provider ([25a29b9](https://github.com/jbcom/radioactive-ralph/commit/25a29b934ef52aaf8c7b0960ed1fb3e6cc80e8e8))
+
+
+### Bug Fixes
+
+* address maintainer review — auto-provisioning, dep tidiness, doc fixes ([bc59c01](https://github.com/jbcom/radioactive-ralph/commit/bc59c01336eb9e57e450cf1920c63c38f5713aee))
+* **agent:** restore ptyMaster.Stat() and decode WSL distro names as real UTF-16LE ([2daa9b3](https://github.com/jbcom/radioactive-ralph/commit/2daa9b3645a55c8ebc151600dd2bdd04e57b392e))
+* **makefile:** add --init to test-linux* Docker targets, fix false test failures ([58d1ccd](https://github.com/jbcom/radioactive-ralph/commit/58d1ccd06d653fe845fef38daece798164f3e233))
+
 ## [0.34.0](https://github.com/jbcom/radioactive-ralph/compare/v0.33.1...v0.34.0) (2026-08-20)
 
 
