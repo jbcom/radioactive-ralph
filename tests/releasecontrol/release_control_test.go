@@ -681,6 +681,8 @@ func TestCLIAndGUICasksHaveDistinctTokensAndFiles(t *testing.T) {
 	requireContains(t, publisher, "Casks/radioactive-ralph.rb", publisherPath)
 	requireContains(t, publisher, "bucket/radioactive-ralph.json", publisherPath)
 	requireContains(t, publisher, "package-manifests.tar.gz", publisherPath)
+	requireContains(t, publisher, `release view "v${VERSION}"`, publisherPath)
+	requireContains(t, publisher, `Accept: application/octet-stream`, publisherPath)
 	requireContains(t, publisher, `"$COSIGN_BIN" verify-blob`, publisherPath)
 	requireContains(t, publisher, `push-version-branch.sh" "$BRANCH"`, publisherPath)
 	requireNotContains(t, publisher, "git push --force-with-lease origin", publisherPath)

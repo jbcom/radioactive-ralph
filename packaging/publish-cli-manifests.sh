@@ -75,12 +75,17 @@ WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 archive="$WORK/package-manifests.tar.gz"
 bundle="$WORK/package-manifests.tar.gz.sigstore.json"
-GH_TOKEN="$RELEASE_GH_TOKEN" "$GH_BIN" release download "v${VERSION}" \
-  --repo "$RELEASE_REPO" --pattern package-manifests.tar.gz \
-  --output "$archive"
-GH_TOKEN="$RELEASE_GH_TOKEN" "$GH_BIN" release download "v${VERSION}" \
-  --repo "$RELEASE_REPO" --pattern package-manifests.tar.gz.sigstore.json \
-  --output "$bundle"
+release="$(GH_TOKEN="$RELEASE_GH_TOKEN" "$GH_BIN" release view "v${VERSION}" \
+  --repo "$RELEASE_REPO" --json assets)"
+download_release_asset() {
+  local asset="$1" output="$2" api_url
+  api_url="$(jq -er --arg name "$asset" \
+    '.assets[] | select(.name == $name) | .apiUrl' <<<"$release")"
+  GH_TOKEN="$RELEASE_GH_TOKEN" "$GH_BIN" api \
+    -H 'Accept: application/octet-stream' "$api_url" > "$output"
+}
+download_release_asset package-manifests.tar.gz "$archive"
+download_release_asset package-manifests.tar.gz.sigstore.json "$bundle"
 "$COSIGN_BIN" verify-blob "$archive" --bundle "$bundle" \
   --certificate-identity \
   "https://github.com/${RELEASE_REPO}/.github/workflows/release.yml@refs/tags/v${VERSION}" \
