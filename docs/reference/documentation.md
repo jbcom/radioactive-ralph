@@ -52,3 +52,12 @@ administrator activates it by adding the repository variables
 `SONAR_PROJECT_KEY` and `SONAR_ORGANIZATION`, plus a `SONAR_TOKEN` secret with
 Execute Analysis permission. Until those three values exist, the analysis job
 is skipped rather than pretending a SonarQube project is connected.
+
+## Automation safety
+
+The repository permits only an audited allowlist of GitHub Actions and requires
+full commit-SHA pins at the repository setting. `Repository Policy` runs from
+the trusted base branch for every pull request; external forks may not change
+workflows, release configuration, dependency automation, or publication files.
+Regular pull requests run with read-only CI permissions, while Pages deployment
+and release publishing remain trusted-branch or tag-only operations.
