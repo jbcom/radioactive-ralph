@@ -13,6 +13,15 @@ shipped. That means historical sections may still mention MCP, plugins,
 supervisors, or the archived Python implementation even though those are no
 longer part of the live contract.
 
+## [0.35.6](https://github.com/jbcom/radioactive-ralph/compare/v0.35.5...v0.35.6) (2026-08-24)
+
+
+### Bug Fixes
+
+* **release:** allow narrow draft package smoke reads ([f3e84d3](https://github.com/jbcom/radioactive-ralph/commit/f3e84d3e648f07fe70c4eb241ef0d66c420b512d))
+* **release:** read draft package assets through API ([9f48893](https://github.com/jbcom/radioactive-ralph/commit/9f488931c1e48d1cb1058d244ac99e042361eb71))
+* **release:** read draft package assets through API ([c4d9e17](https://github.com/jbcom/radioactive-ralph/commit/c4d9e17cab393f28d724f9798754b2f96fb940f6))
+
 ## [0.35.5](https://github.com/jbcom/radioactive-ralph/compare/v0.35.4...v0.35.5) (2026-08-24)
 
 
