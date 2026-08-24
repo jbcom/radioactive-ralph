@@ -22,6 +22,12 @@ for argument in "$@"; do
   [[ "$argument" == "--include" ]] && include_status=1
 done
 if [[ "$kind" == release && "${1:-}" == view ]]; then
+  [[ "$*" == \
+    'view v1.2.3 --repo jbcom/radioactive-ralph --json isDraft,isPrerelease,tagName,assets' ]] || {
+    echo "fake gh: unexpected release view $*" >&2
+    exit 1
+  }
+  printf '{"isDraft":true,"isPrerelease":false,"tagName":"v1.2.3","assets":[{"name":"checksums.txt"}]}\n'
   exit 0
 fi
 if [[ "$kind" == release && "${1:-}" == upload ]]; then
@@ -33,11 +39,6 @@ if [[ "$kind" == release && "${1:-}" == upload ]]; then
     esac
   done
   touch "$FAKE_STATE_DIR/uploaded"
-  exit 0
-fi
-if [[ "$kind" == api &&
-      "$request" == repos/jbcom/radioactive-ralph/releases/tags/v1.2.3 ]]; then
-  printf '{"draft":true,"prerelease":false,"tag_name":"v1.2.3"}\n'
   exit 0
 fi
 if [[ "$kind" == api &&
