@@ -85,6 +85,18 @@ if [[ "${1:-}" == "pr" && "${2:-}" == "create" ]]; then
   exit 0
 fi
 
+if [[ "${1:-}" == "pr" && "${2:-}" == "list" ]]; then
+  printf '%s\n' '[{"number":42,"headRepositoryOwner":{"login":"jbcom"},"isCrossRepository":false}]'
+  exit 0
+fi
+
+if [[ "${1:-}" == "pr" && "${2:-}" == "merge" ]]; then
+  [[ "${3:-}" == "42" ]]
+  [[ "$*" == *"--auto --merge"* ]]
+  printf '%s\n' merged >> "$FAKE_STATE/pr-merge-log"
+  exit 0
+fi
+
 echo "fake gh: unexpected invocation: $*" >&2
 exit 1
 FAKEGH
@@ -129,6 +141,7 @@ fi
 run_publisher
 first_branch="$(git --git-dir="$REMOTE" rev-parse "$REF")"
 [[ "$(<"$STATE/pr-create-count")" == "1" ]]
+[[ "$(wc -l < "$STATE/pr-merge-log" | tr -d ' ')" == "1" ]]
 git --git-dir="$REMOTE" show "$first_branch:Casks/radioactive-ralph-gui.rb" |
   grep -F 'cask "radioactive-ralph-gui"' >/dev/null
 git --git-dir="$REMOTE" show "$first_branch:src/data/directory/directory.json" |
@@ -140,12 +153,14 @@ run_publisher
 second_branch="$(git --git-dir="$REMOTE" rev-parse "$REF")"
 [[ -n "$second_branch" ]]
 [[ "$(<"$STATE/pr-create-count")" == "2" ]]
+[[ "$(wc -l < "$STATE/pr-merge-log" | tr -d ' ')" == "2" ]]
 
 git --git-dir="$REMOTE" update-ref refs/heads/main "$second_branch"
 run_publisher
 third_branch="$(git --git-dir="$REMOTE" rev-parse "$REF")"
 [[ "$third_branch" == "$second_branch" ]]
 [[ "$(<"$STATE/pr-create-count")" == "2" ]]
+[[ "$(wc -l < "$STATE/pr-merge-log" | tr -d ' ')" == "2" ]]
 [[ -n "$first_branch" ]]
 
 echo "CLI manifest rerun tests: ok"

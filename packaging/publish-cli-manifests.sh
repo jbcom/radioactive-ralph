@@ -151,4 +151,14 @@ if ! GH_TOKEN="$PKGS_GH_TOKEN" "$GH_BIN" pr create --repo "$PKGS" --base main --
     exit 1
   fi
 fi
+prs="$(GH_TOKEN="$PKGS_GH_TOKEN" "$GH_BIN" pr list --repo "$PKGS" --state open \
+  --base main --head "$BRANCH" \
+  --json number,headRepositoryOwner,isCrossRepository)"
+pr_number="$(jq -er --arg owner "${PKGS%%/*}" '
+  [ .[] | select(
+      .headRepositoryOwner.login == $owner and .isCrossRepository == false
+    )
+  ] | if length == 1 then .[0].number else error("expected one trusted package PR") end
+' <<<"$prs")"
+GH_TOKEN="$PKGS_GH_TOKEN" "$GH_BIN" pr merge "$pr_number" --repo "$PKGS" --auto --merge
 echo "publish-cli-manifests: manifests published for ${VERSION}"
