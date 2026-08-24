@@ -116,10 +116,15 @@ mkdir -p "$WORK/pkgs/Casks" "$WORK/pkgs/bucket"
 cp "$CLI_CASK" "$WORK/pkgs/Casks/radioactive-ralph.rb"
 cp "$GUI_CASK" "$WORK/pkgs/Casks/radioactive-ralph-gui.rb"
 cp "$SCOOP_MANIFEST" "$WORK/pkgs/bucket/radioactive-ralph.json"
+(
+  cd "$WORK/pkgs"
+  node scripts/generate-directory.mjs
+)
 git -C "$WORK/pkgs" add \
   Casks/radioactive-ralph.rb \
   Casks/radioactive-ralph-gui.rb \
-  bucket/radioactive-ralph.json
+  bucket/radioactive-ralph.json \
+  src/data/directory/directory.json
 
 if git -C "$WORK/pkgs" diff --cached --quiet --exit-code; then
   echo "publish-cli-manifests: radioactive-ralph ${VERSION} is already exact on ${PKGS} main"
