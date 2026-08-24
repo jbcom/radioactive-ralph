@@ -43,3 +43,12 @@ byte-for-byte into the static artifact. Sourcey generates `llms.txt`,
 PR CI runs the same command without deployment privileges. The trusted CD job
 rebuilds from `main`, uploads `docs/dist/` as the GitHub Pages artifact, and
 deploys it through the `github-pages` environment.
+
+## Optional SonarQube Cloud analysis
+
+The repository contains the checked-in analysis scope in
+`sonar-project.properties` and a pinned GitHub Actions workflow. An
+administrator activates it by adding the repository variables
+`SONAR_PROJECT_KEY` and `SONAR_ORGANIZATION`, plus a `SONAR_TOKEN` secret with
+Execute Analysis permission. Until those three values exist, the analysis job
+is skipped rather than pretending a SonarQube project is connected.
