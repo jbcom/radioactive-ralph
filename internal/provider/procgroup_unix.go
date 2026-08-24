@@ -46,5 +46,10 @@ func setProcessGroupKill(cmd *exec.Cmd) {
 	cmd.Cancel = func() error { return killProcessTree(cmd.Process) }
 	// After Cancel fires, don't wait forever for pipe copies to drain — force the
 	// I/O to unblock so Run returns bounded even if a grandchild lingers a moment.
-	cmd.WaitDelay = 5 * time.Second
+	// The turn timeout is often configured in hundreds of milliseconds. A
+	// five-second post-cancel grace silently violates that operator boundary
+	// even after the process group has been SIGKILLed; one second leaves room
+	// for the runtime's pipe-copy teardown without turning cancellation into a
+	// multi-second stall.
+	cmd.WaitDelay = time.Second
 }

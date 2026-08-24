@@ -139,6 +139,21 @@ jobs:
         # internal/provider/race_budget_race_test.go -- the two numbers are one
         # decision split across two files, and only their SUM is meaningful.
         run: go test -race -timeout 20m -coverprofile=coverage.out -covermode=atomic ./...
+      - name: Resolve Sonar project version
+        id: sonar-version
+        # Only the trusted Ubuntu leg publishes analysis. On main, a released
+        # SemVer tag creates Sonar's next-version baseline so the quality gate
+        # measures the code introduced after that release rather than carrying
+        # an unbounded historical window forever.
+        if: >-
+          matrix.os == 'ubuntu-latest' &&
+          (github.event_name != 'pull_request' ||
+          github.event.pull_request.head.repo.full_name == github.repository)
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(git describe --tags --abbrev=0 --match 'v[0-9]*' HEAD)"
+          echo "version=${version#v}" >> "$GITHUB_OUTPUT"
       - name: SonarCloud analysis
         # GitHub withholds Actions secrets from external forks. Their test job
         # still runs, while trusted upstream PRs, merge-queue entries, and
@@ -152,6 +167,12 @@ jobs:
           # This is the Doppler-synced organization Actions secret. Never add a
           # repository-scoped duplicate.
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        with:
+          # `sonar.projectVersion` is honored on the main-branch analysis and
+          # ignored for PR analysis. Pass a tag-derived value only; never pass
+          # a PR-controlled string to scanner arguments.
+          args: >-
+            -Dsonar.projectVersion=${{ steps.sonar-version.outputs.version }}
       - name: Enforcement adapter mutation proofs
         if: runner.os == 'Linux'
         run: bash scripts/ci/test_enforcement_adapter_mutations.sh
