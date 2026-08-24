@@ -17,8 +17,22 @@ git init -q --bare "$REMOTE"
 git init -q "$SEED"
 git -C "$SEED" config user.name test
 git -C "$SEED" config user.email test@example.invalid
+mkdir -p "$SEED/scripts" "$SEED/src/data/directory"
 printf 'seed\n' > "$SEED/README.md"
+cat > "$SEED/scripts/generate-directory.mjs" <<'GENERATOR'
+import { mkdir, readdir, writeFile } from 'node:fs/promises';
+
+const casks = (await readdir('Casks')).sort();
+const manifests = (await readdir('bucket')).sort();
+await mkdir('src/data/directory', { recursive: true });
+await writeFile(
+  'src/data/directory/directory.json',
+  `${JSON.stringify({ casks, manifests }, null, 2)}\n`,
+);
+GENERATOR
+printf '{"casks":[],"manifests":[]}\n' > "$SEED/src/data/directory/directory.json"
 git -C "$SEED" add README.md
+git -C "$SEED" add scripts/generate-directory.mjs src/data/directory/directory.json
 git -C "$SEED" commit -q -m seed
 git -C "$SEED" branch -M main
 git -C "$SEED" remote add origin "$REMOTE"
@@ -71,6 +85,18 @@ if [[ "${1:-}" == "pr" && "${2:-}" == "create" ]]; then
   exit 0
 fi
 
+if [[ "${1:-}" == "pr" && "${2:-}" == "list" ]]; then
+  printf '%s\n' '[{"number":42,"headRepositoryOwner":{"login":"jbcom"},"isCrossRepository":false}]'
+  exit 0
+fi
+
+if [[ "${1:-}" == "pr" && "${2:-}" == "merge" ]]; then
+  [[ "${3:-}" == "42" ]]
+  [[ "$*" == *"--auto --merge"* ]]
+  printf '%s\n' merged >> "$FAKE_STATE/pr-merge-log"
+  exit 0
+fi
+
 echo "fake gh: unexpected invocation: $*" >&2
 exit 1
 FAKEGH
@@ -115,8 +141,11 @@ fi
 run_publisher
 first_branch="$(git --git-dir="$REMOTE" rev-parse "$REF")"
 [[ "$(<"$STATE/pr-create-count")" == "1" ]]
+[[ "$(wc -l < "$STATE/pr-merge-log" | tr -d ' ')" == "1" ]]
 git --git-dir="$REMOTE" show "$first_branch:Casks/radioactive-ralph-gui.rb" |
   grep -F 'cask "radioactive-ralph-gui"' >/dev/null
+git --git-dir="$REMOTE" show "$first_branch:src/data/directory/directory.json" |
+  grep -F 'radioactive-ralph-gui.rb' >/dev/null
 
 mv "$SOURCE" "$TMP/generated-initial"
 mkdir -p "$SOURCE"
@@ -124,12 +153,14 @@ run_publisher
 second_branch="$(git --git-dir="$REMOTE" rev-parse "$REF")"
 [[ -n "$second_branch" ]]
 [[ "$(<"$STATE/pr-create-count")" == "2" ]]
+[[ "$(wc -l < "$STATE/pr-merge-log" | tr -d ' ')" == "2" ]]
 
 git --git-dir="$REMOTE" update-ref refs/heads/main "$second_branch"
 run_publisher
 third_branch="$(git --git-dir="$REMOTE" rev-parse "$REF")"
 [[ "$third_branch" == "$second_branch" ]]
 [[ "$(<"$STATE/pr-create-count")" == "2" ]]
+[[ "$(wc -l < "$STATE/pr-merge-log" | tr -d ' ')" == "2" ]]
 [[ -n "$first_branch" ]]
 
 echo "CLI manifest rerun tests: ok"
