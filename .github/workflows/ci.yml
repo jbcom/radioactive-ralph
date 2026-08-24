@@ -44,8 +44,40 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  classify-pr:
+    name: Classify vetted automation PR
+    runs-on: ubuntu-latest
+    outputs:
+      skip-heavy-ci: ${{ steps.classify.outputs.skip-heavy-ci }}
+    steps:
+      - id: classify
+        env:
+          AUTHOR: ${{ github.event.pull_request.user.login }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          skip=false
+
+          # merge_group events must always exercise the full gate.
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            if [[ "$AUTHOR" == "jbdevprimary" && "$HEAD_REF" == release-please--* ]]; then
+              skip=true
+            elif [[ "$AUTHOR" == "dependabot[bot]" && "$HEAD_REF" == dependabot/* ]] &&
+              [[ "$PR_TITLE" =~ [Ff]rom[[:space:]]+v?([0-9]+)\.[0-9]+\.[0-9]+[^[:space:]]*[[:space:]]+[Tt]o[[:space:]]+v?([0-9]+)\. ]] &&
+              [[ "${BASH_REMATCH[1]}" == "${BASH_REMATCH[2]}" ]]; then
+              skip=true
+            fi
+          fi
+
+          echo "skip-heavy-ci=$skip" >> "$GITHUB_OUTPUT"
+          echo "skip-heavy-ci=$skip"
+
   test:
     name: Test (${{ matrix.os }})
+    needs: classify-pr
+    if: needs.classify-pr.outputs.skip-heavy-ci != 'true'
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -370,6 +402,8 @@ jobs:
 
   e2e:
     name: E2E (CI-feasible)
+    needs: classify-pr
+    if: needs.classify-pr.outputs.skip-heavy-ci != 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -414,6 +448,8 @@ jobs:
 
   gui:
     name: GUI (${{ matrix.os }})
+    needs: classify-pr
+    if: needs.classify-pr.outputs.skip-heavy-ci != 'true'
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -508,6 +544,8 @@ jobs:
 
   build-targets:
     name: Build (${{ matrix.goos }}/${{ matrix.goarch }})
+    needs: classify-pr
+    if: needs.classify-pr.outputs.skip-heavy-ci != 'true'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -580,6 +618,8 @@ jobs:
 
   lint:
     name: Lint
+    needs: classify-pr
+    if: needs.classify-pr.outputs.skip-heavy-ci != 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -592,6 +632,8 @@ jobs:
 
   workflow-lint:
     name: Workflow lint
+    needs: classify-pr
+    if: needs.classify-pr.outputs.skip-heavy-ci != 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -616,6 +658,8 @@ jobs:
 
   vuln:
     name: Vulnerability scan
+    needs: classify-pr
+    if: needs.classify-pr.outputs.skip-heavy-ci != 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -629,6 +673,8 @@ jobs:
 
   docs:
     name: Docs
+    needs: classify-pr
+    if: needs.classify-pr.outputs.skip-heavy-ci != 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -648,6 +694,8 @@ jobs:
 
   package-artifacts:
     name: Package artifacts
+    needs: classify-pr
+    if: needs.classify-pr.outputs.skip-heavy-ci != 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -666,6 +714,8 @@ jobs:
 
   package-artifacts-arm64:
     name: Package artifacts (arm64)
+    needs: classify-pr
+    if: needs.classify-pr.outputs.skip-heavy-ci != 'true'
     runs-on: ubuntu-24.04-arm
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -684,6 +734,8 @@ jobs:
 
   package-gui:
     name: Package GUI (${{ matrix.os }})
+    needs: classify-pr
+    if: needs.classify-pr.outputs.skip-heavy-ci != 'true'
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -736,6 +788,8 @@ jobs:
 
   packaging:
     name: Packaging lint
+    needs: classify-pr
+    if: needs.classify-pr.outputs.skip-heavy-ci != 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -840,8 +894,11 @@ jobs:
 
   dependency-review:
     name: Dependency review
+    needs: classify-pr
+    if: >-
+      github.event_name == 'pull_request' &&
+      needs.classify-pr.outputs.skip-heavy-ci != 'true'
     runs-on: ubuntu-latest
-    if: github.event_name == 'pull_request'
     permissions:
       contents: read
     steps:

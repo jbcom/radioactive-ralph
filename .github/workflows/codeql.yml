@@ -38,8 +38,36 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  classify-pr:
+    name: Classify vetted automation PR
+    runs-on: ubuntu-latest
+    outputs:
+      skip-heavy-ci: ${{ steps.classify.outputs.skip-heavy-ci }}
+    steps:
+      - id: classify
+        env:
+          AUTHOR: ${{ github.event.pull_request.user.login }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          skip=false
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            if [[ "$AUTHOR" == "jbdevprimary" && "$HEAD_REF" == release-please--* ]]; then
+              skip=true
+            elif [[ "$AUTHOR" == "dependabot[bot]" && "$HEAD_REF" == dependabot/* ]] &&
+              [[ "$PR_TITLE" =~ [Ff]rom[[:space:]]+v?([0-9]+)\.[0-9]+\.[0-9]+[^[:space:]]*[[:space:]]+[Tt]o[[:space:]]+v?([0-9]+)\. ]] &&
+              [[ "${BASH_REMATCH[1]}" == "${BASH_REMATCH[2]}" ]]; then
+              skip=true
+            fi
+          fi
+          echo "skip-heavy-ci=$skip" >> "$GITHUB_OUTPUT"
+
   analyze:
     name: Analyze (${{ matrix.language }})
+    needs: classify-pr
+    if: needs.classify-pr.outputs.skip-heavy-ci != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:

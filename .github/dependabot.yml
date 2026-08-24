@@ -7,7 +7,10 @@ updates:
     schedule:
       interval: weekly
     groups:
-      minor-and-patch:
+      major:
+        patterns: ["*"]
+        update-types: ["major"]
+      non-major:
         patterns: ["*"]
         update-types: ["minor", "patch"]
   - package-ecosystem: npm
@@ -15,7 +18,10 @@ updates:
     schedule:
       interval: weekly
     groups:
-      docs:
+      major:
+        patterns: ["*"]
+        update-types: ["major"]
+      non-major:
         patterns: ["*"]
         update-types: ["minor", "patch"]
   - package-ecosystem: github-actions
@@ -23,5 +29,9 @@ updates:
     schedule:
       interval: weekly
     groups:
-      actions:
+      major:
         patterns: ["*"]
+        update-types: ["major"]
+      non-major:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
