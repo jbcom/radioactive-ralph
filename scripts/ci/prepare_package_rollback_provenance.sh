@@ -119,6 +119,10 @@ jq -e \
   '.isDraft == true and .isPrerelease == false and .tagName == $tag' \
   <<<"$release" >/dev/null
 mapfile -t existing < <(jq -r '.assets[].name' <<<"$release")
+(( ${#existing[@]} > 0 )) || {
+  echo "package provenance: draft release has no assets after GoReleaser" >&2
+  exit 1
+}
 has_archive=false
 has_bundle=false
 printf '%s\n' "${existing[@]}" | grep -Fxq "$ARCHIVE" && has_archive=true

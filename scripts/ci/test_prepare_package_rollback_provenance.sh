@@ -22,9 +22,12 @@ for argument in "$@"; do
   [[ "$argument" == "--include" ]] && include_status=1
 done
 if [[ "$kind" == release && "${1:-}" == view ]]; then
-  if [[ " $* " == *' --json '* ]]; then
-    printf '{"isDraft":true,"isPrerelease":false,"tagName":"v1.2.3","assets":[]}\n'
-  fi
+  [[ "$*" == \
+    'view v1.2.3 --repo jbcom/radioactive-ralph --json isDraft,isPrerelease,tagName,assets' ]] || {
+    echo "fake gh: unexpected release view $*" >&2
+    exit 1
+  }
+  printf '{"isDraft":true,"isPrerelease":false,"tagName":"v1.2.3","assets":[{"name":"checksums.txt"}]}\n'
   exit 0
 fi
 if [[ "$kind" == release && "${1:-}" == upload ]]; then
