@@ -430,7 +430,10 @@ jobs:
       - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
       - name: Verify exact sealed release bytes
         env:
-          RELEASE_GH_TOKEN: ${{ github.token }}
+          # Draft releases are intentionally invisible to contents:read tokens.
+          # Keep the verifier read-only while using the organization release
+          # credential that is authorized to inspect the draft.
+          RELEASE_GH_TOKEN: ${{ secrets.CI_GITHUB_TOKEN }}
         run: bash scripts/ci/verify_release_assets.sh "${GITHUB_REF_NAME#v}"
 
   package-manifests:

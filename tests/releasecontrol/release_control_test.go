@@ -580,11 +580,12 @@ func TestReleaseToolingIsPinnedAndPermissionsAreLeastPrivilege(t *testing.T) {
 	requireContains(t, signer, "contents: write", path)
 	requireContains(t, signer, "id-token: write", path)
 	requireContains(t, signer, `gh release upload "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY"`, path)
-	// 5 references: the admission presence check, the three immutable-release
-	// gates, and the admission draft read (which uses CI_GITHUB_TOKEN because the
+	// 6 references: the admission presence check, the three immutable-release
+	// gates, the admission draft read, and the sealed-draft verifier (which use
+	// CI_GITHUB_TOKEN because the
 	// built-in token is contents: read and cannot see draft releases).
-	if got := strings.Count(workflow, "secrets.CI_GITHUB_TOKEN"); got != 5 {
-		t.Errorf("%s CI_GITHUB_TOKEN secret references = %d, want 5", path, got)
+	if got := strings.Count(workflow, "secrets.CI_GITHUB_TOKEN"); got != 6 {
+		t.Errorf("%s CI_GITHUB_TOKEN secret references = %d, want 6", path, got)
 	}
 	requireNotContains(t, workflow, "\nenv:\n  CI_GITHUB_TOKEN:", path)
 
