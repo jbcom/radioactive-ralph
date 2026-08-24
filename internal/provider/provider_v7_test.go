@@ -151,7 +151,10 @@ IFS= read -r _
 printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"text","text":"CLAUDE-PARTIAL-SECRET"}]}}'
 python3 -u - <<'PY'
 import sys
-line = b"x" * ((1 << 20) - 1) + b"\n"
+# 64 KiB exercises non-JSON streaming without making the race detector spend
+# quadratic time copying a megabyte-sized partial PTY record before each
+# newline. The cumulative 16 MiB ceiling remains the behavior under test.
+line = b"x" * ((1 << 16) - 1) + b"\n"
 while True:
     sys.stdout.buffer.write(line)
     sys.stdout.buffer.flush()
