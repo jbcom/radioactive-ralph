@@ -3,6 +3,23 @@
 # actual code quality gates (go test, golangci-lint, go vet) run as documented in
 # AGENTS.md/STANDARDS.md and are not duplicated here.
 repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: 3e8a8703264a2f4a69428a0aa4dcb512790b2c8c # v6.0.0
+    hooks:
+      - id: check-added-large-files
+      - id: check-merge-conflict
+      - id: check-yaml
+      - id: detect-private-key
+        # This provider test intentionally uses key-shaped fixture text.
+        exclude: ^internal/provider/codex_test\.go$
+      - id: end-of-file-fixer
+        # Preserve existing generated/template byte contracts; new files still
+        # receive the normal newline check.
+        exclude: ^(\.github/ISSUE_TEMPLATE/(bug_report|config|feature_request)\.yml|\.github/PULL_REQUEST_TEMPLATE\.md|\.github/release\.yml|CODE_OF_CONDUCT\.md|CONTRIBUTING\.md|cmd/radioactive_ralph/service_shell_env_windows\.go)$
+      - id: mixed-line-ending
+      - id: trailing-whitespace
+        # These fixtures intentionally retain spaces and tabs as test input.
+        exclude: ^(docs/superpowers/specs/2026-07-17-ipc-drive-api-design\.md|scripts/ci/test_dmg_stale_devices\.sh)$
   - repo: local
     hooks:
       - id: hadolint-wsl-dockerfile
