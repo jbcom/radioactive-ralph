@@ -581,11 +581,15 @@ func TestReleaseToolingIsPinnedAndPermissionsAreLeastPrivilege(t *testing.T) {
 	requireContains(t, signer, "id-token: write", path)
 	requireContains(t, signer, `gh release upload "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY"`, path)
 	// 5 references: the admission presence check, the three immutable-release
-	// gates, and the admission draft read (which uses CI_GITHUB_TOKEN because the
+	// gates, and the admission draft read (which use CI_GITHUB_TOKEN because the
 	// built-in token is contents: read and cannot see draft releases).
 	if got := strings.Count(workflow, "secrets.CI_GITHUB_TOKEN"); got != 5 {
 		t.Errorf("%s CI_GITHUB_TOKEN secret references = %d, want 5", path, got)
 	}
+	verify := requireWorkflowJob(t, workflow, "verify-sealed-release", path)
+	requireContains(t, verify, "contents: write", path)
+	requireContains(t, verify, "RELEASE_GH_TOKEN: ${{ github.token }}", path)
+	requireNotContains(t, verify, "secrets.CI_GITHUB_TOKEN", path)
 	requireNotContains(t, workflow, "\nenv:\n  CI_GITHUB_TOKEN:", path)
 
 	const cdPath = ".github/workflows/cd.yml"
