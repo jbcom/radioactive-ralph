@@ -46,10 +46,10 @@ deploys it through the `github-pages` environment.
 
 ## SonarQube Cloud analysis
 
-The repository's `jbcom_radioactive-ralph` project is analyzed on pull requests
-and `main`, using the checked-in scope in `sonar-project.properties`. Its
-repository-scoped token is kept exclusively in GitHub Actions secrets; the
-workflow also supports a manual run for diagnosis.
+The GitHub-integrated `jbcom_radioactive-ralph` project analyzes pull requests
+and `main` without a repository-scoped token or a duplicate GitHub Actions
+workflow. Its provider-owned `SonarCloud Code Analysis` status is required
+before `main` can advance.
 
 ## Automation safety
 
