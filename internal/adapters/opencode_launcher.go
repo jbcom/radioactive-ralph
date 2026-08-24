@@ -486,7 +486,11 @@ func environmentLookup(env []string) Environment {
 }
 
 func replaceEnvironment(env []string, replacements map[string]string, remove map[string]bool) []string {
-	result := make([]string, 0, len(env)+len(replacements))
+	// Start with the existing environment capacity. Adding two independently
+	// controlled lengths can overflow an int before make has a chance to reject
+	// an impractical allocation; append grows the slice safely as replacements
+	// are added below.
+	result := make([]string, 0, len(env))
 	for _, entry := range env {
 		key, _, _ := strings.Cut(entry, "=")
 		if _, replace := replacements[key]; replace || remove[key] {

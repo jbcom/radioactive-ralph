@@ -13,6 +13,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -605,6 +606,24 @@ func TestOpenCodeLauncherIsolatesOneReviewedPlugin(t *testing.T) {
 	)
 	if code := RunOpenCodeLauncher(opts); code != 0 {
 		t.Fatalf("isolated managed launch exit = %d", code)
+	}
+}
+
+func TestReplaceEnvironmentPreservesAndOrdersManagedValues(t *testing.T) {
+	got := replaceEnvironment(
+		[]string{"PATH=/usr/bin", "HOME=/caller", "DROP=old", "MALFORMED"},
+		map[string]string{"ZED": "last", "HOME": "/managed", "ALPHA": "first"},
+		map[string]bool{"DROP": true},
+	)
+	want := []string{
+		"PATH=/usr/bin",
+		"MALFORMED",
+		"ALPHA=first",
+		"HOME=/managed",
+		"ZED=last",
+	}
+	if !slices.Equal(got, want) {
+		t.Fatalf("replaceEnvironment() = %q, want %q", got, want)
 	}
 }
 
