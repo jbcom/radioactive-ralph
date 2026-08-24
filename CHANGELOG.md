@@ -13,6 +13,15 @@ shipped. That means historical sections may still mention MCP, plugins,
 supervisors, or the archived Python implementation even though those are no
 longer part of the live contract.
 
+## [0.35.4](https://github.com/jbcom/radioactive-ralph/compare/v0.35.3...v0.35.4) (2026-08-24)
+
+
+### Bug Fixes
+
+* **release:** stream draft asset API responses ([b517cb4](https://github.com/jbcom/radioactive-ralph/commit/b517cb4f45328d8751809c04344da292d5888a40))
+* **release:** verify draft assets through API ([f6201e4](https://github.com/jbcom/radioactive-ralph/commit/f6201e471da0fe9f100fdd2e62def21ffb168571))
+* **release:** verify draft assets through API ([fe34882](https://github.com/jbcom/radioactive-ralph/commit/fe34882a71c4f065efae5b14103bdecf58ce0a69))
+
 ## [0.35.3](https://github.com/jbcom/radioactive-ralph/compare/v0.35.2...v0.35.3) (2026-08-24)
 
 
