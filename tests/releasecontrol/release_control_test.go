@@ -240,6 +240,8 @@ func TestPublicReleaseWaitsForAllRequiredArtifacts(t *testing.T) {
 	requireContains(t, provenanceJob, "prepare_package_rollback_provenance.sh", path)
 	sealJob := requireWorkflowJob(t, workflow, "release-seal", path)
 	requireContains(t, sealJob, "prepare_release_seal.sh", path)
+	sealScript := readRepositoryFile(t, "scripts/ci/prepare_release_seal.sh")
+	requireContains(t, sealScript, "release view \"v${VERSION}\" --repo \"$RELEASE_REPO\"", "scripts/ci/prepare_release_seal.sh")
 
 	publishJob := requireWorkflowJob(t, workflow, "publish-release", path)
 	requireContains(t, publishJob, "RELEASE_GH_TOKEN: ${{ github.token }}", path)
@@ -266,7 +268,7 @@ func TestPublicReleaseWaitsForAllRequiredArtifacts(t *testing.T) {
 	lastImmutable := strings.LastIndex(publishJob, "bash scripts/ci/require_immutable_releases.sh")
 	lastManifest := strings.LastIndex(publishJob, `contents/.release-please-manifest.json?ref=main`)
 	lastTag := strings.LastIndex(publishJob, `git/ref/tags/${GITHUB_REF_NAME}`)
-	lastRelease := strings.LastIndex(publishJob, `release="$(GH_TOKEN="$RELEASE_GH_TOKEN" gh api`)
+	lastRelease := strings.LastIndex(publishJob, `release="$(GH_TOKEN="$RELEASE_GH_TOKEN" gh release view`)
 	promotion := strings.Index(publishJob, "-f make_latest=true")
 	for label, index := range map[string]int{
 		"sealed assets":     lastAssets,

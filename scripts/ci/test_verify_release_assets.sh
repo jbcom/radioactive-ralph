@@ -44,6 +44,10 @@ assets=(
   release-seal.json.sigstore.json
 )
 if [[ "$subcommand" == "view" ]]; then
+  if [[ " $* " == *' targetCommitish '* ]]; then
+    printf 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n'
+    exit 0
+  fi
   for asset in "${assets[@]}"; do
     [[ "${FAKE_MISSING_ASSET:-}" == "$asset" ]] || printf '%s\n' "$asset"
   done
