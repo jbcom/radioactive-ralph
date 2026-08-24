@@ -240,6 +240,8 @@ func TestPublicReleaseWaitsForAllRequiredArtifacts(t *testing.T) {
 	requireContains(t, provenanceJob, "prepare_package_rollback_provenance.sh", path)
 	sealJob := requireWorkflowJob(t, workflow, "release-seal", path)
 	requireContains(t, sealJob, "prepare_release_seal.sh", path)
+	sealScript := readRepositoryFile(t, "scripts/ci/prepare_release_seal.sh")
+	requireContains(t, sealScript, "release view \"v${VERSION}\" --repo \"$RELEASE_REPO\"", "scripts/ci/prepare_release_seal.sh")
 
 	publishJob := requireWorkflowJob(t, workflow, "publish-release", path)
 	requireContains(t, publishJob, "RELEASE_GH_TOKEN: ${{ github.token }}", path)

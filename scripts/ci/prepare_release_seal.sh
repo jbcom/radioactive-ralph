@@ -48,10 +48,11 @@ expected_assets=(
   package-manifests.tar.gz.sigstore.json
 )
 
-release="$(release_gh api "repos/${RELEASE_REPO}/releases/tags/v${VERSION}")"
+release="$(release_gh release view "v${VERSION}" --repo "$RELEASE_REPO" \
+  --json isDraft,isPrerelease,tagName,targetCommitish,assets)"
 jq -e --arg tag "v${VERSION}" --arg target "$SOURCE_COMMIT" \
-  '.draft == true and .prerelease == false and
-   .tag_name == $tag and .target_commitish == $target' <<<"$release" >/dev/null
+  '.isDraft == true and .isPrerelease == false and
+   .tagName == $tag and .targetCommitish == $target' <<<"$release" >/dev/null
 actual="$(jq -r '.assets[].name' <<<"$release" | LC_ALL=C sort)"
 unsealed="$(printf '%s\n' "${expected_assets[@]}" | LC_ALL=C sort)"
 sealed="$(printf '%s\n' "${expected_assets[@]}" "$SEAL" "$BUNDLE" | LC_ALL=C sort)"
