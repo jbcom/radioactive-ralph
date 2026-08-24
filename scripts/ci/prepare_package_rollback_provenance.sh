@@ -112,8 +112,13 @@ validate_archive() {
   }
 }
 
-mapfile -t existing < <(release_gh release view "v${VERSION}" \
-  --repo "$RELEASE_REPO" --json assets --jq '.assets[].name')
+release="$(release_gh release view "v${VERSION}" --repo "$RELEASE_REPO" \
+  --json isDraft,isPrerelease,tagName,assets)"
+jq -e \
+  --arg tag "v${VERSION}" \
+  '.isDraft == true and .isPrerelease == false and .tagName == $tag' \
+  <<<"$release" >/dev/null
+mapfile -t existing < <(jq -r '.assets[].name' <<<"$release")
 has_archive=false
 has_bundle=false
 printf '%s\n' "${existing[@]}" | grep -Fxq "$ARCHIVE" && has_archive=true
@@ -137,12 +142,6 @@ if [[ "$has_archive" == true || "$has_bundle" == true ]]; then
   exit 0
 fi
 
-release="$(release_gh api \
-  "repos/${RELEASE_REPO}/releases/tags/v${VERSION}")"
-jq -e \
-  --arg tag "v${VERSION}" \
-  '.draft == true and .prerelease == false and .tag_name == $tag' \
-  <<<"$release" >/dev/null
 prior_main_oid="$(pkgs_gh api --jq '.object.sha' \
   "repos/${PKGS_REPO}/git/ref/heads/main")"
 [[ "$prior_main_oid" =~ ^[0-9a-f]{40,64}$ ]]
