@@ -17,18 +17,3 @@ lastUpdated: 2026-07-16
 | [Design](./design.md) | The product shape and why it's built this way |
 | [Demo](./demo.md) | How the recorded terminal demo is structured and how to re-record it |
 | [Launch](./launch.md) | Launch-day asset, packaging, verification, and copy checklist |
-
-```{toctree}
-:hidden:
-
-transports
-tui
-gui
-plan-format
-self-test
-safety-floors
-cassette-vcr
-design
-launch
-demo
-```

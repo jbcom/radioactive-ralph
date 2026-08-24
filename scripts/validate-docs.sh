@@ -17,7 +17,6 @@ LIVE_DOCS=(
   .github/copilot-instructions.md
   docs
   assets/ASSETS.md
-  site/README.md
 )
 
 LIVE_RELEASE_FILES=(
@@ -30,6 +29,9 @@ RETIRED_INSTALL_SURFACES=(
   site/package.json
   site/pnpm-lock.yaml
   site/public/install.sh
+  docs/api
+  docs/conf.py
+  docs/requirements.lock
   reference/pyproject.toml
   reference/tox.ini
   reference/uv.lock
@@ -61,6 +63,9 @@ search_o() {
 }
 
 [[ -x docs/install.sh ]] || fail "docs/install.sh must exist and be executable"
+[[ -f docs/sourcey.config.ts ]] || fail "docs/sourcey.config.ts must exist"
+[[ -f docs/package.json && -f docs/pnpm-lock.yaml ]] ||
+  fail "Sourcey package metadata and lockfile must exist"
 ralph_validate_goreleaser_release_footer "$ROOT/.goreleaser.yaml" ||
   fail "GoReleaser footer violates the platform-specific first-run contract"
 ralph_validate_winget_config_contract "$ROOT/.goreleaser.yaml" ||
@@ -72,12 +77,11 @@ for path in "${RETIRED_INSTALL_SURFACES[@]}"; do
   [[ ! -e "$path" && ! -L "$path" ]] || fail "retired install surface returned: $path"
 done
 
-if search 'site/src/content/docs' "${LIVE_DOCS[@]}" .github "${LIVE_RELEASE_FILES[@]}"; then
-  fail "found stale references to site/src/content/docs"
-fi
-
-if search 'autoapi/' "${LIVE_DOCS[@]}" .github "${LIVE_RELEASE_FILES[@]}"; then
-  fail "found stale references to autoapi output"
+if search 'Sphinx|sphinx-build|gomarkdoc|docs/_build/html|docs/api/' \
+  docs/getting-started docs/guides docs/reference/architecture.md \
+  docs/reference/state.md docs/reference/testing.md README.md CLAUDE.md \
+  AGENTS.md SECURITY.md STANDARDS.md .github Makefile "${LIVE_RELEASE_FILES[@]}"; then
+  fail "found stale legacy documentation renderer reference"
 fi
 
 if search 'install-skill' "${LIVE_DOCS[@]}" "${LIVE_RELEASE_FILES[@]}"; then
@@ -112,7 +116,7 @@ do
   if search "$pattern" \
     docs/getting-started docs/guides docs/reference docs/design \
     README.md CLAUDE.md AGENTS.md SECURITY.md STANDARDS.md \
-    assets/ASSETS.md scripts/demo.tape scripts/record-demo.sh site/README.md \
+    assets/ASSETS.md scripts/demo.tape scripts/record-demo.sh \
     "${LIVE_RELEASE_FILES[@]}"; then
     fail "found stale docs pattern: $pattern"
   fi
@@ -138,7 +142,7 @@ for pattern in \
 do
   if search "$pattern" \
     docs/getting-started docs/guides docs/reference docs/design \
-    README.md AGENTS.md SECURITY.md assets/ASSETS.md site/README.md \
+    README.md AGENTS.md SECURITY.md assets/ASSETS.md \
     "${LIVE_RELEASE_FILES[@]}"; then
     fail "found stale live-docs pattern: $pattern"
   fi

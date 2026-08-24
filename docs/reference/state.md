@@ -40,8 +40,8 @@ This page tracks what the runtime actually does today.
   development registrations
 - the read-only Bubble Tea TUI with macro/meso/micro drill-down
   (`internal/tui`)
-- repo-root Sphinx docs and a generated Go API reference under
-  `docs/api/`
+- a Sourcey documentation site under `docs/`, with its public Go CLI
+  reference derived directly from Go source by Sourcey's `godoc` adapter
 
 ## What changed from the earlier design
 

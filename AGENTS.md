@@ -129,8 +129,10 @@ produces running workers, fan-out partitions, and real provenance at once.
   `go test -race ./...` for concurrency-touching packages.
 - `golangci-lint run` for lint (gofmt-clean; the repo's gci convention merges
   third-party + internal imports into one block after stdlib).
-- `python3 -m tox -e docs` for the docs build.
-- Run `bash scripts/generate-api-docs.sh` when the exported Go API changes.
+- `make docs-check` for the Sourcey docs build and rendered-artifact checks.
+- Sourcey derives the supported CLI API reference directly from Go source;
+  update exported command documentation with the code rather than a generated
+  Markdown mirror.
 - Each new package lands build/test/-race/lint-green in isolation (the rewrite
   proceeds phase-by-phase per the implementation plan).
 - **A check that finds nothing to check must FAIL, not pass.** Silent no-op and

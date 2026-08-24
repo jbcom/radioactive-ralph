@@ -14,9 +14,3 @@ Release-engineering references for shipping a new version.
 
 For the marketing side of a launch (social, blog, demo GIF) see
 `docs/guides/launch.md`.
-
-```{toctree}
-:hidden:
-
-release-checklist
-```
