@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -624,6 +625,13 @@ func TestReplaceEnvironmentPreservesAndOrdersManagedValues(t *testing.T) {
 	}
 	if !slices.Equal(got, want) {
 		t.Fatalf("replaceEnvironment() = %q, want %q", got, want)
+	}
+}
+
+func TestReplacementEnvironmentCapacityDoesNotAddUntrustedLengths(t *testing.T) {
+	const replacementCount = 1
+	if got := replacementEnvironmentCapacity(math.MaxInt, replacementCount); got != math.MaxInt {
+		t.Fatalf("replacementEnvironmentCapacity(MaxInt, %d) = %d, want MaxInt", replacementCount, got)
 	}
 }
 

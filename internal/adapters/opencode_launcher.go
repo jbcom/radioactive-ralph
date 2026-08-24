@@ -490,7 +490,7 @@ func replaceEnvironment(env []string, replacements map[string]string, remove map
 	// controlled lengths can overflow an int before make has a chance to reject
 	// an impractical allocation; append grows the slice safely as replacements
 	// are added below.
-	result := make([]string, 0, len(env))
+	result := make([]string, 0, replacementEnvironmentCapacity(len(env), len(replacements)))
 	for _, entry := range env {
 		key, _, _ := strings.Cut(entry, "=")
 		if _, replace := replacements[key]; replace || remove[key] {
@@ -508,4 +508,12 @@ func replaceEnvironment(env []string, replacements map[string]string, remove map
 		result = append(result, key+"="+value)
 	}
 	return result
+}
+
+// replacementEnvironmentCapacity deliberately ignores replacementCount:
+// append grows result as needed, while summing untrusted sizes can overflow an
+// int before make sees it.
+func replacementEnvironmentCapacity(environmentLength, replacementCount int) int {
+	_ = replacementCount
+	return environmentLength
 }
