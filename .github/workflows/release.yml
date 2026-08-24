@@ -844,12 +844,13 @@ jobs:
             --jq '.object.sha' "repos/${GITHUB_REPOSITORY}/git/ref/tags/${GITHUB_REF_NAME}")"
           [[ "$tag_sha" == "$GITHUB_SHA" ]]
           bash scripts/ci/verify_release_assets.sh "$VERSION"
-          release="$(GH_TOKEN="$RELEASE_GH_TOKEN" gh api \
-            "repos/${GITHUB_REPOSITORY}/releases/tags/${GITHUB_REF_NAME}")"
-          release_id="$(jq -er '.id' <<<"$release")"
+          release="$(GH_TOKEN="$RELEASE_GH_TOKEN" gh release view "$GITHUB_REF_NAME" \
+            --repo "$GITHUB_REPOSITORY" \
+            --json databaseId,isDraft,isPrerelease,tagName,targetCommitish)"
+          release_id="$(jq -er '.databaseId' <<<"$release")"
           jq -e --arg tag "$GITHUB_REF_NAME" --arg target "$GITHUB_SHA" \
-            '.draft == true and .prerelease == false and
-             .tag_name == $tag and .target_commitish == $target' \
+            '.isDraft == true and .isPrerelease == false and
+             .tagName == $tag and .targetCommitish == $target' \
             <<<"$release" >/dev/null
 
           gate_output="$RUNNER_TEMP/package-gate-output"
@@ -880,12 +881,13 @@ jobs:
             --jq '.object.sha' \
             "repos/${GITHUB_REPOSITORY}/git/ref/tags/${GITHUB_REF_NAME}")"
           [[ "$tag_sha" == "$GITHUB_SHA" ]]
-          release="$(GH_TOKEN="$RELEASE_GH_TOKEN" gh api \
-            "repos/${GITHUB_REPOSITORY}/releases/tags/${GITHUB_REF_NAME}")"
-          release_id="$(jq -er '.id' <<<"$release")"
+          release="$(GH_TOKEN="$RELEASE_GH_TOKEN" gh release view "$GITHUB_REF_NAME" \
+            --repo "$GITHUB_REPOSITORY" \
+            --json databaseId,isDraft,isPrerelease,tagName,targetCommitish)"
+          release_id="$(jq -er '.databaseId' <<<"$release")"
           jq -e --arg tag "$GITHUB_REF_NAME" --arg target "$GITHUB_SHA" \
-            '.draft == true and .prerelease == false and
-             .tag_name == $tag and .target_commitish == $target' \
+            '.isDraft == true and .isPrerelease == false and
+             .tagName == $tag and .targetCommitish == $target' \
             <<<"$release" >/dev/null
 
           response=""

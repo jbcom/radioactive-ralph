@@ -268,7 +268,7 @@ func TestPublicReleaseWaitsForAllRequiredArtifacts(t *testing.T) {
 	lastImmutable := strings.LastIndex(publishJob, "bash scripts/ci/require_immutable_releases.sh")
 	lastManifest := strings.LastIndex(publishJob, `contents/.release-please-manifest.json?ref=main`)
 	lastTag := strings.LastIndex(publishJob, `git/ref/tags/${GITHUB_REF_NAME}`)
-	lastRelease := strings.LastIndex(publishJob, `release="$(GH_TOKEN="$RELEASE_GH_TOKEN" gh api`)
+	lastRelease := strings.LastIndex(publishJob, `release="$(GH_TOKEN="$RELEASE_GH_TOKEN" gh release view`)
 	promotion := strings.Index(publishJob, "-f make_latest=true")
 	for label, index := range map[string]int{
 		"sealed assets":     lastAssets,

@@ -178,9 +178,8 @@ expected_package_names="$(printf '%s\n' \
   bucket/radioactive-ralph.json | LC_ALL=C sort)"
 [[ "$package_names" == "$expected_package_names" ]]
 
-release_target="$(release_gh api \
-  --jq '.target_commitish' \
-  "repos/${RELEASE_REPO}/releases/tags/v${VERSION}")"
+release_target="$(release_gh release view "v${VERSION}" --repo "$RELEASE_REPO" \
+  --json targetCommitish --jq '.targetCommitish')"
 jq -e \
   --arg version "$VERSION" \
   --arg source "$release_target" \
