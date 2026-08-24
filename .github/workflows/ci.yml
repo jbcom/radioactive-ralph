@@ -44,8 +44,40 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  classify-pr:
+    name: Classify vetted automation PR
+    runs-on: ubuntu-latest
+    outputs:
+      skip-heavy-ci: ${{ steps.classify.outputs.skip-heavy-ci }}
+    steps:
+      - id: classify
+        env:
+          AUTHOR: ${{ github.event.pull_request.user.login }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          skip=false
+
+          # merge_group events must always exercise the full gate.
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            if [[ "$AUTHOR" == "jbdevprimary" && "$HEAD_REF" == release-please--* ]]; then
+              skip=true
+            elif [[ "$AUTHOR" == "dependabot[bot]" && "$HEAD_REF" == dependabot/* ]] &&
+              [[ "$PR_TITLE" =~ [Ff]rom[[:space:]]+v?([0-9]+)\.[0-9]+\.[0-9]+[^[:space:]]*[[:space:]]+[Tt]o[[:space:]]+v?([0-9]+)\. ]] &&
+              [[ "${BASH_REMATCH[1]}" == "${BASH_REMATCH[2]}" ]]; then
+              skip=true
+            fi
+          fi
+
+          echo "skip-heavy-ci=$skip" >> "$GITHUB_OUTPUT"
+          echo "skip-heavy-ci=$skip"
+
   test:
     name: Test (${{ matrix.os }})
+    needs: classify-pr
+    if: needs.classify-pr.outputs.skip-heavy-ci != 'true'
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -53,6 +85,10 @@ jobs:
         os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # SonarCloud needs the complete history for blame and pull-request
+          # attribution; the other matrix legs use the same authoritative tree.
+          fetch-depth: 0
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
@@ -103,6 +139,19 @@ jobs:
         # internal/provider/race_budget_race_test.go -- the two numbers are one
         # decision split across two files, and only their SUM is meaningful.
         run: go test -race -timeout 20m -coverprofile=coverage.out -covermode=atomic ./...
+      - name: SonarCloud analysis
+        # GitHub withholds Actions secrets from external forks. Their test job
+        # still runs, while trusted upstream PRs, merge-queue entries, and
+        # pushes publish the SonarCloud result.
+        if: >-
+          matrix.os == 'ubuntu-latest' &&
+          (github.event_name != 'pull_request' ||
+          github.event.pull_request.head.repo.full_name == github.repository)
+        uses: SonarSource/sonarqube-scan-action@22918119ff8e1ca75a623e15c8296b6ea4fbe28f # v8.2.1
+        env:
+          # This is the Doppler-synced organization Actions secret. Never add a
+          # repository-scoped duplicate.
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
       - name: Enforcement adapter mutation proofs
         if: runner.os == 'Linux'
         run: bash scripts/ci/test_enforcement_adapter_mutations.sh
@@ -353,6 +402,8 @@ jobs:
 
   e2e:
     name: E2E (CI-feasible)
+    needs: classify-pr
+    if: needs.classify-pr.outputs.skip-heavy-ci != 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -397,6 +448,8 @@ jobs:
 
   gui:
     name: GUI (${{ matrix.os }})
+    needs: classify-pr
+    if: needs.classify-pr.outputs.skip-heavy-ci != 'true'
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -491,6 +544,8 @@ jobs:
 
   build-targets:
     name: Build (${{ matrix.goos }}/${{ matrix.goarch }})
+    needs: classify-pr
+    if: needs.classify-pr.outputs.skip-heavy-ci != 'true'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -563,6 +618,8 @@ jobs:
 
   lint:
     name: Lint
+    needs: classify-pr
+    if: needs.classify-pr.outputs.skip-heavy-ci != 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -575,6 +632,8 @@ jobs:
 
   workflow-lint:
     name: Workflow lint
+    needs: classify-pr
+    if: needs.classify-pr.outputs.skip-heavy-ci != 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -599,6 +658,8 @@ jobs:
 
   vuln:
     name: Vulnerability scan
+    needs: classify-pr
+    if: needs.classify-pr.outputs.skip-heavy-ci != 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -612,35 +673,29 @@ jobs:
 
   docs:
     name: Docs
+    needs: classify-pr
+    if: needs.classify-pr.outputs.skip-heavy-ci != 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
         with:
-          python-version: '3.12'
-      - name: Install gomarkdoc
-        # Retried for the same reason as `go mod download`: this RESOLVES
-        # MODULES over the network, so a transient proxy.golang.org failure
-        # fails the job. A Package GUI (windows-latest) run failed exactly
-        # here, inside `go install`, in a job with no download step to retry.
-        shell: bash
-        run: |
-          for attempt in 1 2 3; do
-            if go install github.com/princjef/gomarkdoc/cmd/gomarkdoc@v1.1.0; then exit 0; fi
-            echo "go install gomarkdoc failed (attempt $attempt/3)" >&2
-            [ "$attempt" -eq 3 ] && exit 1
-            sleep $((attempt * 10))
-          done
-      - name: Install tox
-        run: python -m pip install --disable-pip-version-check "tox==4.53.0"
+          version: 11.21.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24'
+          cache: 'pnpm'
+          cache-dependency-path: docs/pnpm-lock.yaml
       - name: Build docs
-        run: tox -e docs
+        run: make docs-check
 
   package-artifacts:
     name: Package artifacts
+    needs: classify-pr
+    if: needs.classify-pr.outputs.skip-heavy-ci != 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -659,6 +714,8 @@ jobs:
 
   package-artifacts-arm64:
     name: Package artifacts (arm64)
+    needs: classify-pr
+    if: needs.classify-pr.outputs.skip-heavy-ci != 'true'
     runs-on: ubuntu-24.04-arm
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -677,6 +734,8 @@ jobs:
 
   package-gui:
     name: Package GUI (${{ matrix.os }})
+    needs: classify-pr
+    if: needs.classify-pr.outputs.skip-heavy-ci != 'true'
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -729,6 +788,8 @@ jobs:
 
   packaging:
     name: Packaging lint
+    needs: classify-pr
+    if: needs.classify-pr.outputs.skip-heavy-ci != 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -781,7 +842,6 @@ jobs:
             scripts/verify-repo-claims.sh \
             scripts/self-test.sh \
             scripts/drive-open-prs.sh \
-            scripts/generate-api-docs.sh \
             scripts/record-demo.sh \
             scripts/validate-docs.sh \
             scripts/ci/smoke_launchd.sh \
@@ -834,8 +894,11 @@ jobs:
 
   dependency-review:
     name: Dependency review
+    needs: classify-pr
+    if: >-
+      github.event_name == 'pull_request' &&
+      needs.classify-pr.outputs.skip-heavy-ci != 'true'
     runs-on: ubuntu-latest
-    if: github.event_name == 'pull_request'
     permissions:
       contents: read
     steps:

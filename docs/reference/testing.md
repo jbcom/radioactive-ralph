@@ -35,11 +35,11 @@ go test ./...
 go test -race ./...
 golangci-lint run
 govulncheck ./...
-python3 -m tox -e docs
+make docs-check
 ```
 
-The docs tox environment handles the Sphinx dependencies and the Go API
-prebuild in one shot.
+The locked Sourcey toolchain builds the authored Markdown and extracts the
+supported Go CLI reference directly from source in one shot.
 
 ## What CI validates
 
@@ -51,7 +51,7 @@ prebuild in one shot.
 | `golangci-lint run` | Lint hygiene |
 | `actionlint` | Validates GitHub Actions workflow syntax |
 | `govulncheck ./...` | Dependency and call-site vulnerability scan |
-| `tox -e docs` | API markdown generation, docs validation, Sphinx build |
+| `make docs-check` | Sourcey build, rendered-artifact checks, and docs validation |
 
 Provider timeout tests use fake installed binaries for Claude, Codex, OpenCode,
 and declarative execution. They emit progress for longer than the stall lease
@@ -137,4 +137,4 @@ before the pinned probe is updated.
 - `internal/orch` dispatch, spend-cap admission, and verification
 - `internal/supervisor` discovery, single-instance, stale-socket reclaim
 - `cmd/radioactive_ralph` command wiring
-- docs generation and Sphinx publication
+- Sourcey documentation generation and Pages publication

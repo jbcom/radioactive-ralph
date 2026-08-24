@@ -91,34 +91,45 @@ func extractGitHubInvocations(job string) []githubInvocation {
 			continue
 		}
 		for _, seg := range splitShellSegments(line) {
-			fields := strings.Fields(seg)
-			idx := -1
-			for i, f := range fields {
-				// Match the gh binary itself, including VAR=x gh ... and $(gh ...
-				trimmed := strings.TrimLeft(f, "\"'$(`")
-				if trimmed == "gh" {
-					idx = i
-					break
-				}
+			if invocation, ok := parseGitHubInvocation(seg); ok {
+				out = append(out, invocation)
 			}
-			if idx == -1 || idx+1 >= len(fields) {
-				continue
-			}
-			rest := fields[idx+1:]
-			var words []string
-			for _, r := range rest {
-				if !strings.HasPrefix(r, "-") {
-					words = append(words, strings.Trim(r, `"'`))
-				}
-				if len(words) == 2 {
-					break
-				}
-			}
-			sub := strings.Join(words, " ")
-			out = append(out, githubInvocation{subcommand: sub, args: rest, line: strings.TrimSpace(seg)})
 		}
 	}
 	return out
+}
+
+func parseGitHubInvocation(segment string) (githubInvocation, bool) {
+	fields := strings.Fields(segment)
+	for i, field := range fields {
+		// Match the gh binary itself, including VAR=x gh ... and $(gh ...
+		if strings.TrimLeft(field, "\"'$(`") != "gh" {
+			continue
+		}
+		if i+1 >= len(fields) {
+			return githubInvocation{}, false
+		}
+		args := fields[i+1:]
+		return githubInvocation{
+			subcommand: githubSubcommand(args),
+			args:       args,
+			line:       strings.TrimSpace(segment),
+		}, true
+	}
+	return githubInvocation{}, false
+}
+
+func githubSubcommand(args []string) string {
+	words := make([]string, 0, 2)
+	for _, arg := range args {
+		if !strings.HasPrefix(arg, "-") {
+			words = append(words, strings.Trim(arg, `"'`))
+		}
+		if len(words) == 2 {
+			break
+		}
+	}
+	return strings.Join(words, " ")
 }
 
 // splitShellSegments breaks a shell line on pipes, logical operators, and
@@ -585,8 +596,11 @@ func TestReleaseToolingIsPinnedAndPermissionsAreLeastPrivilege(t *testing.T) {
 	requireContains(t, buildDocs, "contents: read", cdPath)
 	requireNotContains(t, buildDocs, "pages: write", cdPath)
 	requireNotContains(t, buildDocs, "id-token: write", cdPath)
-	requireContains(t, buildDocs, "github.com/princjef/gomarkdoc/cmd/gomarkdoc@v1.1.0", cdPath)
-	requireContains(t, buildDocs, `"tox==4.53.0"`, cdPath)
+	requireContains(t, buildDocs, "pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86", cdPath)
+	requireContains(t, buildDocs, "actions/setup-node@", cdPath)
+	requireContains(t, buildDocs, "make docs-check", cdPath)
+	requireNotContains(t, buildDocs, "gomarkdoc", cdPath)
+	requireNotContains(t, buildDocs, "tox", cdPath)
 	requireContains(t, buildDocs, "actions/upload-pages-artifact@", cdPath)
 	publishDocs := requireWorkflowJob(t, cd, "publish-docs", cdPath)
 	requireContains(t, publishDocs, "needs: build-docs", cdPath)
@@ -606,7 +620,8 @@ func TestReleaseToolingIsPinnedAndPermissionsAreLeastPrivilege(t *testing.T) {
 	requireNotContains(t, ci, `version: "~> v2"`, ciPath)
 	requireContains(t, ci, "version: v2.17.0", ciPath)
 	requireNotContains(t, ci, "gomarkdoc@latest", ciPath)
-	requireContains(t, ci, "gomarkdoc@v1.1.0", ciPath)
+	requireContains(t, ci, "pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86", ciPath)
+	requireNotContains(t, ci, "gomarkdoc", ciPath)
 	requireContains(t, ci, "@anthropic-ai/claude-code@2.1.220", ciPath)
 	requireContains(t, ci, "version: v2.12.2", ciPath)
 	requireContains(t, ci, "actionlint@v1.7.12", ciPath)
@@ -641,10 +656,11 @@ func TestReleaseToolingIsPinnedAndPermissionsAreLeastPrivilege(t *testing.T) {
 	requireContains(t, codexJob, "codex logout", providerPath)
 	requireContains(t, codexJob, `test "$CODEX_HOME" = "$RUNNER_TEMP/codex-home"`, providerPath)
 
-	const toxPath = "tox.ini"
-	tox := readRepositoryFile(t, toxPath)
-	requireContains(t, tox, "requires = tox==4.53.0", toxPath)
-	requireContains(t, tox, "-r docs/requirements.lock", toxPath)
+	for _, retired := range []string{"tox.ini", "docs/requirements.lock", "docs/conf.py"} {
+		if _, err := os.Stat(filepath.Join("..", "..", retired)); !os.IsNotExist(err) {
+			t.Errorf("retired Sourcey predecessor %s must be absent, stat error = %v", retired, err)
+		}
+	}
 }
 
 func TestCLIAndGUICasksHaveDistinctTokensAndFiles(t *testing.T) {

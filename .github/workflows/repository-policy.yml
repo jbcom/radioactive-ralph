@@ -1,0 +1,53 @@
+name: Repository Policy
+
+on:
+  pull_request_target:
+    types: [opened, reopened, synchronize, ready_for_review]
+
+# This runs trusted base-branch code only. It never checks out a fork's ref or
+# executes data from a pull request; it reads filenames through GitHub's API.
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  external-fork-sensitive-files:
+    name: External fork sensitive-file policy
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
+      PR_NUMBER: ${{ github.event.pull_request.number }}
+    steps:
+      - name: Reject sensitive-file edits from external forks
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ "$HEAD_REPOSITORY" == "$GITHUB_REPOSITORY" ]]; then
+            echo "Repository Policy: trusted upstream pull request."
+            exit 0
+          fi
+
+          files="$(gh api --paginate \
+            "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}/files?per_page=100" \
+            --jq '.[].filename')"
+          found=false
+          while IFS= read -r file; do
+            case "$file" in
+              .github/workflows/*|.github/actions/*|.github/dependabot.yml|\
+              .coderabbit.yml|.coderabbit.yaml|sonar-project.properties|\
+              .sonarcloud.properties|release-please-config.json|\
+              .release-please-manifest.json|.goreleaser*.yaml|\
+              docs/sourcey.config.ts|docs/package.json|docs/install.sh)
+                echo "::error file=${file}::External forks cannot modify sensitive automation or publication files."
+                found=true
+                ;;
+            esac
+          done <<< "$files"
+
+          if [[ "$found" == true ]]; then
+            exit 1
+          fi
+
+          echo "Repository Policy: external fork changes no protected files."

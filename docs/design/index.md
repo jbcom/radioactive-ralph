@@ -20,18 +20,3 @@ depend on.
 | [Provider write containment](./provider-write-containment.md) | What actually stops a provider writing outside the checkout, and where that guarantee does not yet hold |
 | [Canonical enforcement policy](./enforcement-policy.md) | Shared finite lifecycle, acceptance predicates, waits, budgets, and adapter parity |
 | [Generated enforcement adapters](./enforcement-adapters.md) | Absolute hook commands, managed-session boundary, atomic bundles, and Stop verification |
-
-```{toctree}
-:hidden:
-
-provider-contract
-declarative-provider-bindings
-config-layers
-completion-and-a2a
-deterministic-execution
-exact-provider-identity
-plan-adaptive-concurrency
-provider-write-containment
-enforcement-policy
-enforcement-adapters
-```

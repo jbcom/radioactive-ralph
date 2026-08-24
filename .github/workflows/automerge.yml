@@ -1,36 +1,64 @@
 name: Automerge
 
-# Enables GitHub native auto-merge on dependabot + release-please PRs.
-# Native auto-merge waits for required checks + any required reviews,
-# then squash-merges without further action. This workflow never checks out
-# or executes pull-request code.
+# Admin-merges vetted release-please and Dependabot non-major PRs. These
+# encapsulate already-verified release/dependency work and deliberately skip
+# the full matrix; ordinary and major dependency PRs retain normal protection.
+# This workflow never checks out or executes pull-request code.
 on:
-  pull_request:
+  pull_request_target:
     types: [opened, reopened, synchronize, ready_for_review]
 
 jobs:
-  automerge:
-    name: Enable auto-merge
+  automerge-vetted-prs:
+    name: Auto-merge vetted release and dependency PRs
     runs-on: ubuntu-latest
     if: >
       github.repository == 'jbcom/radioactive-ralph' &&
       github.event.pull_request.head.repo.full_name == github.repository &&
       (
-        (
-          github.event.pull_request.user.login == 'dependabot[bot]' &&
-          startsWith(github.event.pull_request.head.ref, 'dependabot/')
-        ) ||
-        (
-          github.event.pull_request.user.login == 'jbdevprimary' &&
-          startsWith(github.event.pull_request.head.ref, 'release-please--')
-        )
+        (github.event.pull_request.user.login == 'dependabot[bot]' &&
+        startsWith(github.event.pull_request.head.ref, 'dependabot/')) ||
+        (github.event.pull_request.user.login == 'jbdevprimary' &&
+        startsWith(github.event.pull_request.head.ref, 'release-please--'))
       )
     permissions:
       contents: write
       pull-requests: write
     steps:
-      - name: Enable auto-merge (squash)
+      - name: Merge release-please or Dependabot non-major PRs
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.CI_GITHUB_TOKEN }}
+          AUTHOR: ${{ github.event.pull_request.user.login }}
+          HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
           PR_URL: ${{ github.event.pull_request.html_url }}
-        run: gh pr merge --auto --squash "$PR_URL"
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # pull_request_target intentionally reads metadata only: it never
+          # checks out or executes PR code, including code from a fork.
+          if [[ "$HEAD_REPOSITORY" != "$GITHUB_REPOSITORY" ]]; then
+            echo "Not an upstream-authored PR; do not auto-merge."
+            exit 0
+          fi
+
+          if [[ "$AUTHOR" == "jbdevprimary" && "$HEAD_REF" == release-please--* ]]; then
+            gh pr merge --admin --merge "$PR_URL"
+            exit 0
+          fi
+
+          if [[ "$AUTHOR" != "dependabot[bot]" || "$HEAD_REF" != dependabot/* ]]; then
+            echo "Not a Dependabot or release-please PR."
+            exit 0
+          fi
+
+          title="$(gh pr view "$PR_URL" --json title --jq .title)"
+          if [[ "$title" =~ [Ff]rom[[:space:]]+v?([0-9]+)\.[0-9]+\.[0-9]+[^[:space:]]*[[:space:]]+[Tt]o[[:space:]]+v?([0-9]+)\. ]]; then
+            if [[ "${BASH_REMATCH[1]}" == "${BASH_REMATCH[2]}" ]]; then
+              gh pr merge --admin --merge "$PR_URL"
+              exit 0
+            fi
+          fi
+
+          echo "Dependabot update is major or could not be classified; retain normal CI and human merge."

@@ -1,0 +1,13 @@
+{
+  "name": "radioactive-ralph-docs",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "sourcey dev",
+    "build": "sourcey build && cp install.sh dist/install.sh",
+    "validate": "sourcey build --output dist && cp install.sh dist/install.sh"
+  },
+  "dependencies": {
+    "sourcey": "3.6.5"
+  }
+}

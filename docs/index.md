@@ -49,15 +49,3 @@ lastUpdated: 2026-07-16
 - Completion is orchestrator-verified against acceptance criteria, never
   a worker's self-report.
 - Treats the provider as a binding, not the product boundary.
-
-```{toctree}
-:hidden:
-
-getting-started/index
-guides/index
-runbooks/index
-launch/index
-design/index
-reference/index
-api/index
-```
