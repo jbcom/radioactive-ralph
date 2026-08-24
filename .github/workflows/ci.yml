@@ -108,7 +108,13 @@ jobs:
         # decision split across two files, and only their SUM is meaningful.
         run: go test -race -timeout 20m -coverprofile=coverage.out -covermode=atomic ./...
       - name: SonarCloud analysis
-        if: matrix.os == 'ubuntu-latest'
+        # GitHub withholds Actions secrets from external forks. Their test job
+        # still runs, while trusted upstream PRs, merge-queue entries, and
+        # pushes publish the SonarCloud result.
+        if: >-
+          matrix.os == 'ubuntu-latest' &&
+          (github.event_name != 'pull_request' ||
+          github.event.pull_request.head.repo.full_name == github.repository)
         uses: SonarSource/sonarqube-scan-action@22918119ff8e1ca75a623e15c8296b6ea4fbe28f # v8.2.1
         env:
           # This is the Doppler-synced organization Actions secret. Never add a
