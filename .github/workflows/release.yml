@@ -511,7 +511,10 @@ jobs:
     outputs:
       package_head_oid: ${{ steps.package_heads.outputs.package_head_oid }}
     permissions:
-      contents: read
+      # This job reads signed artifacts from the still-draft release. GitHub
+      # hides drafts from contents:read tokens; no organization credential is
+      # exposed and package-repository writes remain separately scoped.
+      contents: write
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -532,7 +535,9 @@ jobs:
     needs: verify-package-heads
     runs-on: ${{ matrix.os }}
     permissions:
-      contents: read
+      # Retrieve exact draft assets before credentials are explicitly removed
+      # for Homebrew/Scoop execution below.
+      contents: write
     strategy:
       fail-fast: false
       matrix:
