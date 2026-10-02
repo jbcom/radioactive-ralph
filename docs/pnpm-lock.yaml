@@ -9,8 +9,8 @@ importers:
   .:
     dependencies:
       sourcey:
-        specifier: 3.6.5
-        version: 3.6.5(@babel/core@7.29.7)
+        specifier: 3.6.11
+        version: 3.6.11(@babel/core@7.29.7)
 
 packages:
 
@@ -786,6 +786,10 @@ packages:
     resolution: {integrity: sha512-CY6crGq313MX8GkwvB7tzgp99vjQxY1++5y10/BKN/GUfHqWaOGQMNZkBvqSzsZKWk/ijwHlWzzkLulsGHhjWQ==}
     hasBin: true
 
+  js-yaml@4.3.2:
+    resolution: {integrity: sha512-SFNOvSJ+Dgf/9An904Yx+CgSlIPCkIpao4qo51lpee25TIRejdH3rhR4EZMGoNx3/TP3O+wzWuiTFl4sqbltzA==}
+    hasBin: true
+
   jsesc@3.1.0:
     resolution: {integrity: sha512-/sM3dO2FOzXjKQhJuo0Q173wf2KOo8t4I8vHy6lF9poUp7bKT0/NHE8fPX23PwfhnykfqnC2xRxOnVw5XuGIaA==}
     engines: {node: '>=6'}
@@ -1179,8 +1183,8 @@ packages:
     resolution: {integrity: sha512-i5uvt8C3ikiWeNZSVZNWcfZPItFQOsYTUAOkcUPGd8DqDy1uOUikjt5dG+uRlwyvR108Fb9DOd4GvXfT0N2/uQ==}
     engines: {node: '>= 12'}
 
-  sourcey@3.6.5:
-    resolution: {integrity: sha512-Pq0UMFsMha5lYrA57iPiUxXe3usvpzbuOs8kawQydxFGUlGvasP9bPFF2gQpN9yWBTWpnIVlaxZamHEzdtj+1A==}
+  sourcey@3.6.11:
+    resolution: {integrity: sha512-fg919VMCGC1/pYeii4rTvXaQyvXvCpeXm/UcZ56AU4g6QMXPvwfsCq7jTroZgVJCeRV7w9PjHapctXY4pEOJZg==}
     engines: {node: '>=20'}
     hasBin: true
 
@@ -2043,6 +2047,10 @@ snapshots:
     dependencies:
       argparse: 2.0.1
 
+  js-yaml@4.3.2:
+    dependencies:
+      argparse: 2.0.1
+
   jsesc@3.1.0: {}
 
   json5@2.2.3: {}
@@ -2425,7 +2433,7 @@ snapshots:
 
   source-map@0.7.6: {}
 
-  sourcey@3.6.5(@babel/core@7.29.7):
+  sourcey@3.6.11(@babel/core@7.29.7):
     dependencies:
       '@apidevtools/json-schema-ref-parser': 13.0.5
       '@preact/preset-vite': 2.10.6(@babel/core@7.29.7)(preact@10.29.8)(vite@8.2.2(jiti@2.7.0))
@@ -2435,7 +2443,7 @@ snapshots:
       citty: 0.1.6
       heroicons: 2.2.0
       jiti: 2.7.0
-      js-yaml: 4.3.1
+      js-yaml: 4.3.2
       marked: 15.0.12
       mcp-parser: 0.4.1
       moxygen: 2.1.12
