@@ -67,7 +67,7 @@ func TestClaudeDeclaresNoExtraWritePath(t *testing.T) {
 }
 
 // TestWritePathsExpandHomeRelativeDeclarations pins that a binding declares its
-// path portably. A config cannot hardcode /Users/someone, and an absolute path
+// path portably. A config cannot hardcode a user's home, and an absolute path
 // baked into a shipped default would be wrong on every other machine.
 func TestWritePathsExpandHomeRelativeDeclarations(t *testing.T) {
 	home, err := os.UserHomeDir()

@@ -15,7 +15,7 @@ draft-to-prerelease promotion.
       `python3 -m tox -e docs` pass.
 - [ ] `RELEASE_PLEASE_GITHUB_TOKEN` is provisioned only for Release Please in
       this repository.
-- [ ] `CI_GITHUB_TOKEN` is present from Doppler repository sync and can read
+- [ ] `CI_GITHUB_TOKEN` is configured and can read
       repository Administration settings. The
       release workflow exposes it only to
       `GET /repos/jbcom/radioactive-ralph/immutable-releases`; missing,

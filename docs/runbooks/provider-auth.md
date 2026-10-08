@@ -37,7 +37,7 @@ claude
 ```
 
 First run prompts you to sign in at `console.anthropic.com`. Session
-tokens are cached under `~/.claude/`.
+tokens are cached in Claude's user configuration directory.
 
 ### Verify
 

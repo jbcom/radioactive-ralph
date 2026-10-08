@@ -20,12 +20,12 @@ fixture() {
 framework       : 683.100.3
 images          : 2
 ================================================
-image-path      : /Users/runner/work/other_1.2.3_darwin_amd64.dmg
+image-path      : /tmp/example-build/other_1.2.3_darwin_amd64.dmg
 image-type      : read-only disk image
 /dev/disk9	GUID_partition_scheme	
 /dev/disk9s1	41504653-0000-11AA-AA11-00306543ECAC	/Volumes/other
 ================================================
-image-path      : /Users/runner/work/radioactive-ralph_1.2.3_darwin_amd64.dmg
+image-path      : /tmp/example-build/radioactive-ralph_1.2.3_darwin_amd64.dmg
 image-type      : read-only disk image
 /dev/disk5	GUID_partition_scheme	
 /dev/disk5s1	41504653-0000-11AA-AA11-00306543ECAC	/Volumes/radioactive-ralph
@@ -33,7 +33,7 @@ image-type      : read-only disk image
 EOF
 }
 
-target=/Users/runner/work/radioactive-ralph_1.2.3_darwin_amd64.dmg
+target=/tmp/example-build/radioactive-ralph_1.2.3_darwin_amd64.dmg
 fail=0
 
 got="$(fixture | dmg_stale_devices "$target" | tr '\n' ' ')"
@@ -52,7 +52,7 @@ fi
 
 # A path that is not attached must yield nothing -- the case that made the
 # original no-op parser look like it was working.
-if [[ -n "$(fixture | dmg_stale_devices /Users/runner/work/absent.dmg)" ]]; then
+if [[ -n "$(fixture | dmg_stale_devices /tmp/example-build/absent.dmg)" ]]; then
   echo "FAIL: returned devices for an image that is not attached" >&2
   fail=1
 fi

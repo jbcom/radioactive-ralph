@@ -9,7 +9,7 @@
 # which looks identical whether CI is merely slow, a PR has a conflict, or tests
 # are failing — so a stall was indistinguishable from patience. This version
 # surfaced a real #245 failure within two rounds.
-cd /Users/jbogaty/src/jbcom/radioactive-ralph || exit 1
+cd "$(dirname "${BASH_SOURCE[0]}")/.." || exit 1
 prev=""
 # inflight is the leader whose rebase is still working through CI. It survives
 # across rounds so a BLOCKED-while-checking leader is not mistaken for idle.

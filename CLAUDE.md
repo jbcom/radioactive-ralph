@@ -23,12 +23,6 @@ keep this file to Claude-specific pillars and links.
   Read both before non-trivial Windows work.
 - **[Implementation plan](docs/superpowers/plans/2026-07-16-supervisor-architecture.md)**
   — the phased rewrite plan.
-- **`.agent-state/decisions.ndjson`** — the append-only decision trail with the
-  rationale behind every load-bearing call. Consult before re-litigating a
-  decision; append to it when you make one.
-- **`.agent-state/directive.md`** — the durable work queue (Status + checkbox
-  items). The stop-hook keeps the loop driving while it is ACTIVE with
-  unchecked, non-wait items.
 
 ## Claude-specific notes
 

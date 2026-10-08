@@ -49,15 +49,6 @@ The repo has an extensive testing doctrine in `AGENTS.md`. Key principles:
   in the same PR.
 - Read the output the user gets, not the assertions about it.
 
-## Remote agents
-
-A fleet of agents operates these repositories unattended on Gitea. Work you
-do locally can duplicate or conflict with theirs. See
-`~/.claude/shared/remote-agents.md` for the full model.
-
-**In short:** hand off dependency bumps and self-contained issues to the
-fleet. Do it yourself when the work needs judgment the fleet doesn't have.
-
 ## Security reports
 
 Do not file public issues for security vulnerabilities. Use

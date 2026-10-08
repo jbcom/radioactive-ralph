@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Fail closed unless the repository's live immutable-release setting is enabled.
 # This endpoint requires repository Administration: read, which the built-in
-# GitHub Actions token does not provide. The Doppler repository-sync
+# GitHub Actions token does not provide. The organization
 # CI_GITHUB_TOKEN is used only for this command.
 set -euo pipefail
 

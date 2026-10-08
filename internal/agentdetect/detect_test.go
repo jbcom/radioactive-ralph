@@ -89,7 +89,7 @@ func TestDetectClassifiesEveryCandidate(t *testing.T) {
 func TestDetectCursorVsCursorAgentDistinctClassification(t *testing.T) {
 	withFakePath(t, map[string]string{
 		"cursor":       "/usr/local/bin/cursor",
-		"cursor-agent": "/Users/x/.local/bin/cursor-agent",
+		"cursor-agent": "/home/example/.local/bin/cursor-agent",
 	}, nil)
 
 	detected := Detect()
