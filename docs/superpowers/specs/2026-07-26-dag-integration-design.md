@@ -1,8 +1,8 @@
 # DAG integration design — folding `archive/plan-v2-dag` into main's plan/orchestrator
 
-**Repo**: `/Users/jbogaty/src/jbcom/radioactive-ralph` (main = v0.22.1)
+**Repo**: `radioactive-ralph` (main = v0.22.1)
 **Source**: tag `archive/plan-v2-dag` (11 commits, ex-PR #198, closed superseded)
-**Worktree**: `/Users/jbogaty/src/jbcom/.worktrees/rr-dag-reland` on `feat/plan-v2-reland`
+**Worktree**: `../.worktrees/rr-dag-reland` on `feat/plan-v2-reland`
 **Merge-base**: `c6eb5d1` — the branch predates `eb04193` (#202) and `99b4b06` (#203).
 
 ---

@@ -72,7 +72,7 @@ type Paths struct {
 // Resolve returns the full Paths plan for the given absolute repo path.
 //
 // The repo path is converted to its absolute, symlink-resolved form before
-// hashing so that ~/work and /Users/me/work produce the same hash.
+// hashing so that ~/work and its absolute path produce the same hash.
 func Resolve(repoPath string) (Paths, error) {
 	var zero Paths
 	if repoPath == "" {

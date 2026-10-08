@@ -42,7 +42,7 @@ func TestOpencodeIsContainableWithItsDeclaredPath(t *testing.T) {
 
 // TestClaudeStillSupportsContainment is the other half. Without it the test
 // above is satisfied by declaring every provider incapable, which would disable
-// containment fleet-wide -- trading an opaque failure for a silent one.
+// containment across projects -- trading an opaque failure for a silent one.
 //
 // A real contained claude turn completes end to end: status=done, exit_code=0,
 // with ordinary assistant output.

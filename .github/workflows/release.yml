@@ -23,7 +23,7 @@ jobs:
       contents: read
     steps:
       # Each non-built-in credential has a fixed call-site purpose:
-      # PKGS_GITHUB_TOKEN mutates jbcom/pkgs; the Doppler-synced
+      # PKGS_GITHUB_TOKEN mutates jbcom/pkgs; the organization
       # CI_GITHUB_TOKEN reads this repository's immutable-release setting and
       # the Release Please draft (GitHub hides drafts from tokens without
       # repository push access, which the read-only built-in token lacks).
@@ -59,7 +59,7 @@ jobs:
 
       # The repository's active tag ruleset makes v* tags admin-created and
       # immutable. Still prove the event is the checked-out tag commit on main
-      # before executing repository code with the Doppler-synced credential.
+      # before executing repository code with the organization credential.
       - name: Require tag commit on main
         id: tag_provenance
         run: |

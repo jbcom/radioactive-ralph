@@ -48,7 +48,7 @@ deploys it through the `github-pages` environment.
 
 The GitHub-integrated `jbcom_radioactive-ralph` project analyzes pull requests
 and `main` from the existing Ubuntu test job, using the checked-in scope in
-`sonar-project.properties`. Authentication is the Doppler-synced organization
+`sonar-project.properties`. Authentication is the organization
 Actions secret, never a repository-scoped duplicate. Its provider-owned
 `SonarCloud Code Analysis` status is required before `main` can advance.
 

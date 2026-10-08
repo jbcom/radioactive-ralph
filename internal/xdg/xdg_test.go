@@ -157,8 +157,8 @@ func TestStateRootLinuxDefault(t *testing.T) {
 }
 
 func TestStateRootDarwin(t *testing.T) {
-	got := stateRootForGOOS("darwin", "/Users/me", "", "")
-	want := filepath.Join("/Users/me", "Library", "Application Support", AppName)
+	got := stateRootForGOOS("darwin", "/home/example", "", "")
+	want := filepath.Join("/home/example", "Library", "Application Support", AppName)
 	if got != want {
 		t.Fatalf("stateRootForGOOS(darwin) = %q, want %q", got, want)
 	}

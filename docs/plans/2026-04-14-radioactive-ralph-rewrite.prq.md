@@ -349,11 +349,11 @@ falling back to the hardcoded list
 Discovered at `radioactive_ralph init` (for operator review) and at each `radioactive_ralph run`
 (for runtime steering). Shell-based discovery:
 
-- Enumerate `~/.claude/skills/*/SKILL.md` frontmatter `name` field
-- Parse `~/.claude/settings.json` for `mcpServers`, `enabledPlugins`,
+- Enumerate `skills/*/SKILL.md` in the provider's user configuration directory for the frontmatter `name` field
+- Parse the provider's user `settings.json` for `mcpServers`, `enabledPlugins`,
   `extraKnownMarketplaces`
 - Parse `.claude/settings.json` in the repo for project-scoped additions
-- Enumerate `~/.claude/plugins/cache/*/` directories
+- Enumerate `plugins/cache/*/` in the provider's user configuration directory
 - Call `claude plugin marketplace list --json` if the CLI exposes it
 
 Stored as `inventory.json`:

@@ -17,8 +17,7 @@ listed="$(sed -n '/shellcheck -x \\/,/^$/p' .github/workflows/ci.yml \
   | grep -oE '[a-z0-9/_.-]+\.sh' | sort -u)"
 # git ls-files, not `find scripts packaging docs`: a hardcoded directory list
 # makes tracked scripts elsewhere invisible to this gate, which is the same
-# blind spot one level up. Three were hiding, including
-# .claude/hooks/task-batch-flush.sh.
+# blind spot one level up.
 #
 present="$(git ls-files '*.sh' | sort -u)"
 

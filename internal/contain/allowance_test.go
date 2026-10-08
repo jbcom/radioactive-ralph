@@ -156,7 +156,7 @@ func TestHomeIsRejectedByBothChecks(t *testing.T) {
 // Seatbelt subpath grant and the Landlock rule, so it is what must be checked.
 //
 // Verified before fixing: NewPolicy(root, link->$HOME) returned nil error with
-// ExtraWritable = [/Users/<me>].
+// ExtraWritable = [$HOME].
 func TestSymlinkedAllowanceIsRejectedByItsTARGET(t *testing.T) {
 	home, err := os.UserHomeDir()
 	if err != nil {
