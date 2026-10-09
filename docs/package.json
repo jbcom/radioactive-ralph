@@ -8,6 +8,6 @@
     "validate": "sourcey build --output dist && cp install.sh dist/install.sh"
   },
   "dependencies": {
-    "sourcey": "3.6.11"
+    "sourcey": "3.6.12"
   }
 }
