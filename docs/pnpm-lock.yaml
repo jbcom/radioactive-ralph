@@ -9,8 +9,8 @@ importers:
   .:
     dependencies:
       sourcey:
-        specifier: 3.6.11
-        version: 3.6.11(@babel/core@7.29.7)
+        specifier: 3.6.12
+        version: 3.6.12(@babel/core@7.29.7)
 
 packages:
 
@@ -782,10 +782,6 @@ packages:
   js-tokens@4.0.0:
     resolution: {integrity: sha512-RdJUflcE3cUzKiMqQgsCu06FPu9UdIJO0beYbPhHN4k6apgJtifcoCtT9bcxOpYBtpD2kCM6Sbzg4CausW/PKQ==}
 
-  js-yaml@4.3.1:
-    resolution: {integrity: sha512-CY6crGq313MX8GkwvB7tzgp99vjQxY1++5y10/BKN/GUfHqWaOGQMNZkBvqSzsZKWk/ijwHlWzzkLulsGHhjWQ==}
-    hasBin: true
-
   js-yaml@4.3.2:
     resolution: {integrity: sha512-SFNOvSJ+Dgf/9An904Yx+CgSlIPCkIpao4qo51lpee25TIRejdH3rhR4EZMGoNx3/TP3O+wzWuiTFl4sqbltzA==}
     hasBin: true
@@ -1183,8 +1179,8 @@ packages:
     resolution: {integrity: sha512-i5uvt8C3ikiWeNZSVZNWcfZPItFQOsYTUAOkcUPGd8DqDy1uOUikjt5dG+uRlwyvR108Fb9DOd4GvXfT0N2/uQ==}
     engines: {node: '>= 12'}
 
-  sourcey@3.6.11:
-    resolution: {integrity: sha512-fg919VMCGC1/pYeii4rTvXaQyvXvCpeXm/UcZ56AU4g6QMXPvwfsCq7jTroZgVJCeRV7w9PjHapctXY4pEOJZg==}
+  sourcey@3.6.12:
+    resolution: {integrity: sha512-F3UUv7AHm+MJKW9k5PHPf3mvSCKVteQIiXzqkhvYSwIV8gsNeMEoF+ADPuz5YTKRuPtJq2t8KoC4Dug5BaJw6A==}
     engines: {node: '>=20'}
     hasBin: true
 
@@ -1373,7 +1369,7 @@ snapshots:
   '@apidevtools/json-schema-ref-parser@13.0.5':
     dependencies:
       '@types/json-schema': 7.0.15
-      js-yaml: 4.3.1
+      js-yaml: 4.3.2
 
   '@babel/code-frame@7.29.7':
     dependencies:
@@ -2043,10 +2039,6 @@ snapshots:
 
   js-tokens@4.0.0: {}
 
-  js-yaml@4.3.1:
-    dependencies:
-      argparse: 2.0.1
-
   js-yaml@4.3.2:
     dependencies:
       argparse: 2.0.1
@@ -2433,7 +2425,7 @@ snapshots:
 
   source-map@0.7.6: {}
 
-  sourcey@3.6.11(@babel/core@7.29.7):
+  sourcey@3.6.12(@babel/core@7.29.7):
     dependencies:
       '@apidevtools/json-schema-ref-parser': 13.0.5
       '@preact/preset-vite': 2.10.6(@babel/core@7.29.7)(preact@10.29.8)(vite@8.2.2(jiti@2.7.0))
