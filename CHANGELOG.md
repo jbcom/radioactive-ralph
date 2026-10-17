@@ -13,6 +13,14 @@ shipped. That means historical sections may still mention MCP, plugins,
 supervisors, or the archived Python implementation even though those are no
 longer part of the live contract.
 
+## [0.35.7](https://github.com/jbcom/radioactive-ralph/compare/v0.35.6...v0.35.7) (2026-10-17)
+
+
+### Bug Fixes
+
+* **deps:** move the Go toolchain to 1.26.9 for the net/http advisories ([4a8ea94](https://github.com/jbcom/radioactive-ralph/commit/4a8ea94d0b6553d5ff4bf510acbc61db24ee38e9))
+* **deps:** move the Go toolchain to 1.26.9 for the net/http advisories ([23681bc](https://github.com/jbcom/radioactive-ralph/commit/23681bcf11b74c0899fe07ed95fd9720b7cf24dc))
+
 ## [0.35.6](https://github.com/jbcom/radioactive-ralph/compare/v0.35.5...v0.35.6) (2026-08-24)
 
 
