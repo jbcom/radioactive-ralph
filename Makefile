@@ -10,7 +10,7 @@ LDFLAGS := -s -w \
 	-X main.Date=$(DATE)
 
 # Docker image for local Linux testing (matches CI Go version).
-GO_LINUX_IMAGE ?= golang:1.26.6
+GO_LINUX_IMAGE ?= golang:1.26.9
 
 # Workspace root — the directory containing go.mod.
 WORKSPACE_ROOT := $(abspath $(dir $(lastword $(MAKEFILE_LIST))))
