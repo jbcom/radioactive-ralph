@@ -116,10 +116,15 @@ mkdir -p "$WORK/pkgs/Casks" "$WORK/pkgs/bucket"
 cp "$CLI_CASK" "$WORK/pkgs/Casks/radioactive-ralph.rb"
 cp "$GUI_CASK" "$WORK/pkgs/Casks/radioactive-ralph-gui.rb"
 cp "$SCOOP_MANIFEST" "$WORK/pkgs/bucket/radioactive-ralph.json"
+(
+  cd "$WORK/pkgs"
+  node scripts/generate-directory.mjs
+)
 git -C "$WORK/pkgs" add \
   Casks/radioactive-ralph.rb \
   Casks/radioactive-ralph-gui.rb \
-  bucket/radioactive-ralph.json
+  bucket/radioactive-ralph.json \
+  src/data/directory/directory.json
 
 if git -C "$WORK/pkgs" diff --cached --quiet --exit-code; then
   echo "publish-cli-manifests: radioactive-ralph ${VERSION} is already exact on ${PKGS} main"
@@ -146,4 +151,14 @@ if ! GH_TOKEN="$PKGS_GH_TOKEN" "$GH_BIN" pr create --repo "$PKGS" --base main --
     exit 1
   fi
 fi
+prs="$(GH_TOKEN="$PKGS_GH_TOKEN" "$GH_BIN" pr list --repo "$PKGS" --state open \
+  --base main --head "$BRANCH" \
+  --json number,headRepositoryOwner,isCrossRepository)"
+pr_number="$(jq -er --arg owner "${PKGS%%/*}" '
+  [ .[] | select(
+      .headRepositoryOwner.login == $owner and .isCrossRepository == false
+    )
+  ] | if length == 1 then .[0].number else error("expected one trusted package PR") end
+' <<<"$prs")"
+GH_TOKEN="$PKGS_GH_TOKEN" "$GH_BIN" pr merge "$pr_number" --repo "$PKGS" --auto --merge
 echo "publish-cli-manifests: manifests published for ${VERSION}"
