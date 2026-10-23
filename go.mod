@@ -5,13 +5,13 @@ go 1.26.9
 require (
 	fyne.io/fyne/v2 v2.8.2
 	github.com/BurntSushi/toml v1.6.0
-	github.com/Microsoft/go-winio v0.6.3
+	github.com/Microsoft/go-winio v0.6.4
 	github.com/a2aproject/a2a-go/v2 v2.6.0
 	github.com/charmbracelet/bubbletea v1.3.10
 	github.com/charmbracelet/lipgloss v1.1.0
 	github.com/charmbracelet/x/exp/teatest v0.0.0-20260713092006-0d683c34c74b
 	github.com/creack/pty v1.1.24
-	github.com/ebitengine/purego v0.11.1
+	github.com/ebitengine/purego v0.11.2
 	github.com/google/uuid v1.6.0
 	github.com/jonboulle/clockwork v0.5.0
 	github.com/mattn/go-isatty v0.0.24
@@ -19,7 +19,7 @@ require (
 	github.com/spf13/viper v1.21.0
 	github.com/ubuntu/gowsl v0.0.0-20251112191800-0ef2623cc8fb
 	github.com/yuin/goldmark v1.8.6
-	golang.org/x/sys v0.48.0
+	golang.org/x/sys v0.49.0
 	modernc.org/sqlite v1.60.1
 )
 
